@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: battle camera loose ends (RE-554). Inishie and Zebes cameras, stage-clear zoom, boss intro camera as a pre-step, boss spawn floor probe, cpufx entry focus id 2. Goldens `training-inishie` and seven `cpufx-*` rebaselined (not a D-051 change).
-- Open: Master Hand first attack differs from boss tick 643; Falcon Kick edge tick (cpufx-d); stage-clear zoom N64 trace (RE-554). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: N64 trace divergences (RE-554). Falcon Kick edge switch in proc_map, Master Hand Wait (seed and position match N64 to boss tick 1034), ground floor-contact bit only on line change. Twelve goldens rebaselined (not a D-051 change).
+- Open: stage-clear zoom N64 trace (RE-554); item floor-contact bit (`PLAN.md`). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: battle camera loose ends (RE-554).
+Baseline: N64 trace divergences (RE-554).
 
 | Check | Result |
 |---|---|

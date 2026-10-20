@@ -2112,7 +2112,8 @@ impl Fighter {
                     )
             },
         );
-        let stop_edge = crate::map::stops_at_edge(self.status.status);
+        let stop_edge = crate::map::stops_at_edge(self.status.status)
+            || crate::captain::special_lw_stops_at_edge(self);
         let cliff_edge = crate::map::teeters_at_edge(self).then_some(crate::map::CliffEdge {
             facing: self.facing,
             stick_x: self.input.stick_x,
@@ -2158,6 +2159,9 @@ impl Fighter {
                         ssb_engine::math::sy_arc_tan2(-f.normal.x * self.facing.sign(), f.normal.y);
                 }
                 crate::status::ottotto_proc_map(self, &surfaces);
+                // `ftCaptainSpecialLwProcMap` after its floor probe kept the
+                // floor: the wall rebound, or the flag-1 pulse cleared.
+                crate::captain::special_lw_proc_map(self);
             }
             // Walked off the end of the line. `mpCommonSetFighterFallOnGroundBreak`
             // drops the fighter into a fall rather than leaving it in a walk

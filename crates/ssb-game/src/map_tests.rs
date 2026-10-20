@@ -570,37 +570,166 @@ fn ness_blast_rebounds_steep_contacts_and_slides_shallow_walls() {
     assert!((f.physics.vel_air.y - speed).abs() < 0.01);
 }
 
+/// `ftCaptainSpecialLwBoundCheckGoto` (`ftcaptainspeciallw.c:128`): a
+/// wall rebounds the kick only while the script's flag 1 is 1 (motion
+/// frames 12 to 31), on the ground or in the air.
 #[test]
 fn falcon_kick_wall_rebound_obeys_the_source_flag_window() {
-    let mut f = fighter(
-        FighterKind::Captain,
-        AnyStatus::Captain(CaptainStatus::SpecialLw),
-        Vec3::ZERO,
-    );
-    f.status.set_time(12.0);
-    f.map_contacts.left_wall = Some(Contact {
-        line: 1,
+    for (flag1, air, rebound) in [
+        (0, false, false),
+        (1, false, true),
+        (1, true, true),
+        (2, false, false),
+    ] {
+        let mut f = fighter(
+            FighterKind::Captain,
+            AnyStatus::Captain(CaptainStatus::SpecialLw),
+            Vec3::ZERO,
+        );
+        if air {
+            f.become_airborne();
+        }
+        f.motion_script.flags[1] = flag1;
+        f.map_contacts.left_wall = Some(Contact {
+            line: 1,
+            flags: 0,
+            normal: Vec2::new(-1.0, 0.0),
+        });
+        let label = format!("flag1 {flag1} air {air}");
+        assert_eq!(
+            crate::captain::special_lw_proc_map(&mut f),
+            rebound,
+            "{label}"
+        );
+        let want = if rebound {
+            CaptainStatus::SpecialLwBound
+        } else {
+            CaptainStatus::SpecialLw
+        };
+        assert_eq!(f.status.status, AnyStatus::Captain(want), "{label}");
+        assert_eq!(f.situation == Situation::Air, air || rebound, "{label}");
+        assert_eq!(
+            f.motion_script.flags[1],
+            if rebound || flag1 == 2 { 0 } else { flag1 }
+        );
+    }
+}
+
+/// `ftCaptainSpecialLwProcMap` (`ftcaptainspeciallw.c:158`): the script's
+/// flag 1 = 2 at motion frame 32 is a one-pass pulse. Losing the floor in
+/// that same map pass switches to `SpecialLwAir` at frame 0 there (N64
+/// trace cpufx-d: status 231 first at el 62, clock 32); grounded in that
+/// pass, the flag clears and a later fall keeps `SpecialLw`.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn falcon_kick_switches_to_air_in_the_pass_that_loses_the_floor() {
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (0, 0), 0);
+    for leave_at in [31.0f32, 32.0, 33.0] {
+        let mut f = Fighter::new(FighterKind::Captain, 0, 3);
+        f.coll = BODY;
+        f.attributes.size = 1.0;
+        f.situation = Situation::Ground;
+        f.floor = Some(Standing {
+            line: 3,
+            flags: 0,
+            normal: Vec2::new(0.0, 1.0),
+        });
+        f.pos = Vec3::new(-5.0, 0.0, 0.0);
+        crate::captain::set_special_lw(&mut f);
+        while f.status.clock < leave_at - 1.0 {
+            f.tick_map(|| [floor]);
+            assert_eq!(f.situation, Situation::Ground, "leave {leave_at}");
+        }
+        f.root_motion.delta.z = 20.0;
+        f.tick_map(|| [floor]);
+        assert_eq!(f.situation, Situation::Air, "leave {leave_at}");
+        assert_eq!(f.physics.jumps_used, 1, "leave {leave_at}");
+        let want = if leave_at == 32.0 {
+            assert_eq!(f.status.anim_frame, 0.0);
+            CaptainStatus::SpecialLwAir
+        } else {
+            CaptainStatus::SpecialLw
+        };
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Captain(want),
+            "leave {leave_at}"
+        );
+        // Walked off before the pulse: the pulse's own air pass switches.
+        if leave_at == 31.0 {
+            f.tick_map(|| [floor]);
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Captain(CaptainStatus::SpecialLwAir)
+            );
+            assert_eq!(f.status.anim_frame, 0.0);
+        }
+        // Grounded through the pulse: the kick stays `SpecialLw` in the air.
+        if leave_at == 33.0 {
+            assert_eq!(f.motion_script.flags[1], 0);
+            f.tick_map(|| [floor]);
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Captain(CaptainStatus::SpecialLw)
+            );
+        }
+    }
+}
+
+/// A grounded pass raises `MAP_FLAG_FLOOR` only on a new floor line
+/// (`mpProcessCheckTestFloorCollision`): a Kirby standing from its first
+/// tick makes no `ftParamKirbyTryMakeMapStarEffect` star, as on the N64
+/// (RE-554: the boss stage's first tick draws no star particles).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_standing_kirby_makes_no_floor_star() {
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0);
+    let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+    f.coll = BODY;
+    f.situation = Situation::Ground;
+    f.floor = Some(Standing {
+        line: 3,
         flags: 0,
-        normal: Vec2::new(-1.0, 0.0),
+        normal: Vec2::new(0.0, 1.0),
     });
-    assert!(ground_callback(&mut f, None));
-    assert_eq!(
-        f.status.status,
-        AnyStatus::Captain(CaptainStatus::SpecialLwBound)
-    );
-    assert_eq!(f.situation, Situation::Air);
-    let mut f = fighter(
-        FighterKind::Captain,
-        AnyStatus::Captain(CaptainStatus::SpecialLw),
-        Vec3::ZERO,
-    );
-    f.status.set_time(32.0);
-    f.map_contacts.right_wall = Some(Contact {
-        line: 1,
-        flags: 0,
-        normal: Vec2::new(1.0, 0.0),
-    });
-    assert!(!ground_callback(&mut f, None));
+    for tick in 0..3 {
+        f.tick_map(|| [floor]);
+        assert_eq!(f.situation, Situation::Ground);
+        assert!(!f.map_contacts.floor, "tick {tick}");
+        assert!(
+            !f.effects
+                .iter()
+                .any(|e| matches!(e, crate::fteffect::FighterEffect::KirbyStar(_))),
+            "tick {tick}"
+        );
+    }
+}
+
+/// `ftCaptainSpecialLwDecideMapCollide`: once the script's flag 3 is set
+/// (motion frame 36) the grounded kick stops at the floor's edge.
+#[test]
+fn falcon_kick_stops_at_the_edge_after_flag3() {
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (0, 0), 0);
+    for flag3 in [0, 1] {
+        let mut f = fighter(
+            FighterKind::Captain,
+            AnyStatus::Captain(CaptainStatus::SpecialLw),
+            Vec3::ZERO,
+        );
+        f.attributes.size = 1.0;
+        f.situation = Situation::Ground;
+        f.floor = Some(Standing {
+            line: 3,
+            flags: 0,
+            normal: Vec2::new(0.0, 1.0),
+        });
+        f.pos = Vec3::new(-5.0, 0.0, 0.0);
+        f.motion_script.flags[3] = flag3;
+        f.root_motion.delta.z = 20.0;
+        f.tick_physics_map(&|| [floor]);
+        let grounded = f.situation == Situation::Ground;
+        assert_eq!(grounded, flag3 != 0, "flag3 {flag3}");
+    }
 }
 
 #[test]

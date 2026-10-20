@@ -130,9 +130,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
 | Camera | Special camera modes beyond Inishie, Zebes, stage-clear zoom, boss intro (RE-554) | RE-406, RE-554 |
-| Master Hand first attack | PSP decides Wait to attack differently from boss tick 643 (N64 row 360+k) → trace `wait_timer` and RNG on both | RE-554 |
-| cpufx-d Falcon Kick edge | PSP loses one motion tick at the platform edge (status 230 to 231, N64 clean el 62 = PSP 460) | RE-554 |
 | Stage-clear zoom trace | No N64 trace of the 46 zoom ticks → 1P warp ROM with forced win; compare eye, at, fovy, RNG X then Y | RE-554 |
+| Item floor-contact bit | Items set the floor-contact bit every grounded tick (`item/map.rs:60-63`) → check its readers vs decomp (`itMapTestLRWallCheckFloor`) | RE-554 |
 | Yoshi | Tongue and Egg Lay timeline matched (RE-552); remaining: grab vs N64, effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552 |
 | Setter first frames | No N64 trace: Barrel/Tornado captures, item throws, Final Cutter landing, Yoshi aerial release, Link aerial Boomerang return | RE-468, RE-473, RE-474 |
 | `anim_frame` | Shield pose clock; DK speed-0 cargo jump/fall; idle camera `status_total_tics` | RE-472, RE-474 |

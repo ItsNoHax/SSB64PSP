@@ -82,6 +82,10 @@ pub fn contact_or_none(c: Option<Contact>) -> (bool, Contact) {
 /// Source current contacts, retained across frames for first-contact callbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Contacts {
+    /// `MAP_FLAG_FLOOR` in `mask_curr`: an airborne pass landed, or a
+    /// grounded pass swept onto a different floor line
+    /// (`mpProcessCheckTestFloorCollision`). Standing on the same floor is
+    /// `mask_stat` and leaves it clear.
     pub floor: bool,
     /// `MAP_FLAG_FLOOREDGE`: [`CliffEdge`] caught the fighter at a floor's
     /// end (`mpCommonCheckSetFighterCliffEdge`); it is grounded 40 units in
@@ -1211,13 +1215,13 @@ where
             return (moved, contacts);
         }
         pos = moved.pos;
-        contacts.floor = moved.floor.is_some();
         if moved.floor.is_none() || contacts.left_wall.is_some() || contacts.right_wall.is_some() {
             return (moved, contacts);
         }
     }
+    // Staying on the floor is `mask_stat`, not `mask_curr`: only the swept
+    // new line above raises `MAP_FLAG_FLOOR` on the ground (N64 trace, RE-554).
     let moved = follow_floor(&surfaces, coll, pos, line);
-    contacts.floor = moved.floor.is_some();
     (moved, contacts)
 }
 
@@ -1637,7 +1641,7 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
             L::Attack13 | L::Attack100Start | L::Attack100Loop | L::Attack100End
         ),
         // `ftCaptainSpecialLwDecideMapCollide` stops only once `flag3` is
-        // set; the port keeps the Falcon Kick's own map pass.
+        // set: `crate::captain::special_lw_stops_at_edge`.
         AnyStatus::Captain(s) => matches!(
             s,
             CaptainStatus::Attack13
@@ -1886,7 +1890,7 @@ pub(crate) fn ground_callback(f: &mut Fighter, floor: Option<Standing>) -> bool 
         }
         return true;
     }
-    crate::captain::map_wall(f)
+    false
 }
 
 #[cfg(test)]
@@ -1966,7 +1970,7 @@ pub(crate) fn air_callback_at(f: &mut Fighter, translate: Vec3) {
             }
         }
     } else {
-        crate::captain::map_wall(f);
+        crate::captain::special_lw_proc_map(f);
     }
 }
 

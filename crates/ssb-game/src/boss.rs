@@ -1057,17 +1057,10 @@ where
                 set_wait(f, surfaces);
             }
         }
-        // `ftBossWaitProcInterrupt`.
-        B::Wait => {
-            if f.boss.is_human {
-                decide_player(f, surfaces);
-            } else {
-                decide_computer(f, surfaces);
-            }
-        }
         // `ftBossDefaultProcInterrupt` needs the game status; nothing sets
         // `Default` (`ftBossDefaultSetStatus` is unused).
-        B::Default
+        B::Wait
+        | B::Default
         | B::Move
         | B::WalkLoop
         | B::GootsubusuUp
@@ -1076,6 +1069,18 @@ where
         | B::Tsutsuku2
         | B::Yubideppou2
         | B::DeadCenter => {}
+    }
+    // `ftMainProcUpdateInterrupt` reads `proc_interrupt` after
+    // `proc_update` ran, so a Wait that `proc_update` just set (the entry's
+    // end, an attack's end) runs `ftBossWaitProcInterrupt` this same tick
+    // (N64 trace, RE-554: Wait from boss tick 601, Move at 650 for a
+    // `wait_timer` of 50).
+    if f.status.status == AnyStatus::Boss(B::Wait) {
+        if f.boss.is_human {
+            decide_player(f, surfaces);
+        } else {
+            decide_computer(f, surfaces);
+        }
     }
 }
 
@@ -1249,12 +1254,26 @@ fn set_transn(f: &mut Fighter) {
     f.physics.vel_air = f.root_motion.delta * size;
 }
 
-/// Velocity a tenth of the way to `dest`, all of it under 5 units; the
-/// source's `vel_air.z` is left alone. Returns the distance.
-fn approach(f: &mut Fighter, dest: Vec3) -> f32 {
+/// Velocity a tenth of the way to `dest` (`syVectorNorm3D`, then
+/// `syVectorScale3D` by `magnitude * 0.1F`); with `snap`, all of it under 5
+/// units (Move, Tsutsuku2, Yubideppou2). `ftBossWaitProcPhysics` has no
+/// snap: Master Hand eases toward the Wait spot without ever reaching it
+/// (N64 trace, RE-554). The source's `vel_air.z` is left alone. Returns the
+/// distance.
+fn approach(f: &mut Fighter, dest: Vec3, snap: bool) -> f32 {
     let vel = dest - f.pos;
     let mag = vel.length();
-    let v = if mag < 5.0 { vel } else { vel * 0.1 };
+    let v = if (snap && mag < 5.0) || mag == 0.0 {
+        vel
+    } else {
+        let inv = 1.0 / mag;
+        let scale = mag * 0.1;
+        Vec3::new(
+            vel.x * inv * scale,
+            vel.y * inv * scale,
+            vel.z * inv * scale,
+        )
+    };
     f.physics.vel_air.x = v.x;
     f.physics.vel_air.y = v.y;
     mag
@@ -1303,13 +1322,13 @@ fn physics(f: &mut Fighter, s: B) {
         B::Wait => {
             if !f.boss.is_human {
                 let dest = f.boss.pos;
-                approach(f, dest);
+                approach(f, dest, false);
             }
         }
         // `ftBossMoveProcPhysics`.
         B::Move => {
             let dest = f.boss.pos;
-            let mag = approach(f, dest);
+            let mag = approach(f, dest, true);
             f.boss.magnitude = if mag < 5.0 { 0.0 } else { mag };
         }
         B::Hippataku
@@ -1360,7 +1379,7 @@ fn physics(f: &mut Fighter, s: B) {
             } else {
                 let t = target_pos(f);
                 let dest = Vec3::new(t.x + -lr(f) * 900.0, t.y + 300.0, 0.0);
-                approach(f, dest);
+                approach(f, dest, true);
             }
         }
         // `ftBossDrillProcPhysics`.
@@ -1445,7 +1464,7 @@ fn walk_loop_in_range(f: &Fighter) -> bool {
 fn yubideppou2_update_position(f: &mut Fighter) {
     let t = target_pos(f);
     let dest = Vec3::new(t.x + -lr(f) * 3000.0, t.y, 0.0);
-    approach(f, dest);
+    approach(f, dest, true);
 }
 
 /// `mpCommonSetFighterProjectFloor` (`mpProcessSetCollProjectFloorID`):

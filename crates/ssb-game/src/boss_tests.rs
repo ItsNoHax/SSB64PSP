@@ -46,8 +46,48 @@ fn init_takes_the_first_floor_line_and_a_level_wait() {
     assert_eq!(f.boss.default_line, Some(0));
     assert_eq!(f.boss.wait_div, 1.0);
     assert_eq!(f.boss.status_id, -1);
-    // `syUtilsRandIntRange(120) + 100 / 9`.
+    // `syUtilsRandIntRange(120) + 100 / 9` at the helper's level 9.
     assert!((11..131).contains(&f.boss.wait_timer));
+}
+
+/// The 1P boss at the default difficulty is level 2 (`sc1pgame.c` Final
+/// Stage row); from seed 1 its first draw is 0, so it waits the minimum
+/// `0 + 100 / 2` ticks (N64 trace, RE-554: `wait_timer` 50).
+#[test]
+fn a_level_two_boss_from_seed_one_waits_fifty_ticks() {
+    let mut f = boss();
+    crate::rng::set_seed(1);
+    init(&mut f, &floor, 2, false);
+    assert_eq!(f.boss.wait_timer, 50);
+}
+
+/// `ftMainProcUpdateInterrupt` reads `proc_interrupt` after `proc_update`:
+/// the tick Appear ends in Wait already counts the wait down. Wait eases
+/// toward its spot without `ftBossMoveProcPhysics`'s snap under 5 units
+/// (N64 trace, RE-554: Wait from boss tick 601, Move at 650).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn wait_counts_down_from_the_tick_appear_ends_and_never_snaps() {
+    let mut f = boss();
+    let target = f.boss.target;
+    f.pos = Vec3::ZERO;
+    init(&mut f, &floor, 9, false);
+    f.boss.target = target;
+    f.boss.wait_timer = 50;
+    appear_set_status(&mut f);
+    for _ in 0..APPEAR_FRAMES as usize {
+        step(&mut f);
+    }
+    assert_eq!(f.status.status, AnyStatus::Boss(B::Wait));
+    assert_eq!(f.boss.wait_timer, 49);
+    for _ in 0..48 {
+        step(&mut f);
+    }
+    assert_eq!(f.status.status, AnyStatus::Boss(B::Wait));
+    let gap = (f.boss.pos - f.pos).length();
+    assert!(gap > 0.0 && gap < 5.0, "{gap}");
+    step(&mut f);
+    assert_ne!(f.status.status, AnyStatus::Boss(B::Wait));
 }
 
 #[test]

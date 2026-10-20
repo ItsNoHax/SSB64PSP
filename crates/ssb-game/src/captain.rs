@@ -344,17 +344,59 @@ pub fn on_kick_hit(f: &mut Fighter) {
     }
 }
 
-/// Ground Falcon Kick flag 1 is set at 12 and replaced by 2 at 32.
-pub(crate) fn map_wall(f: &mut Fighter) -> bool {
-    if f.status.status != AnyStatus::Captain(CaptainStatus::SpecialLw)
-        || !(12.0..32.0).contains(&f.status.clock)
+/// `ftCaptainSpecialLwDecideMapCollide`'s ground probe: once the script's
+/// `SetFlag3(1)` (motion frame 36) runs, `mpCommonProcFighterOnEdge` stops
+/// the kick at the floor's edge instead of `mpCommonProcFighterOnFloor`.
+pub(crate) fn special_lw_stops_at_edge(f: &Fighter) -> bool {
+    f.status.status == AnyStatus::Captain(CaptainStatus::SpecialLw) && f.motion_script.flags[3] != 0
+}
+
+/// `ftCaptainSpecialLwProcMap` after `ftCaptainSpecialLwDecideMapCollide`
+/// (the ground or air map step that calls this): the wall rebound, else the
+/// air switch. The script sets flag 1 to 1 at motion frame 12 and to 2 at
+/// frame 32.
+pub(crate) fn special_lw_proc_map(f: &mut Fighter) -> bool {
+    if f.status.status != AnyStatus::Captain(CaptainStatus::SpecialLw) {
+        return false;
+    }
+    special_lw_bound_check_goto(f) || special_lw_air_check_air_goto(f)
+}
+
+/// `ftCaptainSpecialLwBoundCheckGoto`.
+fn special_lw_bound_check_goto(f: &mut Fighter) -> bool {
+    if f.motion_script.flags[1] != 1
         || (f.map_contacts.left_wall.is_none() && f.map_contacts.right_wall.is_none())
     {
         return false;
     }
     f.become_airborne();
     set(f, CaptainStatus::SpecialLwBound, 0.0, 30.0);
+    f.motion_script.flags[1] = 0;
     true
+}
+
+/// `ftCaptainSpecialLwAirCheckAirGoto`: flag 1 at 2 is a one-pass pulse.
+/// Airborne in this same map pass (the ground probe just lost the floor,
+/// or the kick left it earlier), the kick switches to `SpecialLwAir`;
+/// still grounded, the flag is only cleared.
+fn special_lw_air_check_air_goto(f: &mut Fighter) -> bool {
+    if f.motion_script.flags[1] != 2 {
+        return false;
+    }
+    let switched = !f.is_grounded();
+    if switched {
+        // `ftCaptainSpecialLwAirSetStatus`: TopN keeps the floor's roll
+        // through `ftMainSetStatus`, and TransN takes it, so
+        // `ftPhysicsGetAirVelTransN` turns the kick's run by it.
+        let roll = f.topn_rotate_z;
+        set(f, CaptainStatus::SpecialLwAir, 0.0, 30.0);
+        fteffect::set_lag_pauses_effects(f);
+        f.topn_rotate_z = roll;
+        f.root_motion.rotate_z = roll;
+        f.pose_writes.transn_rotate_z = Some(roll);
+    }
+    f.motion_script.flags[1] = 0;
+    switched
 }
 
 /// `efManagerNoEjectProcUpdate` on the Falcon Punch and Falcon Kick flames:
@@ -435,18 +477,10 @@ pub fn update(f: &mut Fighter) {
                 status::anim_end_set_fall(f);
             }
         }
+        // `ftCaptainSpecialLwProcUpdate`; the air switch is in `proc_map`
+        // ([`special_lw_proc_map`]).
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir => {
-            if current == CaptainStatus::SpecialLw && !f.is_grounded() && f.status.clock >= 32.0 {
-                // `ftCaptainSpecialLwAirSetStatus`: TopN keeps the floor's
-                // roll through `ftMainSetStatus`, and TransN takes it, so
-                // `ftPhysicsGetAirVelTransN` turns the kick's run by it.
-                let roll = f.topn_rotate_z;
-                set(f, CaptainStatus::SpecialLwAir, 0.0, 30.0);
-                fteffect::set_lag_pauses_effects(f);
-                f.topn_rotate_z = roll;
-                f.root_motion.rotate_z = roll;
-                f.pose_writes.transn_rotate_z = Some(roll);
-            } else if f.status.animation_ended() {
+            if f.status.animation_ended() {
                 status::set_wait_or_fall(f);
             }
         }
@@ -664,9 +698,12 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
             fteffect::set_lag_pauses_effects(f);
         }
+        // `ftCaptainSpecialLwSetAir` from the ground probe, then the rest of
+        // `ftCaptainSpecialLwProcMap` in the same pass.
         CaptainStatus::SpecialLw => {
             f.become_airborne();
             f.physics.jumps_used = 1;
+            special_lw_proc_map(f);
         }
         _ => return false,
     }
@@ -690,6 +727,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
         }
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir | CaptainStatus::SpecialLwBound => {
             f.land(y);
+            special_lw_proc_map(f);
         }
         CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi => {
             if f.physics.vel_air.y < 0.0 && f.captain.dive_cliff_wait == 0 {
@@ -805,8 +843,8 @@ mod tests {
         let mut f = captain();
         set_special_lw(&mut f);
         f.become_airborne();
-        f.status.set_time(32.0);
-        update(&mut f);
+        f.motion_script.flags[1] = 2;
+        special_lw_proc_map(&mut f);
         assert_eq!(
             f.status.status,
             AnyStatus::Captain(CaptainStatus::SpecialLwAir)

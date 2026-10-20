@@ -200,10 +200,10 @@ fn the_falcon_kick_keeps_its_roll_into_the_air() {
     assert!(crate::captain::apply_ground_physics(&mut f));
     let roll = -sy_arc_tan2(n.x, n.y);
     assert_eq!(f.topn_rotate_z.to_bits(), roll.to_bits());
-    // Off the edge past frame 32: `ftCaptainSpecialLwAirSetStatus`.
+    // Off the edge on the flag-1 pulse: `ftCaptainSpecialLwAirSetStatus`.
     f.become_airborne();
-    f.status.clock = 32.0;
-    crate::captain::update(&mut f);
+    f.motion_script.flags[1] = 2;
+    assert!(crate::captain::special_lw_proc_map(&mut f));
     assert_eq!(
         f.status.status,
         AnyStatus::Captain(CaptainStatus::SpecialLwAir)
