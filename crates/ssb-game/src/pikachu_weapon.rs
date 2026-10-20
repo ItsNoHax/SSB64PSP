@@ -1,5 +1,10 @@
 //! `wppikachuthunderjolt.c` / `wppikachuthunder.c` (US).
 use super::*;
+use crate::map::{Contact, MASK_LWALL, MASK_RWALL};
+use crate::wpmap::WeaponColl;
+use ssb_engine::math::{
+    defined_or, f_clc_dtor32, f_cst_dtor32, sy_arc_tan2, sy_vector_angle_diff_3d,
+};
 
 // `llPikachuSpecial1ThunderJolt{Air,Ground}WeaponAttributes` and
 // `llPikachuMainThunder{Head,Trail}WeaponAttributes`, generated from the ROM
@@ -23,10 +28,25 @@ pub struct ThunderJolt {
     pub velocity: Vec3,
     pub lifetime: u16,
     pub damage: i32,
-    pub surface: Option<MapSurface>,
-    /// `lr`: ±1 on floor; 2 ascending, 3 descending on wall.
+    /// `weapon_vars.thunder_jolt.line_type`: the line kind the ground weapon
+    /// crawls; `None` for the aerial weapon.
+    pub line_type: Option<MapSurfaceKind>,
+    /// The aerial weapon's `coll_data` (`wpMapTestAllCheckFloor`).
+    coll: WeaponColl,
+    /// The ground weapon's `coll_data.floor_line_id`, `lwall_line_id` and
+    /// `rwall_line_id` (`None` for -1).
+    floor_line: Option<u16>,
+    lwall_line: Option<u16>,
+    rwall_line: Option<u16>,
+    /// `coll_data.pos_prev`: `translate` before this frame's `vel_air`.
+    pos_prev: Vec3,
+    /// `lr`: ±1 on a floor; 2 ascending, 3 descending on a wall.
     pub direction: i8,
-    normal: Vec2,
+    /// `weapon_vars.thunder_jolt.rotate`: the angle of the line under the
+    /// jolt at its last successful `mpCollisionGet[FC/LR]Common*` query.
+    rotate: Vec2,
+    /// The root DObj's `rotate.z`, which steers the ground weapon.
+    rotate_z: f32,
     /// Counts `gcAddAnimAll` calls: the aerial weapon's own, then the ground
     /// weapon's at its creation and at every restart. Presentation only.
     pub anim_epoch: u16,
@@ -43,10 +63,23 @@ pub struct ThunderJolt {
     pub sfx: Option<crate::sound::FgmHandle>,
 }
 
+/// `nWPPikachuThunderJoltStatus*`: `wpPikachuThunderJoltGroundGetStatus`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JoltStatus {
+    Null,
+    Active,
+    Destroy,
+}
+
 /// `gcSetAllAnimSpeed(new_gobj, 0.5F)` in `wpPikachuThunderJoltGroundMakeWeapon`.
 pub const JOLT_GROUND_ANIM_SPEED: f32 = 0.5;
 /// `WPPIKACHUJOLT_ANIM_PUSH_FRAME`.
 const JOLT_ANIM_PUSH_FRAME: f32 = 7.5;
+/// `WPPIKACHUJOLT_VEL`.
+const JOLT_VEL: f32 = 55.0;
+/// `WPPIKACHUJOLT_GRAVITY`, `WPPIKACHUJOLT_TVEL` (US).
+const JOLT_GRAVITY: f32 = 0.0;
+const JOLT_TVEL: f32 = 50.0;
 const DEG_180: f32 = core::f32::consts::PI;
 impl ThunderJolt {
     pub(super) fn new(s: WeaponSpawn) -> Self {
@@ -57,9 +90,18 @@ impl ThunderJolt {
             velocity: Vec3::new(cos * 40.0 * s.facing, sin * 40.0, 0.0),
             lifetime: 100,
             damage: 10,
-            surface: None,
+            line_type: None,
+            coll: WeaponColl::default(),
+            floor_line: None,
+            lwall_line: None,
+            rwall_line: None,
+            pos_prev: s.position,
             direction: if s.facing < 0.0 { -1 } else { 1 },
-            normal: Vec2::ZERO,
+            // Read only when the ground weapon's first query fails, which
+            // its landing on the line rules out; up, never an unwritten
+            // value (D-050).
+            rotate: Vec2::new(0.0, 1.0),
+            rotate_z: 0.0,
             anim_epoch: 0,
             anim_ticks: 0,
             anim_frame: 0.0,
@@ -68,10 +110,14 @@ impl ThunderJolt {
             sfx: None,
         }
     }
-    /// The ground weapon's root `rotate.z`: `wpPikachuThunderJoltGroundProcMap`
-    /// sets it to `atan2(-angle.x, angle.y)` of the line it rides.
+    /// The ground weapon (`dWPPikachuThunderJoltGroundWeaponDesc`).
+    pub fn grounded(&self) -> bool {
+        self.line_type.is_some()
+    }
+    /// The root DObj's `rotate.z`: the ground weapon's
+    /// `atan2(-angle.x, angle.y)` of the line it crawls.
     pub fn rotate_z(&self) -> f32 {
-        ssb_engine::math::sy_arc_tan2(-self.normal.x, self.normal.y)
+        self.rotate_z
     }
     /// `wpPikachuThunderJoltGroundAddAnim`: restart the animation and play it
     /// once.
@@ -82,11 +128,13 @@ impl ThunderJolt {
         self.anim_fresh = false;
     }
     pub(super) fn hit(&self) -> (Hitbox, Vec3) {
-        if self.surface.is_some() {
-            // Ground attribute offset (0,100,0), rotated with the surface.
+        if self.grounded() {
+            // Ground attribute offset (0,100,0), turned with the DObj's
+            // `rotate.z`.
+            let (sin, cos) = sin_cos(self.rotate_z);
             (
                 JOLT_GROUND,
-                self.position + Vec3::new(self.normal.x * 100.0, self.normal.y * 100.0, 0.0),
+                self.position + Vec3::new(-sin * 100.0, cos * 100.0, 0.0),
             )
         } else {
             (JOLT_AIR, self.position)
@@ -98,18 +146,42 @@ impl ThunderJolt {
         if self.velocity.x * f.facing.sign() < 0.0 {
             self.velocity.x = -self.velocity.x;
         }
-        if self.surface.is_some() {
+        if self.grounded() {
             self.direction = if self.velocity.x >= 0.0 { 1 } else { -1 };
             // `wpPikachuThunderJoltGroundProcReflector`.
             self.model_rotate_y = if self.velocity.x >= 0.0 { DEG_180 } else { 0.0 };
         }
         self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
-    fn attach(&mut self, s: MapSurface, pos: Vec3, direction: i8) {
-        self.surface = Some(s);
-        self.position = pos;
-        self.normal = surface_normal(s.kind, s.segment);
-        self.direction = direction;
+    /// `coll_data.<kind>_line_id`.
+    fn line_of(&self, kind: MapSurfaceKind) -> Option<u16> {
+        match kind {
+            MapSurfaceKind::Floor => self.floor_line,
+            MapSurfaceKind::LeftWall => self.lwall_line,
+            MapSurfaceKind::RightWall => self.rwall_line,
+            MapSurfaceKind::Ceiling => None,
+        }
+    }
+    /// Ride `line` of `kind` with `lr`: `line_type`, the `coll_data` line id
+    /// and `lr`, as each transition sets them.
+    fn set_line(&mut self, kind: MapSurfaceKind, line: u16, lr: i8) {
+        self.line_type = Some(kind);
+        match kind {
+            MapSurfaceKind::Floor => self.floor_line = Some(line),
+            MapSurfaceKind::LeftWall => self.lwall_line = Some(line),
+            MapSurfaceKind::RightWall => self.rwall_line = Some(line),
+            MapSurfaceKind::Ceiling => {}
+        }
+        self.direction = lr;
+    }
+    /// The ground weapon on `s`'s line with `lr`, angled by it, as a
+    /// transition onto it leaves the jolt.
+    #[cfg(test)]
+    pub(crate) fn ride(&mut self, s: MapSurface, lr: i8) {
+        self.set_line(s.kind, s.topology.map_or(0, |t| t.line), lr);
+        self.rotate = surface_normal(s.kind, s.segment);
+        self.rotate_z = sy_arc_tan2(-self.rotate.x, self.rotate.y);
+        self.damage = 7;
     }
     /// `wpPikachuThunderJoltAirProcUpdate`/`...GroundProcUpdate` and their
     /// `proc_map`. Every end makes a small dust cloud where the jolt is.
@@ -124,6 +196,9 @@ impl ThunderJolt {
         }
         alive
     }
+    /// `wpProcessProcWeaponMain` for either weapon: animation, `proc_update`,
+    /// `translate += vel_air`, `proc_map`. Returns false where the original
+    /// makes its dust and ends the weapon.
     fn tick_map<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I + Copy,
@@ -133,16 +208,33 @@ impl ThunderJolt {
         // `proc_update`. The first play after `gcAddAnimAll` only parses.
         self.anim_ticks = self.anim_ticks.wrapping_add(1);
         if core::mem::take(&mut self.anim_fresh) {
-        } else if self.surface.is_some() {
+        } else if self.grounded() {
             self.anim_frame += JOLT_GROUND_ANIM_SPEED;
         }
+        let Some(kind) = self.line_type else {
+            // `wpPikachuThunderJoltAirProcUpdate`.
+            self.lifetime = self.lifetime.saturating_sub(1);
+            if self.lifetime == 0 {
+                return false;
+            }
+            // `wpMainApplyGravityClampTVel`.
+            self.velocity.y -= JOLT_GRAVITY;
+            let mag = crate::wpmap::mag(self.velocity);
+            if mag > JOLT_TVEL {
+                self.velocity.x = self.velocity.x / mag * JOLT_TVEL;
+                self.velocity.y = self.velocity.y / mag * JOLT_TVEL;
+            }
+            self.pos_prev = self.position;
+            self.position += self.velocity;
+            return self.air_map(surfaces, fx);
+        };
         // `wpPikachuThunderJoltGroundProcUpdate`, ahead of the lifetime:
         // `efManagerPikachuThunderJoltMakeEffect` at the DObj, then the
         // animation restarts.
-        if self.surface.is_some() && self.anim_frame == JOLT_ANIM_PUSH_FRAME {
+        if self.anim_frame == JOLT_ANIM_PUSH_FRAME {
             fx.push(Fx::ThunderJolt {
                 pos: self.position,
-                rotate_z: self.rotate_z(),
+                rotate_z: self.rotate_z,
             });
             self.restart_anim();
         }
@@ -150,344 +242,296 @@ impl ThunderJolt {
         if self.lifetime == 0 {
             return false;
         }
-        if self.surface.is_none() {
-            self.velocity.y = self.velocity.y.max(-50.0);
-            let wanted = self.position + self.velocity;
-            // `wpMapTestAllCheckFloor`, then LWALL, then RWALL. Ceiling does
-            // not convert the aerial jolt into a crawler.
-            for kind in [
-                MapSurfaceKind::Floor,
-                MapSurfaceKind::LeftWall,
-                MapSurfaceKind::RightWall,
-            ] {
-                let hit = map_contact(
-                    surfaces().into_iter().filter(|s| s.kind == kind),
-                    self.position,
-                    wanted,
-                    JOLT_COLL,
-                );
-                if let Some(hit) = hit {
-                    let s = hit.surface;
-                    // A floor landing keeps the full step's x and puts y
-                    // on the floor there: the N64 cpufx-s trace's jolt
-                    // lands one whole 28.28 step on from its last air
-                    // place (RE-541).
-                    let landed = match kind {
-                        MapSurfaceKind::Floor => project(s, wanted),
-                        _ => None,
-                    };
-                    let pos = landed
-                        .or_else(|| project(s, hit.position))
-                        .unwrap_or(hit.position);
-                    let angle = ssb_engine::math::sy_arc_tan2(hit.normal.y, hit.normal.x);
-                    let direction = match kind {
-                        MapSurfaceKind::Floor => {
-                            if self.velocity.x >= 0.0 {
-                                1
-                            } else {
-                                -1
-                            }
-                        }
-                        MapSurfaceKind::LeftWall => {
-                            if angle > core::f32::consts::PI * 0.75 {
-                                3
-                            } else {
-                                2
-                            }
-                        }
-                        MapSurfaceKind::RightWall => {
-                            if angle > core::f32::consts::FRAC_PI_4 {
-                                2
-                            } else {
-                                3
-                            }
-                        }
-                        _ => unreachable!(),
-                    };
-                    self.damage = 7;
-                    self.attach(s, pos, direction);
-                    // `wpPikachuThunderJoltGroundMakeWeapon`: a new weapon,
-                    // whose `wpManagerMakeWeapon` adds the ground animation.
-                    self.anim_epoch = self.anim_epoch.wrapping_add(1);
-                    self.anim_ticks = 0;
-                    self.anim_frame = 0.0;
-                    self.anim_fresh = true;
-                    self.model_rotate_y = match (kind, direction) {
-                        (MapSurfaceKind::Floor, d) if d >= 0 => DEG_180,
-                        (MapSurfaceKind::Floor, _) => 0.0,
-                        (MapSurfaceKind::LeftWall, 3) | (MapSurfaceKind::RightWall, 2) => 0.0,
-                        _ => DEG_180,
-                    };
-                    // `wpPikachuThunderJoltGroundMakeWeapon`'s
-                    // `efManagerPikachuThunderJoltMakeEffect` at the new
-                    // weapon's DObj, before its FGM.
-                    fx.push(Fx::ThunderJolt {
-                        pos: self.position,
-                        rotate_z: self.rotate_z(),
-                    });
-                    // `wpMainPlayFGM(new_wp, nSYAudioFGMPikachuElectricLoop)`:
-                    // the new weapon has no sound yet.
-                    self.sfx =
-                        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPikachuElectricLoop);
-                    // `wpManagerMakeWeapon` links the ground weapon after
-                    // this one, so `gcRunAll` runs its process this same
-                    // frame: the N64 cpufx-s trace's new jolt has already
-                    // spent a life and moved 55 (RE-541).
-                    return self.tick_map(surfaces, fx);
-                }
-            }
-            self.position = map_contact(
-                surfaces()
-                    .into_iter()
-                    .filter(|s| s.kind == MapSurfaceKind::Ceiling),
-                self.position,
-                wanted,
-                JOLT_COLL,
-            )
-            .map_or(wanted, |hit| hit.position);
-            return true;
-        }
-        let Some(current) = refresh_surface(surfaces(), self.surface.unwrap()) else {
-            return false;
-        };
-        self.surface = Some(current);
-        self.velocity.x = self.normal.y * 55.0;
-        self.velocity.y = -self.normal.x * 55.0;
-        if current.kind == MapSurfaceKind::Floor {
+        // `cosf(rotate.z)`, `__sinf(rotate.z)`.
+        let (sin, cos) = sin_cos(self.rotate_z);
+        self.velocity.x = cos * JOLT_VEL;
+        self.velocity.y = sin * JOLT_VEL;
+        if kind == MapSurfaceKind::Floor {
             self.velocity.x *= self.direction as f32;
-        } else if self.direction == 2 {
-            self.velocity.y = self.velocity.y.abs();
         } else {
-            self.velocity.y = -self.velocity.y.abs();
-        }
-        let from = self.position;
-        let wanted = from + self.velocity;
-        let line = current.topology.map(|t| t.line);
-        // The source projects against every segment of the current line.
-        let on_line = surfaces()
-            .into_iter()
-            .filter(|s| same_line(*s, current))
-            .find_map(|s| project(s, wanted).map(|pos| (s, pos)));
-        if on_line.is_none() {
-            if let Some(alive) = self.edge_transition(surfaces, current, from) {
-                return alive;
+            if self.direction == 2 && self.velocity.y < 0.0 {
+                self.velocity.y = -self.velocity.y;
+            }
+            if self.direction == 3 && self.velocity.y > 0.0 {
+                self.velocity.y = -self.velocity.y;
             }
         }
-        let projected = on_line.map_or(wanted, |(_, p)| p);
-        // `GetStatus`: incoming floor/wall or ceiling crossing can supersede
-        // the projected current line. Exclude the authored opposite edge.
-        let collision_kind = match current.kind {
-            MapSurfaceKind::Floor => {
-                if self.direction == 1 {
-                    MapSurfaceKind::LeftWall
-                } else {
-                    MapSurfaceKind::RightWall
-                }
-            }
-            _ => {
-                if self.direction == 3 {
-                    MapSurfaceKind::Floor
-                } else {
-                    MapSurfaceKind::Ceiling
-                }
-            }
-        };
-        let excluded = if collision_kind == MapSurfaceKind::Ceiling {
-            None
-        } else {
-            endpoint(
-                surfaces,
-                current,
-                if current.kind == MapSurfaceKind::Floor {
-                    self.direction < 0
-                } else {
-                    true
-                },
-            )
-            .and_then(|(_, v)| neighbor(surfaces, line, v))
-        };
-        let collision = surfaces()
-            .into_iter()
-            .filter(|s| s.kind == collision_kind)
-            .filter_map(|s| {
-                let t = swept_coords_intersection(
-                    Vec2::new(from.x, from.y),
-                    Vec2::new(projected.x, projected.y),
-                    s.coords(),
-                )?;
-                let n = surface_normal(s.kind, s.segment);
-                if (projected.x - from.x) * n.x + (projected.y - from.y) * n.y >= 0.0 {
-                    return None;
-                }
-                Some((
-                    t,
-                    s,
-                    Vec3::new(
-                        from.x + (projected.x - from.x) * t,
-                        from.y + (projected.y - from.y) * t,
-                        from.z,
-                    ),
-                ))
-            })
-            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal))
-            // Source chooses the closest crossing before excluding its line.
-            .filter(|(_, s, _)| excluded.is_none() || s.topology.map(|t| t.line) != excluded);
-        if let Some((_, s, pos)) = collision {
-            if s.kind == MapSurfaceKind::Ceiling {
-                return false;
-            }
-            let dir = if s.kind == MapSurfaceKind::Floor {
-                if current.kind == MapSurfaceKind::LeftWall {
-                    -1
-                } else {
-                    1
-                }
-            } else {
-                2
-            };
-            self.attach(s, pos, dir);
-            self.restart_anim();
-            return true;
-        }
-        if let Some((s, pos)) = on_line {
-            self.attach(s, pos, self.direction);
-            return true;
-        }
-        false
+        self.pos_prev = self.position;
+        self.position += self.velocity;
+        self.ground_map(&surfaces)
     }
-    fn edge_transition<I, F>(
-        &mut self,
-        surfaces: F,
-        current: MapSurface,
-        from: Vec3,
-    ) -> Option<bool>
+    /// `wpPikachuThunderJoltAirProcMap`: a floor, else a left wall, else a
+    /// right wall met by `wpMapTestAllCheckFloor` makes the ground weapon;
+    /// on a wall, at a height clamped to the wall's ends.
+    fn air_map<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
+    where
+        F: Fn() -> I + Copy,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        self.coll.begin();
+        if self
+            .coll
+            .test_all_check_floor(&JOLT_COLL, self.pos_prev, &mut self.position, &surfaces)
+        {
+            return self.make_ground(MapSurfaceKind::Floor, surfaces, fx);
+        }
+        for (mask, kind, line) in [
+            (MASK_LWALL, MapSurfaceKind::LeftWall, self.coll.lwall_line),
+            (MASK_RWALL, MapSurfaceKind::RightWall, self.coll.rwall_line),
+        ] {
+            if self.coll.mask_curr & mask == 0 {
+                continue;
+            }
+            if let Some(line) = line {
+                // `mpCollisionGet[L/R]WallEdgeU`, then `...EdgeD`.
+                for high in [true, false] {
+                    let (found, edge) = defined_or(
+                        crate::map::line_edge(&surfaces, kind, line, high),
+                        Vec2::ZERO,
+                    );
+                    if found
+                        && (if high {
+                            self.position.y > edge.y
+                        } else {
+                            self.position.y < edge.y
+                        })
+                    {
+                        self.position.y = edge.y;
+                    }
+                }
+            }
+            return self.make_ground(kind, surfaces, fx);
+        }
+        true
+    }
+    /// `wpPikachuThunderJoltGroundMakeWeapon`: the ground weapon replaces
+    /// the aerial one at its `translate`, keeping its life and line ids.
+    fn make_ground<I, F>(&mut self, kind: MapSurfaceKind, surfaces: F, fx: &mut Emit) -> bool
+    where
+        F: Fn() -> I + Copy,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let air_vel_x = self.velocity.x;
+        self.line_type = Some(kind);
+        self.floor_line = self.coll.floor.map(|f| f.line);
+        self.lwall_line = self.coll.lwall_line;
+        self.rwall_line = self.coll.rwall_line;
+        self.damage = 7;
+        // `wpManagerMakeWeapon` zeroes `vel_air`, adds the ground animation
+        // and (`WEAPON_FLAG_COLLPROJECT`) sets `pos_prev` to the aerial
+        // weapon's `translate`; `lr` stays the aerial weapon's until the
+        // switch below.
+        self.velocity = Vec3::ZERO;
+        self.anim_epoch = self.anim_epoch.wrapping_add(1);
+        self.anim_ticks = 0;
+        self.anim_frame = 0.0;
+        self.anim_fresh = true;
+        self.pos_prev = self.position;
+        // `wpPikachuThunderJoltGroundProcMap(new_gobj)`: its result is
+        // dropped, so an end only leaves its dust.
+        if !self.ground_map(&surfaces) {
+            fx.push(Fx::DustExpandSmall(self.position));
+        }
+        match self.line_type {
+            Some(MapSurfaceKind::Floor) => {
+                self.direction = if air_vel_x >= 0.0 { 1 } else { -1 };
+                self.model_rotate_y = if self.direction >= 0 { DEG_180 } else { 0.0 };
+            }
+            Some(MapSurfaceKind::LeftWall) => {
+                if sy_arc_tan2(self.rotate.y, self.rotate.x) > f_cst_dtor32(135.0) {
+                    self.model_rotate_y = 0.0;
+                    self.direction = 3;
+                } else {
+                    self.model_rotate_y = DEG_180;
+                    self.direction = 2;
+                }
+            }
+            Some(MapSurfaceKind::RightWall) => {
+                if sy_arc_tan2(self.rotate.y, self.rotate.x) > f_cst_dtor32(45.0) {
+                    self.model_rotate_y = 0.0;
+                    self.direction = 2;
+                } else {
+                    self.model_rotate_y = DEG_180;
+                    self.direction = 3;
+                }
+            }
+            _ => {}
+        }
+        // `efManagerPikachuThunderJoltMakeEffect` at the new weapon's DObj,
+        // before its FGM.
+        fx.push(Fx::ThunderJolt {
+            pos: self.position,
+            rotate_z: self.rotate_z,
+        });
+        // `wpMainPlayFGM(new_wp, nSYAudioFGMPikachuElectricLoop)`: the new
+        // weapon has no sound yet.
+        self.sfx = crate::sound::play_fgm(crate::sound::id::nSYAudioFGMPikachuElectricLoop);
+        // `wpManagerMakeWeapon` links the ground weapon after this one, so
+        // `gcRunAll` runs its process this same frame: the N64 cpufx-s
+        // trace's new jolt has already spent a life and moved 55 (RE-541).
+        self.tick_map(surfaces, fx)
+    }
+    /// `wpPikachuThunderJoltGroundProcMap`: follow the line along its own
+    /// axis; past its end, step onto the joined wall or floor; a wall or
+    /// floor crossed on the way (`GetStatus`) takes over. Returns false
+    /// where the original makes its dust and ends the weapon.
+    fn ground_map<I, F>(&mut self, surfaces: &F) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let line = current.topology.map(|t| t.line);
-        // Exact endpoint identity, normalized by X (floor) / Y (wall).
-        // Missing topology ends the crawler rather than inventing a join.
-        let positive = if current.kind == MapSurfaceKind::Floor {
-            self.direction == 1
-        } else {
-            self.direction == 2
+        let Some(kind) = self.line_type else {
+            return true;
         };
-        let (_, vertex) = endpoint(&surfaces, current, positive)?;
-        let next_line = neighbor(&surfaces, line, vertex)?;
-        let s = surfaces().into_iter().find(|s| {
-            s.topology.is_some_and(|t| {
-                t.line == next_line && (t.vertex1 == vertex || t.vertex2 == vertex)
-            })
-        })?;
-        let dir = match (current.kind, self.direction, s.kind) {
-            (MapSurfaceKind::Floor, 1, MapSurfaceKind::LeftWall) => 2,
-            (MapSurfaceKind::Floor, 1, MapSurfaceKind::RightWall) => 3,
-            (MapSurfaceKind::Floor, -1, MapSurfaceKind::LeftWall) => 3,
-            (MapSurfaceKind::Floor, -1, MapSurfaceKind::RightWall) => 2,
-            (MapSurfaceKind::LeftWall, 2, MapSurfaceKind::Floor) => 1,
-            (MapSurfaceKind::LeftWall, _, MapSurfaceKind::Floor) => -1,
-            (MapSurfaceKind::RightWall, 2, MapSurfaceKind::Floor) => -1,
-            (MapSurfaceKind::RightWall, _, MapSurfaceKind::Floor) => 1,
-            _ => return None,
+        let Some(line) = self
+            .line_of(kind)
+            .filter(|&l| crate::map::line_exists(surfaces, l))
+        else {
+            return false;
         };
-        let n = surface_normal(s.kind, s.segment);
-        // `syVectorAngleDiff3D(&angle, &rotate) > WPPIKACHUJOLT_ROTATE_ANGLE_MAX`
-        // (`F_CLC_DTOR32(100.0F)`, `wppikachuthunderjolt.c:401`).
-        if ssb_engine::math::sy_vector_angle_diff_3d(
-            Vec3::new(n.x, n.y, 0.0),
-            Vec3::new(self.normal.x, self.normal.y, 0.0),
-        ) > ssb_engine::math::f_clc_dtor32(100.0)
-        {
-            return Some(false);
+        let (on_line, (dist, hit)) = defined_or(
+            crate::map::line_common(surfaces, kind, line, self.position),
+            (0.0, Contact::NONE),
+        );
+        if on_line {
+            self.rotate = hit.normal;
+            if kind == MapSurfaceKind::Floor {
+                self.position.y += dist;
+            } else {
+                self.position.x += dist;
+            }
+            return self.get_status(surfaces) != JoltStatus::Destroy;
         }
-        let t = s.topology.unwrap();
-        let [x1, y1, x2, y2] = s.coords();
-        let pos = if t.vertex1 == vertex {
-            Vec3::new(x1, y1, from.z)
-        } else {
-            Vec3::new(x2, y2, from.z)
+        // `mpCollisionGetEdgeUnder[R/L]LineID` (floor, by `lr` ±1) or
+        // `mpCollisionGetEdge[Right/Left][U/D]LineID` (wall, U when `lr` 2).
+        let high = match (kind, self.direction) {
+            (MapSurfaceKind::Floor, 1) => Some(true),
+            (MapSurfaceKind::Floor, -1) => Some(false),
+            (MapSurfaceKind::Floor, _) => None,
+            (_, lr) => Some(lr == 2),
         };
-        self.attach(s, pos, dir);
+        let next = high.and_then(|high| crate::map::line_neighbor(surfaces, kind, line, high));
+        if let Some((next_kind, next_line)) = next {
+            use MapSurfaceKind::{Floor, LeftWall, RightWall};
+            // The new line, `lr`, and which of its ends the jolt starts at
+            // (`mpCollisionGet[L/R]WallEdge[U/D]`, `mpCollisionGetFloorEdge[L/R]`).
+            let forward = match kind {
+                Floor => self.direction == 1,
+                _ => self.direction == 2,
+            };
+            let to = match (kind, forward, next_kind) {
+                (Floor, true, LeftWall) => Some((2, false)),
+                (Floor, true, RightWall) => Some((3, true)),
+                (Floor, false, LeftWall) => Some((3, true)),
+                (Floor, false, RightWall) => Some((2, false)),
+                (LeftWall, true, Floor) => Some((1, false)),
+                (LeftWall, false, Floor) => Some((-1, true)),
+                (RightWall, true, Floor) => Some((-1, true)),
+                (RightWall, false, Floor) => Some((1, false)),
+                _ => None,
+            };
+            if let Some((lr, high)) = to {
+                self.set_line(next_kind, next_line, lr);
+                let (found, edge) = defined_or(
+                    crate::map::line_edge(surfaces, next_kind, next_line, high),
+                    Vec2::ZERO,
+                );
+                if found {
+                    self.position = Vec3::new(edge.x, edge.y, 0.0);
+                }
+                return self.check_destroy(surfaces);
+            }
+        }
+        self.get_status(surfaces) == JoltStatus::Active
+    }
+    /// `wpPikachuThunderJoltGroundGetStatus`: from `pos_prev` to `translate`,
+    /// a floor jolt crossing the wall ahead (not the one joined at its other
+    /// end) climbs it; a descending wall jolt crossing a floor (not the one
+    /// joined at its top) runs along it; an ascending one crossing a ceiling
+    /// ends. Otherwise `rotate.z` follows the line under it.
+    fn get_status<I, F>(&mut self, surfaces: &F) -> JoltStatus
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        use MapSurfaceKind::{Ceiling, Floor, LeftWall, RightWall};
+        let from = Vec2::new(self.pos_prev.x, self.pos_prev.y);
+        let to = Vec2::new(self.position.x, self.position.y);
+        let lr = self.direction;
+        // (line kind crossed, the line id it must not be, its new `lr`).
+        let check = match (self.line_type, lr) {
+            (Some(Floor), 1) => Some((LeftWall, self.joined(surfaces, Floor, false), 2)),
+            (Some(Floor), _) => Some((RightWall, self.joined(surfaces, Floor, true), 2)),
+            (Some(LeftWall), 3) => Some((Floor, self.joined(surfaces, LeftWall, true), -1)),
+            (Some(RightWall), 3) => Some((Floor, self.joined(surfaces, RightWall, true), 1)),
+            (Some(LeftWall | RightWall), _) => Some((Ceiling, None, 0)),
+            _ => None,
+        };
+        if let Some((cross_kind, excluded, new_lr)) = check {
+            let (crossed, (hit, at)) = defined_or(
+                crate::map::line_crossing(surfaces, cross_kind, from, to),
+                (Contact::NONE, Vec2::ZERO),
+            );
+            if crossed && excluded != Some(hit.line) {
+                if cross_kind == Ceiling {
+                    return JoltStatus::Destroy;
+                }
+                let at3 = Vec3::new(at.x, at.y, 0.0);
+                let (on_line, (_, angle)) = defined_or(
+                    crate::map::line_common(surfaces, cross_kind, hit.line, at3),
+                    (0.0, Contact::NONE),
+                );
+                if !on_line {
+                    return JoltStatus::Destroy;
+                }
+                self.set_line(cross_kind, hit.line, new_lr);
+                self.position = at3;
+                self.restart_anim();
+                self.rotate_z = sy_arc_tan2(-angle.normal.x, angle.normal.y);
+                return JoltStatus::Active;
+            }
+        }
+        self.rotate_z = sy_arc_tan2(-self.rotate.x, self.rotate.y);
+        JoltStatus::Null
+    }
+    /// The line joined at one end of the current `kind` line
+    /// (`mpCollisionGetEdge*LineID`), any kind.
+    fn joined<I, F>(&self, surfaces: &F, kind: MapSurfaceKind, high: bool) -> Option<u16>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let line = self.line_of(kind)?;
+        crate::map::line_neighbor(surfaces, kind, line, high).map(|(_, l)| l)
+    }
+    /// `wpPikachuThunderJoltGroundCheckDestroy`: at a corner, the new line
+    /// turning more than `WPPIKACHUJOLT_ROTATE_ANGLE_MAX` (100 degrees) from
+    /// the last one ends the jolt; otherwise `rotate.z` follows it.
+    fn check_destroy<I, F>(&mut self, surfaces: &F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
         self.restart_anim();
-        Some(true)
-    }
-}
-fn same_line(a: MapSurface, b: MapSurface) -> bool {
-    match (a.topology, b.topology) {
-        (Some(a), Some(b)) => a.line == b.line,
-        _ => a == b,
-    }
-}
-fn project(s: MapSurface, p: Vec3) -> Option<Vec3> {
-    let [x1, y1, x2, y2] = s.coords();
-    if matches!(s.kind, MapSurfaceKind::Floor | MapSurfaceKind::Ceiling) {
-        if p.x < x1.min(x2) - 0.001 || p.x > x1.max(x2) + 0.001 || x1 == x2 {
-            return None;
+        let kind = self.line_type.unwrap_or(MapSurfaceKind::Floor);
+        // The jolt stands on the new line's end, so the query succeeds; a
+        // failure would leave `angle` unwritten, read here as no turn.
+        let (on_line, (_, hit)) = defined_or(
+            self.line_of(kind)
+                .and_then(|line| crate::map::line_common(surfaces, kind, line, self.position)),
+            (0.0, Contact::NONE),
+        );
+        let angle = if on_line { hit.normal } else { self.rotate };
+        if sy_vector_angle_diff_3d(
+            Vec3::new(angle.x, angle.y, 0.0),
+            Vec3::new(self.rotate.x, self.rotate.y, 0.0),
+        ) > f_clc_dtor32(100.0)
+        {
+            return false;
         }
-        Some(Vec3::new(
-            p.x,
-            y1 + div_nonzero((p.x - x1) * (y2 - y1), x2 - x1),
-            p.z,
-        ))
-    } else {
-        if p.y < y1.min(y2) - 0.001 || p.y > y1.max(y2) + 0.001 || y1 == y2 {
-            return None;
-        }
-        Some(Vec3::new(
-            x1 + div_nonzero((p.y - y1) * (x2 - x1), y2 - y1),
-            p.y,
-            p.z,
-        ))
+        self.rotate_z = sy_arc_tan2(-angle.x, angle.y);
+        true
     }
-}
-fn endpoint<I, F>(surfaces: F, current: MapSurface, positive: bool) -> Option<(Vec2, u16)>
-where
-    F: Fn() -> I,
-    I: IntoIterator<Item = MapSurface>,
-{
-    let floor = matches!(
-        current.kind,
-        MapSurfaceKind::Floor | MapSurfaceKind::Ceiling
-    );
-    // Found flags beside defined ends: the compare below must never read
-    // an unwritten `Option` payload, which LLVM may compare before the
-    // tag test (RE-531).
-    let mut ends = [(false, Vec2::ZERO, 0); 2];
-    for s in surfaces().into_iter().filter(|s| same_line(*s, current)) {
-        let Some(t) = s.topology else { continue };
-        let [x1, y1, x2, y2] = s.coords();
-        if t.point == 0 {
-            ends[0] = (true, Vec2::new(x1, y1), t.vertex1);
-        }
-        if t.point + 1 == t.segments {
-            ends[1] = (true, Vec2::new(x2, y2), t.vertex2);
-        }
-    }
-    let [(found_a, pa, va), (found_b, pb, vb)] = ends;
-    if !(found_a && found_b) {
-        return None;
-    }
-    let (a, b) = ((pa, va), (pb, vb));
-    let first_lower = if floor { a.0.x < b.0.x } else { a.0.y < b.0.y };
-    Some(if first_lower == positive { b } else { a })
-}
-fn neighbor<I, F>(surfaces: F, line: Option<u16>, vertex: u16) -> Option<u16>
-where
-    F: Fn() -> I,
-    I: IntoIterator<Item = MapSurface>,
-{
-    // `func_ovl2_800FB31C`: ascending original line IDs, last match wins.
-    surfaces()
-        .into_iter()
-        .filter_map(|s| s.topology)
-        .filter(|t| {
-            Some(t.line) != line
-                && ((t.point == 0 && t.vertex1 == vertex)
-                    || (t.point + 1 == t.segments && t.vertex2 == vertex))
-        })
-        .map(|t| t.line)
-        .max()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -532,15 +576,15 @@ impl ThunderHead {
             fx.push(self.trail_effect(10, 3));
             return false;
         }
-        let wanted = self.position + Vec3::new(0.0, -450.0, 0.0);
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted, HEAD_COLL) {
-            self.position = hit.position;
-            // `wpPikachuThunderHeadProcMap`.
+        let from = self.position;
+        self.position.y -= 450.0;
+        // `wpPikachuThunderHeadProcMap`: the 450 fall splits into two
+        // substeps, and the one that meets the map is where it ends.
+        if crate::wpmap::check_coll_end(&HEAD_COLL, from, &mut self.position, &surfaces) {
             fx.push(Fx::Quake(1));
             fx.push(Fx::SparkleWhite(self.position));
             return false;
         }
-        self.position = wanted;
         true
     }
 }
@@ -696,7 +740,7 @@ mod tests {
             (100, 50, 1),
         )];
         assert!(j.tick(|| ceiling, &mut crate::wpeffect::Emit::default()));
-        assert!(j.surface.is_none());
+        assert!(!j.grounded());
         assert_eq!(j.position.y, 0.0);
         for _ in 1..99 {
             assert!(j.tick(|| [], &mut crate::wpeffect::Emit::default()));
@@ -708,9 +752,9 @@ mod tests {
         let floor = surface(MapSurfaceKind::Floor, 3, (-200, 0, 5), (200, 0, 6));
         let wall = surface(MapSurfaceKind::RightWall, 5, (200, 0, 6), (200, -400, 0));
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
-        j.attach(floor, j.position, 1);
+        j.ride(floor, 1);
         assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
-        assert_eq!(j.surface.unwrap().kind, MapSurfaceKind::RightWall);
+        assert_eq!(j.line_type, Some(MapSurfaceKind::RightWall));
         assert_eq!(j.direction, 3);
         assert_eq!(j.position, Vec3::new(200.0, 0.0, 0.0));
         assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
@@ -725,7 +769,7 @@ mod tests {
         let mut disconnected = wall;
         disconnected.topology.as_mut().unwrap().vertex1 = 99;
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
-        j.attach(floor, j.position, 1);
+        j.ride(floor, 1);
         assert!(!j.tick(
             || [floor, disconnected],
             &mut crate::wpeffect::Emit::default()
@@ -736,20 +780,82 @@ mod tests {
         let floor = surface(MapSurfaceKind::Floor, 3, (-200, 0, 5), (200, 0, 6));
         let wall = surface(MapSurfaceKind::RightWall, 5, (200, 0, 6), (200, -400, 0));
         let ceiling = surface(MapSurfaceKind::Ceiling, 7, (200, 0, 6), (400, 0, 9));
-        assert_eq!(neighbor(|| [ceiling, floor, wall], Some(3), 6), Some(7));
+        assert_eq!(
+            crate::map::line_neighbor(&|| [ceiling, floor, wall], MapSurfaceKind::Floor, 3, true),
+            Some((MapSurfaceKind::Ceiling, 7))
+        );
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
-        j.attach(floor, j.position, 1);
+        j.ride(floor, 1);
         assert!(!j.tick(
             || [ceiling, floor, wall],
             &mut crate::wpeffect::Emit::default()
         ));
+    }
+    /// `wpPikachuThunderJoltGroundGetStatus`: a floor jolt crossing the
+    /// wall ahead climbs it from the crossing, ascending.
+    #[test]
+    fn floor_jolt_climbs_the_wall_it_crosses() {
+        let floor = surface(MapSurfaceKind::Floor, 1, (-400, 0, 0), (400, 0, 1));
+        let wall = surface(MapSurfaceKind::LeftWall, 2, (100, -50, 2), (100, 400, 3));
+        let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 80.0, 0.0));
+        j.ride(floor, 1);
+        assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
+        assert_eq!(j.line_type, Some(MapSurfaceKind::LeftWall));
+        assert_eq!(j.direction, 2);
+        assert_eq!(j.position, Vec3::new(100.0, 0.0, 0.0));
+        assert_eq!(j.anim_ticks, 1);
+        assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
+        assert_eq!((j.position.x, j.position.y), (100.0, 55.0));
+    }
+    /// `wpPikachuThunderJoltGroundCheckDestroy`: a corner turning more than
+    /// 100 degrees ends the jolt; 97 degrees does not.
+    #[test]
+    fn corner_past_one_hundred_degrees_destroys_jolt() {
+        let floor = surface(MapSurfaceKind::Floor, 3, (-200, 0, 5), (200, 0, 6));
+        for (foot, alive) in [(150, true), (100, false)] {
+            // An undercut right side: 97 or 104 degrees from the floor's up.
+            let wall = surface(MapSurfaceKind::RightWall, 5, (200, 0, 6), (foot, -400, 0));
+            let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 180.0, 0.0));
+            j.ride(floor, 1);
+            let mut fx = crate::wpeffect::Emit::default();
+            assert_eq!(j.tick(|| [floor, wall], &mut fx), alive, "foot {foot}");
+            assert_eq!(j.line_type, Some(MapSurfaceKind::RightWall));
+            assert_eq!((j.position.x, j.position.y), (200.0, 0.0));
+            let dust = fx
+                .iter()
+                .any(|e| matches!(e, crate::wpeffect::WeaponEffect::DustExpandSmall(_)));
+            assert_eq!(dust, !alive);
+        }
+    }
+    /// `wpPikachuThunderJoltAirProcMap`: a left wall makes the ground
+    /// weapon on it; a vertical one (`atan2(rotate.y, rotate.x)` 180 > 135)
+    /// sends it down with `rotate.y` 0, and it moves 55 that same frame.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn air_jolt_meeting_a_left_wall_crawls_down_it() {
+        let wall = surface(MapSurfaceKind::LeftWall, 4, (300, -2000, 0), (300, 2000, 1));
+        let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 500.0));
+        j.velocity = Vec3::new(40.0, 0.0, 0.0);
+        let mut ticks = 0;
+        while !j.grounded() {
+            let y = j.position.y;
+            assert!(j.tick(|| [wall], &mut crate::wpeffect::Emit::default()));
+            ticks += 1;
+            assert!(ticks < 20);
+            if j.grounded() {
+                assert_eq!(j.position.y, y - 55.0);
+            }
+        }
+        assert_eq!(j.line_type, Some(MapSurfaceKind::LeftWall));
+        assert_eq!((j.direction, j.model_rotate_y), (3, 0.0));
+        assert_eq!(j.position.x, 300.0);
     }
     #[test]
     fn descending_wall_ceiling_contact_destroys_jolt() {
         let wall = surface(MapSurfaceKind::LeftWall, 1, (0, -400, 0), (0, 400, 1));
         let ceiling = surface(MapSurfaceKind::Ceiling, 2, (-100, 50, 2), (100, 50, 3));
         let mut j = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt, 0.0, 25.0));
-        j.attach(wall, j.position, 2);
+        j.ride(wall, 2);
         assert!(!j.tick(|| [wall, ceiling], &mut crate::wpeffect::Emit::default()));
     }
     #[test]

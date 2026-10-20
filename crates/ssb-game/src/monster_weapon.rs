@@ -14,7 +14,7 @@ use crate::attack::Hitbox;
 use crate::combat::Element;
 use crate::ground::BodyColl;
 use crate::status::BlastZone;
-use crate::weapon::{map_contact, MapSurface};
+use crate::weapon::MapSurface;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
@@ -709,8 +709,7 @@ impl MonsterShot {
             | ShotKind::FireFlower
             | ShotKind::StarRod => {
                 let c = self.attributes().map_coll;
-                if let Some(hit) = map_contact(surfaces(), prev, self.position, c) {
-                    self.position = hit.position;
+                if crate::wpmap::check_coll_end(&c, prev, &mut self.position, &surfaces) {
                     if self.kind == ShotKind::StarRod {
                         // `itStarRodWeaponStarProcMap`.
                         fx.push(Fx::StarSplash {
@@ -740,10 +739,17 @@ impl MonsterShot {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let bottom = self.attributes().map_coll.bottom;
-        let from = Vec2::new(prev.x, prev.y + bottom);
-        let to = Vec2::new(self.position.x, self.position.y + bottom);
-        let Some((hit, _)) = crate::map::floor_crossing(surfaces, from, to) else {
+        // `itIwarkWeaponRockProcMap` keeps `translate` from before
+        // `wpMapTestAllCheckCollEnd` for its dust; the test may stop the
+        // rock at an earlier substep.
+        let full = self.position;
+        let coll = self.attributes().map_coll;
+        let end = crate::map::move_air_check_coll_end(&coll, prev, self.position, surfaces);
+        self.position = end.pos;
+        if end.mask & crate::map::MASK_FLOOR == 0 {
+            return;
+        }
+        let Some(hit) = end.floor else {
             return;
         };
         if self.floor_line == Some(hit.line) {
@@ -754,7 +760,7 @@ impl MonsterShot {
         self.velocity.y *= ROCK_COLLIDE_MUL_VEL;
         self.floor_line = Some(hit.line);
         crate::sound::play_fgm(crate::sound::id::nSYAudioFGMIwarkRockMake);
-        let pos = self.position + Vec3::new(0.0, ROCK_COLLIDE_ADD_Y, 0.0);
+        let pos = full + Vec3::new(0.0, ROCK_COLLIDE_ADD_Y, 0.0);
         fx.push(Fx::DustLight {
             pos,
             lr: self.lr as i8,

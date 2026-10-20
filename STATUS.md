@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: N64 trace divergences (RE-554). Falcon Kick edge switch in proc_map, Master Hand Wait (seed and position match N64 to boss tick 1034), ground floor-contact bit only on line change. Twelve goldens rebaselined (not a D-051 change).
-- Open: stage-clear zoom N64 trace (RE-554); item floor-contact bit (`PLAN.md`). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: weapon map pass and item floor bit (RE-555). Weapons use the decomp `mask_curr` pass and coll-end substeps; Thunder Jolt rewritten; approximation deleted. Five goldens rebaselined (not a D-051 change).
+- Open: stage-clear zoom N64 trace (RE-554); weapon spawn snap, jolt damage, item floor Option (`PLAN.md`). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: N64 trace divergences (RE-554).
+Baseline: weapon map pass (RE-555).
 
 | Check | Result |
 |---|---|

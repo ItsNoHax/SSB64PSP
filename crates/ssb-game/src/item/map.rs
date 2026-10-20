@@ -56,10 +56,15 @@ where
         item.rwall_normal = hit.normal;
         item.rwall_line = hit.line;
     }
+    // Standing on the same line is `mask_stat` only; `MAP_FLAG_FLOOR` in
+    // `mask_curr` marks the swept change of floor line
+    // (`mpProcessCheckTestFloorCollision`, mpprocess.c:1020; RE-554).
+    if contacts.floor {
+        item.mask_curr |= MASK_FLOOR;
+    }
     match moved.floor {
         Some(f) => {
             item.floor = Some(f);
-            item.mask_curr |= MASK_FLOOR;
             true
         }
         None => false,
@@ -118,33 +123,31 @@ where
     item.mask_curr & flags != 0
 }
 
-/// `itMapTestAllCheckCollEnd`: the walls and ceiling are only tested, and
-/// a floor the item's bottom crossed this frame is noted
-/// (`mpProcessRunFloorCollisionAdjNewNULL`) without stopping it: the item
-/// keeps its position and stays airborne, and its spin and root roll stop.
-/// Only the floor is read by the callers, so only the floor is tested.
-/// Returns whether it met one.
+/// `itMapTestAllCheckCollEnd`: the walls, ceiling and floor are only
+/// tested ([`crate::map::move_air_check_coll_end`]); `mpProcessUpdateMain`
+/// keeps the substep that met one (`is_coll_end`), and the item stays
+/// airborne. A floor its bottom crossed is noted
+/// (`mpProcessRunFloorCollisionAdjNewNULL`), and its spin and root roll
+/// stop. Returns `is_coll_end`.
 pub(crate) fn test_all_check_coll_end<I, F>(item: &mut Item, surfaces: &F) -> bool
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let bottom = item.coll.bottom;
-    let from = Vec2::new(item.pos_prev.x, item.pos_prev.y + bottom);
-    let to = Vec2::new(item.pos.x, item.pos.y + bottom);
-    let Some((hit, _)) = crate::map::floor_crossing(surfaces, from, to) else {
-        return false;
-    };
-    item.mask_curr |= MASK_FLOOR;
-    item.floor = Some(Standing {
-        line: hit.line,
-        flags: hit.flags,
-        normal: hit.normal,
-    });
-    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemMapCollide);
-    item.spin_step = 0.0;
-    item.rotate_z = 0.0;
-    true
+    let end = crate::map::move_air_check_coll_end(&item.coll, item.pos_prev, item.pos, surfaces);
+    item.pos = end.pos;
+    item.mask_curr |= end.mask;
+    if let Some(hit) = end.floor {
+        item.floor = Some(Standing {
+            line: hit.line,
+            flags: hit.flags,
+            normal: hit.normal,
+        });
+        crate::sound::play_fgm(crate::sound::id::nSYAudioFGMItemMapCollide);
+        item.spin_step = 0.0;
+        item.rotate_z = 0.0;
+    }
+    end.mask != 0
 }
 
 fn dot(v: Vec3, n: Vec2) -> f32 {

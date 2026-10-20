@@ -6,12 +6,13 @@
 //! boundary explicit prevents projectile lifetime/collision from becoming a
 //! hidden per-fighter side effect.
 
-use ssb_engine::math::{div_nonzero, sin_cos, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, Vec2, Vec3};
 
 use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
 use crate::fighter::Fighter;
 use crate::ground::BodyColl;
+use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
 use crate::monster_weapon::{ShotKind, ShotProc};
 use crate::status::BlastZone;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
@@ -109,10 +110,10 @@ pub enum WeaponKind {
     },
     /// `wpYoshiStarMakeStars`: one `nWPKindYoshiStar` each way.
     YoshiStars,
-    /// `nWPKindCutter`, Final Cutter's wave. `grounded`: Kirby stood on a
-    /// floor line, which the wave then follows.
+    /// `nWPKindCutter`, Final Cutter's wave. `floor_line`: Kirby's
+    /// `floor_line_id`, which the wave follows if it lies under the spawn.
     KirbyCutter {
-        grounded: bool,
+        floor_line: Option<u16>,
     },
     NessPKFire {
         grounded: bool,
@@ -270,13 +271,14 @@ impl FoxBlaster {
         I: IntoIterator<Item = MapSurface>,
     {
         self.scale_x = (self.scale_x + 16.0 / 3.0).min(160.0 / 3.0);
-        let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted, FOX_BLASTER_MAP_COLL) {
-            // `wpFoxBlasterProcMap`.
-            fx.push(Fx::FoxBlasterGlow(hit.position));
+        let from = self.position;
+        self.position += self.velocity;
+        // `wpFoxBlasterProcMap`: the glow where the shot stopped.
+        if crate::wpmap::check_coll_end(&FOX_BLASTER_MAP_COLL, from, &mut self.position, &surfaces)
+        {
+            fx.push(Fx::FoxBlasterGlow(self.position));
             return false;
         }
-        self.position = wanted;
         true
     }
 }
@@ -287,14 +289,10 @@ pub const BOSS_BULLET_HITBOX: Hitbox =
     crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.hitbox();
 pub const BOSS_BULLET_MAP_COLL: BodyColl =
     crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.map_coll;
-/// `WPYUBIBULLET_EXPLODE_LIFETIME` and `..._SIZE` (`wpvars.h`).
-pub const BOSS_BULLET_EXPLODE_LIFETIME: u16 = 6;
-pub const BOSS_BULLET_EXPLODE_SIZE: f32 = 180.0;
-
 /// Source `wpBossBullet`: a straight shot (`vel = { 160 * lr, -25 }`, no
-/// `proc_update`) that bursts where it meets the map
-/// (`wpBossBulletExplodeInitVars`): a 180-wide fire blast for six frames
-/// that neither hops nor reflects.
+/// `proc_update`). Its `proc_map` and `proc_hit` both end it: the blast
+/// `wpBossBulletExplodeInitVars` sets up never runs, since
+/// `wpBossBulletProcMap` returns TRUE after it (ROM 0x0E86F0).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BossBullet {
     pub owner_port: u8,
@@ -303,8 +301,6 @@ pub struct BossBullet {
     pub velocity: Vec3,
     /// `nWPKindBulletHard`; the two share their attributes.
     pub hard: bool,
-    pub exploded: bool,
-    pub lifetime: u16,
 }
 
 /// `wpMainReflectorRotateWeaponModel` (`wp/wpmain.c:170`): the model
@@ -339,55 +335,33 @@ impl BossBullet {
                 0.0,
             ),
             hard,
-            exploded: false,
-            lifetime: 0,
         }
     }
 
     pub fn hitbox(&self) -> Hitbox {
-        if self.exploded {
-            Hitbox {
-                damage: self.damage,
-                radius: BOSS_BULLET_EXPLODE_SIZE * 0.5,
-                element: crate::combat::Element::Fire,
-                ..BOSS_BULLET_HITBOX
-            }
-        } else {
-            Hitbox {
-                damage: self.damage,
-                ..BOSS_BULLET_HITBOX
-            }
+        Hitbox {
+            damage: self.damage,
+            ..BOSS_BULLET_HITBOX
         }
     }
 
-    /// `wpBossBulletExplodeInitVars`.
-    fn explode(&mut self) {
-        self.exploded = true;
-        self.lifetime = BOSS_BULLET_EXPLODE_LIFETIME;
-        self.velocity = Vec3::ZERO;
-    }
-
-    /// The explosion's `wpBossBulletExplodeProcUpdate`, or the shot's
-    /// move and `wpBossBulletProcMap`.
+    /// The shot's move and `wpBossBulletProcMap`.
     fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if self.exploded {
-            self.lifetime -= 1;
-            return self.lifetime != 0;
-        }
-        let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted, BOSS_BULLET_MAP_COLL) {
-            self.position = hit.position;
-            // `wpBossBulletProcMap`.
-            self.explode();
+        let from = self.position;
+        self.position += self.velocity;
+        // `wpBossBulletProcMap`: `wpBossBulletExplodeInitVars`, the sound and
+        // the sparkle, then TRUE, so `wpProcessProcWeaponMain` destroys the
+        // bullet that frame (ROM 0x0E86F0 returns 1): the blast never lives.
+        if crate::wpmap::check_coll_end(&BOSS_BULLET_MAP_COLL, from, &mut self.position, &surfaces)
+        {
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
             fx.push(Fx::SparkleWhiteMultiExplode(self.position));
-            return true;
+            return false;
         }
-        self.position = wanted;
         true
     }
 }
@@ -500,13 +474,13 @@ impl SamusChargeShot {
             bottom: -half,
             width: half,
         };
-        let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted, coll) {
-            // `wpSamusChargeShotProcMap`.
-            fx.push(Fx::DustExpandSmall(hit.position));
+        let from = self.position;
+        self.position += self.velocity;
+        // `wpSamusChargeShotProcMap` (the shot is released).
+        if crate::wpmap::check_coll_end(&coll, from, &mut self.position, &surfaces) {
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
-        self.position = wanted;
         true
     }
 }
@@ -542,8 +516,11 @@ pub struct SamusBomb {
     pub exploded: bool,
     /// `lr`, set from the launch and after every rebound.
     pub lr: f32,
-    /// The floor line while grounded, with `vel_ground`.
-    pub floor: Option<(MapSurface, f32)>,
+    /// `ga == nMPKineticsGround` (`wpMapSetGround`), with `vel_ground`.
+    pub grounded: bool,
+    pub vel_ground: f32,
+    /// `coll_data`: the masks and the floor it stands on.
+    pub coll: crate::wpmap::WeaponColl,
     /// Ports already in the attack record.
     pub hit_ports: u8,
     /// `bomb_blink_timer` and the current palette, presentation only.
@@ -562,7 +539,9 @@ impl SamusBomb {
             lifetime: SAMUS_BOMB_WAIT_LIFETIME,
             exploded: false,
             lr: spawn.facing,
-            floor: None,
+            grounded: false,
+            vel_ground: 0.0,
+            coll: crate::wpmap::WeaponColl::default(),
             hit_ports: 0,
             blink_timer: 8,
             blink_palette: 0,
@@ -581,19 +560,21 @@ impl SamusBomb {
         }
     }
 
-    /// `wpSamusBombExplodeInitVars`.
+    /// `wpSamusBombExplodeInitVars`: `ga` is kept, so a grounded explosion
+    /// still rides its line.
     fn explode(&mut self) {
         self.exploded = true;
         self.lifetime = SAMUS_BOMB_EXPLODE_LIFETIME;
         self.velocity = Vec3::ZERO;
-        self.floor = None;
     }
 
+    /// `wpMainVelSetLR`.
     fn set_lr(&mut self) {
         self.lr = if self.velocity.x < 0.0 { -1.0 } else { 1.0 };
     }
 
-    /// `wpSamusBombProcUpdate` (or the explosion's) then `wpSamusBombProcMap`.
+    /// `wpSamusBombProcUpdate` (or the explosion's), the move of
+    /// `wpProcessProcWeaponMain`, then `wpSamusBombProcMap`.
     fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
@@ -601,36 +582,36 @@ impl SamusBomb {
     {
         self.lifetime -= 1;
         if self.exploded {
-            return self.lifetime != 0;
+            if self.lifetime == 0 {
+                return false;
+            }
+            self.ride_line(&surfaces);
+            return true;
         }
         if self.lifetime == 0 {
             // `wpSamusBombProcUpdate`.
             fx.push(Fx::SparkleWhiteMultiExplode(self.position));
             self.explode();
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
+            // `proc_map` is now NULL; the main pass still moves it.
+            self.ride_line(&surfaces);
             return true;
         }
-        self.floor = self
-            .floor
-            .and_then(|(old, v)| refresh_surface(surfaces(), old).map(|s| (s, v)));
-        match self.floor {
-            None => {
-                self.velocity.y -= SAMUS_BOMB_WAIT_GRAVITY;
-                let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
-                if speed > SAMUS_BOMB_WAIT_TVEL {
-                    let scale = SAMUS_BOMB_WAIT_TVEL / speed;
-                    self.velocity.x *= scale;
-                    self.velocity.y *= scale;
-                }
-                self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR * self.lr;
+        if self.grounded {
+            // `wpMainVelGroundTransferAir`.
+            let angle = self.coll.floor_angle();
+            self.velocity.x = self.lr * angle.y * self.vel_ground;
+            self.velocity.y = self.lr * -angle.x * self.vel_ground;
+            self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND * self.lr;
+        } else {
+            self.velocity.y -= SAMUS_BOMB_WAIT_GRAVITY;
+            let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
+            if speed > SAMUS_BOMB_WAIT_TVEL {
+                let scale = SAMUS_BOMB_WAIT_TVEL / speed;
+                self.velocity.x *= scale;
+                self.velocity.y *= scale;
             }
-            Some((segment, vel_ground)) => {
-                // `wpMainVelGroundTransferAir` along the floor line.
-                let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
-                self.velocity.x = self.lr * normal.y * vel_ground;
-                self.velocity.y = self.lr * -normal.x * vel_ground;
-                self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND * self.lr;
-            }
+            self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR * self.lr;
         }
         self.blink_timer -= 1;
         if self.blink_timer == 0 {
@@ -643,68 +624,65 @@ impl SamusBomb {
                 3
             };
         }
-
-        let mut wanted = self.position + self.velocity;
-        if let Some((segment, _)) = self.floor {
-            // `wpMapTestLRWallCheckFloor`: slide along the line until it ends.
-            wanted += segment.motion.map_or(Vec3::ZERO, |m| m.speed);
-            let [x1, _, x2, _] = segment.coords();
-            let (lo, hi) = (x1.min(x2), x1.max(x2));
-            if wanted.x < lo || wanted.x > hi {
-                self.floor = None;
-                self.position = wanted;
-            } else {
-                let y = segment_y(segment, wanted.x) - SAMUS_BOMB_MAP_COLL.bottom;
-                self.position = Vec3::new(wanted.x, y, wanted.z);
+        let pos_prev = self.position;
+        self.position += self.velocity;
+        self.coll.begin();
+        if !self.grounded {
+            let landed = self.coll.test_all_check_floor(
+                &SAMUS_BOMB_MAP_COLL,
+                pos_prev,
+                &mut self.position,
+                &surfaces,
+            );
+            if self
+                .coll
+                .check_all_rebound(
+                    &mut self.velocity,
+                    MASK_CEIL | MASK_RWALL | MASK_LWALL,
+                    SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL,
+                    self.position,
+                    &SAMUS_BOMB_MAP_COLL,
+                )
+                .is_some()
+            {
+                self.set_lr();
             }
-            return true;
-        }
-        match map_contact(surfaces(), self.position, wanted, SAMUS_BOMB_MAP_COLL) {
-            Some(hit) => {
-                self.position = hit.position;
-                let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
-                self.velocity.x -= 2.0 * dot * hit.normal.x;
-                self.velocity.y -= 2.0 * dot * hit.normal.y;
-                if hit.kind == MapSurfaceKind::Floor {
-                    self.velocity.x *= SAMUS_BOMB_FLOOR_MOD_VEL;
-                    self.velocity.y *= SAMUS_BOMB_FLOOR_MOD_VEL;
-                    self.set_lr();
-                    let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
-                    if speed < SAMUS_BOMB_GROUND_MIN_SPEED {
-                        // `wpMapSetGround`.
-                        self.floor = Some((hit.surface, self.velocity.x * self.lr));
-                    }
-                } else {
-                    self.velocity.x *= SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL;
-                    self.velocity.y *= SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL;
-                    self.set_lr();
+            if landed {
+                crate::wpmap::reflect(&mut self.velocity, self.coll.floor_angle());
+                crate::wpmap::scale(&mut self.velocity, SAMUS_BOMB_FLOOR_MOD_VEL);
+                self.set_lr();
+                if crate::wpmap::mag(self.velocity) < SAMUS_BOMB_GROUND_MIN_SPEED {
+                    // `wpMapSetGround`.
+                    self.grounded = true;
+                    self.vel_ground = self.velocity.x * self.lr;
                 }
             }
-            None => self.position = wanted,
+        } else if !self.coll.test_lr_wall_check_floor(
+            &SAMUS_BOMB_MAP_COLL,
+            pos_prev,
+            &mut self.position,
+            &surfaces,
+        ) {
+            // `wpMapSetAir`.
+            self.grounded = false;
         }
         true
     }
-}
 
-fn refresh_surface(
-    surfaces: impl IntoIterator<Item = MapSurface>,
-    old: MapSurface,
-) -> Option<MapSurface> {
-    surfaces
-        .into_iter()
-        .find(|s| match (s.topology, old.topology) {
-            (Some(a), Some(b)) => a.line == b.line && a.point == b.point,
-            _ => s.kind == old.kind && s.segment == old.segment,
-        })
-}
-
-fn segment_y(s: MapSurface, x: f32) -> f32 {
-    let [x1, y1, x2, y2] = s.coords();
-    if x1 == x2 {
-        return y1;
+    /// `wpProcessProcWeaponMain` without a `proc_map`: a grounded weapon
+    /// rides its line's `vel_speed` while the line exists.
+    fn ride_line<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        self.position += self.velocity;
+        if let Some(floor) = self.coll.floor.filter(|_| self.grounded) {
+            if crate::map::line_exists(surfaces, floor.line) {
+                self.position += crate::map::line_speed(surfaces, floor.line);
+            }
+        }
     }
-    // `x1 != x2` here; `div_nonzero` keeps the guard (D-050).
-    y1 + div_nonzero((x - x1) * (y2 - y1), x2 - x1)
 }
 
 /// `wpvars.h` Boomerang constants.
@@ -804,6 +782,8 @@ pub struct LinkBoomerang {
     pub anim_ticks: u16,
     /// `wp->p_sfx`/`sfx_id`: the flight sound (`wpMainPlayFGM`).
     pub sfx: Option<crate::sound::FgmHandle>,
+    /// `coll_data`: the masks whose fresh bits bound it.
+    pub coll: crate::wpmap::WeaponColl,
 }
 
 impl LinkBoomerang {
@@ -843,6 +823,7 @@ impl LinkBoomerang {
             grandchild_hidden: false,
             anim_ticks: 0,
             sfx: None,
+            coll: crate::wpmap::WeaponColl::default(),
         }
     }
 
@@ -1015,21 +996,36 @@ impl LinkBoomerang {
                 self.set_return(false);
             }
         }
-        let wanted = self.position + self.velocity;
+        let pos_prev = self.position;
+        self.position += self.velocity;
+        // `wpLinkBoomerangProcMap`.
+        self.coll.begin();
         if self.is_reflect || self.is_return {
-            self.position = wanted;
             return (true, false);
         }
-        match map_contact(surfaces(), self.position, wanted, LINK_BOOMERANG_MAP_COLL) {
-            Some(hit) => {
-                self.position = hit.position;
-                // `wpLinkBoomerangProcMap`: a newly touched surface.
-                fx.push(Fx::DustCollide(hit.position));
-                if self.bound(hit.normal) {
-                    self.set_return(true);
+        self.coll.test_all(
+            &LINK_BOOMERANG_MAP_COLL,
+            pos_prev,
+            &mut self.position,
+            &surfaces,
+        );
+        let fresh = self.coll.fresh();
+        if fresh != 0 {
+            fx.push(Fx::DustCollide(self.position));
+            let mut bound = false;
+            for (mask, normal) in [
+                (MASK_LWALL, self.coll.lwall_angle),
+                (MASK_RWALL, self.coll.rwall_angle),
+                (MASK_CEIL, self.coll.ceil_angle),
+                (MASK_FLOOR, self.coll.floor_angle()),
+            ] {
+                if fresh & mask != 0 {
+                    bound |= self.bound(normal);
                 }
             }
-            None => self.position = wanted,
+            if bound {
+                self.set_return(true);
+            }
         }
         (true, false)
     }
@@ -1233,19 +1229,16 @@ impl YoshiEgg {
                 .to_radians();
             self.position.z = 0.0;
         }
-        let wanted = self.position + self.velocity;
-        match map_contact(surfaces(), self.position, wanted, YOSHI_EGG_MAP_COLL) {
-            Some(hit) => {
-                self.position = hit.position;
-                // `wpYoshiEggThrowProcMap`.
-                fx.push(Fx::Quake(2));
-                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggShatter1);
-                fx.push(Fx::YoshiEggExplode(hit.position));
-                fx.push(Fx::EggBreak(hit.position));
-                fx.push(Fx::DustExpandSmall(hit.position));
-                self.explode();
-            }
-            None => self.position = wanted,
+        let from = self.position;
+        self.position += self.velocity;
+        // `wpYoshiEggThrowProcMap`: the egg bursts where it stopped.
+        if crate::wpmap::check_coll_end(&YOSHI_EGG_MAP_COLL, from, &mut self.position, &surfaces) {
+            fx.push(Fx::Quake(2));
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggShatter1);
+            fx.push(Fx::YoshiEggExplode(self.position));
+            fx.push(Fx::EggBreak(self.position));
+            fx.push(Fx::DustExpandSmall(self.position));
+            self.explode();
         }
         true
     }
@@ -1374,15 +1367,21 @@ pub struct KirbyCutter {
     pub lifetime: u16,
     pub lr: f32,
     pub damage: i32,
-    /// Resolve the floor line under the spawn on the first tick.
-    pub seek_floor: bool,
-    pub floor: Option<MapSurface>,
+    /// Kirby's `floor_line_id` at the make: the wave starts grounded on it
+    /// if it lies under the spawn (`mpCollisionGetFCCommonFloor`), resolved
+    /// on the first tick.
+    pub seek_floor: Option<u16>,
+    /// `ga == nMPKineticsGround` (`wpMapSetGround`), with `vel_ground`.
+    pub grounded: bool,
+    pub vel_ground: f32,
+    /// `coll_data`: the masks and the floor it rides.
+    pub coll: crate::wpmap::WeaponColl,
     pub hit_ports: u8,
     /// `wpMainVelSetModelPitch`'s root `rotate.y`: +90 degrees for a
     /// rightward `vel_air.x`, else -90. Presentation only.
     pub model_rotate_y: f32,
     /// Root `rotate.z`: `wpKirbyCutterProcUpdate` sets it to the floor's
-    /// slope while grounded. Presentation only.
+    /// slope while grounded; leaving the floor aims the flight by it.
     pub rotate_z: f32,
     /// `gcPlayAnimAll` calls on the tree, one per update.
     pub anim_ticks: u16,
@@ -1398,7 +1397,7 @@ fn model_pitch(vel_x: f32) -> f32 {
 }
 
 impl KirbyCutter {
-    fn new(spawn: WeaponSpawn, grounded: bool) -> Self {
+    fn new(spawn: WeaponSpawn, floor_line: Option<u16>) -> Self {
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
         Self {
             owner_port: spawn.owner_port,
@@ -1407,8 +1406,10 @@ impl KirbyCutter {
             lifetime: KIRBY_CUTTER_LIFETIME,
             lr,
             damage: KIRBY_CUTTER_HITBOX.damage,
-            seek_floor: grounded,
-            floor: None,
+            seek_floor: floor_line,
+            grounded: false,
+            vel_ground: 0.0,
+            coll: crate::wpmap::WeaponColl::default(),
             hit_ports: 0,
             model_rotate_y: model_pitch(lr),
             rotate_z: 0.0,
@@ -1416,33 +1417,25 @@ impl KirbyCutter {
         }
     }
 
-    /// `wpKirbyCutterProcUpdate` then `wpKirbyCutterProcMap`.
+    /// `wpMapSetGround`.
+    fn set_ground(&mut self) {
+        self.grounded = true;
+        self.vel_ground = self.velocity.x * self.lr;
+    }
+
+    /// `wpKirbyCutterProcUpdate`, the move of `wpProcessProcWeaponMain`,
+    /// then `wpKirbyCutterProcMap`.
     fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if self.seek_floor {
-            // `mpCollisionGetFCCommonFloor(fp->coll_data.floor_line_id, pos)`:
-            // the owner's floor, which the spawn stands over.
-            self.seek_floor = false;
-            self.floor = surfaces()
-                .into_iter()
-                .filter(|s| s.kind == MapSurfaceKind::Floor)
-                .filter(|seg| {
-                    let [x1, _, x2, _] = seg.coords();
-                    let (lo, hi) = (x1.min(x2), x1.max(x2));
-                    self.position.x >= lo && self.position.x <= hi
-                })
-                .map(|seg| {
-                    (
-                        seg,
-                        (segment_y(seg, self.position.x) - self.position.y).abs(),
-                    )
-                })
-                .filter(|(_, d)| *d <= KIRBY_CUTTER_MAP_COLL.top)
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(seg, _)| seg);
+        if let Some(line) = self.seek_floor.take() {
+            // `wpKirbyCutterMakeWeapon`.
+            if let Some((_, floor)) = crate::map::floor_point(&surfaces, line, self.position.x) {
+                self.coll.floor = Some(floor);
+                self.set_ground();
+            }
         }
         // `wpProcessProcWeaponMain` plays the DObj animation before
         // `proc_update`.
@@ -1452,49 +1445,46 @@ impl KirbyCutter {
             fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
-        if let Some(segment) = self.floor {
+        if self.grounded {
             // `-syUtilsArcTan2(floor_angle.x, floor_angle.y)`.
-            let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
-            self.rotate_z = -ssb_engine::math::sy_arc_tan2(normal.x, normal.y);
+            let angle = self.coll.floor_angle();
+            self.rotate_z = -ssb_engine::math::sy_arc_tan2(angle.x, angle.y);
         }
-        self.floor = self.floor.and_then(|s| refresh_surface(surfaces(), s));
-        if let Some(segment) = self.floor {
-            // `wpMainVelGroundTransferAir` along the floor line.
-            let normal = surface_normal(MapSurfaceKind::Floor, segment.segment);
-            self.velocity.x = self.lr * normal.y * KIRBY_CUTTER_VEL;
-            self.velocity.y = self.lr * -normal.x * KIRBY_CUTTER_VEL;
-            let wanted =
-                self.position + self.velocity + segment.motion.map_or(Vec3::ZERO, |m| m.speed);
-            let [x1, _, x2, _] = segment.coords();
-            let (lo, hi) = (x1.min(x2), x1.max(x2));
-            if wanted.x < lo || wanted.x > hi {
-                // `wpMapSetAir`: the wave keeps flying along the line.
-                self.floor = None;
-                self.position = wanted;
-            } else {
-                let y = segment_y(segment, wanted.x) - KIRBY_CUTTER_MAP_COLL.bottom;
-                self.position = Vec3::new(wanted.x, y, wanted.z);
+        // `vel_air` stays level on the floor: the ground pass puts the wave
+        // back on its line.
+        let pos_prev = self.position;
+        self.position += self.velocity;
+        self.coll.begin();
+        if !self.grounded {
+            if self.coll.test_all_check_floor(
+                &KIRBY_CUTTER_MAP_COLL,
+                pos_prev,
+                &mut self.position,
+                &surfaces,
+            ) {
+                self.set_ground();
             }
-            return true;
-        }
-        let wanted = self.position + self.velocity;
-        match map_contact(surfaces(), self.position, wanted, KIRBY_CUTTER_MAP_COLL) {
-            Some(hit) if hit.kind == MapSurfaceKind::Floor => {
-                // `wpMapTestAllCheckFloor` then `wpMapSetGround`.
-                self.floor = Some(hit.surface);
-                self.position = hit.position;
-                true
-            }
-            // A wall or the ceiling.
-            Some(hit) => {
-                fx.push(Fx::DustExpandSmall(hit.position));
-                false
-            }
-            None => {
-                self.position = wanted;
-                true
+        } else if !self.coll.test_lr_wall_check_floor(
+            &KIRBY_CUTTER_MAP_COLL,
+            pos_prev,
+            &mut self.position,
+            &surfaces,
+        ) {
+            // `wpMapSetAir`: the flight follows the last slope.
+            self.grounded = false;
+            let (sin, cos) = sin_cos(self.rotate_z);
+            self.velocity.x = cos * self.vel_ground;
+            self.velocity.y = sin * self.vel_ground;
+            if self.model_rotate_y < 0.0 {
+                self.velocity.x = -self.velocity.x;
+                self.velocity.y = -self.velocity.y;
             }
         }
+        if self.coll.mask_curr & (MASK_CEIL | MASK_RWALL | MASK_LWALL) != 0 {
+            fx.push(Fx::DustExpandSmall(self.position));
+            return false;
+        }
+        true
     }
 
     /// `wpKirbyCutterProcReflector`, then the reflect damage bonus.
@@ -1549,6 +1539,8 @@ pub struct MarioFireball {
     /// [`FireballAttributes::rotate_speed`] on every update that does not
     /// expire.
     pub rotate_x: f32,
+    /// `coll_data`: the masks `wpMapCheckAllRebound` gates on.
+    pub coll: crate::wpmap::WeaponColl,
 }
 
 impl MarioFireball {
@@ -1564,6 +1556,7 @@ impl MarioFireball {
             velocity: Vec3::new(attr.vel_base * cos * spawn.facing, attr.vel_base * sin, 0.0),
             lifetime: attr.lifetime,
             rotate_x: 0.0,
+            coll: crate::wpmap::WeaponColl::default(),
         }
     }
 
@@ -1571,13 +1564,9 @@ impl MarioFireball {
         &FIREBALL_ATTRIBUTES[self.index as usize]
     }
 
-    /// `wpMarioFireballProcUpdate` then `wpMarioFireballProcMap`.
-    ///
-    /// The source calls `wpMapTestAll` with its authored collision diamond,
-    /// then only rebounds when entering a floor/ceiling/wall surface this
-    /// frame. The portable sweep supplies that same one-sided map contract
-    /// without coupling the match-owned weapon pool to a particular stage
-    /// format or runtime.
+    /// `wpMarioFireballProcUpdate`, the move of `wpProcessProcWeaponMain`,
+    /// then `wpMarioFireballProcMap`: `wpMapTestAll`, then a rebound off
+    /// any surface first touched this frame.
     fn tick<I, F>(&mut self, surfaces: F, fx: &mut Emit) -> bool
     where
         F: Fn() -> I,
@@ -1595,22 +1584,31 @@ impl MarioFireball {
         let attr = self.attributes();
         self.velocity.y = (self.velocity.y - attr.gravity).max(-attr.vel_terminal);
         self.rotate_x += attr.rotate_speed;
-        let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted, MARIO_FIREBALL_MAP_COLL) {
-            self.position = hit.position;
-            let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
-            self.velocity.x = (self.velocity.x - 2.0 * dot * hit.normal.x) * attr.rebound;
-            self.velocity.y = (self.velocity.y - 2.0 * dot * hit.normal.y) * attr.rebound;
-            // `wpMarioFireballProcMap`.
-            if self.velocity.x * self.velocity.x + self.velocity.y * self.velocity.y
-                < attr.vel_min * attr.vel_min
-            {
+        let pos_prev = self.position;
+        self.position += self.velocity;
+        self.coll.begin();
+        self.coll.test_all(
+            &MARIO_FIREBALL_MAP_COLL,
+            pos_prev,
+            &mut self.position,
+            &surfaces,
+        );
+        if self
+            .coll
+            .check_all_rebound(
+                &mut self.velocity,
+                crate::wpmap::MASK_MAIN,
+                attr.rebound,
+                self.position,
+                &MARIO_FIREBALL_MAP_COLL,
+            )
+            .is_some()
+        {
+            if crate::wpmap::mag(self.velocity) < attr.vel_min {
                 fx.push(Fx::DustExpandSmall(self.position));
                 return false;
             }
             fx.push(Fx::FireGrind(self.position));
-        } else {
-            self.position = wanted;
         }
         true
     }
@@ -1787,7 +1785,7 @@ impl Weapon {
             Weapon::Egg(_) => wp::YOSHI_EGG_THROW,
             Weapon::Star(_) => wp::YOSHI_STAR,
             Weapon::Cutter(_) => wp::KIRBY_CUTTER,
-            Weapon::Jolt(j) if j.surface.is_some() => wp::PIKACHU_THUNDER_JOLT_GROUND,
+            Weapon::Jolt(j) if j.grounded() => wp::PIKACHU_THUNDER_JOLT_GROUND,
             Weapon::Jolt(_) => wp::PIKACHU_THUNDER_JOLT_AIR,
             Weapon::Thunder(_) => wp::PIKACHU_THUNDER_HEAD,
             Weapon::Trail(_) => wp::PIKACHU_THUNDER_TRAIL,
@@ -1825,7 +1823,7 @@ impl Weapon {
             Weapon::Fireball(_) | Weapon::ChargeShot(_) | Weapon::Star(_) | Weapon::PKFire(_) => {
                 wflags(true, true, true, true)
             }
-            Weapon::Jolt(j) => wflags(true, j.surface.is_none(), true, true),
+            Weapon::Jolt(j) => wflags(true, !j.grounded(), true, true),
             Weapon::Blaster(_) => wflags(false, true, true, true),
             // The 2D shot hops, reflects and is absorbed; the 3D shot is
             // only absorbed, before and after it bursts.
@@ -1836,7 +1834,7 @@ impl Weapon {
             }
             Weapon::Bomb(_) => wflags(false, true, false, false),
             // The burst clears `can_hop` and `can_reflect` only.
-            Weapon::BossBullet(b) => wflags(false, !b.exploded, !b.exploded, true),
+            Weapon::BossBullet(_) => wflags(false, true, true, true),
             Weapon::Boomerang(_) | Weapon::Egg(_) => wflags(true, true, true, false),
             Weapon::Cutter(_) | Weapon::PKThunder(_) => wflags(true, false, true, true),
             Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => {
@@ -1869,9 +1867,9 @@ impl Weapon {
     /// and a Final Cutter wave on the floor (`wpMapSetGround`).
     fn is_grounded(&self) -> bool {
         match self {
-            Weapon::Jolt(j) => j.surface.is_some(),
-            Weapon::Cutter(c) => c.floor.is_some(),
-            Weapon::Bomb(b) => b.floor.is_some(),
+            Weapon::Jolt(j) => j.grounded(),
+            Weapon::Cutter(c) => c.grounded,
+            Weapon::Bomb(b) => b.grounded,
             _ => false,
         }
     }
@@ -1973,13 +1971,8 @@ impl Weapon {
             // The head has no callbacks.
             Weapon::Thunder(_) => {}
             Weapon::Monster(m) => m.proc_fx(shot_proc(proc), fx),
-            // `wpBossBulletProcHit` for all four; the burst clears all but
-            // `proc_absorb`.
-            Weapon::BossBullet(b) => {
-                if !b.exploded || proc == Proc::Absorb {
-                    fx.push(Fx::SparkleWhiteMultiExplode(pos));
-                }
-            }
+            // `wpBossBulletProcHit` for all four.
+            Weapon::BossBullet(_) => fx.push(Fx::SparkleWhiteMultiExplode(pos)),
         }
     }
 
@@ -1988,11 +1981,8 @@ impl Weapon {
     /// `can_hop` weapon that met the shield under 135 degrees hops, any
     /// other runs its `proc_shield`. Returns whether the weapon lives on.
     fn on_shield(&mut self, shield: crate::combat::ShieldCollide, fx: &mut Emit) -> bool {
-        // The Bomb's and the bullet's bursts clear `proc_hop` and
-        // `proc_shield`.
-        if matches!(self, Weapon::Bomb(b) if b.exploded)
-            || matches!(self, Weapon::BossBullet(b) if b.exploded)
-        {
+        // The Bomb's burst clears `proc_hop` and `proc_shield`.
+        if matches!(self, Weapon::Bomb(b) if b.exploded) {
             return true;
         }
         let hops = self.flags().can_hop && !self.is_grounded();
@@ -3228,8 +3218,8 @@ impl WeaponPool {
                 scale,
             } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x, scale)),
             WeaponKind::YoshiStars => unreachable!("handled above"),
-            WeaponKind::KirbyCutter { grounded } => {
-                Weapon::Cutter(KirbyCutter::new(spawn, grounded))
+            WeaponKind::KirbyCutter { floor_line } => {
+                Weapon::Cutter(KirbyCutter::new(spawn, floor_line))
             }
         };
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
@@ -3622,8 +3612,6 @@ impl WeaponPool {
                     self.hit_records[i] = [None; 4];
                 }
             }
-            // The burst has no `proc_hit`.
-            Weapon::BossBullet(b) if b.exploded => {}
             Weapon::Monster(m) if m.survives(ShotProc::Hit) => {}
             _ => destroy(slot),
         }
@@ -4248,11 +4236,6 @@ impl WeaponPool {
                     c.hit_ports |= bit;
                     continue;
                 }
-                // The bullet's burst has no `proc_hit` and hits on.
-                if matches!(weapon, Weapon::BossBullet(b) if b.exploded) {
-                    record_weapon_victim(records, defender.port);
-                    continue;
-                }
                 // `wpYoshiEggThrowProcHit`: the egg explodes in place.
                 if let Weapon::Egg(e) = weapon {
                     record_weapon_victim(records, defender.port);
@@ -4746,85 +4729,6 @@ pub enum AnimatedWeapon {
     PKThunder(PKThunder),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MapContact {
-    pub(crate) position: Vec3,
-    normal: Vec2,
-    time: f32,
-    kind: MapSurfaceKind,
-    surface: MapSurface,
-}
-
-/// Finds the first one-sided contact of a weapon's authored map-collision
-/// diamond. `mpProcessUpdateMain` performs this before weapon map callbacks;
-/// support-point sweeping is the allocation-free equivalent of its individual
-/// bottom/top/side probes for a weapon that has one symmetric diamond.
-pub(crate) fn map_contact<I>(
-    surfaces: I,
-    from: Vec3,
-    to: Vec3,
-    coll: BodyColl,
-) -> Option<MapContact>
-where
-    I: IntoIterator<Item = MapSurface>,
-{
-    let mut first: Option<MapContact> = None;
-    // The first contact's time beside it, always written: LLVM may compute
-    // the compare before the `None` test, and a signalling NaN in an
-    // unwritten payload traps a PSP (D-050).
-    let mut first_time = 0.0f32;
-    let delta = Vec2::new(to.x - from.x, to.y - from.y);
-
-    for surface in surfaces {
-        let normal = surface_normal(surface.kind, surface.segment);
-        let speed = surface.motion.map_or(Vec3::ZERO, |m| m.speed);
-        let relative = Vec2::new(delta.x - speed.x, delta.y - speed.y);
-        // `wpMapCheckAllRebound` only reflects an incoming velocity
-        // (`lbCommonSim2D(vel, angle) < 0`). This also excludes a point left
-        // touching a surface after the preceding frame's rebound.
-        if relative.x * normal.x + relative.y * normal.y >= 0.0 {
-            continue;
-        }
-        let support = diamond_support_toward_surface(normal, coll);
-        let probe_from = Vec2::new(from.x + support.x + speed.x, from.y + support.y + speed.y);
-        let probe_to = Vec2::new(to.x + support.x, to.y + support.y);
-        let Some(time) = swept_coords_intersection(probe_from, probe_to, surface.coords()) else {
-            continue;
-        };
-        if first.is_some() && time >= first_time {
-            continue;
-        }
-        first_time = time;
-        first = Some(MapContact {
-            position: Vec3::new(from.x + delta.x * time, from.y + delta.y * time, from.z),
-            normal,
-            time,
-            kind: surface.kind,
-            surface,
-        });
-    }
-    first
-}
-
-/// The diamond point farthest *into* a surface, matching the source map
-/// collision extents `(top, center, bottom, width)`.
-fn diamond_support_toward_surface(normal: Vec2, coll: BodyColl) -> Vec2 {
-    let candidates = [
-        Vec2::new(0.0, coll.top),
-        Vec2::new(coll.width, coll.center),
-        Vec2::new(0.0, coll.bottom),
-        Vec2::new(-coll.width, coll.center),
-    ];
-    candidates
-        .into_iter()
-        .min_by(|a, b| {
-            let da = a.x * normal.x + a.y * normal.y;
-            let db = b.x * normal.x + b.y * normal.y;
-            da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
-        })
-        .unwrap_or(Vec2::ZERO)
-}
-
 /// The collision normal represented by a one-sided map line. Source map lines
 /// are grouped by kind before testing, so their winding is not gameplay data;
 /// choose the perpendicular whose signed axis matches that group.
@@ -4851,26 +4755,6 @@ pub(crate) fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
         };
     }
     Vec2::new(n.x / length, n.y / length)
-}
-
-/// Returns the movement fraction where the moving point meets the static
-/// segment. The `0.001` edge slack is shared with `mpcollision.c`.
-pub(crate) fn swept_coords_intersection(from: Vec2, to: Vec2, coords: [f32; 4]) -> Option<f32> {
-    const EPS: f32 = 0.001;
-    let r = Vec2::new(to.x - from.x, to.y - from.y);
-    let [x1, y1, x2, y2] = coords;
-    let q = Vec2::new(x1, y1);
-    let v = Vec2::new(x2 - x1, y2 - y1);
-    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
-    let denom = cross(r, v);
-    if denom.abs() <= EPS {
-        return None;
-    }
-    let qmp = Vec2::new(q.x - from.x, q.y - from.y);
-    let t = cross(qmp, v) / denom;
-    let u = cross(qmp, r) / denom;
-    ((-EPS..=1.0 + EPS).contains(&t) && (-EPS..=1.0 + EPS).contains(&u))
-        .then_some(t.clamp(0.0, 1.0))
 }
 
 #[cfg(test)]
@@ -5016,7 +4900,7 @@ mod tests {
         let mut items = flames_at_damage_centres(&[Vec3::ZERO; 5]);
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
-            kind: WeaponKind::KirbyCutter { grounded: false },
+            kind: WeaponKind::KirbyCutter { floor_line: None },
             owner_port: 1,
             team: 1,
             stale: crate::stale::WeaponStale::FRESH,
@@ -5051,7 +4935,7 @@ mod tests {
         let mut items = flames_at_damage_centres(&[Vec3::ZERO; 4]);
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
-            kind: WeaponKind::KirbyCutter { grounded: false },
+            kind: WeaponKind::KirbyCutter { floor_line: None },
             owner_port: 1,
             team: 1,
             stale: crate::stale::WeaponStale::FRESH,
@@ -5553,7 +5437,7 @@ mod tests {
         let center = ness.joint_world(0, Vec3::new(300.0, 195.0, 0.0));
         let mut weapons = WeaponPool::default();
         weapons.spawn(WeaponSpawn {
-            kind: WeaponKind::KirbyCutter { grounded: false },
+            kind: WeaponKind::KirbyCutter { floor_line: None },
             owner_port: 0,
             team: 0,
             stale: crate::stale::WeaponStale::FRESH,
@@ -5675,7 +5559,7 @@ mod tests {
         for tick in 0..90 {
             weapons.tick(|| floor, None);
             let bomb = weapons.bombs().next().unwrap();
-            if bomb.floor.is_some() {
+            if bomb.grounded {
                 settled = Some(tick);
                 break;
             }
@@ -5685,7 +5569,7 @@ mod tests {
         assert!((bomb.position.y - 75.0).abs() < 1.0);
         weapons.tick(|| floor, None);
         let bomb = weapons.bombs().next().unwrap();
-        assert!(bomb.floor.is_some());
+        assert!(bomb.grounded);
         assert_eq!(bomb.position.y, 75.0);
         // `wpSamusBombProcUpdate` spins 10 degrees per grounded update.
         let before = bomb.rotate_z;
@@ -5868,48 +5752,96 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fireball_rebounds_from_every_authored_map_direction() {
-        // Each line is positioned 50 units from the origin: exactly where the
-        // sourced map-collision diamond's support point reaches it. The four
-        // surface kinds have different outward normals, so this catches a
-        // swapped LeftWall/RightWall interpretation rather than merely testing
-        // a generic segment hit.
+        // A line of each kind 50 units out, crossed by a 100-unit step:
+        // `wpMapTestAll` stops the diamond on it and `wpMapCheckAllRebound`
+        // reflects the velocity off that kind's normal. The four kinds face
+        // different ways, so this catches a swapped LeftWall/RightWall.
         let cases = [
             (
                 surface(MapSurfaceKind::Floor, -100, -50, 100, -50),
-                Vec3::new(0.0, -10.0, 0.0),
-                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, -100.0, 0.0),
+                Vec2::new(0.0, 1.0),
             ),
             (
                 surface(MapSurfaceKind::Ceiling, -100, 50, 100, 50),
-                Vec3::new(0.0, 10.0, 0.0),
-                Vec3::new(0.0, -1.0, 0.0),
+                Vec3::new(0.0, 100.0, 0.0),
+                Vec2::new(0.0, -1.0),
             ),
             (
                 surface(MapSurfaceKind::LeftWall, 50, -100, 50, 100),
-                Vec3::new(10.0, 0.0, 0.0),
-                Vec3::new(-1.0, 0.0, 0.0),
+                Vec3::new(100.0, 0.0, 0.0),
+                Vec2::new(-1.0, 0.0),
             ),
             (
                 surface(MapSurfaceKind::RightWall, -50, -100, -50, 100),
-                Vec3::new(-10.0, 0.0, 0.0),
-                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(-100.0, 0.0, 0.0),
+                Vec2::new(1.0, 0.0),
             ),
         ];
-
         for (surface, delta, normal) in cases {
-            let from = Vec3::ZERO;
-            let to = from + delta;
-            let hit = map_contact([surface], from, to, MARIO_FIREBALL_MAP_COLL)
-                .expect("the diamond reaches the map line");
-            assert_eq!(hit.position, Vec3::ZERO);
-            assert_eq!(hit.normal, Vec2::new(normal.x, normal.y));
-            let dot = delta.x * hit.normal.x + delta.y * hit.normal.y;
-            let reflected = Vec2::new(
-                delta.x - 2.0 * dot * hit.normal.x,
-                delta.y - 2.0 * dot * hit.normal.y,
+            let mut coll = crate::wpmap::WeaponColl::default();
+            let mut pos = delta;
+            coll.begin();
+            coll.test_all(&MARIO_FIREBALL_MAP_COLL, Vec3::ZERO, &mut pos, &|| {
+                [surface]
+            });
+            assert_ne!(pos, delta, "{:?} stops the step", surface.kind);
+            let mut vel = delta;
+            let at = coll.check_all_rebound(
+                &mut vel,
+                crate::wpmap::MASK_MAIN,
+                1.0,
+                pos,
+                &MARIO_FIREBALL_MAP_COLL,
             );
-            assert!(reflected.x * delta.x + reflected.y * delta.y < 0.0);
+            assert!(at.is_some(), "{:?} rebounds", surface.kind);
+            let dot = delta.x * normal.x + delta.y * normal.y;
+            assert_eq!(
+                (vel.x, vel.y),
+                (
+                    delta.x - 2.0 * dot * normal.x,
+                    delta.y - 2.0 * dot * normal.y
+                ),
+                "{:?}",
+                surface.kind
+            );
         }
+    }
+
+    /// `wpBossBulletProcMap`: the frame the shot meets the map it sparkles
+    /// at its `translate`, its whole step on, and ends.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_boss_bullet_ends_at_its_step_on_meeting_the_map() {
+        let floor = surface(MapSurfaceKind::Floor, -8000, -100, 8000, -100);
+        let mut b = BossBullet::new(
+            WeaponSpawn {
+                kind: WeaponKind::BossBullet { hard: false },
+                owner_port: 0,
+                team: 0,
+                position: Vec3::ZERO,
+                facing: 1.0,
+                stale: crate::stale::WeaponStale::FRESH,
+            },
+            false,
+        );
+        let mut fx = crate::wpeffect::Emit::default();
+        let mut from = b.position;
+        let mut ticks = 0;
+        while b.tick(|| [floor], &mut fx) {
+            from = b.position;
+            ticks += 1;
+            assert!(ticks < 40);
+        }
+        assert_eq!(b.position, from + b.velocity);
+        let sparkles: std::vec::Vec<_> = fx
+            .iter()
+            .filter_map(|e| match e {
+                Fx::SparkleWhiteMultiExplode(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sparkles, [b.position]);
     }
 
     fn shield_at(degrees: f32, dir_z: f32) -> crate::combat::ShieldCollide {
@@ -5963,22 +5895,24 @@ mod tests {
     #[test]
     fn cutter_wave_yaw_follows_its_velocity_and_roll_its_floor() {
         let spawn = |facing| WeaponSpawn {
-            kind: WeaponKind::KirbyCutter { grounded: true },
+            kind: WeaponKind::KirbyCutter {
+                floor_line: Some(0),
+            },
             owner_port: 0,
             team: 0,
             stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(0.0, 100.0, 0.0),
             facing,
         };
-        let left = KirbyCutter::new(spawn(-1.0), true);
+        let left = KirbyCutter::new(spawn(-1.0), Some(0));
         assert_eq!(left.model_rotate_y, -core::f32::consts::FRAC_PI_2);
         // A floor rising 100 over 1000 to the right.
         let slope = [surface(MapSurfaceKind::Floor, -1000, 0, 1000, 200)];
-        let mut c = KirbyCutter::new(spawn(1.0), true);
+        let mut c = KirbyCutter::new(spawn(1.0), Some(0));
         assert_eq!(c.model_rotate_y, core::f32::consts::FRAC_PI_2);
         assert!(c.tick(|| slope, &mut crate::wpeffect::Emit::default()));
         assert_eq!(c.anim_ticks, 1);
-        assert!(c.floor.is_some());
+        assert!(c.grounded);
         let want = ssb_engine::math::sy_arc_tan2(100.0, 1000.0);
         assert!((c.rotate_z - want).abs() < 1e-4, "{} vs {want}", c.rotate_z);
     }
@@ -6015,7 +5949,7 @@ mod tests {
         // A Bomb on the floor is not airborne: `wpSamusBombProcHit`
         // explodes it. The explosion ignores the shield.
         let mut bomb = SamusBomb::new(spawn(WeaponKind::SamusBomb));
-        bomb.floor = Some((surface(MapSurfaceKind::Floor, -500, 0, 500, 0), 0.0));
+        bomb.grounded = true;
         let mut w = Weapon::Bomb(bomb);
         assert!(w.on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Bomb(b) = w else { unreachable!() };
@@ -6035,11 +5969,11 @@ mod tests {
         assert_eq!(b.lr, -1.0);
         // A grounded Thunder Jolt cannot hop: `proc_shield` destroys it.
         let mut jolt = ThunderJolt::new(spawn(WeaponKind::PikachuThunderJolt));
-        jolt.surface = Some(surface(MapSurfaceKind::Floor, -500, 0, 500, 0));
+        jolt.ride(surface(MapSurfaceKind::Floor, -500, 0, 500, 0), 1);
         assert!(!Weapon::Jolt(jolt)
             .on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
         // The Final Cutter wave cannot hop and flies on.
-        let cutter = KirbyCutter::new(spawn(WeaponKind::KirbyCutter { grounded: false }), false);
+        let cutter = KirbyCutter::new(spawn(WeaponKind::KirbyCutter { floor_line: None }), None);
         assert!(Weapon::Cutter(cutter)
             .on_shield(shield_at(100.0, 1.0), &mut crate::wpeffect::Emit::default()));
     }
@@ -6230,6 +6164,218 @@ mod reflector_rotate_tests {
                 0.0,
             );
             assert_eq!(reflector_rotate(v)[0].to_bits(), raw_pitch(v).to_bits());
+        }
+    }
+}
+
+#[cfg(test)]
+mod map_pass_tests {
+    //! Batch 16: the `wpmap.c` passes (W1-W4).
+    use super::*;
+    use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL};
+
+    fn surface(kind: MapSurfaceKind, x1: i16, y1: i16, x2: i16, y2: i16) -> MapSurface {
+        MapSurface {
+            motion: None,
+            topology: None,
+            kind,
+            segment: Segment {
+                x1,
+                y1,
+                x2,
+                y2,
+                flags: 0,
+            },
+        }
+    }
+
+    fn cutter_on(line: u16, x: f32, y: f32) -> KirbyCutter {
+        let spawn = WeaponSpawn {
+            kind: WeaponKind::KirbyCutter {
+                floor_line: Some(line),
+            },
+            owner_port: 0,
+            team: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(x, y - KIRBY_CUTTER_MAP_COLL.bottom, 0.0),
+            facing: 1.0,
+        };
+        KirbyCutter::new(spawn, Some(line))
+    }
+
+    /// W1, `wpKirbyCutterProcMap` (wpkirbycutter.c:71,85): the ground pass
+    /// tests the walls, and a wall in `mask_curr` ends the wave with dust.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_grounded_cutter_dies_on_a_wall() {
+        let map = [
+            surface(MapSurfaceKind::Floor, -2000, 0, 2000, 0),
+            surface(MapSurfaceKind::LeftWall, 600, 0, 600, 1000),
+        ];
+        let mut c = cutter_on(0, 0.0, 0.0);
+        for _ in 0..KIRBY_CUTTER_LIFETIME - 2 {
+            let mut fx = crate::wpeffect::Emit::default();
+            if !c.tick(|| map, &mut fx) {
+                assert!(c.coll.mask_curr & MASK_LWALL != 0);
+                assert!(c.position.x <= 600.0 - KIRBY_CUTTER_MAP_COLL.width);
+                assert!(fx.iter().any(|e| matches!(e, Fx::DustExpandSmall(_))));
+                return;
+            }
+            assert!(c.grounded);
+            assert!(c.position.x < 600.0);
+        }
+        panic!("the wave passed the wall");
+    }
+
+    /// W2, `wpSamusBombProcMap` (wpsamusbomb.c:152): a grounded Bomb takes
+    /// `wpMapTestLRWallCheckFloor`, so a wall stops it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_grounded_bomb_stops_at_a_wall() {
+        let map = [
+            surface(MapSurfaceKind::Floor, -2000, 0, 2000, 0),
+            surface(MapSurfaceKind::LeftWall, 600, 0, 600, 1000),
+        ];
+        let mut bomb = SamusBomb::new(WeaponSpawn {
+            kind: WeaponKind::SamusBomb,
+            owner_port: 0,
+            team: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(500.0, -SAMUS_BOMB_MAP_COLL.bottom, 0.0),
+            facing: 1.0,
+        });
+        bomb.grounded = true;
+        bomb.vel_ground = 7.0;
+        bomb.coll.floor = Some(crate::ground::Standing {
+            line: 0,
+            flags: 0,
+            normal: Vec2::new(0.0, 1.0),
+        });
+        let mut walled = false;
+        for _ in 0..60 {
+            assert!(bomb.tick(|| map, &mut crate::wpeffect::Emit::default()));
+            assert!(bomb.grounded);
+            assert!(bomb.position.x <= 600.0 - SAMUS_BOMB_MAP_COLL.width);
+            assert_eq!(bomb.position.y, -SAMUS_BOMB_MAP_COLL.bottom);
+            walled |= bomb.coll.mask_curr & MASK_LWALL != 0;
+        }
+        assert!(walled);
+    }
+
+    /// W3: leaving the line's end snaps the wave to the corner
+    /// (`mpProcessCheckTestFloorCollisionNew`, mpprocess.c:968) before
+    /// `wpMapSetAir` aims it down the last slope.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_grounded_cutter_leaves_a_ledge_from_its_corner() {
+        // Falling 200 over 1500 to the right, ending at (500, 0).
+        let map = [surface(MapSurfaceKind::Floor, -1000, 200, 500, 0)];
+        let mut c = cutter_on(0, 0.0, 200.0 / 3.0);
+        for _ in 0..10 {
+            assert!(c.tick(|| map, &mut crate::wpeffect::Emit::default()));
+            if !c.grounded {
+                assert!(c.position.x > 500.0);
+                assert_eq!(c.position.y, -KIRBY_CUTTER_MAP_COLL.bottom);
+                // `cos/sin(rotate.z) * vel_ground`, down the slope.
+                assert!(c.velocity.x > 0.0 && c.velocity.y < 0.0);
+                let speed = Vec2::new(c.velocity.x, c.velocity.y).length();
+                assert!((speed - KIRBY_CUTTER_VEL).abs() < 1e-3);
+                return;
+            }
+            // `vel_air` stays level: full speed in x, the floor sets y.
+            assert_eq!(c.velocity, Vec3::new(KIRBY_CUTTER_VEL, 0.0, 0.0));
+        }
+        panic!("the wave never left the ledge");
+    }
+
+    /// W3: a grounded wave swept onto another floor line lands on it and
+    /// follows it; `MAP_FLAG_FLOOR` marks only that line change (RE-554).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_grounded_cutter_follows_a_floor_line_change() {
+        let map = [
+            surface(MapSurfaceKind::Floor, -1000, 0, 0, 0),
+            // Rising 1 in 5, crossing y = 0 at x = 0.
+            surface(MapSurfaceKind::Floor, -100, -20, 1000, 200),
+        ];
+        let mut c = cutter_on(0, -50.0, 0.0);
+        assert!(c.tick(|| map, &mut crate::wpeffect::Emit::default()));
+        assert!(c.grounded);
+        assert_eq!(c.coll.floor.unwrap().line, 1);
+        assert!(c.coll.mask_curr & MASK_FLOOR != 0);
+        let y = 50.0 * 0.2 - KIRBY_CUTTER_MAP_COLL.bottom;
+        assert!((c.position.y - y).abs() < 1e-3, "{}", c.position.y);
+        assert!(c.tick(|| map, &mut crate::wpeffect::Emit::default()));
+        assert!(c.grounded);
+        assert_eq!(c.coll.floor.unwrap().line, 1);
+        assert_eq!(c.coll.mask_curr & MASK_FLOOR, 0);
+        let y = 150.0 * 0.2 - KIRBY_CUTTER_MAP_COLL.bottom;
+        assert!((c.position.y - y).abs() < 1e-3, "{}", c.position.y);
+    }
+
+    /// W4, `wpMapCheckAllRebound` (wpmap.c:174): only a surface first
+    /// touched this frame (`mask_prev ^ mask_curr`) that the velocity moves
+    /// into reflects it, and the scale follows any reflection.
+    #[test]
+    fn rebound_needs_a_fresh_contact_moving_into_it() {
+        let body = BodyColl {
+            top: 20.0,
+            center: 10.0,
+            bottom: 0.0,
+            width: 10.0,
+        };
+        let mut coll = crate::wpmap::WeaponColl {
+            mask_curr: MASK_LWALL,
+            lwall_angle: Vec2::new(-1.0, 0.0),
+            ..Default::default()
+        };
+        let at = Vec3::new(100.0, 50.0, 3.0);
+        let mut vel = Vec3::new(10.0, -4.0, 0.0);
+        let pos = coll.check_all_rebound(&mut vel, crate::wpmap::MASK_MAIN, 0.5, at, &body);
+        assert_eq!(pos, Some(Vec3::new(110.0, 60.0, 3.0)));
+        assert_eq!(vel, Vec3::new(-5.0, -2.0, 0.0));
+        // Touched last frame too: not fresh.
+        coll.mask_prev = MASK_LWALL;
+        let mut vel = Vec3::new(10.0, -4.0, 0.0);
+        assert!(coll
+            .check_all_rebound(&mut vel, crate::wpmap::MASK_MAIN, 0.5, at, &body)
+            .is_none());
+        assert_eq!(vel, Vec3::new(10.0, -4.0, 0.0));
+        // Fresh but moving away, or outside `check`.
+        coll.mask_prev = 0;
+        let mut vel = Vec3::new(-10.0, 0.0, 0.0);
+        assert!(coll
+            .check_all_rebound(&mut vel, crate::wpmap::MASK_MAIN, 0.5, at, &body)
+            .is_none());
+        let mut vel = Vec3::new(10.0, 0.0, 0.0);
+        assert!(coll
+            .check_all_rebound(&mut vel, MASK_CEIL, 0.5, at, &body)
+            .is_none());
+    }
+
+    /// W4 in `wpMarioFireballProcMap`: a floor still touched from the last
+    /// frame does not rebound the Fireball again.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_fireball_rebounds_only_off_a_fresh_floor() {
+        let map = [surface(MapSurfaceKind::Floor, -2000, 0, 2000, 0)];
+        for (prev, rebounds) in [(0, true), (MASK_FLOOR, false)] {
+            let spawn = WeaponSpawn {
+                kind: WeaponKind::MarioFireball,
+                owner_port: 0,
+                team: 0,
+                stale: crate::stale::WeaponStale::FRESH,
+                position: Vec3::new(0.0, 5.0 - MARIO_FIREBALL_MAP_COLL.bottom, 0.0),
+                facing: 1.0,
+            };
+            let mut ball = MarioFireball::new(spawn, 0);
+            ball.velocity = Vec3::new(30.0, -20.0, 0.0);
+            ball.coll.mask_curr = prev;
+            let mut fx = crate::wpeffect::Emit::default();
+            assert!(ball.tick(|| map, &mut fx));
+            assert!(ball.coll.mask_curr & MASK_FLOOR != 0);
+            assert_eq!(ball.velocity.y > 0.0, rebounds);
+            assert_eq!(fx.iter().any(|e| matches!(e, Fx::FireGrind(_))), rebounds);
         }
     }
 }

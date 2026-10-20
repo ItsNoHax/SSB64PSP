@@ -39,15 +39,18 @@ const DIAGONAL_Y: i8 = 70;
 
 /// `nessjibaku`'s route (RE-503): run right from the jab's end until Ness
 /// brakes under Dream Land's right platform (x 1393; the left one holds
-/// the dummy, which PK Thunder's head would hit), jump onto it, Up+B on
-/// it; steer down-right from [`JIBAKU_STEER`], left from
-/// [`JIBAKU_STEER_LEFT`].
+/// the dummy, which PK Thunder's head would hit); the jump falls short of
+/// the platform, so Up+B is on the main floor. Steer down-right from
+/// [`JIBAKU_STEER`], left from [`JIBAKU_STEER_LEFT`]: the head loops
+/// clockwise to the right and comes back left just above the floor.
+/// A lower loop meets the floor, or the stage's right wall at its top
+/// vertex (`wpMapTestAllCheckCollEnd`), and ends the head.
 const JIBAKU_RUN: u64 = 30;
 const JIBAKU_RUN_END: u64 = 57;
 const JIBAKU_JUMP_TICK: u64 = 80;
 const JIBAKU_B_TICK: u64 = 140;
-const JIBAKU_STEER: u64 = 170;
-const JIBAKU_STEER_LEFT: u64 = 191;
+const JIBAKU_STEER: u64 = 175;
+const JIBAKU_STEER_LEFT: u64 = 196;
 /// `kirbystoneslope`'s Down+B, Kirby standing on Kongo Jungle's left slope
 /// (RE-503).
 const STONE_SLOPE_B_TICK: u64 = 120;
@@ -207,10 +210,11 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // Up+B at tick 45 with the stick up and left; the zip
         // (`SpecialAirHi`) runs ticks 65 to 69 and is 3 frames in here.
         PikachuQuick => 68,
-        // Up+B on the right platform at 140; PK Thunder loops round under
-        // the platform and back up into Ness: PK Thunder 2 off a
-        // pass-through floor is `SpecialAirHiJibaku`, up and left.
-        NessJibaku => 227,
+        // Up+B at 140; PK Thunder loops round to the right and back into
+        // Ness by 231, below his 150-unit mark: PK Thunder 2 is
+        // `SpecialAirHiJibaku` (`ftNessSpecialHiJibakuSetStatus`), left and
+        // slightly up; 3 frames in here.
+        NessJibaku => 232,
         // Down+B at 120 on the slope; Stone slides down it from tick ~125,
         // TopN rolled 19.7 degrees, until the bowl's floor near 160.
         KirbyStoneSlope => STONE_SLOPE_B_TICK + 20,
@@ -481,8 +485,8 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
         }
         // The run right, then the steering: `wpNessPKThunderHeadProcUpdate`
         // turns the head 6 degrees a frame toward the stick, down-right
-        // (clockwise from straight up) round under the platform, then
-        // left, back up into Ness from below.
+        // (clockwise from straight up), then left, back into Ness just
+        // above the floor.
         NessJibaku => {
             if (JIBAKU_RUN..JIBAKU_RUN_END).contains(&tick) {
                 80

@@ -1,7 +1,7 @@
 //! PK Fire and PK Thunder (US). PK Fire's flame is an item
 //! (`crate::item::pk_fire`): the spark's hit callback queues it for the item
 //! pool.
-use super::{map_contact, BodyColl, Hitbox, MapSurface, OwnerView, WeaponSpawn};
+use super::{BodyColl, Hitbox, MapSurface, OwnerView, WeaponSpawn};
 use crate::fighter::Fighter;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
@@ -71,13 +71,13 @@ impl PKFire {
             fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
-        let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted, SPARK_MAP_COLL) {
-            // `wpNessPKFireProcMap`.
-            fx.push(Fx::DustExpandSmall(hit.position));
+        let from = self.position;
+        self.position += self.velocity;
+        // `wpNessPKFireProcMap`.
+        if crate::wpmap::check_coll_end(&SPARK_MAP_COLL, from, &mut self.position, &surfaces) {
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
-        self.position = wanted;
         true
     }
     pub(super) fn reflect(&mut self, f: &Fighter) {
@@ -235,23 +235,19 @@ impl PKThunder {
                 self.velocity = Vec3::new(cos * 60.0, sin * 60.0, 0.0);
             }
         }
-        let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(
-            surfaces(),
-            self.position,
-            wanted,
-            BodyColl {
-                top: 100.0,
-                center: 0.0,
-                bottom: -100.0,
-                width: 100.0,
-            },
-        ) {
-            // `wpNessPKThunderHeadProcMap` and `wpNessPKReflectHeadProcMap`.
-            fx.push(Fx::DustExpandSmall(hit.position));
+        let from = self.position;
+        self.position += self.velocity;
+        let coll = BodyColl {
+            top: 100.0,
+            center: 0.0,
+            bottom: -100.0,
+            width: 100.0,
+        };
+        // `wpNessPKThunderHeadProcMap` and `wpNessPKReflectHeadProcMap`.
+        if crate::wpmap::check_coll_end(&coll, from, &mut self.position, &surfaces) {
+            fx.push(Fx::DustExpandSmall(self.position));
             return false;
         }
-        self.position = wanted;
         true
     }
     pub(super) fn reflect(&mut self, f: &Fighter, group: u16) {

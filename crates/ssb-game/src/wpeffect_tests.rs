@@ -198,7 +198,7 @@ fn a_blaster_and_a_bomb_never_clash() {
 fn a_star_survives_its_set_off_and_a_cutter_does_not() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(
-        WeaponKind::KirbyCutter { grounded: false },
+        WeaponKind::KirbyCutter { floor_line: None },
         0,
         0.0,
         1.0,

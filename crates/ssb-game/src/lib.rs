@@ -144,4 +144,5 @@ pub mod vs_mode;
 pub mod wallpaper;
 pub mod weapon;
 pub mod wpeffect;
+pub mod wpmap;
 pub mod yoshi;

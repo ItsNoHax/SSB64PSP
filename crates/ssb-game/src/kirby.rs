@@ -752,7 +752,7 @@ fn make_cutter(f: &mut Fighter) {
     let position = f.joint_query(0, Vec3::ZERO) + Vec3::new(FINALCUTTER_OFF_X * lr, 0.0, 0.0);
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::KirbyCutter {
-            grounded: f.is_grounded(),
+            floor_line: f.floor.map(|s| s.line),
         },
         owner_port: f.port,
         team: f.team,
@@ -2563,6 +2563,12 @@ mod tests {
         f.physics.vel_air.y = -10.0;
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialHiLanding));
+        // The map pass that landed it set `floor_line_id`.
+        f.floor = Some(crate::ground::Standing {
+            line: 3,
+            flags: 0,
+            normal: ssb_engine::math::Vec2::new(0.0, 1.0),
+        });
         f.status.set_time(2.0);
         update(&mut f);
         assert!(f.weapon_spawn.is_none());
@@ -2571,7 +2577,9 @@ mod tests {
         let spawn = f.take_weapon_spawn().expect("wave at frame 3");
         assert!(matches!(
             spawn.kind,
-            WeaponKind::KirbyCutter { grounded: true }
+            WeaponKind::KirbyCutter {
+                floor_line: Some(3)
+            }
         ));
         assert_eq!(spawn.position.x, FINALCUTTER_OFF_X);
     }

@@ -752,3 +752,117 @@ fn a_destroyed_item_leaves_dust_unless_its_owner_holds_it() {
     tick(&mut pool);
     assert!(drain_fx(&mut pool).is_empty());
 }
+
+/// `itMapProcLRWallCheckFloor` on the same floor line leaves
+/// `MAP_FLAG_FLOOR` out of `mask_curr` (`mask_stat` only, mpprocess.c:940;
+/// RE-554).
+#[test]
+fn a_standing_item_raises_no_floor_bit() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    for _ in 0..3 {
+        tick(&mut pool);
+        let bob = pool.get(slot).unwrap();
+        assert_eq!(bob.ga, Ga::Ground);
+        assert_eq!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
+    }
+    let bob = pool.get_mut(slot).unwrap();
+    bob.mask_curr = 0;
+    assert!(map::test_lr_wall_check_floor(bob, &|| [floor()]));
+    assert_eq!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
+    assert_eq!(bob.floor.unwrap().line, 0);
+}
+
+/// A grounded item swept onto another floor line raises `MAP_FLAG_FLOOR`
+/// (`mpProcessCheckTestFloorCollision`, mpprocess.c:1020) and takes the new
+/// line (`mpProcessSetLandingFloor`).
+#[test]
+fn a_grounded_item_onto_a_new_floor_line_raises_the_floor_bit() {
+    let rise = crate::map::floor_surface((
+        1,
+        crate::collision::Segment {
+            x1: 100,
+            y1: -20,
+            x2: 300,
+            y2: 80,
+            flags: 0,
+        },
+    ));
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    let bob = pool.get_mut(slot).unwrap();
+    // The bottom (`map_coll.bottom` below `pos`) crosses the rise at x 140.
+    let y = -bob.coll.bottom;
+    bob.pos_prev = Vec3::new(60.0, y, 0.0);
+    bob.pos = Vec3::new(160.0, y, 0.0);
+    bob.mask_curr = 0;
+    assert!(map::test_lr_wall_check_floor(bob, &|| [floor(), rise]));
+    assert_ne!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
+    assert_eq!(bob.floor.unwrap().line, 1);
+}
+
+/// The airborne pass still raises `MAP_FLAG_FLOOR` on a landing
+/// (`mpProcessRunFloorCollisionAdjNew`, mpprocess.c:2031).
+#[test]
+fn an_airborne_item_landing_raises_the_floor_bit() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    let bob = pool.get_mut(slot).unwrap();
+    bob.floor = None;
+    let y = -bob.coll.bottom;
+    bob.pos_prev = Vec3::new(0.0, y + 40.0, 0.0);
+    bob.pos = Vec3::new(0.0, y - 40.0, 0.0);
+    bob.mask_curr = 0;
+    assert!(map::test_all_collision_flag(
+        bob,
+        crate::map::MASK_FLOOR,
+        &|| [floor()]
+    ));
+    assert_ne!(bob.mask_curr & crate::map::MASK_FLOOR, 0);
+    assert_eq!(bob.floor.unwrap().line, 0);
+}
+
+/// `itMapTestAllCheckCollEnd` (B3): a 600 fall runs as three 200 substeps
+/// and stops after the one whose bottom crossed the floor, airborne, with
+/// the floor bit.
+#[test]
+fn coll_end_stops_an_item_at_the_substep_that_met_the_floor() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    let bob = pool.get_mut(slot).unwrap();
+    bob.floor = None;
+    let y = -bob.coll.bottom;
+    bob.pos_prev = Vec3::new(0.0, y + 300.0, 0.0);
+    bob.pos = Vec3::new(0.0, y - 300.0, 0.0);
+    bob.mask_curr = 0;
+    assert!(map::test_all_check_coll_end(bob, &|| [floor()]));
+    assert_eq!(bob.pos.y, y - 100.0);
+    assert_eq!(bob.mask_curr, crate::map::MASK_FLOOR);
+    assert_eq!(bob.floor.unwrap().line, 0);
+}
+
+/// `itBombHeiCommonCheckMakeDustEffect`: the forced callers (Walk and
+/// ExplodeWait hits) still dust on the ground, and the unforced one makes
+/// none from a grounded pass, which no longer raises the floor bit.
+#[test]
+fn bob_omb_dust_needs_a_fresh_floor_bit_or_the_override() {
+    let dusts = |fx: &crate::wpeffect::Emit| {
+        fx.iter()
+            .filter(|e| matches!(e, crate::wpeffect::WeaponEffect::DustHeavyDouble { .. }))
+            .count()
+    };
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 15, 0.0);
+    tick(&mut pool);
+    let grounded = *pool.get(slot).unwrap();
+    for (status, want) in [
+        (bombhei::Status::Walk, 1),
+        (bombhei::Status::ExplodeWait, 1),
+        (bombhei::Status::ExplodeMap, 0),
+    ] {
+        let mut bob = grounded;
+        let mut fx = crate::wpeffect::Emit::default();
+        bombhei::hit_proc(&mut bob, status, HitProc::Hit, 1.0, &mut fx);
+        assert_eq!(dusts(&fx), want, "{status:?}");
+    }
+}

@@ -10,7 +10,7 @@
 
 use ssb_engine::math::{sin_cos, Vec3};
 
-use super::{map_contact, MapSurface};
+use super::MapSurface;
 use crate::attack::Hitbox;
 use crate::ground::BodyColl;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
@@ -129,27 +129,26 @@ impl ArwingLaser {
             self.lifetime = self.lifetime.saturating_sub(1);
             return (self.lifetime != 0, false);
         }
-        let wanted = self.position + self.velocity;
+        let from = self.position;
+        self.position += self.velocity;
         if !self.three_d {
             // `grSectorArwingWeaponLaser2DProcMap`.
-            if let Some(hit) = map_contact(surfaces(), self.position, wanted, LASER_2D_MAP_COLL) {
-                fx.push(Fx::DustExpandSmall(hit.position));
+            if crate::wpmap::check_coll_end(&LASER_2D_MAP_COLL, from, &mut self.position, &surfaces)
+            {
+                fx.push(Fx::DustExpandSmall(self.position));
                 return (false, false);
             }
-            self.position = wanted;
             return (true, false);
         }
-        // `grSectorArwingWeaponLaser3DProcMap`.
-        if wanted.z.abs() < LASER_3D_MAP_DEPTH {
-            if let Some(hit) = map_contact(surfaces(), self.position, wanted, LASER_3D_MAP_COLL) {
-                self.position = hit.position;
-                crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
-                fx.push(Fx::SparkleWhiteMultiExplode(self.position));
-                self.explode();
-                return (true, true);
-            }
+        // `grSectorArwingWeaponLaser3DProcMap`: bursts where it stopped.
+        if self.position.z.abs() < LASER_3D_MAP_DEPTH
+            && crate::wpmap::check_coll_end(&LASER_3D_MAP_COLL, from, &mut self.position, &surfaces)
+        {
+            crate::sound::play_fgm(crate::sound::id::nSYAudioFGMExplodeS);
+            fx.push(Fx::SparkleWhiteMultiExplode(self.position));
+            self.explode();
+            return (true, true);
         }
-        self.position = wanted;
         (true, false)
     }
 

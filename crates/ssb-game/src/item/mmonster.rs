@@ -1422,14 +1422,16 @@ where
             }
         }
         Status::TosakintoAppear => {
-            if map::test_all_check_coll_end(item, surfaces) {
+            map::test_all_check_coll_end(item, surfaces);
+            if item.mask_curr & MASK_FLOOR != 0 {
                 item.vel_air.y = TOSAKINTO_FLAP_VEL_Y;
                 tosakinto_bounce(item);
                 crate::sound::play_fgm(crate::sound::id::nSYAudioFGMTosakintoSplash);
             }
         }
         Status::TosakintoBounce => {
-            if map::test_all_check_coll_end(item, surfaces) {
+            map::test_all_check_coll_end(item, surfaces);
+            if item.mask_curr & MASK_FLOOR != 0 {
                 item.vel_air.y = TOSAKINTO_FLAP_VEL_Y;
                 if crate::rng::rand_int_range(2) != 0 {
                     item.vel_air.x = -item.vel_air.x;
@@ -1438,7 +1440,8 @@ where
             }
         }
         Status::LizardonFall => {
-            if map::test_all_check_coll_end(item, surfaces) {
+            map::test_all_check_coll_end(item, surfaces);
+            if item.mask_curr & MASK_FLOOR != 0 {
                 item.vel_air.y = 0.0;
                 lizardon_attack(item, kind(item));
             }
@@ -1464,7 +1467,8 @@ where
             }
         }
         Status::MLuckyFall => {
-            if map::test_all_check_coll_end(item, surfaces) {
+            map::test_all_check_coll_end(item, surfaces);
+            if item.mask_curr & MASK_FLOOR != 0 {
                 item.vel_air.y = 0.0;
                 if item.multi != 0 {
                     set(item, Status::MLuckyMakeEgg);
@@ -1474,7 +1478,8 @@ where
             }
         }
         Status::MLuckyAppear => {
-            if map::test_all_check_coll_end(item, surfaces) {
+            map::test_all_check_coll_end(item, surfaces);
+            if item.mask_curr & MASK_FLOOR != 0 {
                 item.vel_air.y = 0.0;
                 mlucky_make_egg(item);
             }

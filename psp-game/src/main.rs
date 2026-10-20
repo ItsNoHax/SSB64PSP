@@ -291,8 +291,10 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // times.
         GameScene::CpuWalk => 200,
         GameScene::CpuJump => 120,
-        // After "Go" the CPU closes in; at tick 900 its fiery hit lands
-        // (7%). Locked fighters run no CPU during the countdown (RE-438).
+        // After "Go" the CPU closes in; by tick 900 its hits have taken P1
+        // to 33% and the two stand together on the main floor, dust at
+        // their feet. Locked fighters run no CPU during the countdown
+        // (RE-438).
         GameScene::VsCpu => 900,
         // "Go" at 398. The camera frames the player alone, so this is a
         // tick where the CPUs' fight has drawn all four into its view.
@@ -1290,7 +1292,7 @@ fn log_capture_state(
             weapons
                 .jolts()
                 .map(|j| (
-                    j.surface.is_some(),
+                    j.grounded(),
                     j.anim_epoch,
                     j.anim_ticks,
                     j.position.x
@@ -8829,7 +8831,7 @@ impl EffectVisuals {
                 W::Boomerang(b) => ((0, 0), b.anim_ticks, None, anim_of(&assets.boomerang), 1.0),
                 W::Cutter(c) => ((1, 0), c.anim_ticks, None, anim_of(&assets.cutter), 1.0),
                 W::Jolt(j) => {
-                    let ground = j.surface.is_some();
+                    let ground = j.grounded();
                     let asset = if ground {
                         assets.jolt_ground.as_ref()
                     } else {
@@ -10977,7 +10979,7 @@ unsafe fn draw_items_weapons_effects(
     // Master Hand's bullets: `TraRotRpyRSca` turned along the velocity by
     // `wpMainReflectorRotateWeaponModel`; the burst has no display list.
     if let Some(bullet) = assets.boss_bullet.as_ref() {
-        for shot in weapons.boss_bullets().filter(|b| !b.exploded) {
+        for shot in weapons.boss_bullets() {
             gpu.model_transform_xyz(
                 [shot.position.x, shot.position.y, shot.position.z],
                 ssb_game::weapon::reflector_rotate(shot.velocity),
@@ -11159,7 +11161,7 @@ unsafe fn draw_items_weapons_effects(
         let Some(visual) = effect_visuals.weapons.get(slot).and_then(|v| v.fx.live()) else {
             continue;
         };
-        if jolt.surface.is_none() {
+        if !jolt.grounded() {
             let Some((object, _)) = assets.jolt_air.as_ref() else {
                 continue;
             };

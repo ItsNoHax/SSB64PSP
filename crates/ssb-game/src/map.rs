@@ -841,6 +841,203 @@ where
     }
 }
 
+/// [`move_air`] with `mpProcessSetCollideFloor` in place of the landing
+/// (`wpMapProcAll`): a floor met puts the body on its line without landing
+/// it, and the sweep goes on (`is_coll_end` stays clear). Returns the last
+/// floor met (`floor_line_id`, `floor_angle`) beside the contacts;
+/// [`Contacts::floor`] is its `MAP_FLAG_FLOOR`.
+pub fn move_air_collide_floor<I, F>(
+    coll: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    surfaces: F,
+) -> (Vec3, Contacts, Option<Contact>)
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let steps = ground::substep_count(from, to);
+    let step = Vec3::new(
+        (to.x - from.x) / steps as f32,
+        (to.y - from.y) / steps as f32,
+        (to.z - from.z) / steps as f32,
+    );
+    let mut pos = from;
+    let mut contacts = Contacts::default();
+    let mut floor_hit = None;
+    for _ in 0..steps {
+        let prev = pos;
+        pos += step;
+        let mut current = Contacts::default();
+        for kind in [Kind::LeftWall, Kind::RightWall] {
+            let lines = walls(&surfaces, *coll, *coll, prev, pos, kind, None);
+            if let Some(hit) = correct_wall(&surfaces, *coll, &mut pos, kind, lines) {
+                if kind == Kind::LeftWall {
+                    contacts.left_wall = Some(hit);
+                    current.left_wall = Some(hit);
+                } else {
+                    contacts.right_wall = Some(hit);
+                    current.right_wall = Some(hit);
+                }
+            }
+        }
+        let ceil = ceiling_step(&surfaces, *coll, *coll, prev, &mut pos, &current);
+        if let Some(hit) = ceil.contact {
+            contacts.ceiling = Some(hit);
+        }
+        let bottom = Vec2::new(0.0, coll.bottom);
+        let floor = sweep(
+            &surfaces,
+            Kind::Floor,
+            point(prev, bottom),
+            point(pos, bottom),
+        )
+        .map(|(h, _)| h)
+        .or_else(|| adjacent_horizontal(&surfaces, &current, Kind::Floor, pos, coll.bottom));
+        if let Some(hit) = floor {
+            contacts.floor = true;
+            floor_hit = Some(hit);
+            collide_floor(&surfaces, *coll, &mut pos, hit);
+        }
+    }
+    (pos, contacts, floor_hit)
+}
+
+/// What [`move_air_check_coll_end`] found.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CollEnd {
+    /// `translate` after the last substep run: the full move, or the substep
+    /// that met the map (`is_coll_end` stops `mpProcessUpdateMain`).
+    pub pos: Vec3,
+    /// The `mask_curr` bits the tests raised.
+    pub mask: u16,
+    /// `ceil_line_id`/`ceil_angle` of a ceiling the top crossed.
+    pub ceiling: Option<Contact>,
+    /// `floor_line_id`/`floor_flags`/`floor_angle` of a floor the bottom
+    /// crossed.
+    pub floor: Option<Contact>,
+}
+
+/// `mpProcessUpdateMain` with `wpMapProcAllCheckCollEnd`: each substep only
+/// tests the walls (`mpProcessCheckTest[L/R]WallCollisionAdjNew`), the
+/// ceiling (`mpProcessCheckTestCeilCollisionAdjNew`) and the floor
+/// (`mpProcessRunFloorCollisionAdjNewNULL`); nothing moves the body. A hit
+/// sets `is_coll_end`, which ends the substeps. No wall is run, so
+/// `mask_unk` stays clear and the wall-adjacent ceiling and floor probes
+/// never apply; `ignore_line_id` is -1, so a pass-through floor counts.
+pub fn move_air_check_coll_end<I, F>(coll: &BodyColl, from: Vec3, to: Vec3, surfaces: F) -> CollEnd
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let steps = ground::substep_count(from, to);
+    let step = Vec3::new(
+        (to.x - from.x) / steps as f32,
+        (to.y - from.y) / steps as f32,
+        (to.z - from.z) / steps as f32,
+    );
+    let mut out = CollEnd {
+        pos: from,
+        mask: 0,
+        ceiling: None,
+        floor: None,
+    };
+    for _ in 0..steps {
+        let prev = out.pos;
+        out.pos += step;
+        let pos = out.pos;
+        for (kind, mask) in [(Kind::LeftWall, MASK_LWALL), (Kind::RightWall, MASK_RWALL)] {
+            if walls(&surfaces, *coll, *coll, prev, pos, kind, None)[0].is_some() {
+                out.mask |= mask;
+            }
+        }
+        let top = Vec2::new(0.0, coll.top);
+        if let Some((hit, _)) = sweep(&surfaces, Kind::Ceiling, point(prev, top), point(pos, top)) {
+            out.mask |= MASK_CEIL;
+            out.ceiling = Some(hit);
+        }
+        let bottom = Vec2::new(0.0, coll.bottom);
+        if let Some((hit, _)) = sweep(
+            &surfaces,
+            Kind::Floor,
+            point(prev, bottom),
+            point(pos, bottom),
+        ) {
+            out.mask |= MASK_FLOOR;
+            out.floor = Some(hit);
+        }
+        if out.mask != 0 {
+            break;
+        }
+    }
+    out
+}
+
+/// `mpCollisionGetFCCommonFloor` (`kind` [`Kind::Floor`]) and
+/// `mpCollisionGetLRCommon[L/R]Wall`: where `pos` projects onto `line`
+/// along its own axis (x for a floor, y for a wall). Returns the signed
+/// distance to it (`floor_y - pos.y`, or `wall_x - pos.x`) and its angle,
+/// or `None` when `pos` lies past the line's ends (±0.001).
+pub fn line_common<I, F>(surfaces: &F, kind: Kind, line: u16, pos: Vec3) -> Option<(f32, Contact)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    if matches!(kind, Kind::Floor | Kind::Ceiling) {
+        return height(surfaces, kind, line, pos.x).map(|(y, hit)| (y - pos.y, hit));
+    }
+    let (lo, _) = edge(surfaces, kind, line, false)?;
+    let (hi, _) = edge(surfaces, kind, line, true)?;
+    if pos.y <= lo.y - 0.001 || hi.y + 0.001 <= pos.y {
+        return None;
+    }
+    let y = pos.y.clamp(lo.y, hi.y);
+    // The first segment spanning `y`, as the original's `break` picks.
+    for (i, s) in surfaces().into_iter().enumerate() {
+        if s.kind != kind || line_id(i, s) != line {
+            continue;
+        }
+        let [x1, y1, x2, y2] = s.coords();
+        if (y1 <= y && y <= y2) || (y2 <= y && y <= y1) {
+            // `mpCollisionGetLineDistanceLR`.
+            let x = if y1 == y2 {
+                x1
+            } else {
+                x1 + div_nonzero((y - y1) * (x2 - x1), y2 - y1)
+            };
+            return Some((x - pos.x, contact(i, s)));
+        }
+    }
+    None
+}
+
+/// `mpCollisionGetEdgeUnder[L/R]LineID` (a floor's left or right end),
+/// `mpCollisionGetEdge[Right/Left][U/D]LineID` (a wall's upper or lower
+/// end), then `mpCollisionGetLineTypeID`: the line joined at that end.
+pub fn line_neighbor<I, F>(surfaces: &F, kind: Kind, line: u16, high: bool) -> Option<(Kind, u16)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    neighbor(surfaces, kind, line, high)
+}
+
+/// `mpCollisionCheck[Floor/Ceil/LWall/RWall]LineCollisionDiff`: the nearest
+/// line of `kind` the point crosses moving `from` to `to` (a moving line by
+/// its own motion), and where.
+pub fn line_crossing<I, F>(
+    surfaces: &F,
+    kind: Kind,
+    from: Vec2,
+    to: Vec2,
+) -> Option<(Contact, Vec2)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    sweep(surfaces, kind, from, to)
+}
+
 fn adjacent_horizontal<I, F>(
     surfaces: &F,
     contacts: &Contacts,

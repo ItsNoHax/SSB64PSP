@@ -774,8 +774,9 @@ pub enum GameScene {
     /// the left, his model pitched along it and stretched
     /// (`ftPikachuSpecialHiUpdateModelPitchScale`, RE-503).
     PikachuQuick,
-    /// `nessjibaku`: Ness in Training on Dream Land's right platform, PK
-    /// Thunder steered round under it and back up into him: PK Thunder 2
+    /// `nessjibaku`: Ness in Training on Dream Land's main floor under the
+    /// right platform, PK Thunder steered round to the right and back into
+    /// him just above the floor: PK Thunder 2
     /// (`SpecialAirHiJibaku`), his model pitched along the launch
     /// (`ftNessSpecialHiUpdateModelPitch`, RE-503).
     NessJibaku,

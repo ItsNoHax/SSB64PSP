@@ -1410,8 +1410,9 @@ fn map_queries_compute_nothing_on_unwritten_stack() {
         move_air(&BODY, from, to, AirOptions::default(), || s.iter().copied())
     }
     #[inline(never)]
-    fn weapon(s: &[MapSurface], from: Vec3, to: Vec3) -> Option<crate::weapon::MapContact> {
-        crate::weapon::map_contact(s.iter().copied(), from, to, BODY)
+    fn weapon(s: &[MapSurface], from: Vec3, to: Vec3) -> bool {
+        let mut pos = to;
+        crate::wpmap::check_coll_end(&BODY, from, &mut pos, &|| s.iter().copied())
     }
     let s = [
         surface(Kind::Floor, 1, (-100, 0), (100, 0), collision::flags::CLIFF),
@@ -1457,7 +1458,7 @@ fn map_queries_compute_nothing_on_unwritten_stack() {
     unsafe { fedisableexcept(TRAPS) };
     assert!(off.0.floor.is_none() && walk.0.floor.is_some() && edge.1.floor_edge);
     assert!(rise.contacts.ceiling.is_some() && past.contacts.right_wall.is_some());
-    assert!(land.moved.floor.is_some() && shot.is_some());
+    assert!(land.moved.floor.is_some() && shot);
 }
 
 /// The fighter's queued surface-strike effects (RE-503).
