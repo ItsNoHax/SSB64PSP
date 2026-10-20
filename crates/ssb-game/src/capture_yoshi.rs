@@ -19,11 +19,11 @@
 //!   first hurtbox per fighter (`dFTCommonYoshiEggDamageCollDescs`) and makes
 //!   the rest intangible; [`crate::hurtbox::yoshi_egg_coll`] is that box
 //!   (RE-332, RE-349).
-//! * **Map collision on laying.** `mpCommonRunFighterCollisionDefault` sweeps
-//!   from Yoshi to the egg. The shared map solver is not yet wired to that
-//!   placement step, so the egg is placed without the sweep.
-//! * **Acid floors.** `ftCommonYoshiEggProcTrap`'s damaging-floor escape
-//!   needs ground hazards, which are not ported.
+//! * **Effect room.** `ftCommonYoshiEggProcUpdate` falls back to counting
+//!   `breakout_wait` when `efManagerYoshiEggLayMakeEffect` finds no room.
+//!   The port's egg is not drawn from the effect pool, so it always has
+//!   room and that branch (`flag0 == 1`, `breakout_wait-- <= 0`, 16
+//!   frames instead of the 10-frame break) cannot run; it is not ported.
 
 use ssb_engine::math::Vec3;
 
@@ -159,6 +159,8 @@ pub struct CaptureYoshiState {
     pub lr: f32,
     /// `effect_gobj`: the egg drawn around the fighter (RE-417).
     pub effect: EggLayEffect,
+    /// `is_damagefloor`: acid hit the egg ([`on_hit`]).
+    pub is_damagefloor: bool,
 }
 
 /// `ftCommonCaptureYoshiProcCapture`, run on the swallowed fighter once its
@@ -246,10 +248,24 @@ fn set_egg(f: &mut Fighter) {
     f.interface.tag_wait = 1;
     let lr = holder.facing.sign();
     f.pos = holder.pos + Vec3::new(-lr * LAY_OFF_X, LAY_OFF_Y, 0.0);
+    // `mpCommonRunFighterCollisionDefault(fighter_gobj, &Yoshi's
+    // translate, &Yoshi's coll_data)`: run by the caller, which has the map
+    // ([`take_lay_sweep`]).
+    f.grab.release_sweep = Some((holder.pos, holder.coll));
     f.physics.vel_air = Vec3::new(-lr * LAY_VEL_X, LAY_VEL_Y, 0.0);
     f.grab.capture = None;
     f.grab.holder = None;
     f.egg.lr = lr;
+    f.egg.is_damagefloor = false;
+}
+
+/// The lay's map sweep, `(Yoshi's TopN, Yoshi's diamond)`, on the frame
+/// [`update_held`] laid the egg; `None` on every other frame.
+pub fn take_lay_sweep(f: &mut Fighter) -> Option<(Vec3, crate::ground::BodyColl)> {
+    if f.status.status != Status::YoshiEgg {
+        return None;
+    }
+    f.grab.release_sweep.take()
 }
 
 /// The egg effect's process in the fighter's hitlag.
@@ -270,23 +286,41 @@ pub fn tick_egg_effect(f: &mut Fighter) {
 /// effect link after the fighters) runs here first, for the frame before,
 /// as the port's display effects do; an effect made this frame gets its
 /// first process next frame.
+///
+/// On a damaging floor the effect stops and the egg breaks at once.
 pub fn update_egg(f: &mut Fighter) {
-    if f.egg.effect.made {
-        f.egg.effect.process();
+    let is_escape = if f.egg.is_damagefloor {
+        // `ftParamProcStopEffect`.
+        f.egg.effect.made = false;
+        true
     } else {
-        // `ftCommonYoshiEggMakeEffect`.
-        f.egg.effect.make();
-    }
-    if f.egg.breaking && f.egg.break_frames >= EGG_BREAK_FRAMES {
+        if f.egg.effect.made {
+            f.egg.effect.process();
+        } else {
+            // `ftCommonYoshiEggMakeEffect`: the port's egg always has room.
+            f.egg.effect.make();
+        }
+        f.egg.breaking && f.egg.break_frames >= EGG_BREAK_FRAMES
+    };
+    if is_escape {
         escape(f);
     }
 }
 
+/// The escape half of `ftCommonYoshiEggProcUpdate` (`:179-196`).
 fn escape(f: &mut Fighter) {
+    // The effects' copy of TopN's translation has `z` zeroed; TopN keeps
+    // its own.
+    let pos = Vec3::new(f.pos.x, f.pos.y, 0.0);
+    f.effects
+        .push(crate::fteffect::FighterEffect::YoshiEggExplode { pos });
+    f.effects.push(crate::fteffect::FighterEffect::At {
+        kind: crate::fteffect::kind::EGG_BREAK,
+        pos,
+    });
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMYoshiEggLayShatter);
     f.physics.vel_air = Vec3::new(0.0, ESCAPE_VEL_Y, 0.0);
 
-    f.pos.z = 0.0;
     f.pos.y += ESCAPE_OFF_Y;
     f.become_airborne();
     status::set_any_status_preserve(
@@ -343,11 +377,19 @@ pub fn physics(f: &mut Fighter) {
 /// damage (`damage_mul`), no knockback or damage status
 /// (`damage_kind = nFTDamageKindNone`), and each point of it takes four
 /// frames off the escape wait.
+///
+/// Acid (`damage_object_class` Ground, `damage_object_kind` Acid, the
+/// last `ftParamUpdate1PGameDamageStats`) breaks the egg on its next
+/// update ([`update_egg`]).
 pub fn on_hit(f: &mut Fighter, damage: i32) {
     let queued = (damage as f32 * DAMAGE_MUL + 0.999) as i32;
     f.add_damage(queued);
     if !f.egg.breaking {
         f.egg.escape_wait -= ((2.0 * queued as f32) / 0.5) as i32;
+    }
+    if f.stats.damage_object == crate::spgame::bonus::DamageObject::Acid {
+        f.egg.escape_wait = 0;
+        f.egg.is_damagefloor = true;
     }
 }
 
@@ -360,12 +402,16 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
     true
 }
 
-/// `ftCommonYoshiEggProcMap`, aerial half.
+/// `ftCommonYoshiEggProcMap`, aerial half: only `fp->ga` turns to ground,
+/// not `mpCommonSetFighterGround`, so the flight's `vel_air.x` never
+/// becomes a ground velocity (the egg stops dead where it lands), and the
+/// jump count and landing params are untouched.
 pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
     if f.status.status != Status::YoshiEgg {
         return false;
     }
-    f.land(floor_y);
+    f.situation = crate::fighter::Situation::Ground;
+    f.pos.y = floor_y;
     true
 }
 
@@ -446,6 +492,90 @@ mod tests {
         f.egg.stage = 3;
         update_held(&mut f, Vec3::ZERO);
         f
+    }
+
+    /// `ftCommonYoshiEggProcTrap`: an acid hit (`damage_object_class`
+    /// Ground, kind Acid) zeroes the wait and sets `is_damagefloor`;
+    /// `ftCommonYoshiEggProcUpdate` then stops the egg effect and escapes
+    /// at once, without the break animation. Any other hit only shortens
+    /// the wait.
+    #[test]
+    fn an_acid_hit_breaks_the_egg_on_its_next_update() {
+        use crate::spgame::bonus::DamageObject;
+        let mut f = egg();
+        update_egg(&mut f);
+        f.stats.damage_object = DamageObject::Bumper;
+        on_hit(&mut f, 10);
+        update_egg(&mut f);
+        assert_eq!(f.status.status, Status::YoshiEgg, "a bumper hit");
+        assert!(!f.egg.is_damagefloor);
+        f.stats.damage_object = DamageObject::Acid;
+        on_hit(&mut f, 10);
+        assert!(f.egg.is_damagefloor);
+        assert_eq!(f.egg.escape_wait, 0);
+        assert!(!f.egg.breaking, "no break animation");
+        update_egg(&mut f);
+        assert_eq!(f.status.status, Status::Fall);
+        assert!(!f.egg.effect.made, "ftCommonYoshiEggProcStopEffect");
+        // A new egg starts clear (`ftCommonYoshiEggSetStatus`).
+        let mut f = egg();
+        f.egg.is_damagefloor = true;
+        f.status.status = Status::CaptureYoshi.into();
+        f.grab.holder = Some(holder());
+        f.egg.stage = 3;
+        update_held(&mut f, Vec3::ZERO);
+        assert!(!f.egg.is_damagefloor);
+    }
+
+    /// `ftCommonYoshiEggSetStatus`'s `mpCommonRunFighterCollisionDefault`:
+    /// the lay offset is swept from Yoshi with Yoshi's diamond, so a wall
+    /// between Yoshi and the lay point stops the egg; the lay velocity then
+    /// moves it the same frame and the egg's `proc_map` tests from Yoshi.
+    #[test]
+    fn the_egg_is_laid_against_a_wall_behind_yoshi() {
+        use crate::collision::Segment;
+        use crate::weapon::{MapSurface, MapSurfaceKind, SurfaceTopology};
+        let wall = MapSurface {
+            motion: None,
+            kind: MapSurfaceKind::RightWall,
+            segment: Segment {
+                x1: -40,
+                y1: -500,
+                x2: -40,
+                y2: 500,
+                flags: 0,
+            },
+            topology: Some(SurfaceTopology {
+                line: 0,
+                point: 0,
+                segments: 1,
+                vertex1: 0,
+                vertex2: 1,
+            }),
+        };
+        let surfaces = || core::iter::once(wall);
+        let mut f = swallowed();
+        let mut h = holder();
+        h.coll = crate::ground::BodyColl {
+            top: 400.0,
+            center: 250.0,
+            bottom: 0.0,
+            width: 50.0,
+        };
+        f.grab.holder = Some(h);
+        f.coll = crate::ground::BodyColl {
+            top: 200.0,
+            center: 100.0,
+            bottom: 0.0,
+            width: 30.0,
+        };
+        f.egg.stage = 3;
+        f.tick_physics_map(&surfaces);
+        assert_eq!(f.status.status, Status::YoshiEgg);
+        // Unswept, the egg would stand at x -100 - 20, behind the wall.
+        assert_eq!(f.pos.x, -40.0 + 30.0, "{:?}", f.pos);
+        assert_eq!(f.pos.y, 90.0 + 60.0, "laid and moved the same frame");
+        assert!(f.grab.release_sweep.is_none());
     }
 
     /// `efManagerYoshiEggLayProcUpdate` never reads `is_pause_effect` and
@@ -560,6 +690,50 @@ mod tests {
             update_egg(&mut f);
         }
         assert!(egg_effect(&f).is_none());
+    }
+
+    /// `ftCommonYoshiEggProcUpdate`'s escape (`:179-196`): the explosion
+    /// (Yoshi's particle script 3) and the shell (`efManagerEggBreakMakeEffect`)
+    /// at TopN's translation with `z` zeroed, then the shatter FGM; TopN
+    /// itself keeps its `z` and rises by `ESCAPE_OFF_Y`.
+    #[test]
+    fn the_escape_explodes_and_breaks_the_egg_then_plays_the_shatter() {
+        use crate::fteffect::{kind, FighterEffect};
+        let r = crate::sound::testing::Recorder::install();
+        let mut f = egg();
+        f.pos = Vec3::new(120.0, 400.0, 7.0);
+        update_egg(&mut f);
+        f.egg.escape_wait = 0;
+        let mut frames = 0;
+        while f.status.status == Status::YoshiEgg {
+            f.effects.clear();
+            let _ = r.take();
+            physics(&mut f);
+            update_egg(&mut f);
+            frames += 1;
+            assert!(frames < 200, "never escapes");
+        }
+        assert_eq!(f.status.status, Status::Fall);
+        let pos = Vec3::new(120.0, 400.0, 0.0);
+        let queued: std::vec::Vec<_> = f.effects.iter().copied().collect();
+        assert_eq!(
+            queued[..2],
+            [
+                FighterEffect::YoshiEggExplode { pos },
+                FighterEffect::At {
+                    kind: kind::EGG_BREAK,
+                    pos
+                }
+            ]
+        );
+        assert_eq!(
+            r.take(),
+            [crate::sound::testing::Call::PlayFgm(
+                crate::sound::id::nSYAudioFGMYoshiEggLayShatter
+            )]
+        );
+        assert_eq!(f.pos, Vec3::new(120.0, 400.0 + ESCAPE_OFF_Y, 7.0));
+        crate::sound::uninstall();
     }
 
     /// `ftCommonYoshiEggProcPhysics`'s `gcSetAnimSpeed` and

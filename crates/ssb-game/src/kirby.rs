@@ -54,6 +54,8 @@ pub const VACUUM_COPY_ANGLE: f32 = 75.0 * core::f32::consts::PI / 180.0;
 pub const VACUUM_COPY_VEL_BASE: f32 = 100.0;
 pub const VACUUM_THROW_VEL_BASE: f32 = 120.0;
 pub const VACUUM_SPECIALNWAIT_DIST_MIN: f32 = 1024.0;
+/// `FTKIRBY_VACUUM_STOPGFX_DIST_MIN` (squared: 96 units).
+pub const VACUUM_STOPGFX_DIST_MIN: f32 = 9216.0;
 pub const VACUUM_GRAVITY_MUL: f32 = 2.0;
 pub const VACUUM_FALL_MAX_MUL: f32 = 2.0;
 
@@ -325,6 +327,7 @@ pub fn damage_check_lose_copy(f: &mut Fighter) {
 
 /// `ftKirbySpecialNLoseCopy`: the lost star
 /// (`efManagerLoseKirbyStarMakeEffect`) leaves from where Kirby stands now.
+/// Source order: passive vars, star, FGM, `copy_id`, hat, colour animation.
 pub fn lose_copy(f: &mut Fighter) {
     crate::kirby_copy::init_passive_vars(f);
     f.effects
@@ -332,11 +335,11 @@ pub fn lose_copy(f: &mut Fighter) {
             pos: f.pos,
             lr: f.facing.sign() as i8,
         });
+    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNLoseCopy);
     f.kirby.copy_id = FighterKind::Kirby;
     f.model_parts
         .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
     crate::colanim::reset_stat_update(f);
-    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbySpecialNLoseCopy);
 }
 
 /// `FTKirbyCopy[27]` (file 228 + 0x0, `llKirbyMainMotionSpecialNFTKirbyCopy`):
@@ -1058,7 +1061,11 @@ pub fn inhale_catch(f: &mut Fighter, held: &Fighter) {
         f.pos.x + crate::capture_kirby::CAPTURE_OFF.x * lr,
         f.pos.y + crate::capture_kirby::CAPTURE_OFF.y,
     );
-    f.kirby.inhale_dist = Vec2::new(held.pos.x - point.x, held.pos.y - point.y);
+    // The caught fighter's `ftCommonCaptureKirbyProcCapture` runs
+    // `ftCommonCaptureKirbyProcPhysics` in the same hit phase, so the first
+    // pull step lands on the catch frame (N64: 28 across, 36 up that frame).
+    f.kirby.inhale_dist =
+        crate::capture_kirby::decay_dist(Vec2::new(held.pos.x - point.x, held.pos.y - point.y));
     // `ftKirbySpecialNCatchProcUpdate` reads the copy on the eat; the
     // victim cannot change it while held.
     f.kirby.victim_is_kirby = is_kirby(held.kind);
@@ -1236,7 +1243,14 @@ pub fn on_wiggle(f: &mut Fighter, up: bool, down: bool, push_x: Option<f32>) {
         }
     }
     if up || down || push_x.is_some() {
+        // A bare `gcAddDObjAnimJoint`: the next parse stands on frame 0.
         f.status.anim_frame = 0.0;
+        if let status::ClipStart::Restart(clip) =
+            crate::motion::clip_on_set_status(f.kind, f.status.status)
+        {
+            f.status.clip = clip;
+        }
+        f.status.clip_changed = true;
     }
 }
 
@@ -1423,6 +1437,10 @@ pub fn update(f: &mut Fighter) {
                 // (RE-474).
                 status::play_anim_events(f);
             } else {
+                if d.x * d.x + d.y * d.y < VACUUM_STOPGFX_DIST_MIN {
+                    // `ftKirbySpecialNStopEffect`.
+                    crate::fteffect::stop_attached(f);
+                }
                 // The victim's `ftCommonCaptureKirbyProcPhysics` pulls it in.
                 f.kirby.inhale_dist = crate::capture_kirby::decay_dist(d);
             }
@@ -2345,14 +2363,51 @@ mod tests {
             update(&mut f);
             frames += 1;
         }
-        // 240 across at 28 per frame: nine pulls, then the eat.
-        assert_eq!(frames, 9);
+        // 240 across at 28 per frame: nine pulls, the first on the catch
+        // frame (the victim's `ftCommonCaptureKirbyProcCapture` runs its
+        // `ProcPhysics`), then the eat.
+        assert_eq!(frames, 8);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialNEat));
         assert!(f
             .grab
             .outbox
             .iter()
             .any(|e| matches!(e, Some(GrabEvent::KirbyEat { is_kirby: false }))));
+    }
+
+    /// `ftKirbySpecialNCatchProcUpdate` (`ftkirbyspecialn.c:202`): inside
+    /// `FTKIRBY_VACUUM_STOPGFX_DIST_MIN` (96 units) but short of the eat,
+    /// `ftKirbySpecialNStopEffect` ejects the attached inhale wind.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_inhale_wind_stops_once_the_victim_is_within_96_units() {
+        let stops = |f: &Fighter| {
+            f.effects
+                .iter()
+                .filter(|e| matches!(e, crate::fteffect::FighterEffect::StopAttached))
+                .count()
+        };
+        for (dist, stopped) in [
+            (Vec2::new(60.0, 80.0), false),
+            (Vec2::new(60.0, 70.0), true),
+        ] {
+            let mut f = kirby();
+            f.situation = Situation::Ground;
+            f.grab.catch = Some(1);
+            f.kirby.copy_pending = FighterKind::Mario;
+            set_inhale(&mut f, K::SpecialNCatch, 0.0, StatusTiming::unknown());
+            f.effects.clear();
+            f.is_effect_attach = true;
+            f.kirby.inhale_dist = dist;
+            update(&mut f);
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Kirby(K::SpecialNCatch),
+                "{dist:?}"
+            );
+            assert_eq!(stops(&f), usize::from(stopped), "{dist:?}");
+            assert_eq!(f.is_effect_attach, !stopped, "{dist:?}");
+        }
     }
 
     /// RE-474's N64 Training trace of the swallow: each of these setters

@@ -21,12 +21,12 @@
 use ssb_capture::script::{self, button};
 use ssb_capture::GameScene;
 use ssb_engine::input::{ControllerState, N64Buttons};
-use ssb_game::fighter::{FighterKind, JostleBody};
+use ssb_game::fighter::FighterKind;
 use ssb_game::status::Status;
 
 #[path = "common/posed.rs"]
 mod posed;
-use posed::{exchange, Posed};
+use posed::{tick_pair, Posed};
 
 #[path = "common/dream_land.rs"]
 mod dream_land;
@@ -317,6 +317,14 @@ fn fighter_scenes_reach_the_move_they_are_named_for() {
     );
 }
 
+/// `scene`'s fighter pad as `(buttons, stick x, stick y)`.
+fn scene_pad(scene: GameScene) -> impl Fn(u64) -> (u16, i8, i8) {
+    move |tick| {
+        let pad = script::fighter_pad(scene, tick).unwrap();
+        (pad.buttons, pad.stick_x, pad.stick_y)
+    }
+}
+
 /// `yoshiegg`: Yoshi walks under the left platform, jumps onto it and
 /// tongues the dummy standing there; the dummy is swallowed
 /// (`CaptureYoshi`), laid in an egg (`YoshiEgg`) and is still in it at the
@@ -336,7 +344,6 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
     let (stage, segments) = dream_land(&pack);
     let map = dream_land_map(&pack, &stage);
-    let map_fn = || map.iter().copied();
     let mut fighters: Vec<Posed> = [(FighterKind::Yoshi, 0), (FighterKind::Mario, 1)]
         .into_iter()
         .map(|(kind, port)| {
@@ -351,101 +358,14 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
     let mut timeline: Vec<(u64, String, String)> = Vec::new();
     let mut jump_was_held = false;
     for tick in FIRST_TICK..capture {
-        // Priority 5: input, TransN's sample, the interrupt, jostle and the
-        // grab exchange.
-        for i in 0..2 {
-            let (c, tapped, released) = if i == 0 {
-                let pad = script::fighter_pad(scene, tick).unwrap();
-                let held = pad.buttons
-                    & (N64Buttons::C_UP
-                        | N64Buttons::C_DOWN
-                        | N64Buttons::C_LEFT
-                        | N64Buttons::C_RIGHT)
-                    != 0;
-                let edges = (held && !jump_was_held, !held && jump_was_held);
-                jump_was_held = held;
-                (
-                    ControllerState {
-                        buttons: N64Buttons(pad.buttons),
-                        stick_x: pad.stick_x,
-                        stick_y: pad.stick_y,
-                        connected: true,
-                    },
-                    edges.0,
-                    edges.1,
-                )
-            } else {
-                (
-                    ControllerState {
-                        connected: true,
-                        ..ControllerState::default()
-                    },
-                    false,
-                    false,
-                )
-            };
-            let p = &mut fighters[i];
-            p.fighter.set_input(c, tapped, released);
-            p.sample_held_child_offset();
-            p.set_root_motion(None);
-            p.fighter.tick_interrupt(&map_fn);
-            p.after_interrupt(&pack);
-            if !fighters[i].fighter.is_in_hitlag() {
-                let other = JostleBody::of(&fighters[1 - i].fighter);
-                ssb_game::fighter::jostle(&mut fighters[i].fighter, &[(other, i == 0)]);
-            }
-            exchange(&mut fighters, i);
-        }
-        // Priority 4: the clip, the physics and map, the joint samples.
-        for i in 0..2 {
-            fighters[i].physics(&pack, &map_fn);
-            let _ = fighters[i].fighter.take_weapon_spawn();
-            exchange(&mut fighters, i);
-        }
-        // Priorities 1 and 0: the catch search, the hit search, then
-        // `ftMainProcParams`.
-        for i in 0..2 {
-            let [a, b] = &mut fighters[..] else {
-                unreachable!()
-            };
-            let (catcher, other) = if i == 0 { (a, b) } else { (b, a) };
-            if ssb_game::grab::nearest_catch(
-                &catcher.fighter,
-                core::iter::once(&other.fighter),
-                ssb_game::team::TeamRules::FREE_FOR_ALL,
-            )
-            .is_some()
-            {
-                ssb_game::grab::search_catch(
-                    &mut catcher.fighter,
-                    &mut other.fighter,
-                    ssb_game::team::TeamRules::FREE_FOR_ALL,
-                );
-            }
-        }
-        for i in 0..2 {
-            exchange(&mut fighters, i);
-        }
-        for p in &mut fighters {
-            p.settle_capture(&pack, &map_fn);
-        }
-        {
-            let [a, b] = &mut fighters[..] else {
-                unreachable!()
-            };
-            let mut both = [&mut a.fighter, &mut b.fighter];
-            ssb_game::combat::search_all(&mut both, ssb_game::team::TeamRules::FREE_FOR_ALL);
-            ssb_game::combat::finish_frame(&mut both);
-        }
-        for p in &mut fighters {
-            p.fighter.resolve_cliff_release(&map_fn);
-        }
-        for i in 0..2 {
-            exchange(&mut fighters, i);
-        }
-        for p in &mut fighters {
-            p.settle_status(&pack);
-        }
+        let _ = tick_pair(
+            &pack,
+            &map,
+            &mut fighters,
+            &scene_pad(scene),
+            tick,
+            &mut jump_was_held,
+        );
         let now = (
             format!("{:?}", fighters[0].fighter.status.status),
             format!("{:?}", fighters[1].fighter.status.status),
@@ -501,4 +421,89 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
         ssb_game::capture_yoshi::egg_effect(dummy).is_some(),
         "no egg effect: {line}"
     );
+}
+
+/// Kirby's spit on the N64's Training Castle (warp ROM
+/// `warp_kirbyvssamus`, P1 route `9:8:x=127;49:40:b;129:3:a`, Samus the
+/// standing dummy): Kirby dashes to x 498, inhales Samus and spits her
+/// right at N64 frame 129. The star leaves Kirby's mouth at x 508 on the
+/// Castle's floor and climbs the rise ahead in its first frame, so its
+/// first `ftCommonThrownCommonStarProcMap` lands it: N64 frame 135 makes
+/// the star, the magnitude-2 quake (2 GObjs) and the impact wave at
+/// (624, 1398.15), TopN's translation before the collision moved it to
+/// (624, 1400.65) (`~/ppsspp-test/batch9/s.txt`, `g4.txt`). N64 row `t`
+/// is replay tick `t`: a route step starting at `s` is recorded at
+/// `t = s - 1` and acts on frame `s`.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
+    use ssb_game::fteffect::FighterEffect as E;
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    const CASTLE: u32 = 4;
+    let (stage, segments) = stage_floors(&pack, CASTLE);
+    let map = dream_land_map(&pack, &stage);
+    let mut fighters: Vec<Posed> = [(FighterKind::Kirby, 0), (FighterKind::Samus, 1)]
+        .into_iter()
+        .map(|(kind, port)| {
+            Posed::new(
+                &pack,
+                training_fighter(&pack, &stage, kind, port, &segments),
+            )
+        })
+        .collect();
+    let pad = |t: u64| match t {
+        9..=16 => (0, 127, 0),
+        49..=88 => (button::B, 0, 0),
+        129..=131 => (button::A, 0, 0),
+        _ => (0, 0, 0),
+    };
+    let mut jump_was_held = false;
+    let mut star: Option<(u64, Vec<E>, [f32; 2])> = None;
+    let mut log = vec![format!(
+        "spawn Kirby ({:.2},{:.2}) Samus ({:.2},{:.2})",
+        fighters[0].fighter.pos.x,
+        fighters[0].fighter.pos.y,
+        fighters[1].fighter.pos.x,
+        fighters[1].fighter.pos.y
+    )];
+    for tick in 1..=150 {
+        let [_, queued] = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut jump_was_held);
+        let (k, dummy) = (&fighters[0].fighter, &fighters[1].fighter);
+        let impacts: Vec<E> = queued
+            .into_iter()
+            .filter(|e| matches!(e, E::ImpactWave { .. } | E::Quake(_)))
+            .collect();
+        let status = format!("{:?}", dummy.status.status);
+        log.push(format!(
+            "{tick}: K {:?} ({:.2},{:.2}) S {status} ({:.2},{:.2}) vel ({:.2},{:.2}) {impacts:?}",
+            k.status.status,
+            k.pos.x,
+            k.pos.y,
+            dummy.pos.x,
+            dummy.pos.y,
+            dummy.physics.vel_air.x,
+            dummy.physics.vel_air.y
+        ));
+        if star.is_none() && status.contains("ThrownKirbyStar") {
+            star = Some((tick, impacts, [dummy.pos.x, dummy.pos.y]));
+        }
+        assert_eq!(dummy.effects.dropped, 0);
+    }
+    let log = log.join("\n");
+    if std::env::var_os("SCENE_TRACE").is_some() {
+        println!("kirby spit on the Castle:\n{log}");
+    }
+    let (tick, impacts, pos) = star.unwrap_or_else(|| panic!("never spat: {log}"));
+    assert_eq!(tick, 135, "{log}");
+    // The trace prints two decimals.
+    let near =
+        |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 0.005 && (a[1] - b[1]).abs() < 0.005;
+    assert!(near(pos, [624.0, 1400.65]), "{pos:?}\n{log}");
+    let [E::Quake(2), E::ImpactWave { pos: wave, .. }] = impacts.as_slice() else {
+        panic!("star tick {tick}: {impacts:?}\n{log}");
+    };
+    assert!(near([wave.x, wave.y], [624.0, 1398.15]), "{wave:?}\n{log}");
 }

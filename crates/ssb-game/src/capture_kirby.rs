@@ -157,7 +157,10 @@ pub fn decay_dist(dist: Vec2) -> Vec2 {
 }
 
 /// Held physics for the two capture statuses (`ftCommonCaptureKirbyProcPhysics`
-/// then `ftCommonCaptureWaitKirbyProcMap`). Both stay airborne.
+/// then `ftCommonCaptureWaitKirbyProcMap`). Both stay airborne. The eat
+/// frame's `ProcPhysics` sets `CaptureWaitKirby`, whose own `proc_map`
+/// then runs in that frame's map phase, so the victim already stands at
+/// Kirby's side on it (N64 Castle trace: x 508 on the eat row).
 pub fn update_held(f: &mut Fighter, holder: Holder) {
     f.situation = crate::fighter::Situation::Air;
     f.floor = None;
@@ -166,7 +169,8 @@ pub fn update_held(f: &mut Fighter, holder: Holder) {
         if f.kirby_capture.is_goto_wait {
             set_capture_wait(f);
         }
-    } else {
+    }
+    if f.status.status == Status::CaptureWaitKirby {
         f.pos = holder.pos;
         f.pos.x += WAIT_OFF_X * holder.facing.sign();
     }
@@ -341,6 +345,7 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         1 => {
             if is_kirby(f.kind) && s.is_kirby {
                 // The copy the swallowing Kirby took is lost.
+                crate::kirby_copy::init_passive_vars(f);
                 f.kirby.copy_id = FighterKind::Kirby;
                 f.model_parts
                     .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
@@ -412,16 +417,15 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32, normal: Vec2, wave: Vec3) -> bo
     }
     f.pos.y = floor_y;
     crate::fteffect::surface_impact(f, wave, normal, true);
+    // `lbCommonReflect2D`, whatever the velocity's side of the surface.
     let v = f.physics.vel_air;
-    let dot = v.x * normal.x + v.y * normal.y;
-    if dot < 0.0 {
-        f.physics.vel_air.x = v.x - 2.0 * dot * normal.x;
-        f.physics.vel_air.y = v.y - 2.0 * dot * normal.y;
-        let after = f.physics.vel_air;
-        if after.x * v.x + after.y * v.y < 0.0 {
-            f.kirby_capture.lr = if normal.x < 0.0 { -1.0 } else { 1.0 };
-            f.kirby_capture.flag1 = 0;
-        }
+    let dot = (normal.x * v.x + normal.y * v.y) * -2.0;
+    f.physics.vel_air.x = v.x + normal.x * dot;
+    f.physics.vel_air.y = v.y + normal.y * dot;
+    let after = f.physics.vel_air;
+    if after.x * v.x + v.y * after.y < 0.0 {
+        f.kirby_capture.lr = if normal.x < 0.0 { -1.0 } else { 1.0 };
+        f.kirby_capture.flag1 = 0;
     }
     true
 }
@@ -620,5 +624,85 @@ mod tests {
         // `ftParamSetHitStatusAll(Normal)` before the escape (`:329`).
         assert_eq!(f.hitstatus, HitStatus::Normal);
         assert_eq!(f.kirby.copy_id, FighterKind::Kirby);
+    }
+
+    /// `ftCommonThrownCommonStarProcMap` reflects with `lbCommonReflect2D`
+    /// whichever side of the struck surface the velocity points: a star
+    /// leaving a wall it touches is turned back into it.
+    #[test]
+    fn a_star_reflects_off_any_contact_even_moving_away() {
+        let mut f = Fighter::new(FighterKind::Mario, 1, 4);
+        set_star(
+            &mut f,
+            false,
+            Vec3::new(30.0, 0.0, 0.0),
+            crate::thrown::ThrowOwner {
+                port: 0,
+                kind: FighterKind::Kirby,
+                team: 0,
+            },
+        );
+        f.kirby_capture.lr = -1.0;
+        let pos = f.pos;
+        assert!(on_landing(&mut f, pos.y, Vec2::new(1.0, 0.0), pos));
+        assert_eq!(f.physics.vel_air.x, -30.0);
+        assert_eq!(f.kirby_capture.lr, 1.0);
+        assert_eq!(f.kirby_capture.flag1, 0);
+    }
+
+    /// `ftCommonThrownCommonStarUpdatePhysics` (`flag2 == 1`, `:320`):
+    /// `ftKirbySpecialNInitPassiveVars` runs before `copy_id` resets, so a
+    /// spat Kirby's stored charge does not survive into its next copy.
+    #[test]
+    fn a_spat_kirby_loses_its_copys_stored_charge() {
+        for (copy, set, read) in [
+            (
+                FighterKind::Samus,
+                (|f: &mut Fighter| {
+                    f.kirby.copy.samus_charge_level = 5;
+                    f.kirby.copy.samus_charge_recoil = 3;
+                }) as fn(&mut Fighter),
+                (|f: &Fighter| {
+                    i32::from(f.kirby.copy.samus_charge_level) + f.kirby.copy.samus_charge_recoil
+                }) as fn(&Fighter) -> i32,
+            ),
+            (
+                FighterKind::Donkey,
+                |f| f.kirby.copy.donkey_charge_level = 7,
+                |f| i32::from(f.kirby.copy.donkey_charge_level),
+            ),
+            (
+                FighterKind::Captain,
+                |f| f.kirby.copy.captain_punch_count = 2,
+                |f| f.kirby.copy.captain_punch_count,
+            ),
+            (
+                FighterKind::Purin,
+                |f| f.kirby.copy.purin_count = 1,
+                |f| f.kirby.copy.purin_count,
+            ),
+        ] {
+            let mut f = Fighter::new(FighterKind::Kirby, 1, 4);
+            f.kirby.copy_id = copy;
+            set(&mut f);
+            f.kirby_capture.is_kirby = true;
+            f.grab.breakout_wait = 400;
+            set_star(
+                &mut f,
+                true,
+                Vec3::new(-26.0, 96.0, 0.0),
+                crate::thrown::ThrowOwner {
+                    port: 0,
+                    kind: FighterKind::Kirby,
+                    team: 0,
+                },
+            );
+            for _ in 0..11 {
+                apply_air_physics(&mut f);
+            }
+            assert_eq!(f.status.status, Status::Fall, "{copy:?}");
+            assert_eq!(f.kirby.copy_id, FighterKind::Kirby, "{copy:?}");
+            assert_eq!(read(&f), 0, "{copy:?}");
+        }
     }
 }

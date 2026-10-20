@@ -840,6 +840,9 @@ fn how_to_play_hits_as_the_n64_does() {
                 );
             }
         }
+        for p in &mut fighters {
+            p.settle_catch(&pack);
+        }
         for i in 0..2 {
             exchange(&mut fighters, i);
         }

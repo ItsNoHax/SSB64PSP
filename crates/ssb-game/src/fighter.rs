@@ -1556,6 +1556,22 @@ impl Fighter {
         // of its own velocity (`ftCommonCapturePulledProcPhysics`).
         if crate::grab::tick_held(self, || crate::map::floors(surfaces())) {
             self.root_motion = RootMotion::default();
+            if let Some((from, previous)) = crate::capture_yoshi::take_lay_sweep(self) {
+                // `ftCommonCaptureYoshiProcPhysics` laid the egg: its
+                // `mpCommonRunFighterCollisionDefault` sweeps from Yoshi
+                // with Yoshi's diamond and leaves `pos_prev` at Yoshi. The
+                // rest of `ftMainProcPhysicsMap` then runs as for any
+                // status: the lay velocity moves TopN and the egg's
+                // `proc_map` (airborne: `mpCommonCheckFighterLanding`)
+                // tests from Yoshi to there.
+                self.pos = crate::map::run_default_collision(
+                    &self.coll, &previous, from, self.pos, surfaces,
+                );
+                let want = crate::physics::integrated_position(self.pos, &self.physics, false);
+                self.map_contacts_prev = self.map_contacts;
+                self.map_contacts = crate::map::Contacts::default();
+                self.air_map_step(from, want, surfaces);
+            }
             crate::dead::check(self);
             self.after_dead_check(y_prev);
             return;
@@ -2323,7 +2339,16 @@ impl Fighter {
             self.attributes.traction,
         );
         let want = crate::physics::integrated_position(self.pos, &self.physics, false);
+        self.air_map_step(self.pos, want, surfaces);
+    }
 
+    /// The airborne `proc_map` from `from` (`coll_data.pos_prev`) to
+    /// `want`, TopN after the position step.
+    fn air_map_step<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         let skip_pass = self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi)
             && self.pikachu.pass_timer < 2
@@ -2339,7 +2364,6 @@ impl Fighter {
         } else {
             skip_pass
         };
-        let from = self.pos;
         if matches!(
             self.status.status,
             crate::status::AnyStatus::Common(s) if crate::reaction::is_damage_air(s)

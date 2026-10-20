@@ -156,6 +156,10 @@ pub enum FighterEffect {
     /// `efManagerQuakeMakeEffect(magnitude)`, called directly (no
     /// `ftParamMakeEffect` demo check).
     Quake(u8),
+    /// `efManagerYoshiEggExplodeMakeEffect(&pos)` from the Egg Lay
+    /// victim's escape (`ftCommonYoshiEggProcUpdate`): script 3 of Yoshi's
+    /// particle bank at world `pos`. Not attached.
+    YoshiEggExplode { pos: Vec3 },
 }
 
 /// Requests a fighter can queue between two flushes. A frame's worst case
@@ -406,6 +410,9 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
             }
             FighterEffect::Quake(magnitude) => {
                 rt.effects.quake(magnitude);
+            }
+            FighterEffect::YoshiEggExplode { pos } => {
+                rt.effects.yoshi_egg_explode(rt.particles, rt.banks, pos);
             }
         }
     }

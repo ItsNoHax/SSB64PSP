@@ -95,7 +95,7 @@ pub enum WeaponEffect {
     /// `efManagerDustCollideMakeEffect`: the Boomerang meets a surface.
     DustCollide(Vec3),
     /// `efManagerYoshiEggExplodeMakeEffect`: script 3 of Yoshi's own
-    /// particle bank, which the pack does not hold (made as nothing).
+    /// particle bank (pack bank 3, [`crate::effect::YOSHI_PARTICLE_BANK`]).
     YoshiEggExplode(Vec3),
     /// `efManagerEggBreakMakeEffect`.
     EggBreak(Vec3),

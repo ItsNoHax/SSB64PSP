@@ -1889,6 +1889,12 @@ pub struct StatusState {
     /// A `motion_id` of -2: `ftParamPlayAnim` skips the figatree, whose
     /// clock stands still until a status plays one again.
     pub clip_paused: bool,
+    /// `AOBJ_ANIM_CHANGED` still pending: a figatree restarted outside
+    /// `ftMainSetStatus` (whose own first parse consumes it), by a bare
+    /// `lbCommonAddFighterPartsFigatree` (`gcAddDObjAnimJoint`). The next
+    /// `ftAnimParseDObjFigatree` poses that frame without counting, so
+    /// `anim_frame` stands one more play.
+    pub clip_changed: bool,
     /// The status clock: `frame_begin` plus `anim_speed` per play, past
     /// the figatree's end (wrapped only by [`StatusTiming::looping`]). The
     /// port's [`StatusState::animation_ended`] and the drawn clip's start
@@ -1972,6 +1978,7 @@ impl Default for StatusState {
             anim_frame: 0.0,
             clip: Clip::Unknown,
             clip_paused: false,
+            clip_changed: false,
             clock: 0.0,
             timing: StatusTiming::unknown(),
             jump_input: JumpInput::None,
@@ -4116,6 +4123,9 @@ pub fn play_anim(f: &mut Fighter) {
         s.anim_frame = s.clock;
         return;
     }
+    if core::mem::take(&mut s.clip_changed) {
+        return;
+    }
     if !s.clip_paused && s.clip != Clip::Stopped {
         s.anim_frame += speed;
         s.clip.settle(&mut s.anim_frame);
@@ -4288,6 +4298,7 @@ pub fn set_any_status_preserve(
         ClipStart::Freeze => f.status.clip_paused = true,
     }
     f.status.clock = anim_frame_begin;
+    f.status.clip_changed = false;
     f.status.anim_frame_begin = anim_frame_begin;
     f.status.entry = f.status.entry.wrapping_add(1);
     f.status.total_tics = 0;

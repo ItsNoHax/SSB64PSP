@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: unported fighter effects and lag pause (RE-549, RE-550, RE-551). Kirby Final Cutter, landing first-frame play, PK Thunder trail, PK Wave, Kirby capture and lost stars; own-clock effects tick in hitlag. 6 goldens rebaselined, 3 added.
-- Open: shield poke at `vsshield` t=610 (0.7-unit margin) awaits an N64 trace (RE-418). Remaining effect gaps are in `PLAN.md`.
+- Landed: capture loose ends (RE-552). Kirby inhale catch/eat/wiggle timing, copy loss, star reflect; Yoshi egg lay sweep, landing, acid escape. 4 goldens rebaselined, none added.
+- Open: shield poke at `vsshield` t=610 (0.7-unit margin) awaits an N64 trace (RE-418). Remaining gaps are in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: unported fighter effects (RE-549–RE-551).
+Baseline: capture loose ends (RE-552).
 
 | Check | Result |
 |---|---|

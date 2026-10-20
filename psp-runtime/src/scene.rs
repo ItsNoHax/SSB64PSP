@@ -1961,11 +1961,20 @@ impl FighterScene {
         // `ftCommonCapturePulledProcCapture` then reads the hand from that
         // pose (`func_ovl0_800C9A38` on the DObjs as they stand), not the
         // `Catch` frame the physics pass sampled (RE-511).
+        let status = &self.fighter.status;
+        let fresh = self.started != Some((status.status, status.entry));
         if !self.fighter.slope_pending {
+            // Any other `proc_catch` (`ftYoshiSpecialNCatchProcCatch`) sets
+            // its status before the caught fighter's `proc_capture` reads
+            // the joint, so that reads the new status's pose too.
+            if fresh && self.fighter.grab.catch.is_some() {
+                self.tick_animation(pack);
+                self.sample_gameplay_joints(pack);
+                self.sample_anchor(pack);
+            }
             return;
         }
-        let status = &self.fighter.status;
-        if self.started != Some((status.status, status.entry)) {
+        if fresh {
             self.tick_animation(pack);
         }
         let segments = || MapSegments::with_groups(pack, stage, groups);
@@ -1978,7 +1987,9 @@ impl FighterScene {
     /// in this frame's hit phase: `ftMainPlayAnimEventsAll` plays
     /// `CapturePulled`'s first frame, then `ftCommonCapturePulledProcPhysics`
     /// and `ftCommonCapturePulledProcMap` place it at the catcher's hand on
-    /// the catch frame itself (RE-472). Call after [`Self::settle_catch`]
+    /// the catch frame itself (RE-472). `ftCommonCaptureYoshiProcCapture`
+    /// likewise runs `ftCommonCaptureYoshiProcPhysics`, placing the
+    /// swallowed fighter at the tongue. Call after [`Self::settle_catch`]
     /// and the `grab::exchange` that delivers the capture and the hand.
     pub fn settle_capture(
         &mut self,
@@ -1988,6 +1999,7 @@ impl FighterScene {
     ) {
         let status = &self.fighter.status;
         if status.status != ssb_game::status::Status::CapturePulled
+            && status.status != ssb_game::status::Status::CaptureYoshi
             || self.started == Some((status.status, status.entry))
             || self.fighter.grab.holder.is_none()
         {

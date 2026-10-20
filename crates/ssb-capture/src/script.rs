@@ -275,9 +275,10 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // L at 250, once the copy is over, drops it; the lost star is
         // rising on its arc.
         KirbyLose => 262 + ROUTE_DELAY,
-        // The egg laid at 293 lands on the top platform at 334; the
+        // The egg laid at 293 lands on the top platform 39 ticks later and
+        // stops dead there (`ftCommonYoshiEggProcMap` only sets `ga`); the
         // Training CPU wiggles it open at 458 (`ftComputer`'s `YoshiEgg`
-        // wiggle), so the capture is the egg at rest some 46 ticks in.
+        // wiggle), so the capture is the egg at rest some 48 ticks in.
         YoshiEgg => 380,
         // Z from tick 40: the egg is up from the end of `GuardOn`, and 16
         // ticks a point of the shield's 55 decays, darkening it.
