@@ -330,7 +330,9 @@ class Mupen64PlusHarness:
         return self._rdram_ptr
 
     def read_rdram(self, vaddr, length):
-        """vaddr: a 0x80xxxxxx/0xA0xxxxxx N64 virtual address. Returns big-endian bytes."""
+        """vaddr: a 0x80xxxxxx/0xA0xxxxxx N64 virtual address. Returns raw core bytes:
+        Mupen keeps RDRAM as host-order (little-endian) 32-bit words, so byte i of
+        a word lives at (addr ^ 3); use read_u32/read_f32/read_be for values."""
         base = self._rdram_base()
         offset = vaddr & 0x7FFFFF  # 8 MB RDRAM
         buf = (ctypes.c_ubyte * length).from_address(base + offset)
@@ -343,14 +345,22 @@ class Mupen64PlusHarness:
         buf[:] = data
 
     def read_u32(self, vaddr):
-        return int.from_bytes(self.read_rdram(vaddr, 4), "big")
+        """Aligned N64 word (RDRAM words are stored host-order)."""
+        return int.from_bytes(self.read_rdram(vaddr & ~3, 4), "little")
 
     def read_f32(self, vaddr):
         import struct
-        return struct.unpack(">f", self.read_rdram(vaddr, 4))[0]
+        return struct.unpack("<f", self.read_rdram(vaddr & ~3, 4))[0]
+
+    def read_be(self, vaddr, length):
+        """N64 (big-endian) byte order for an aligned range of whole words."""
+        raw = bytearray(self.read_rdram(vaddr & ~3, (length + 3) & ~3))
+        for i in range(0, len(raw), 4):
+            raw[i:i + 4] = raw[i:i + 4][::-1]
+        return bytes(raw[:length])
 
     def write_u8(self, vaddr, value):
-        self.write_rdram(vaddr, bytes([value & 0xFF]))
+        self.write_rdram(vaddr ^ 3, bytes([value & 0xFF]))
 
     def stop(self):
         if self.core is None:
@@ -371,7 +381,8 @@ class Mupen64PlusHarness:
 
 
 def parse_route(spec):
-    """spec: ';'-separated steps 'hold:p1button+button;hold:...'. Empty buttons = idle."""
+    """spec: ';'-separated steps 'hold:p1button+button;hold:...'. Empty buttons = idle.
+    'x=N'/'y=N' tokens set the analog stick (signed int8, raw N64 units)."""
     steps = []
     for chunk in spec.split(";"):
         chunk = chunk.strip()
@@ -403,7 +414,9 @@ def main():
     ap.add_argument("--data-dir", default=os.path.expanduser("~/.var/app/net.sourceforge.m64py.M64Py/data/mupen64plus"))
     ap.add_argument("--frames", type=int, default=120, help="idle frames to smoke-test frame stepping")
     ap.add_argument("--route", default=None,
-                     help="';'-separated steps 'hold:btn+btn;hold:btn' (btn in a,b,start,z,l,r,dpad_u,dpad_d,dpad_l,dpad_r,c_u,c_d,c_l,c_r), applied to P1 only")
+                     help="';'-separated steps 'hold:btn+btn;hold:btn' (btn in a,b,start,z,l,r,dpad_u,dpad_d,dpad_l,dpad_r,c_u,c_d,c_l,c_r), "
+                          "applied to P1 only; analog stick as 'x=N'/'y=N' tokens, raw signed N64 units -128..127 "
+                          "(e.g. '30:b+x=-45+y=70')")
     ap.add_argument("--screenshot-every", type=int, default=0)
     ap.add_argument("--final-screenshot", action="store_true")
     ap.add_argument("--audio-dump", default=None, metavar="PATH",

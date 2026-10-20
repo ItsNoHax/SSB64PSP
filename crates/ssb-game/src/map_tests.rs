@@ -455,6 +455,81 @@ fn fire_fox_redirects_shallow_new_contacts_and_keeps_speed() {
     assert_eq!(f.fox_special_hi.pass_timer, 1);
 }
 
+/// `ftFoxSpecialAirHiBoundProcMap` (`ftfoxspecialhi.c:440`): the airborne
+/// bound lands in place (`mpCommonSetFighterGround`, no status change) and
+/// the grounded one falls off an edge (`mpCommonSetFighterFallOnGroundBreak`),
+/// as `SpecialHiEnd` does (`ftfoxstatus.h:286`).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn fire_fox_bound_lands_in_place_and_end_statuses_fall_off_edges() {
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0);
+    let mut f = fighter(
+        FighterKind::Fox,
+        AnyStatus::Fox(FoxStatus::SpecialAirHiBound),
+        Vec3::new(5.0, 0.0, 0.0),
+    );
+    f.situation = Situation::Air;
+    f.pos = Vec3::new(0.0, 4.0, 0.0);
+    f.set_root_motion(crate::physics::RootMotion {
+        delta: Vec3::new(0.0, -10.0, 0.0),
+        rotate_z: 0.0,
+        translate: Vec3::ZERO,
+    });
+    f.tick_physics_map(&|| [floor]);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Fox(FoxStatus::SpecialAirHiBound)
+    );
+    assert_eq!(f.situation, Situation::Ground);
+    assert_eq!(f.pos.y, 0.0);
+
+    for status in [FoxStatus::SpecialAirHiBound, FoxStatus::SpecialHiEnd] {
+        let mut f = fighter(FighterKind::Fox, AnyStatus::Fox(status), Vec3::ZERO);
+        f.situation = Situation::Ground;
+        f.floor = Some(Standing {
+            line: 3,
+            flags: 0,
+            normal: Vec2::new(0.0, 1.0),
+        });
+        f.pos = Vec3::new(995.0, 0.0, 0.0);
+        f.physics.vel_ground.x = 40.0;
+        f.tick_physics_map(&|| [floor]);
+        assert_eq!(f.situation, Situation::Air, "{status:?}");
+        assert_eq!(f.status.status, Status::Fall, "{status:?}");
+    }
+}
+
+/// `ftPikachuSpecialHiEndProcPhysics` (`ftpikachuspecialhi.c:449`): before
+/// motion flag 1 the grounded end has no physics, so the `vel_air`
+/// `ftPikachuSpecialHiEndBackupVel` zeroed holds Pikachu in place; from the
+/// flag the 0.2 ground speed slides under friction.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn quick_attack_ground_end_holds_still_until_flag1() {
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0);
+    let mut f = fighter(
+        FighterKind::Pikachu,
+        AnyStatus::Pikachu(PikachuStatus::SpecialHiEnd),
+        Vec3::ZERO,
+    );
+    f.situation = Situation::Ground;
+    f.floor = Some(Standing {
+        line: 3,
+        flags: 0,
+        normal: Vec2::new(0.0, 1.0),
+    });
+    f.physics.vel_ground.x = 20.0;
+    f.pikachu.zip_flag1 = 0;
+    f.tick_physics_map(&|| [floor]);
+    assert_eq!(f.pos.x, 0.0);
+    assert_eq!(f.physics.vel_air, Vec3::ZERO);
+    assert_eq!(f.physics.vel_ground.x, 20.0);
+
+    f.pikachu.zip_flag1 = 2;
+    f.tick_physics_map(&|| [floor]);
+    assert!(f.pos.x > 0.0 && f.pos.x < 20.0, "{}", f.pos.x);
+}
+
 #[test]
 fn ness_blast_rebounds_steep_contacts_and_slides_shallow_walls() {
     let mut f = fighter(
@@ -855,6 +930,9 @@ fn aerial_jump_and_recovery_cliff_gates_follow_their_source_callbacks() {
     f.status.status = AnyStatus::Kirby(KirbyStatus::JumpAerialF5);
     assert!(allows_cliff(&f));
     f.status.status = AnyStatus::Purin(PurinStatus::JumpAerialF3);
+    assert!(allows_cliff(&f));
+    // `ftPikachuSpecialAirHiStartProcMap` is `mpCommonProcFighterCliff`.
+    f.status.status = AnyStatus::Pikachu(PikachuStatus::SpecialAirHiStart);
     assert!(allows_cliff(&f));
     f.status.status = AnyStatus::Yoshi(status::YoshiStatus::SpecialAirLwStart);
     f.status.set_time(4.0);

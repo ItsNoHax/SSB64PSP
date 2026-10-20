@@ -16,7 +16,18 @@ pub fn dream_land<'p>(
     ssb_rom::pack::StageDesc,
     Vec<(u16, ssb_game::collision::Segment)>,
 ) {
-    let stage = pack.stage(0).expect("Dream Land");
+    stage_floors(pack, 0)
+}
+
+/// Pack stage `index` and its floor segments, `(line id, segment)`.
+pub fn stage_floors<'p>(
+    pack: &ssb_rom::pack::Pack<'p>,
+    index: u32,
+) -> (
+    ssb_rom::pack::StageDesc,
+    Vec<(u16, ssb_game::collision::Segment)>,
+) {
+    let stage = pack.stage(index).expect("stage in pack");
     let mut segments = Vec::new();
     for line in pack.stage_lines(&stage) {
         if line.kind != ssb_rom::pack::line_kind::FLOOR {

@@ -494,13 +494,20 @@ pub fn update(f: &mut Fighter) {
                 }
             } else if f.status.animation_ended() {
                 if ground {
-                    status::set_wait(f)
+                    // `ftCommonWaitSetStatus` from `proc_update`, then
+                    // Wait's `proc_interrupt` the same frame (`ftmain.c:1499`).
+                    status::anim_end_set_wait(f)
                 } else {
                     status::set_fall_special(f, 0.4, true, true, 0.4, false)
                 }
             }
         }
     }
+}
+/// `ftPikachuSpecialHiEndProcPhysics` @ `ftpikachuspecialhi.c:449`: the
+/// grounded end runs no physics before motion flag 1.
+pub(crate) fn ground_end_holds(f: &Fighter) -> bool {
+    f.status.status == AnyStatus::Pikachu(P::SpecialHiEnd) && f.pikachu.zip_flag1 == 0
 }
 pub fn apply_ground_physics(f: &mut Fighter) -> bool {
     match f.status.status {

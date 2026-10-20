@@ -37,6 +37,24 @@ const AIR_SPECIAL_TICK: u64 = 40;
 const DIAGONAL_X: i8 = -45;
 const DIAGONAL_Y: i8 = 70;
 
+/// `nessjibaku`'s route (RE-503): run right from the jab's end until Ness
+/// brakes under Dream Land's right platform (x 1393; the left one holds
+/// the dummy, which PK Thunder's head would hit), jump onto it, Up+B on
+/// it; steer down-right from [`JIBAKU_STEER`], left from
+/// [`JIBAKU_STEER_LEFT`].
+const JIBAKU_RUN: u64 = 30;
+const JIBAKU_RUN_END: u64 = 57;
+const JIBAKU_JUMP_TICK: u64 = 80;
+const JIBAKU_B_TICK: u64 = 140;
+const JIBAKU_STEER: u64 = 170;
+const JIBAKU_STEER_LEFT: u64 = 191;
+/// `kirbystoneslope`'s Down+B, Kirby standing on Kongo Jungle's left slope
+/// (RE-503).
+const STONE_SLOPE_B_TICK: u64 = 120;
+/// `captainkickroll`'s Down+B, Captain Falcon facing left on Peach's
+/// Castle's roof (RE-503).
+const KICK_ROLL_B_TICK: u64 = 60;
+
 /// The delay of the jump route the dummy scenes follow. The route was
 /// found for a fighter standing free from tick 13; the jab runs to tick 25
 /// (Mario, Kirby) or 31 (Yoshi) and swallowed its first jump (RE-516).
@@ -113,6 +131,9 @@ macro_rules! scripted_scene {
             | $crate::GameScene::Shadows
             | $crate::GameScene::FoxFire
             | $crate::GameScene::PikachuQuick
+            | $crate::GameScene::NessJibaku
+            | $crate::GameScene::KirbyStoneSlope
+            | $crate::GameScene::CaptainKickRoll
     };
 }
 
@@ -165,6 +186,17 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // Up+B at tick 45 with the stick up and left; the zip
         // (`SpecialAirHi`) runs ticks 65 to 69 and is 3 frames in here.
         PikachuQuick => 68,
+        // Up+B on the right platform at 140; PK Thunder loops round under
+        // the platform and back up into Ness: PK Thunder 2 off a
+        // pass-through floor is `SpecialAirHiJibaku`, up and left.
+        NessJibaku => 227,
+        // Down+B at 120 on the slope; Stone slides down it from tick ~125,
+        // TopN rolled 19.7 degrees, until the bowl's floor near 160.
+        KirbyStoneSlope => STONE_SLOPE_B_TICK + 20,
+        // Down+B at 60 facing left; the kick runs up the roof's left slope
+        // and leaves its end near tick 89: `SpecialLwAir` with the slope's
+        // 14.7-degree roll until near 120.
+        CaptainKickRoll => KICK_ROLL_B_TICK + 40,
         // Up+B at tick 45; Egg Throw makes the egg on frame 4 and throws it
         // on frame 23, and it has flown some 16 frames here.
         Yoshi => 85,
@@ -324,6 +356,21 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
             90 => button::B,
             _ => 0,
         },
+        // `nessjibaku`: run right under the right platform, jump onto it,
+        // then Up+B there.
+        NessJibaku => match tick {
+            4 | 8 => button::A,
+            JIBAKU_JUMP_TICK => button::C_UP,
+            JIBAKU_B_TICK => button::B,
+            _ => 0,
+        },
+        // `kirbystoneslope`, `captainkickroll`: Down+B once standing.
+        KirbyStoneSlope | CaptainKickRoll => match tick {
+            4 | 8 => button::A,
+            STONE_SLOPE_B_TICK if scene == KirbyStoneSlope => button::B,
+            KICK_ROLL_B_TICK if scene == CaptainKickRoll => button::B,
+            _ => 0,
+        },
         PikachuAir => match tick {
             4 | 8 => button::A,
             45 => button::C_UP,
@@ -381,6 +428,39 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
         FoxFire | PikachuQuick => {
             if tick >= SPECIAL_TICK {
                 DIAGONAL_X
+            } else {
+                0
+            }
+        }
+        // The run right, then the steering: `wpNessPKThunderHeadProcUpdate`
+        // turns the head 6 degrees a frame toward the stick, down-right
+        // (clockwise from straight up) round under the platform, then
+        // left, back up into Ness from below.
+        NessJibaku => {
+            if (JIBAKU_RUN..JIBAKU_RUN_END).contains(&tick) {
+                80
+            } else if (JIBAKU_STEER..JIBAKU_STEER_LEFT).contains(&tick) {
+                57
+            } else if tick >= JIBAKU_STEER_LEFT {
+                -80
+            } else {
+                0
+            }
+        }
+        // Kirby spawns facing right on the flat left of the bowl; the dash
+        // stops him on its left slope.
+        KirbyStoneSlope => {
+            if (30..42).contains(&tick) {
+                80
+            } else {
+                0
+            }
+        }
+        // Captain Falcon spawns facing right on the roof; a two-tick tap
+        // turns him left.
+        CaptainKickRoll => {
+            if (30..32).contains(&tick) {
+                -80
             } else {
                 0
             }
@@ -461,6 +541,10 @@ fn stick_y(scene: GameScene, tick: u64) -> i8 {
         40
     } else if matches!(scene, FoxFire | PikachuQuick) && tick >= SPECIAL_TICK {
         DIAGONAL_Y
+    } else if scene == NessJibaku && tick == JIBAKU_B_TICK {
+        80
+    } else if scene == NessJibaku && (JIBAKU_STEER..JIBAKU_STEER_LEFT).contains(&tick) {
+        -57
     } else if (scene == Superjump && tick == 150)
         || (matches!(scene, LinkSpin | Yoshi | Kirby | Purin | NessThunder) && tick == SPECIAL_TICK)
     {
@@ -468,6 +552,8 @@ fn stick_y(scene: GameScene, tick: u64) -> i8 {
     } else if (matches!(scene, SamusBomb | YoshiBomb | CaptainKick | LinkBomb)
         && tick == SPECIAL_TICK)
         || (scene == PikachuThunder && tick == 90)
+        || (scene == KirbyStoneSlope && tick == STONE_SLOPE_B_TICK)
+        || (scene == CaptainKickRoll && tick == KICK_ROLL_B_TICK)
         || (scene == NessMagnet && tick >= SPECIAL_TICK)
     {
         // The special-low check's downward stick with the B edge.

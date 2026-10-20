@@ -1736,7 +1736,9 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
         ),
         AnyStatus::Pikachu(s) => matches!(
             s,
-            PikachuStatus::SpecialAirHi | PikachuStatus::SpecialAirHiEnd
+            PikachuStatus::SpecialAirHiStart
+                | PikachuStatus::SpecialAirHi
+                | PikachuStatus::SpecialAirHiEnd
         ),
         AnyStatus::Captain(s) => {
             matches!(s, CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi)

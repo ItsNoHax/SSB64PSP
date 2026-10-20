@@ -7,7 +7,8 @@
 //! `donkey` this way). The scripts live in `ssb_capture::script`, shared
 //! with `psp-game`, so this test reads the very schedule the capture runs.
 //!
-//! The replay is the fighter alone on Dream Land's floors: no dummy, items,
+//! The replay is the fighter alone on Dream Land's floors (the slope
+//! scenes': their stage's, [`scene_stage`]): no dummy, items,
 //! camera or skeleton (TransN root motion is not applied, so statuses that
 //! travel on their animation, like Final Cutter, are only checked for being
 //! entered). Scenes that need the dummy or items stay out of it: `kirbyhat`
@@ -29,7 +30,19 @@ use posed::{exchange, Posed};
 
 #[path = "common/dream_land.rs"]
 mod dream_land;
-use dream_land::{dream_land, dream_land_map, training_fighter};
+use dream_land::{dream_land, dream_land_map, stage_floors, training_fighter};
+
+/// The pack stage a scene's Training runs on (`capture_stage_gkind` in
+/// `psp-game`): Dream Land but for the slope scenes.
+fn scene_stage(scene: GameScene) -> u32 {
+    match scene {
+        // Kongo Jungle (`gkind::JUNGLE`).
+        GameScene::KirbyStoneSlope => 6,
+        // Peach's Castle (`gkind::CASTLE`).
+        GameScene::CaptainKickRoll => 4,
+        _ => 0,
+    }
+}
 
 /// The first tick the fighter sees input: Training's first battle frame
 /// (the menu's A at tick 8 has confirmed the mode on its own frame).
@@ -115,6 +128,19 @@ fn intents() -> Vec<Intent> {
         intent(S::Donkey, K::Donkey, &["SpecialN"], 30, &["SpecialN"]),
         intent(S::Ness, K::Ness, &["SpecialN"], 45, &[]),
         intent(S::NessThunder, K::Ness, &["SpecialHi"], 45, &["SpecialHi"]),
+        // No PK Thunder here, so no jibaku: the golden's capture log has
+        // `SpecialAirHiJibaku` at 227.
+        intent(S::NessJibaku, K::Ness, &["SpecialHi"], 140, &["SpecialHi"]),
+        intent(
+            S::KirbyStoneSlope,
+            K::Kirby,
+            &["SpecialLwHold"],
+            120,
+            &["SpecialLwHold"],
+        ),
+        // The kick runs on its TransN, not applied here: the golden's
+        // capture log has `SpecialLwAir` at 100.
+        intent(S::CaptainKickRoll, K::Captain, &["SpecialLw"], 60, &[]),
         intent(S::NessMagnet, K::Ness, &["SpecialLw"], 45, &["SpecialLw"]),
         intent(S::LinkBomb, K::Link, &["SpecialLw"], 45, &[]),
         intent(S::Grab, K::Mario, &["Catch"], 125, &["Catch"]),
@@ -143,7 +169,7 @@ fn replay(
     scene: GameScene,
     kind: FighterKind,
 ) -> (Vec<(u64, String)>, String, f32) {
-    let (stage, segments) = dream_land(pack);
+    let (stage, segments) = stage_floors(pack, scene_stage(scene));
     let floors = || segments.iter().copied();
     let mut f = training_fighter(pack, &stage, kind, 0, &segments);
 

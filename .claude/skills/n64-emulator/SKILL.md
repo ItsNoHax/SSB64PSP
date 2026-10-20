@@ -28,8 +28,16 @@ tools/run-n64-headless.sh --route "60:start;30:;10:a" \
 |---|---|
 | `--route` | `;`-separated `hold:button+button` steps for P1; empty list = idle `hold` frames |
 | Buttons | `a,b,start,z,l,r,dpad_u,dpad_d,dpad_l,dpad_r,c_u,c_d,c_l,c_r` |
+| Stick | `x=N`, `y=N` tokens in a step: raw signed N64 units (-128..127), same units as `ssb_capture::script` pads; e.g. `30:b+x=-45+y=70` |
 | Screenshots | `~/.var/app/net.sourceforge.m64py.M64Py/data/mupen64plus/screenshot/`; `--data-dir` overrides |
 | Driver log | `[driver] ...` on stderr: plugin attach, screenshot paths; read to check a step landed |
+
+### Per-frame fighter trace
+
+- `tools/n64-headless/pitch_trace.py ROM OUT WORKDIR WINDOWS LAST`: P1 pad windows `start:len:btn+x=N+y=N`, one row per frame of `--scene` (default 54, Training)
+- Row per player: status id, `lr`, `ga`, `vel_air` x/y, joint `--joint` (default 4) rotate and scale, f32 bits then decimals
+- Golden tick = N64 row + 4 on the Training warp ROMs: the golden's A at tick 8 jabs on its first fighter frame; the N64 script presses A at 4 (RE-503)
+- Warp ROMs (Training on Peach's Castle): `~/ppsspp-test/re473/warp/`, `~/ppsspp-test/re474/warp/`; spawn `lr` differs from Dream Land
 
 ### Audio dump
 
@@ -48,7 +56,9 @@ tools/run-n64-headless.sh --route "60:start;30:;10:a" \
 ### RDRAM access and custom steps
 
 - Import `Mupen64PlusHarness` from `tools/n64-headless/n64_driver.py`
-- Methods: `read_rdram`, `read_u32`, `read_f32`, `write_rdram`, `run_steps`
+- Methods: `read_rdram`, `read_u32`, `read_f32`, `read_be`, `write_rdram`, `write_u8`, `run_steps`
+- RDRAM holds host-order (little-endian) 32-bit words: `read_rdram` bytes are word-swapped; byte `i` lives at `addr ^ 3`; `read_u32`/`read_f32` (aligned words) and `read_be` undo it
+- Screenshots take a frame: never call one inside a per-frame trace loop
 - Run: `flatpak run --command=python3 net.sourceforge.m64py.M64Py <script.py>`
 
 ## Route landmarks (RE-151, RE-216)

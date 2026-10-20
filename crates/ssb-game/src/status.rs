@@ -2938,13 +2938,18 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
     if ssb_engine::math::sy_vector_angle_diff_3d(floor_angle, f.physics.vel_air)
         > ssb_engine::math::f_cst_dtor32(110.0)
     {
-        f.land(floor_y);
+        // `mpProcessSetLandingFloor` and `mpCommonSetFighterLandingParams`
+        // only: `ftFoxSpecialAirHiBoundSetStatus` keeps `ga` airborne, with
+        // its velocity and jumps (`ftfoxspecialhi.c:459`).
+        f.pos.y = floor_y;
+        f.landing_public();
         set_any_status(
             f,
             AnyStatus::Fox(FoxStatus::SpecialAirHiBound),
             0.0,
             StatusTiming::frames(20.0),
         );
+        f.motion_script.flags[1] = 0;
     } else {
         f.land(floor_y);
         set_fox_special_hi_end(f);
@@ -2973,9 +2978,34 @@ pub fn apply_fox_special_hi_air_physics(f: &mut Fighter) {
                 f.physics.vel_air.y -= 3.035_714_4 * sin;
             }
         }
-        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd | FoxStatus::SpecialAirHiBound) => {
-            physics::apply_gravity_default(&mut f.physics, &f.attributes);
-            physics::apply_air_friction(&mut f.physics, &f.attributes);
+        // `ftPhysicsApplyAirVelDrift` (`ftfoxstatus.h:304`): the stick
+        // drifts the fall, with no fast-fall check of its own (RE-503
+        // measured the drift on the N64).
+        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd) => {
+            if f.physics.is_fastfall {
+                physics::apply_fast_fall(&mut f.physics, &f.attributes);
+            } else {
+                physics::apply_gravity_default(&mut f.physics, &f.attributes);
+            }
+            physics::apply_air_drift(&mut f.physics, &f.attributes, f.input.stick_x);
+        }
+        // `ftFoxSpecialAirHiBoundProcPhysics` (`ftfoxspecialhi.c:422`), its
+        // airborne half: `ftPhysicsApplyAirVelTransNYZ`, then the air
+        // friction, with no gravity. The grounded half is the default
+        // `ftPhysicsApplyGroundVelFriction`.
+        AnyStatus::Fox(FoxStatus::SpecialAirHiBound) => {
+            let mut transn = f.physics;
+            physics::apply_air_vel_transn_all(
+                &mut transn,
+                f.root_motion,
+                f.facing.sign(),
+                f.attributes.size,
+            );
+            f.physics.vel_air.y = transn.vel_air.y;
+            f.physics.vel_air.z = transn.vel_air.z;
+            if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x) {
+                physics::apply_air_friction(&mut f.physics, &f.attributes);
+            }
         }
         _ => {}
     }
@@ -3002,16 +3032,15 @@ pub fn switch_fox_special_hi_air(f: &mut Fighter) {
             (FoxStatus::SpecialAirHiHold, StatusTiming::unknown())
         }
         AnyStatus::Fox(FoxStatus::SpecialHi) => (FoxStatus::SpecialAirHi, StatusTiming::unknown()),
-        AnyStatus::Fox(FoxStatus::SpecialHiEnd) => {
-            (FoxStatus::SpecialAirHiEnd, StatusTiming::frames(20.0))
-        }
         _ => return,
     };
+    // `mpCommonSetFighterAir` first in each switch (`ftfoxspecialhi.c:59`,
+    // `:105`, `ftFoxSpecialAirHiSetStatus` `:271`).
+    f.set_fighter_air();
     set_any_status(f, AnyStatus::Fox(status), f.status.anim_frame, timing);
-    if matches!(
-        status,
-        FoxStatus::SpecialAirHiStart | FoxStatus::SpecialAirHiHold
-    ) {
+    if status == FoxStatus::SpecialAirHi {
+        f.physics.jumps_used = f.attributes.jumps_max;
+    } else {
         physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     }
 }
@@ -3723,7 +3752,10 @@ pub fn apply_mario_special_lw_air_physics(f: &mut Fighter) {
 pub fn set_landing_fall_special(f: &mut Fighter, is_allow_interrupt: bool, anim_speed: f32) {
     let timing = match crate::motion::anim_length(f.kind, Status::LandingFallSpecial.into()) {
         Some(len) => StatusTiming::at_speed(len, anim_speed),
-        None => StatusTiming::unknown(),
+        None => StatusTiming {
+            anim_speed,
+            ..StatusTiming::unknown()
+        },
     };
     set_status(f, Status::LandingFallSpecial, 0.0, timing);
     f.fall_special.landing_allow_interrupt = is_allow_interrupt;
@@ -4186,9 +4218,9 @@ pub fn set_any_status_preserve(
         _ if keeps_situation => {}
         (Situation::Ground, false) => f.become_airborne(),
         (Situation::Air, true) => {
+            // `vel_air` waits for the next ground transfer (RE-503).
             f.situation = Situation::Ground;
             f.physics.vel_ground.x = f.physics.vel_air.x;
-            f.physics.vel_air = ssb_engine::math::Vec3::ZERO;
             f.physics.is_fastfall = false;
             f.samus.charge_recoil = 0;
         }
@@ -4866,15 +4898,19 @@ pub(crate) fn set_landing_air_null(f: &mut Fighter, anim_speed: f32) {
 }
 
 /// The playback rate the fighter's current clip starts at. This is
-/// [`AnyStatus::anim_speed`], except for [`Status::LandingAirNull`], whose
-/// rate is the aerial's landing-lag flag and so lives only in the timing
-/// [`set_landing_air_null`] stored.
+/// [`AnyStatus::anim_speed`], except for [`Status::LandingAirNull`] and
+/// [`Status::LandingFallSpecial`], whose rate is the landing lag and so
+/// lives only in the timing [`set_landing_air_null`] and
+/// [`set_landing_fall_special`] stored.
 pub fn clip_speed(f: &Fighter) -> f32 {
     // `gcSetAnimSpeed` on the fighter mid-status: the Fire Flower's hold
     // (`ftCommonFireFlowerShootProcAccessory`) and the Giant Punch's full
     // charge change the figatree's own rate, which the status clock
     // mirrors (RE-472).
+    // `ftCommonLandingFallSpecialSetStatus` passes the move's landing lag
+    // as the figatree's rate too (RE-503).
     if f.status.status == Status::LandingAirNull
+        || f.status.status == Status::LandingFallSpecial
         || matches!(
             f.status.status,
             AnyStatus::Common(Status::FireFlowerShoot | Status::FireFlowerShootAir)
@@ -6757,10 +6793,21 @@ fn update_extended(f: &mut Fighter) {
                 anim_end_set_wait(f);
             }
         }
-        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd | FoxStatus::SpecialAirHiBound) => {
+        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd) => {
             if f.status.animation_ended() {
                 // `FTFOX_FIREFOX_*`: accelerating, no forced landing.
                 set_fall_special(f, 1.0, true, false, 0.34, true);
+            }
+        }
+        // `ftFoxSpecialAirHiBoundProcUpdate` (`ftfoxspecialhi.c:402`): the
+        // script's flag 1 cuts an airborne bound short; at the end the air
+        // falls specially and the ground waits.
+        AnyStatus::Fox(FoxStatus::SpecialAirHiBound) => {
+            let air = f.situation == Situation::Air;
+            if (f.motion_script.flags[1] != 0 && air) || (f.status.animation_ended() && air) {
+                set_fall_special(f, 1.0, true, false, 0.34, true);
+            } else if f.status.animation_ended() {
+                anim_end_set_wait(f);
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart) => {
@@ -8228,6 +8275,90 @@ mod tests {
         assert_eq!(fox.situation, Situation::Air);
     }
 
+    /// `ftFoxSpecialAirHiBoundSetStatus` runs no `mpCommonSetFighterGround`:
+    /// the floor collision only places Fox on the floor
+    /// (`mpProcessSetLandingFloor`), so he stays airborne with his velocity
+    /// and his spent jumps (`ftfoxspecialhi.c:218`, `:459`).
+    #[test]
+    fn fire_fox_bound_keeps_the_air_and_its_velocity() {
+        let mut fox = Fighter::new(FighterKind::Fox, 0, 3);
+        fox.situation = Situation::Air;
+        fox.status.status = AnyStatus::Fox(FoxStatus::SpecialAirHi);
+        fox.map_contacts_prev.floor = true;
+        fox.physics.jumps_used = fox.attributes.jumps_max;
+        fox.physics.vel_air = Vec3::new(-20.0, -100.0, 0.0);
+        fox.pos.y = 3.0;
+        fox.motion_script.flags[1] = 1;
+        assert!(fox_fire_fox_floor_contact(
+            &mut fox,
+            Vec2::new(0.0, 1.0),
+            0.0
+        ));
+        assert_eq!(
+            fox.status.status,
+            AnyStatus::Fox(FoxStatus::SpecialAirHiBound)
+        );
+        assert_eq!(fox.situation, Situation::Air);
+        assert_eq!(fox.physics.vel_air, Vec3::new(-20.0, -100.0, 0.0));
+        // Not reset by a landing; the bound's script adds one more at frame
+        // 0 (`nFTMotionEventSetAirJumpAdd`, `ftmain.c:400`).
+        assert!(fox.physics.jumps_used >= fox.attributes.jumps_max);
+        assert_eq!(fox.pos.y, 0.0);
+        assert_eq!(fox.motion_script.flags[1], 0);
+    }
+
+    /// `ftFoxSpecialAirHiBoundProcPhysics` (`ftfoxspecialhi.c:422`): in the
+    /// air TransN's Y and Z replace `vel_air`'s, X keeps its own and takes
+    /// the air friction (no gravity); on the ground, plain ground friction.
+    #[test]
+    fn fire_fox_bound_physics_reads_transn_and_air_friction() {
+        let mut fox = Fighter::new(FighterKind::Fox, 0, 3);
+        fox.situation = Situation::Air;
+        fox.status.status = AnyStatus::Fox(FoxStatus::SpecialAirHiBound);
+        fox.facing = Facing::Right;
+        fox.physics.vel_air = Vec3::new(10.0, -100.0, 0.0);
+        fox.set_root_motion(physics::RootMotion {
+            delta: Vec3::new(0.0, 7.0, 0.0),
+            rotate_z: 0.0,
+            translate: Vec3::ZERO,
+        });
+        apply_fox_special_hi_air_physics(&mut fox);
+        let size = fox.attributes.size;
+        assert_eq!(fox.physics.vel_air.y, 7.0 * size);
+        assert_eq!(fox.physics.vel_air.z, 0.0);
+        let mut want = PhysicsState {
+            vel_air: Vec3::new(10.0, 0.0, 0.0),
+            ..PhysicsState::default()
+        };
+        if !physics::check_clamp_air_vel_x_dec(&mut want, fox.attributes.air_speed_max_x) {
+            physics::apply_air_friction(&mut want, &fox.attributes);
+        }
+        assert_eq!(fox.physics.vel_air.x, want.vel_air.x);
+    }
+
+    /// `ftFoxSpecialAirHiBoundProcUpdate` (`ftfoxspecialhi.c:402`): flag 1
+    /// in the air ends in FallSpecial at once; at the animation's end the
+    /// air falls specially and the ground waits.
+    #[test]
+    fn fire_fox_bound_update_follows_flag1_and_situation() {
+        let bound = |situation, flag1, frame| {
+            let mut fox = Fighter::new(FighterKind::Fox, 0, 3);
+            fox.situation = situation;
+            fox.status.status = AnyStatus::Fox(FoxStatus::SpecialAirHiBound);
+            fox.status.timing = StatusTiming::frames(20.0);
+            fox.status.clock = frame;
+            fox.motion_script.flags[1] = flag1;
+            update(&mut fox);
+            fox.status.status
+        };
+        let bound_status = AnyStatus::Fox(FoxStatus::SpecialAirHiBound);
+        assert_eq!(bound(Situation::Air, 1, 3.0), Status::FallSpecial);
+        assert_eq!(bound(Situation::Ground, 1, 3.0), bound_status);
+        assert_eq!(bound(Situation::Air, 0, 3.0), bound_status);
+        assert_eq!(bound(Situation::Air, 0, 20.0), Status::FallSpecial);
+        assert_eq!(bound(Situation::Ground, 0, 20.0), Status::Wait);
+    }
+
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn fox_rapid_jab_counts_press_and_release_then_exits_after_idle_cycle() {
@@ -9036,7 +9167,10 @@ mod tests {
         f.physics.vel_air.y = -50.0; // past FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
         set_landing_or_landing_air(&mut f);
         assert_eq!(f.status.status, Status::LandingFallSpecial);
-        // The landing figatree plays at the landing lag's speed (RE-468).
+        // The landing figatree plays at the landing lag's speed (RE-468):
+        // `ftMainSetStatus`'s `anim_speed` is the clip's own rate (RE-503:
+        // the N64's joint 4 eases back at 0.34 after a Fire Fox bound).
+        assert_eq!(clip_speed(&f), 0.5);
         let len = crate::motion::anim_length(f.kind, Status::LandingFallSpecial.into()).unwrap();
         for _ in 0..(len / 0.5) as usize - 1 {
             update(&mut f);

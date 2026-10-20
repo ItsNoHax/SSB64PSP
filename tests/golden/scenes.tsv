@@ -243,3 +243,8 @@ f1-vs-players-held	psp-game	vsplayers@44	pass	RE-411
 f1-training-select-held	psp-game	trainingselectpicked@30	pass	RE-411
 f1-training-fox-fire	psp-game	foxfire	pass	RE-503
 f1-training-pikachu-quick	psp-game	pikachuquick	pass	RE-503
+f1-training-ness-jibaku	psp-game	nessjibaku	pass	RE-503
+f1-vs-four-fly-roll	psp-game	vs4@2530	pass	RE-503
+f1-training-twister-spin	psp-game	trainingtwister@1760	pass	RE-503 RE-507
+f1-training-kirby-stone-slope	psp-game	kirbystoneslope	pass	RE-503
+f1-training-captain-kick-roll	psp-game	captainkickroll	pass	RE-503

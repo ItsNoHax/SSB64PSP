@@ -757,10 +757,24 @@ pub enum GameScene {
     /// the left, his model pitched along it and stretched
     /// (`ftPikachuSpecialHiUpdateModelPitchScale`, RE-503).
     PikachuQuick,
+    /// `nessjibaku`: Ness in Training on Dream Land's right platform, PK
+    /// Thunder steered round under it and back up into him: PK Thunder 2
+    /// (`SpecialAirHiJibaku`), his model pitched along the launch
+    /// (`ftNessSpecialHiUpdateModelPitch`, RE-503).
+    NessJibaku,
+    /// `kirbystoneslope`: Kirby in Training on Kongo Jungle, Stone slid
+    /// down the bowl's left slope, his TopN rolled to the floor
+    /// (`ftKirbySpecialLwGetGroundAxisYaw`, RE-503).
+    KirbyStoneSlope,
+    /// `captainkickroll`: Captain Falcon in Training on Peach's Castle, the
+    /// Falcon Kick run up the roof's left slope and off its end: TopN keeps
+    /// the floor's roll in `SpecialLwAir` (`ftCaptainSpecialLwAirSetStatus`,
+    /// RE-503).
+    CaptainKickRoll,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 189] = [
+    pub const ALL: [GameScene; 192] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -950,6 +964,9 @@ impl GameScene {
         GameScene::VsResultsLink,
         GameScene::FoxFire,
         GameScene::PikachuQuick,
+        GameScene::NessJibaku,
+        GameScene::KirbyStoneSlope,
+        GameScene::CaptainKickRoll,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1144,6 +1161,9 @@ impl GameScene {
             GameScene::VsResultsLink => "vsresultslink",
             GameScene::FoxFire => "foxfire",
             GameScene::PikachuQuick => "pikachuquick",
+            GameScene::NessJibaku => "nessjibaku",
+            GameScene::KirbyStoneSlope => "kirbystoneslope",
+            GameScene::CaptainKickRoll => "captainkickroll",
         }
     }
 

@@ -40,6 +40,10 @@ crates/ssb-rom/src/sprite.rs	SELECT_COMMON	link-time labels: llMNSelectCommonFil
 crates/ssb-rom/src/transition.rs	EXPECTED_FILES	test fixture: the llLBTransition*FileID labels (reloc_data_symbols.us.txt) the generated dLBTransitionDescs is checked against
 crates/ssb-rom/tests/backup.rs	DEFAULT_BACKUP_ROM	layout: the symbol's address and its segment's ROM and VRAM start, to find the array in the ROM
 crates/ssb-rom/tests/explain_movement.rs	N64_SEEDS	test fixture: N64 measurements (RE-468, RE-472)
+crates/ssb-rom/tests/special_hi_pitch.rs	FOX	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_hi_pitch.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_hi_pitch.rs	BOUND	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_hi_pitch.rs	QUICK_END	test fixture: N64 measurements or expected ROM values
 crates/ssb-engine/src/audio/fgm.rs	ZERO	port constant: the empty FGM player
 crates/ssb-engine/src/audio/golden.rs	FGMS	test fixture: the golden audio scenario's FGM calls
 crates/ssb-engine/src/audio/n64ref.rs	B_MENU	test fixture: N64 audio captures' call timelines (RE-479)

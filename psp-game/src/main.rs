@@ -1297,6 +1297,7 @@ fn log_capture_state(
                 | GameScene::Ness
                 | GameScene::NessThunder
                 | GameScene::NessMagnet
+                | GameScene::NessJibaku
                 | GameScene::LinkBomb
         )
     ) {
@@ -2127,10 +2128,12 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Yoshi | GameScene::YoshiBomb | GameScene::YoshiEgg | GameScene::YoshiShield | GameScene::YoshiRollF | GameScene::YoshiRollB | GameScene::YoshiShieldBreak) => {
             ssb_game::fighter::FighterKind::Yoshi
         }
-        Some(GameScene::Captain | GameScene::CaptainKick) => {
+        Some(GameScene::Captain | GameScene::CaptainKick | GameScene::CaptainKickRoll) => {
             ssb_game::fighter::FighterKind::Captain
         }
-        Some(GameScene::Kirby | GameScene::KirbyHat | GameScene::KirbyJab) => {
+        Some(
+            GameScene::Kirby | GameScene::KirbyHat | GameScene::KirbyJab | GameScene::KirbyStoneSlope,
+        ) => {
             ssb_game::fighter::FighterKind::Kirby
         }
         Some(
@@ -2143,7 +2146,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Purin | GameScene::PurinBow) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::PikachuHat) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
-        Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet) => {
+        Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet | GameScene::NessJibaku) => {
             ssb_game::fighter::FighterKind::Ness
         }
         _ => ssb_game::fighter::FighterKind::Mario,
@@ -2443,7 +2446,9 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
     match scene {
         Some(GameScene::VsSector) => ssb_game::stage_select::gkind::SECTOR,
         Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
-        Some(GameScene::TrainingJungle) => ssb_game::stage_select::gkind::JUNGLE,
+        Some(GameScene::TrainingJungle | GameScene::KirbyStoneSlope) => {
+            ssb_game::stage_select::gkind::JUNGLE
+        }
         Some(GameScene::TrainingZebes) => ssb_game::stage_select::gkind::ZEBES,
         Some(
             GameScene::TrainingSaffron | GameScene::TrainingChansey
@@ -2459,7 +2464,7 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingSector | GameScene::TrainingArwing) => {
             ssb_game::stage_select::gkind::SECTOR
         }
-        Some(GameScene::TrainingCastle | GameScene::TrainingBumper) => {
+        Some(GameScene::TrainingCastle | GameScene::TrainingBumper | GameScene::CaptainKickRoll) => {
             ssb_game::stage_select::gkind::CASTLE
         }
         Some(GameScene::TrainingHyrule | GameScene::TrainingTwister) => {

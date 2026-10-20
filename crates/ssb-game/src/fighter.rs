@@ -886,7 +886,8 @@ impl Fighter {
         self.physics.jumps_used = 1;
     }
 
-    /// Lands, clearing air state.
+    /// Lands (`mpCommonSetFighterGround` @ `mpcommon.c:882`): `vel_air`
+    /// keeps the landing frame's step until the next ground transfer.
     ///
     /// The air-to-ground velocity transfer is guarded on actually being
     /// airborne, mirroring [`Fighter::become_airborne`]. Without the guard a
@@ -899,7 +900,6 @@ impl Fighter {
     pub fn land(&mut self, floor_y: f32) {
         if self.situation == Situation::Air {
             self.physics.vel_ground.x = self.physics.vel_air.x;
-            self.physics.vel_air = Vec3::ZERO;
             self.physics.is_fastfall = false;
         }
         self.situation = Situation::Ground;
@@ -915,7 +915,7 @@ impl Fighter {
     /// `mpCommonSetFighterLandingParams`'s crowd half, on landing and on a
     /// ledge catch: a fighter launched hard who lands or grabs near a side
     /// of the stage makes the crowd gasp.
-    fn landing_public(&mut self) {
+    pub(crate) fn landing_public(&mut self) {
         if self.public_knockback != 0.0 {
             if self.public_knockback >= 100.0 {
                 if let Some(b) = self.dead.bounds {
@@ -1843,9 +1843,10 @@ impl Fighter {
                 crate::status::FoxStatus::SpecialHiStart
                     | crate::status::FoxStatus::SpecialHiHold
                     | crate::status::FoxStatus::SpecialHi
-                    | crate::status::FoxStatus::SpecialHiEnd
             )
         ) {
+            // `SpecialHiEnd` and a grounded `SpecialAirHiBound` fall
+            // (`mpCommonSetFighterFallOnGroundBreak`, `ftfoxstatus.h:286`).
             crate::status::switch_fox_special_hi_air(self);
         } else if matches!(
             self.status.status,
@@ -1939,7 +1940,11 @@ impl Fighter {
             | crate::status::AnyStatus::Ness(_)
             | crate::status::AnyStatus::Boss(_) => crate::status::Status::Wait,
         };
-        let no_physics = crate::status::is_ottotto(self.status.status);
+        // No `proc_physics` this frame: TopN steps by the `vel_air` left
+        // (the teeters; Quick Attack's grounded end before motion flag 1,
+        // `ftPikachuSpecialHiEndProcPhysics`).
+        let no_physics =
+            crate::status::is_ottotto(self.status.status) || crate::pikachu::ground_end_holds(self);
         if crate::dokan::apply_ground_physics(self)
             || crate::item_use::apply_ground_physics(self)
             || crate::captain::apply_ground_physics(self)
@@ -2112,6 +2117,14 @@ impl Fighter {
         match moved.floor {
             Some(f) => {
                 self.floor = Some(f);
+                // `ftFoxSpecialHiProcMap` (`ftfoxspecialhi.c:193`): still on
+                // the floor, the travel angle follows its slope.
+                if self.status.status
+                    == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialHi)
+                {
+                    self.fox_special_hi.angle =
+                        ssb_engine::math::sy_arc_tan2(-f.normal.x * self.facing.sign(), f.normal.y);
+                }
                 crate::status::ottotto_proc_map(self, &surfaces);
             }
             // Walked off the end of the line. `mpCommonSetFighterFallOnGroundBreak`
@@ -2370,6 +2383,14 @@ impl Fighter {
                 self.floor = Some(f);
                 self.ignore_line = None;
                 if crate::status::fox_fire_fox_floor_contact(self, f.normal, moved.pos.y) {
+                    return;
+                }
+                // `ftFoxSpecialAirHiBoundProcMap` (`ftfoxspecialhi.c:442`):
+                // `mpCommonSetFighterGround`, and the bound plays on.
+                if self.status.status
+                    == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialAirHiBound)
+                {
+                    self.land(moved.pos.y);
                     return;
                 }
                 if matches!(
@@ -2693,7 +2714,9 @@ mod tests {
         assert!(f.is_grounded());
         assert_eq!(f.pos.y, 10.0);
         assert_eq!(f.physics.vel_ground.x, 1.2);
-        assert_eq!(f.physics.vel_air, Vec3::ZERO);
+        // `mpCommonSetFighterGround` leaves `vel_air` to the next ground
+        // transfer (RE-503: the N64 keeps -48.09 on Fox's landing frame).
+        assert_eq!(f.physics.vel_air, Vec3::new(1.2, -3.0, 0.0));
         assert_eq!(f.physics.jumps_used, 0);
         assert!(!f.physics.is_fastfall);
     }
