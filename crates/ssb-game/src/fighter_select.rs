@@ -2,7 +2,7 @@
 //! the hand cursor, the two pucks (the player's and the CPU's), the portrait
 //! grid, the recall, the costume picks and syncs, the ready check and the
 //! scene data it saves. [`layer`] holds its presentation, the spotlights'
-//! flicker and size included; no host draws the spotlight model yet.
+//! flicker and size included; the host draws it from `spotlights()`.
 //!
 //! One [`FighterSelect::tick`] runs the scene's processes in the original
 //! order: `mnPlayers1PTrainingFuncRun` (the scene GObj's `func_run`), then

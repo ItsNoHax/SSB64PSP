@@ -313,11 +313,18 @@ fn the_spotlight_flickers_under_the_held_fighter() {
     assert_eq!(s.view.slots[MAN].spotlight.scale, 2.0);
     idle(&mut s);
     assert!(!s.view.slots[MAN].spotlight.shown);
+    assert_eq!(s.spotlights(), [None; 4]);
     idle(&mut s);
     assert!(s.view.slots[MAN].spotlight.shown);
     assert!(!s.view.slots[COM].spotlight.shown);
+    let shown = Some(crate::players_vs::layer::SpotlightDraw {
+        translate: [-830.0, -870.0, 0.0],
+        scale: 2.0,
+    });
+    assert_eq!(s.spotlights(), [shown, None, None, None]);
     tap(&mut s, N64Buttons::A);
     assert!(!s.view.slots[MAN].spotlight.shown);
+    assert_eq!(s.spotlights(), [None; 4]);
     assert_eq!(spotlight_translate(MAN), [-830.0, -870.0, 0.0]);
     assert_eq!(spotlight_translate(COM), [830.0, -870.0, 0.0]);
 }

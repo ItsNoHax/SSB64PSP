@@ -26,8 +26,8 @@
 use crate::d_arrays as d;
 use crate::fighter::FighterKind;
 use crate::players_vs::layer::{
-    self as vs, common, piece, rom, Draw, Fighter, Flash, Piece, Spotlight, FILE_EMBLEMS,
-    FILE_GAME_MODES, FILE_PLAYERS_COMMON, FLASH_LENGTH,
+    self as vs, common, piece, rom, Draw, Fighter, Flash, Piece, Spotlight, SpotlightDraw,
+    FILE_EMBLEMS, FILE_GAME_MODES, FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::players_vs::DrawKey;
 
@@ -311,6 +311,18 @@ impl FighterSelect {
     pub(super) fn view_tick(&mut self) {
         let ready = self.is_ready();
         self.view.ready_banner = vs::step_ready(&mut self.view.ready_blink, ready);
+    }
+
+    /// The player's and the CPU's spotlights (`[MAN, COM]`), each `Some`
+    /// while shown; the source's other two never show (see
+    /// `view_tick_before_adjust`).
+    pub fn spotlights(&self) -> [Option<SpotlightDraw>; 4] {
+        let drawn = |slot: usize| {
+            self.view.slots[slot]
+                .spotlight
+                .drawn(spotlight_translate(slot))
+        };
+        [drawn(MAN), drawn(COM), None, None]
     }
 
     /// What draws, back to front.

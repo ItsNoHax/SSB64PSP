@@ -204,6 +204,31 @@ fn luigi_s_own_demo_rows_skip_his_translate_scales() {
     assert!(!DemoStatus::Lose.skips_translate_scales(FighterKind::Luigi));
 }
 
+/// `gcRunAll` runs every `func_run` (here `mnVSResultsFuncRun`, which makes
+/// the fighters) before the process queue, so the fighters' priority-5
+/// `scSubsysFighterProcUpdate` runs in their creation tic too.
+#[test]
+fn the_fighter_process_runs_from_the_creation_tic() {
+    let mut r = results(Kind::StockRoyal, &[1, 2], Some(0));
+    for (tic, run) in [
+        (0, false),
+        (119, false),
+        (120, true),
+        (121, true),
+        (400, true),
+    ] {
+        r.total_tics = tic;
+        assert_eq!(r.fighters_run(), run, "tic {tic}");
+        assert_eq!(r.fighters_due(), tic == 120, "tic {tic}");
+    }
+    // No contest makes them on its first tic.
+    r.init_fighters_all_tic = 1;
+    r.total_tics = 0;
+    assert!(!r.fighters_run());
+    r.total_tics = 1;
+    assert!(r.fighters_run() && r.fighters_due());
+}
+
 #[test]
 fn the_fighters_come_at_tic_120_and_fade_in_by_0x16() {
     let mut players = [Player::default(); 4];

@@ -116,8 +116,9 @@ fn make_emblem(
 
 /// One tic of the fighters, after [`Results::tick`]: on
 /// `sMNVSResultsInitFightersAllTic` they are made and their statuses set
-/// (`ftMainSetStatus` plays the clip's first frame at once); on later tics
-/// each plays on (`ftMainProcUpdateMain`). A Win clip holds its last frame
+/// (`ftMainSetStatus` plays the clip's first frame at once); from that tic
+/// on each plays on (`scSubsysFighterProcUpdate`, [`Results::fighters_run`]:
+/// the process runs in the creation tic too). A Win clip holds its last frame
 /// and the claps loop, as the clips themselves do.
 #[inline(never)]
 pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [Option<(FighterKind, u8)>; 4]) {
@@ -151,9 +152,12 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
         for (slot, fighter) in f.models.iter_mut().zip(f.scene.fighters) {
             *slot = fighter.map(|fighter| make_model(p, fighter));
         }
-    } else {
+    }
+    if r.fighters_run() {
         // `scSubsysFighterProcUpdate`: the clip, the status script's
-        // events, the colour animation.
+        // events, the colour animation. `gcRunAll` runs the process queue
+        // after every `func_run`, so a fighter made above already updates
+        // in its creation tic.
         for m in f.models.iter_mut().flatten() {
             play(p, m);
             m.demo.tick(m.skeleton.frame());

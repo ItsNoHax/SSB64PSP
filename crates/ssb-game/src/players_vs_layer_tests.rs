@@ -523,13 +523,22 @@ fn the_spotlight_flickers_under_a_held_fighter() {
     assert!(s.view.slots.iter().all(|v| v.spotlight.shown));
     idle(&mut s);
     assert!(s.view.slots.iter().all(|v| !v.spotlight.shown));
+    assert_eq!(s.spotlights(), [None; 4]);
     hover(&mut s, FighterKind::Donkey);
     assert!(s.view.slots[0].spotlight.shown);
     assert_eq!(s.view.slots[0].spotlight.scale, 2.0);
+    // What the host draws: slot 0's, at its translate and Donkey's size.
+    let shown = Some(SpotlightDraw {
+        translate: [-1250.0, -850.0, 0.0],
+        scale: 2.0,
+    });
+    assert_eq!(s.spotlights(), [shown, None, None, None]);
     idle(&mut s);
     assert!(!s.view.slots[0].spotlight.shown);
+    assert_eq!(s.spotlights(), [None; 4]);
     idle(&mut s);
     assert!(s.view.slots[0].spotlight.shown);
+    assert_eq!(s.spotlights(), [shown, None, None, None]);
     hover(&mut s, FighterKind::Fox);
     assert_eq!(s.view.slots[0].spotlight.scale, 1.5);
     tap(&mut s, N64Buttons::A);
@@ -538,6 +547,7 @@ fn the_spotlight_flickers_under_a_held_fighter() {
     idle(&mut s);
     assert!(!s.view.slots[0].spotlight.shown);
     assert!(s.view.slots[1..].iter().all(|v| !v.spotlight.shown));
+    assert_eq!(s.spotlights(), [None; 4]);
     assert_eq!(spotlight_translate(0), [-1250.0, -850.0, 0.0]);
     assert_eq!(spotlight_translate(3), [1270.0, -850.0, 0.0]);
 }

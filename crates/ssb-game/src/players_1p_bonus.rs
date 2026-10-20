@@ -4,8 +4,8 @@
 //! the player's puck, the portrait grid, the costume picks, the title that
 //! switches between the two practices, the auto-start once a fighter is
 //! placed, and the scene data it saves. [`layer`] holds its presentation,
-//! with the records and the spotlight's flicker and size; no host draws
-//! the spotlight model yet.
+//! with the records and the spotlight's flicker and size; the host draws
+//! it from `spotlights()`.
 //!
 //! The scene is a copy of `mnPlayers1PGame` (`crate::players_1p`) with the
 //! options removed. What differs:

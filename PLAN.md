@@ -19,7 +19,7 @@
 | Items | 20 normal items, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons |
 | CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447) | N64 trait checks |
 | Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | Rumble |
-| Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | Selects' spotlight; opening differences |
+| Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | opening differences |
 | Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
 | Audio | N64 audio system ported whole, sample-exact ([D-049](docs/decisions/D-049.md), RE-479) | Within the PSP-2000 CPU budget everywhere |
 | PSP performance | 60 FPS under PPSSPP; PSP-2000 figures in STATUS | 60 FPS on a PSP-2000 in every scene |
@@ -128,7 +128,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
 | Demo fighter effects | Campaign rows drop effects (no particle world); Characters page change keeps old particles; Characters/select costume 0; `Skeleton::frame` 0 after a clip ends | RE-528 |
-| Results animation tick | Results fighters' animation may start one tick late vs N64 (N64 steps in the creation update; PSP pose at tick 764 = N64 update 120); check creation tick vs first `play` in `results_screen.rs` | RE-528 |
 | Same-frame makes | Process order modelled; N64 two-fighter confirmation needs a cpufx `mkrom.py` per-port input patch (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
 | Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
@@ -159,7 +158,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Select spotlight draw | No host draws `mn*MakeSpotlight` (file 22 `MNPlayersSpotlight`, DL link 9) in any select; state is ported (`Spotlight`). Needs pack pairing, host model, new golden; acceptance: N64 capture of a held fighter. Also VS select CPU colour animation; locked shadows' noise | RE-411, RE-448 |
+| Select CPU colour animation | VS select CPU colour animation; locked shadows' noise | RE-411, RE-448 |
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
 | Battle-stage lights | Fixed-direction light bake (RE-065 deviation) → display-list lights as movies use; A/B battle rows vs N64, PSP CPU cost | RE-065, RE-529 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |

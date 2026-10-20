@@ -17,7 +17,7 @@ use ssb_engine::math::Vec3;
 use ssb_game::fighter_select::FighterSelect;
 use ssb_game::players_1p::Players1P;
 use ssb_game::players_1p_bonus::Players1PBonus;
-use ssb_game::players_vs::layer::{self, Draw, Piece};
+use ssb_game::players_vs::layer::{self, Draw, Piece, SpotlightDraw};
 use ssb_game::players_vs::PlayersVs;
 use ssb_game::results_scene::Camera;
 use ssb_psp_runtime::gu::Gpu;
@@ -55,11 +55,14 @@ pub struct Model {
     demo: ssb_game::demo_fighter::DemoFighter,
 }
 
-/// The four slots' poses and the scene's particle world
-/// (`efParticleInitAll`, `efManagerInitEffects`).
+/// The four slots' poses, the scene's particle world
+/// (`efParticleInitAll`, `efManagerInitEffects`) and the spotlight model.
 pub struct Fighters {
     models: [Option<Box<Model>>; 4],
     world: crate::demo_world::DemoWorld,
+    /// `llMNPlayersSpotlightDObjDesc`'s packed object, looked up on the
+    /// first tick with a pack (`object_keyed` scans every object).
+    spotlight: Option<Option<ssb_rom::pack::ObjectDesc>>,
 }
 
 /// Boxed so the session holds a pointer.
@@ -68,6 +71,7 @@ pub fn start() -> Box<Fighters> {
     Box::new(Fighters {
         models: [None, None, None, None],
         world: crate::demo_world::DemoWorld::new(),
+        spotlight: None,
     })
 }
 
@@ -121,6 +125,9 @@ fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<Placed>; 4], f: &mut 
     let Some(p) = pack else {
         return;
     };
+    if f.spotlight.is_none() {
+        f.spotlight = Some(ssb_psp_runtime::scene::object_keyed(p, layer::SPOTLIGHT_DESC));
+    }
     f.world.run(p);
     for (port, (model, placed)) in f.models.iter_mut().zip(fighters.iter()).enumerate() {
         let Some((fighter, pos)) = *placed else {
@@ -228,7 +235,8 @@ pub unsafe fn draw_all(
             tint: None,
         })
     });
-    draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, Some(f));
+    let spots = select.spotlights();
+    draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, &spots, Some(f));
 }
 
 /// `dGMColScriptsFighterComPlayer`'s `SetColor1`: white at 0x30, which
@@ -256,7 +264,8 @@ pub unsafe fn draw_training(
         })
     };
     let shown = [shown(MAN), shown(COM), None, None];
-    draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, f);
+    let spots = select.spotlights();
+    draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, &spots, f);
 }
 
 /// The 1P select back to front (`Players1P::visit`), with the backup's
@@ -277,9 +286,10 @@ pub unsafe fn draw_1p(
         tint: None,
     });
     let shown = [shown, None, None, None];
+    let spots = select.spotlights();
     let records = Players1P::records(backup, select.force_puck_fighter_kind());
     select.visit(&records, |d| match d {
-        One::Select(d) => draw_select_piece(gpu, p, draw_state, d, &shown, f),
+        One::Select(d) => draw_select_piece(gpu, p, draw_state, d, &shown, &spots, f),
         One::Fill { rect, color } => meshdraw::fill_rect_n64(rect, color, draw_state),
         One::MirroredT { piece, size } => {
             if let Some((s, d)) = sobj_draw(p, &piece) {
@@ -326,12 +336,13 @@ pub unsafe fn draw_bonus(
         tint: None,
     });
     let shown = [shown, None, None, None];
+    let spots = select.spotlights();
     let records = select.records(backup);
     select.visit(&records, |d| {
         let (piece, size) = match d {
             Draw::Sprite(piece) | Draw::Shadow(piece) => (piece, None),
             Draw::Tiled { piece, size } => (piece, Some(size)),
-            _ => return draw_select_piece(gpu, p, draw_state, d, &shown, f),
+            _ => return draw_select_piece(gpu, p, draw_state, d, &shown, &spots, f),
         };
         match menu.filter(|m| has_sprite(m, &piece)) {
             Some(m) => draw_piece(m, draw_state, &piece, size),
@@ -357,9 +368,10 @@ unsafe fn draw_screen(
     draw_state: &mut meshdraw::DrawState,
     visit: &dyn Fn(&mut dyn FnMut(Draw)),
     shown: &[Option<Shown>; 4],
+    spots: &[Option<SpotlightDraw>; 4],
     f: Option<&Fighters>,
 ) {
-    visit(&mut |d| draw_select_piece(gpu, p, draw_state, d, shown, f));
+    visit(&mut |d| draw_select_piece(gpu, p, draw_state, d, shown, spots, f));
     gpu.set_viewport_pillarboxed();
 }
 
@@ -370,6 +382,7 @@ unsafe fn draw_select_piece(
     draw_state: &mut meshdraw::DrawState,
     d: Draw,
     shown: &[Option<Shown>; 4],
+    spots: &[Option<SpotlightDraw>; 4],
     f: Option<&Fighters>,
 ) {
     match d {
@@ -383,7 +396,7 @@ unsafe fn draw_select_piece(
         Draw::Scissor(rect) => gpu.set_viewport_n64(rect),
         Draw::Fighters => {
             if let Some(f) = f {
-                draw_fighters(gpu, p, draw_state, shown, f);
+                draw_fighters(gpu, p, draw_state, shown, spots, f);
             }
         }
     }
@@ -436,13 +449,15 @@ fn sobj_draw(p: &Pack<'_>, piece: &Piece) -> Option<(ssb_rom::pack::SpriteDesc, 
 /// turned by its `rotate.y`, at `dSCSubsysFighterScales` and in the slot's
 /// costume. A hidden fighter (an NA slot, or one with nothing under its
 /// puck) is not drawn. A tint is `G_RM_FOG_PRIM_A`'s blend towards
-/// `color1` (`ftDisplayMainCalcFogColor`), as in battle.
+/// `color1` (`ftDisplayMainCalcFogColor`), as in battle. Then the shown
+/// spotlights ([`draw_spotlights`]).
 #[inline(never)]
 unsafe fn draw_fighters(
     gpu: &mut Gpu,
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     shown: &[Option<Shown>; 4],
+    spots: &[Option<SpotlightDraw>; 4],
     f: &Fighters,
 ) {
     let cam = &CAMERA;
@@ -495,7 +510,38 @@ unsafe fn draw_fighters(
         }
         draw_state.finish_fighter_light();
     }
+    if let Some(Some(object)) = f.spotlight {
+        draw_spotlights(gpu, p, draw_state, &object, spots);
+    }
     // DL links 10, 15 and 18 of the same camera.
     f.world.draw(p, cam, draw_state);
     gpu.set_viewport_n64(layer::VIEWPORT);
+}
+
+/// The spotlights (`mn*MakeSpotlight`, DL link 9 under the fighter camera,
+/// `gcDrawDObjTreeDLLinksForGObj`), in GObj order. Their one list is on
+/// task head 1 (`list_id 1`), and a camera pass runs every head-0 list
+/// before its head-1 lists (RE-422), so the floor pool draws after the
+/// fighters' head-0 lists whatever their GObj order. Head 1 opens with
+/// `G_RM_AA_ZB_XLU_SURF` and the list sets no render mode: the pool is
+/// depth-compared against the fighters' depth, writes none, and blends.
+/// Deviation: links 10, 15 and 18's head-0 lists (the particles) draw
+/// after it here.
+unsafe fn draw_spotlights(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    object: &ssb_rom::pack::ObjectDesc,
+    spots: &[Option<SpotlightDraw>; 4],
+) {
+    let k = meshdraw::MODEL_SCALE;
+    let posed = crate::results_screen::rooted_rest_pose(p, object);
+    let n = (object.node_count as usize).min(posed.len());
+    for spot in spots.iter().flatten() {
+        let s = spot.scale;
+        // `mn*SpotlightProcUpdate` stores `scale.y` twice: z stays 1.
+        gpu.model_transform_xyz(spot.translate, [0.0; 3], [s * k, s * k, k]);
+        let base = gpu.model_matrix();
+        meshdraw::draw_object_posed(p, object, &base, &posed[..n], None, draw_state, None, None, 0);
+    }
 }

@@ -401,6 +401,14 @@ impl Results {
     pub fn fighters_due(&self) -> bool {
         self.total_tics == self.init_fighters_all_tic
     }
+
+    /// Whether the fighters' `scSubsysFighterProcUpdate` runs this tic.
+    /// `gcRunAll` runs every `func_run` (`mnVSResultsFuncRun`, which makes
+    /// them) before the process queue, so their priority-5 process already
+    /// runs in the creation tic, right after `ftMainSetStatus`.
+    pub fn fighters_run(&self) -> bool {
+        self.total_tics >= self.init_fighters_all_tic
+    }
 }
 
 /// `mnVSResultsSaveBackup`, at the results' start: the VS counters and the

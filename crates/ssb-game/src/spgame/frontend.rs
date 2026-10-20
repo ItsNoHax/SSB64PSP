@@ -12,7 +12,7 @@ use ssb_engine::input::{ControllerState, N64Buttons};
 pub enum Screen {
     Intro(intro::Intro),
     Continue(continue_scene::Continue),
-    StageClear(stage_clear::StageClear),
+    StageClear(Box<stage_clear::StageClear>),
     Ending(ending::Ending),
     Staffroll(Box<staffroll::Staffroll>),
     Congra(congra::Congra),
@@ -91,11 +91,11 @@ impl Frontend {
                 session.data.fkind,
             )),
             Scene::Continue => Screen::Continue(continue_scene::Continue::new(session.data.score)),
-            Scene::StageClear => Screen::StageClear(stage_clear::StageClear::new(
+            Scene::StageClear => Screen::StageClear(Box::new(stage_clear::StageClear::new(
                 &session.data,
                 &session.state,
                 backup.spgame_difficulty,
-            )),
+            ))),
             _ => Screen::Host(scene),
         };
         scene

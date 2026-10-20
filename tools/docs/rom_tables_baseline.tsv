@@ -58,6 +58,7 @@ crates/ssb-game/src/opening/run.rs	FIGHTER_ANIM_JOINTS	link-time labels: the pro
 crates/ssb-game/src/particle.rs	EMPTY	port constants: the identity matrix and the empty pool slot
 crates/ssb-game/src/particle.rs	IDENTITY	port constants: the identity matrix and the empty pool slot
 crates/ssb-game/src/players_vs_layer.rs	SHUTTER_SCISSORS	function-body constants: mnPlayersVSShutter{1..4}PProcDisplay's lbCommonSetSpriteScissor immediates
+crates/ssb-game/src/players_vs_layer.rs	SPOTLIGHT_DESC	layout: a (file, offset) pair, checked against the pack by crates/ssb-rom/tests/select_spotlight.rs
 crates/ssb-game/src/results_layer.rs	STOCK_ROWS	function-body constants: mnVSResultsDrawResults{Time,Stock}Royal's row y positions and x offsets, written as immediates
 crates/ssb-game/src/results_layer.rs	TIME_ROWS	function-body constants: mnVSResultsDrawResults{Time,Stock}Royal's row y positions and x offsets, written as immediates
 crates/ssb-game/src/spgame/challenger.rs	DECALS	function-body constants: sc1PChallengerMakeDecals' positions and colours, written as immediates (sc1pchallenger.c:154-176)

@@ -505,8 +505,14 @@ fn the_spotlight_flickers_under_an_unplaced_fighter() {
     assert_eq!(s.view.spotlight.scale, 2.0);
     idle(&mut s);
     assert!(!s.view.spotlight.shown);
+    assert_eq!(s.spotlights(), [None; 4]);
     idle(&mut s);
     assert!(s.view.spotlight.shown);
+    let shown = Some(crate::players_vs::layer::SpotlightDraw {
+        translate: [-1100.0, -850.0, 0.0],
+        scale: 2.0,
+    });
+    assert_eq!(s.spotlights(), [shown, None, None, None]);
     hover_portrait(&mut s, FighterKind::Fox);
     assert_eq!(s.view.spotlight.scale, 1.5);
     tap(&mut s, N64Buttons::A);
@@ -514,4 +520,5 @@ fn the_spotlight_flickers_under_an_unplaced_fighter() {
     assert!(!s.view.spotlight.shown);
     idle(&mut s);
     assert!(!s.view.spotlight.shown);
+    assert_eq!(s.spotlights(), [None; 4]);
 }

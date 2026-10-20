@@ -9,7 +9,7 @@
 //! ready banner, the fighters' turn and status and the spotlights' flicker
 //! and size) is [`layer`]'s (RE-411); the logic updates it at the source's
 //! call sites, as it makes the scene's sounds and announcer voices.
-//! Drawing stays with the host; no host draws the spotlight model yet.
+//! Drawing stays with the host, which draws the spotlight from `spotlights()`.
 //!
 //! One [`PlayersVs::tick`] runs the scene's processes in the original
 //! order: `mnPlayersVSFuncRun` (the scene GObj's `func_run`), then the

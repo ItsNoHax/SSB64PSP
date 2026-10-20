@@ -39,6 +39,9 @@ pub const FILE_EMBLEMS: u32 = 20;
 pub const FILE_SELECT_COMMON: u32 = 21;
 pub const FILE_GAME_MODES: u32 = 18;
 pub const FILE_PORTRAITS: u32 = 19;
+/// `llMNPlayersSpotlightDObjDesc`: file 22 (`MNPlayersSpotlight`) at
+/// 0x568, every select's spotlight model.
+pub const SPOTLIGHT_DESC: (u32, u32) = (22, 0x568);
 
 /// `llMNPlayersCommon*` offsets.
 pub(crate) mod common {
@@ -406,6 +409,24 @@ impl Spotlight {
             _ => self.shown = false,
         }
     }
+
+    /// What the fighter camera draws of it at `translate`: the DObj's
+    /// `translate` and x/y `scale` (z stays 1), or `None` while hidden.
+    pub fn drawn(&self, translate: [f32; 3]) -> Option<SpotlightDraw> {
+        self.shown.then_some(SpotlightDraw {
+            translate,
+            scale: self.scale,
+        })
+    }
+}
+
+/// A shown spotlight's root `DObj`: where the host draws
+/// `llMNPlayersSpotlightDObjDesc` under the fighter camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpotlightDraw {
+    pub translate: [f32; 3],
+    /// `scale.x` and `scale.y`; `scale.z` is the desc's 1.
+    pub scale: f32,
 }
 
 /// `mnPlayersVSMakeSpotlight`: slot `player`'s spotlight `translate`, 840
@@ -870,6 +891,12 @@ impl PlayersVs {
     /// GObjs run it, and both step the one blink counter.
     fn ready_update(&mut self, ready: bool) -> bool {
         step_ready(&mut self.view.ready_blink, ready)
+    }
+
+    /// The four spotlights in GObj order (`mnPlayersVSMakeSpotlight`,
+    /// slot order), each `Some` while shown.
+    pub fn spotlights(&self) -> [Option<SpotlightDraw>; PLAYERS] {
+        core::array::from_fn(|p| self.view.slots[p].spotlight.drawn(spotlight_translate(p)))
     }
 
     /// What draws, back to front.

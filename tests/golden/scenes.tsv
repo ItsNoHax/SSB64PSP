@@ -239,3 +239,5 @@ f1-cpufx-stone	psp-game	cpufx-s@523	pass	RE-541
 f1-cpufx-jolt	psp-game	cpufx-s@561	pass	RE-541
 f1-cpufx-jolt-end	psp-game	cpufx-s@569	pass	RE-543
 f1-vs-results-link	psp-game	vsresultslink	pass	RE-528
+f1-vs-players-held	psp-game	vsplayers@44	pass	RE-411
+f1-training-select-held	psp-game	trainingselectpicked@30	pass	RE-411

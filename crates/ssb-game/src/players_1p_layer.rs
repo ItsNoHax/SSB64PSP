@@ -26,7 +26,7 @@
 use crate::d_arrays as g;
 use crate::fighter::FighterKind;
 use crate::players_vs::layer::{
-    self as vs, common, piece, rom, Fighter, Flash, Piece, Spotlight, FILE_EMBLEMS,
+    self as vs, common, piece, rom, Fighter, Flash, Piece, Spotlight, SpotlightDraw, FILE_EMBLEMS,
     FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::results_scene::FIGHTER_SCALES;
@@ -365,6 +365,16 @@ impl Players1P {
         let f = self.view.fighter.filter(|f| !f.hidden)?;
         let scale = FIGHTER_SCALES[(f.kind as usize).min(11)];
         Some((f, FIGHTER_POSITION, scale, self.slot.costume))
+    }
+
+    /// The spotlight (`mnPlayers1PGameMakeSpotlight`), `Some` while shown.
+    pub fn spotlights(&self) -> [Option<SpotlightDraw>; 4] {
+        [
+            self.view.spotlight.drawn(SPOTLIGHT_TRANSLATE),
+            None,
+            None,
+            None,
+        ]
     }
 
     /// What draws, back to front. `records` are the backup's

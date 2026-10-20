@@ -2,8 +2,8 @@
 //! hand cursor, the player's puck, the portrait grid, the recall, the
 //! costume picks, the level, stock and (hidden) time options, the ready
 //! check and the scene and backup data it saves. [`layer`] holds its
-//! presentation, the spotlight's flicker and scale included; no host draws
-//! the spotlight model yet.
+//! presentation, the spotlight's flicker and scale included; the host draws
+//! it from `spotlights()`.
 //!
 //! The scene has one slot (`sMNPlayers1PGameSlot`), for the port in
 //! `gSCManagerSceneData.player` (`sMNPlayers1PGameManPlayer`). Unlike the
