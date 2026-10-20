@@ -125,7 +125,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Captain's car | Battle-camera fallback before TopN in bounds unverified (`f1-vs-car`) → warp-boot capture, focus id 2, Captain | RE-523 |
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
-| Demo fighter effects | Results and select demo fighters; effects on joints ≠ 0 need RE-528 | RE-528 |
+| Demo fighter effects | Campaign rows drop effects (no particle world); Characters page change keeps old particles; Characters/select costume 0; `Skeleton::frame` 0 after a clip ends | RE-528 |
+| Results animation tick | Results fighters' animation may start one tick late vs N64 (N64 steps in the creation update; PSP pose at tick 764 = N64 update 120); check creation tick vs first `play` in `results_screen.rs` | RE-528 |
 | Same-frame makes | Process order modelled; N64 two-fighter confirmation needs a cpufx `mkrom.py` per-port input patch (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
 | Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
@@ -158,10 +159,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Select spotlight | Both character selects under held puck; VS select CPU colour animation; locked shadows' noise | RE-411 |
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
 | Battle-stage lights | Fixed-direction light bake (RE-065 deviation) → display-list lights as movies use; A/B battle rows vs N64, PSP CPU cost | RE-065, RE-529 |
-| Demo-script events | EFFECT/FGM events on results and select screens, joints ≠ 0 | RE-528 |
 | `rgb_lerp` audit | Materials with runtime image or palette swaps draw un-lerped → audit all | RE-527 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
-| Characters scene | Fighter runs no motion-script events (effects, colour animations, part changes) | RE-461 |
 | Anti-piracy | Validators that set `error_flags` | RE-460, RE-461 |
 | 1P ending | Ending room background matanim; N64 compare ending, staff roll, challenger; CP/heart tags; observed loss/win handoffs | RE-459 |
 | 1P bonus stages | N64 pause capture, PSP comparison | RE-456 |

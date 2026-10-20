@@ -64,13 +64,16 @@ struct FighterModel {
     slot: Option<u32>,
     skips_scales: bool,
     skeleton: Skeleton,
-    demo: ssb_game::modelpart::DemoParts,
+    demo: ssb_game::demo_fighter::DemoFighter,
 }
 
 /// The menus' state and the running scene's sprite pack.
 pub(crate) struct Menus {
     pub active: Option<Active>,
     fighter: Option<Box<FighterModel>>,
+    /// Characters' particles and effects (`efParticleInitAll`,
+    /// `efManagerInitEffects`).
+    world: Option<crate::demo_world::DemoWorld>,
     emblem: Option<Box<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)>>,
     /// A capture's stand-in for `osGetTime`'s low byte.
     clock: u8,
@@ -105,6 +108,7 @@ impl Menus {
         Menus {
             active: None,
             fighter: None,
+            world: None,
             emblem: None,
             clock: 0,
             scene: Scene::Startup,
@@ -175,6 +179,7 @@ impl Menus {
     /// freed before this one's load.
     pub(crate) fn enter(&mut self, scene: Scene, prev: Scene, host: &mut Host<'_, '_>) {
         self.fighter = None;
+        self.world = None;
         self.emblem = None;
         self.scene_prev = prev;
         self.scene = scene;
@@ -230,7 +235,11 @@ impl Menus {
         }
         if let (Active::Characters(m), Some(p)) = (&active, host.pack) {
             self.emblem = make_emblem(p, m.kind());
-            self.fighter = Some(make_fighter(p, &m.fighter));
+            let mut world = crate::demo_world::DemoWorld::new();
+            let mut fighter = make_fighter(p, &m.fighter);
+            make_effects(p, &mut world, &m.fighter, &mut fighter);
+            self.world = Some(world);
+            self.fighter = Some(fighter);
         }
         self.active = Some(active);
     }
@@ -240,6 +249,7 @@ impl Menus {
         self.active = None;
         self.title_opening = None;
         self.fighter = None;
+        self.world = None;
         self.emblem = None;
     }
 
@@ -327,23 +337,36 @@ impl Menus {
             return None;
         };
         let kind = m.kind();
+        if let (Some(p), Some(world)) = (host.pack, self.world.as_mut()) {
+            world.run(p);
+        }
         let next = m.tick(pad, host.backup, &mut rand);
         let mut anim_end = false;
         if let (Some(p), Some(f)) = (host.pack, self.fighter.as_deref_mut()) {
-            if f.serial == m.fighter.serial && f.kind == m.fighter.kind {
+            if f.kind == m.fighter.kind {
                 play(p, f);
-                f.demo.tick();
+                f.demo.tick(f.skeleton.frame());
                 anim_end = f.skeleton.frame() == 0.0;
+                if let Some(world) = self.world.as_mut() {
+                    make_effects(p, world, &m.fighter, f);
+                    world.process(p);
+                }
             }
         }
+        // A status set below makes its effects before the turn.
+        let unturned = m.fighter;
         m.tick_fighter(anim_end, &mut rand);
         if let Some(p) = host.pack {
-            let fresh = self
-                .fighter
-                .as_ref()
-                .is_none_or(|f| f.serial != m.fighter.serial || f.kind != m.fighter.kind);
-            if fresh {
-                self.fighter = Some(make_fighter(p, &m.fighter));
+            match self.fighter.as_deref_mut() {
+                Some(f) if f.kind == m.fighter.kind => {
+                    if f.serial != m.fighter.serial {
+                        set_status(p, f, &m.fighter);
+                    }
+                }
+                _ => self.fighter = Some(make_fighter(p, &m.fighter)),
+            }
+            if let (Some(world), Some(f)) = (self.world.as_mut(), self.fighter.as_deref_mut()) {
+                make_effects(p, world, &unturned, f);
             }
             if m.kind() != kind {
                 self.emblem = make_emblem(p, m.kind());
@@ -386,7 +409,7 @@ impl Menus {
             Draw::Fill { rect, rgba } => meshdraw::fill_rect_n64(rect, rgba, draw_state),
             Draw::Fighter => {
                 if let (Some(p), Active::Characters(m)) = (pack, active) {
-                    draw_fighter(gpu, p, draw_state, m, self.fighter.as_deref());
+                    draw_fighter(gpu, p, draw_state, m, self.fighter.as_deref(), self.world.as_ref());
                 }
             }
             Draw::Emblem => {
@@ -543,38 +566,80 @@ fn clip(motion: Motion) -> (Option<u32>, usize, bool) {
     }
 }
 
-/// `ftManagerMakeFighter` or `ftMainSetStatus`: the clip from its first
-/// frame, played at once.
+/// `mnCharactersMakeFighter`: the page's fighter, muted, in its first
+/// status.
 fn make_fighter(p: &Pack<'_>, f: &characters::Fighter) -> Box<FighterModel> {
-    let (slot, row, demo) = clip(f.motion);
+    let mut demo = ssb_game::demo_fighter::DemoFighter::new(f.kind, 0, 0);
+    // `fp->is_muted = TRUE`.
+    demo.fighter.is_muted = true;
     let mut m = Box::new(FighterModel {
         serial: f.serial,
         kind: f.kind,
         object: ssb_psp_runtime::scene::fighter_object(p, f.kind as u32).unwrap_or(u32::MAX),
         slot: None,
-        skips_scales: match f.motion {
-            Motion::Demo(d) => d.skips_translate_scales(f.kind),
-            _ => false,
-        },
-        // TopN is scaled by `dSCSubsysFighterScales`; a battle status may
-        // be flagged (Yoshi's attacks), which animates the `animlock` parts
-        // (RE-509).
-        skeleton: {
-            let mut s = ssb_psp_runtime::scene::fighter_skeleton(f.kind, f.scale());
-            s.locks.flagged = matches!(f.motion, Motion::Status(st)
-                if ssb_game::motion::uses_animlocks(f.kind, st));
-            s
-        },
-        // A battle status's model and texture part events are not run
-        // (RE-461): those statuses show the make's parts.
-        demo: ssb_game::modelpart::DemoParts::start(f.kind, if demo { row } else { 0 }),
+        skips_scales: false,
+        skeleton: ssb_psp_runtime::scene::fighter_skeleton(f.kind, f.scale()),
+        demo,
     });
+    set_status(p, &mut m, f);
+    m
+}
+
+/// `ftMainSetStatus(fighter_gobj, status_id, 0.0F, 1.0F, flags)`: the
+/// clip from its first frame, played at once, then the status's script
+/// from time zero; then `mnCharactersFighterProcUpdate`'s skeleton flash
+/// for DamageE1.
+///
+/// Its `ftParamResetFighterColAnim` before the change never runs: it
+/// tests `fp->status_id` against `nFTCommonStatusDamageE1`, but
+/// `ftMainSetStatus` stored `FTSTATUS_CHARACTERS_DEMO(DamageE1)` there
+/// (ftmain.c:4406, before the 0x20000 comes off).
+fn set_status(p: &Pack<'_>, m: &mut FighterModel, f: &characters::Fighter) {
+    let (slot, row, _) = clip(f.motion);
+    m.serial = f.serial;
+    m.slot = None;
+    m.skips_scales = match f.motion {
+        Motion::Demo(d) => d.skips_translate_scales(f.kind),
+        _ => false,
+    };
+    // TopN is scaled by `dSCSubsysFighterScales`; a battle status may
+    // be flagged (Yoshi's attacks), which animates the `animlock` parts
+    // (RE-509).
+    m.skeleton = ssb_psp_runtime::scene::fighter_skeleton(f.kind, f.scale());
+    m.skeleton.locks.flagged = matches!(f.motion, Motion::Status(st)
+        if ssb_game::motion::uses_animlocks(f.kind, st));
     if let Some(anim) = slot.and_then(|slot| p.fighter_anim(f.kind as u32, slot)) {
         m.skeleton.start(p, &anim, 0.0, 1.0);
         m.slot = slot;
-        play(p, &mut m);
+        play(p, m);
     }
-    m
+    match f.motion {
+        Motion::Null => {}
+        Motion::Status(s) => {
+            m.demo.set_main_status(s, f.flags);
+            if s == ssb_game::status::AnyStatus::Common(ssb_game::status::Status::DamageE1) {
+                // `ftParamCheckSetSkeletonColAnimID(fighter_gobj, 3)`.
+                let id = ssb_game::colanim::ColAnimId(ssb_game::colanim::skeleton_colanim_base(f.kind) + 3);
+                ssb_game::colanim::check_set(&mut m.demo.fighter, id, 0);
+            }
+        }
+        Motion::Demo(_) => m.demo.set_status_preserve(row, f.flags),
+    }
+}
+
+/// `ftParamMakeEffect` for what the fighter's script queued.
+fn make_effects(
+    p: &Pack<'_>,
+    world: &mut crate::demo_world::DemoWorld,
+    fighter: &characters::Fighter,
+    m: &mut FighterModel,
+) {
+    let stand = crate::demo_world::Stand {
+        pos: characters::FIGHTER_POSITION,
+        yaw: fighter.rotate_y,
+        scale: fighter.scale(),
+    };
+    world.make(p, m.object, &m.skeleton, stand, &mut m.demo);
 }
 
 /// One frame of the clip, through the fighter's translation scales.
@@ -655,6 +720,7 @@ unsafe fn draw_fighter(
     draw_state: &mut meshdraw::DrawState,
     menu: &CharactersMenu,
     model: Option<&FighterModel>,
+    world: Option<&crate::demo_world::DemoWorld>,
 ) {
     let Some(m) = model else {
         return;
@@ -664,10 +730,28 @@ unsafe fn draw_fighter(
     };
     camera_view(gpu, draw_state, &menu.camera);
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-    let n = m.skeleton.compose(p, &obj, &mut posed);
-    let base = crate::topn_base(characters::FIGHTER_POSITION, menu.fighter.rotate_y, menu.fighter.scale(), m.skeleton.locks.flagged);
-    draw_state.configure_fighter_light(characters::LIGHT_ANGLE);
-    let parts = m.demo.parts.draw_parts();
+    // The parts an effect's joint query marked this frame draw from
+    // their collision locals (RE-509).
+    let f = &m.demo.fighter;
+    let queried = f.queried_joints.get();
+    let lead = m.skeleton.lead_xrotn_pose().is_some() && queried & 1 << 2 != 0;
+    let n = m.skeleton.compose_queried(p, &obj, &mut posed, queried >> 4, lead);
+    let pos = characters::FIGHTER_POSITION;
+    let base = crate::topn_base(pos, menu.fighter.rotate_y, menu.fighter.scale(), m.skeleton.locks.flagged);
+    // `ftDisplayLightsDrawReflect`: a colour animation's light (DamageE1's
+    // skeleton flash) replaces the scene's; the fighter faces right.
+    let light = f.colanim.light.map_or(characters::LIGHT_ANGLE, |(x, y)| [x, y]);
+    draw_state.configure_fighter_light(light);
+    // `ftDisplayMainCalcFogColor`: `G_RM_FOG_PRIM_A` blends the fighter
+    // towards the animation's colour by its alpha.
+    let fog = f.colanim.color();
+    if let Some(rgba) = fog {
+        let cam = &menu.camera;
+        let view = (cam.at - cam.eye).normalized();
+        let at = ssb_engine::math::Vec3 { x: pos[0], y: pos[1], z: pos[2] };
+        gpu.set_constant_fog((at - cam.eye).dot(view), rgba);
+    }
+    let parts = m.demo.parts().draw_parts();
     meshdraw::draw_fighter_posed(
         p,
         &obj,
@@ -675,12 +759,19 @@ unsafe fn draw_fighter(
         &posed[..n],
         draw_state,
         meshdraw::Look {
-            costume: 0,
-            textures: m.demo.parts.draw_textures(),
+            // The skeleton's parts while the flash shows it (RE-414).
+            costume: crate::fighter_draw_costume(p, &obj, f),
+            textures: m.demo.parts().draw_textures(),
             parts: parts.as_ref().map(|p| &p[..]),
             accessory_before: m.kind == FighterKind::Purin,
         },
     );
+    if fog.is_some() {
+        gpu.clear_fog();
+    }
     draw_state.finish_fighter_light();
+    if let Some(world) = world {
+        world.draw(p, &menu.camera, draw_state);
+    }
     gpu.set_viewport_n64(VIEWPORT);
 }

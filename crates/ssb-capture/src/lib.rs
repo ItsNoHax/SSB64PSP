@@ -745,10 +745,14 @@ pub enum GameScene {
     /// RE-467) from its first tic, entered from the newcomers with the
     /// clock at the title's start tic.
     OpeningTitle,
+    /// `vsresultslink`: `vsresults` with Link as the CPU winner, a few
+    /// frames into the first sparkle his Win script makes on his sword
+    /// (joint 11, RE-528).
+    VsResultsLink,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 186] = [
+    pub const ALL: [GameScene; 187] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -935,6 +939,7 @@ impl GameScene {
         GameScene::OpeningClash,
         GameScene::OpeningNewcomers,
         GameScene::OpeningTitle,
+        GameScene::VsResultsLink,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1126,6 +1131,7 @@ impl GameScene {
             GameScene::OpeningClash => "op-clash",
             GameScene::OpeningNewcomers => "op-newcomers",
             GameScene::OpeningTitle => "op-title",
+            GameScene::VsResultsLink => "vsresultslink",
         }
     }
 

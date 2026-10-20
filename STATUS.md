@@ -7,7 +7,7 @@
 | Item | Value | Refs |
 |---|---|---|
 | Pack | v121 | `crates/ssb-rom/src/pack.rs` |
-| Goldens | 225 of 225 goldens match by pixel hash | `tests/golden/hashes.tsv` |
+| Goldens | 226 of 226 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy) | Room 13.39 ms, Run 14.98, Yoster 15.58, Clash 13.17 | RE-530, RE-532, RE-539 |
@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed: fighter link-15 make order (process order, RE-542, RE-538, RE-540); trig chunks 4-5 (RE-503).
-  - Goldens unchanged; chunk 5 has unit tests only (PLAN: Chunk 5 golden).
+- Landed: demo fighters on the battle runner (results, selects, Characters, campaign, movie; RE-461, RE-528); golden `f1-vs-results-link` matches the N64 sparkle.
+  - Other goldens unchanged.
 
 ## Next
 
-1. Demo fighter motion-script events (RE-461, RE-528): next gameplay batch.
-2. Thunder Jolt burst spikes (RE-541).
+1. Thunder Jolt burst spikes (RE-541).
+2. Results animation one-tick lag (PLAN).
 3. MS8 list in `PLAN.md`, 1P intro first.
 
 ## Blockers
@@ -32,7 +32,7 @@
 
 ## Verification
 
-Baseline: fighter link-15 make order, trig chunks 4-5.
+Baseline: demo fighter motion-script events.
 
 | Check | Result |
 |---|---|

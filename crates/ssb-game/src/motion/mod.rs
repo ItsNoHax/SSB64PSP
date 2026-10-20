@@ -132,7 +132,8 @@ pub struct FighterScripts {
 }
 
 /// A script index with this bit set reads the fighter's demo scripts
-/// ([`DemoScripts::words`]); only the part-event walk uses it.
+/// ([`DemoScripts::words`]): a demo fighter's threads ([`start_demo`]) and
+/// the part-event walk.
 pub const DEMO_BIT: u32 = 0x2000_0000;
 
 /// One fighter's `dFT<Name>SubMotionDescs` scripts (`sc/scsubsys`): the
@@ -176,233 +177,6 @@ pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
         FighterKind::PolyNess => &scripts::NNESS_DEMO,
         FighterKind::GiantDonkey => &scripts::GDONKEY_DEMO,
     })
-}
-
-/// An event of a demo status script that its host carries out: the
-/// fighter's place is the host's.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DemoEvent {
-    /// `nFTMotionEventEffect`: `ftParamMakeEffect(fighter_gobj, kind,
-    /// joint, &offset, &scatter, fp->lr, FALSE, flag)`.
-    Effect {
-        kind: u16,
-        joint: i8,
-        offset: Vec3,
-        scatter: Vec3,
-        /// `nFTMotionEventEffectItemHold`: the offset divides by the
-        /// fighter's size.
-        is_scale_pos: bool,
-        flag: u16,
-    },
-    /// `nFTMotionEventPlayFGM`: `func_800269C0(id)` (a demo fighter is
-    /// not muted).
-    PlayFgm(u16),
-}
-
-/// The events one [`DemoScript`] step ran, in order.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DemoEvents {
-    list: [DemoEvent; DEMO_EVENTS_MAX],
-    len: u8,
-}
-
-/// More events than any demo row runs in one frame (Samus's Win1 runs
-/// two).
-const DEMO_EVENTS_MAX: usize = 4;
-
-impl DemoEvents {
-    const EMPTY: DemoEvents = DemoEvents {
-        list: [DemoEvent::PlayFgm(0); DEMO_EVENTS_MAX],
-        len: 0,
-    };
-
-    fn push(&mut self, e: DemoEvent) {
-        if let Some(slot) = self.list.get_mut(usize::from(self.len)) {
-            *slot = e;
-            self.len += 1;
-        }
-    }
-
-    pub fn as_slice(&self) -> &[DemoEvent] {
-        &self.list[..usize::from(self.len)]
-    }
-}
-
-/// A demo fighter's status script (`scSubsysFighterSetStatus`, then
-/// `scSubsysFighterProcUpdate`'s `ftMainPlayAnimEventsAll` each frame), of
-/// which the port runs the flow and the model- and texture-part events
-/// (RE-426) and hands the effect and sound events to its host
-/// ([`DemoEvent`]). Demo statuses play at speed 1 from frame 0.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DemoScript {
-    kind: FighterKind,
-    thread: ScriptThread,
-    anim_frame: f32,
-    /// The last step's events.
-    events: DemoEvents,
-}
-
-impl DemoScript {
-    /// `ftMainSetStatus(fighter_gobj, nFTDemoStatusNull + row,
-    /// FTSTATUS_PRESERVE_NONE, 1.0F, 0.0F)`: the parts reset if modified,
-    /// the row's script starts and its time-zero commands run.
-    pub fn start(kind: FighterKind, row: usize, parts: &mut crate::modelpart::ModelParts) -> Self {
-        let base = parts.detail_base;
-        parts.set_detail_all(base);
-        if parts.is_modify {
-            parts.reset_all();
-        }
-        if parts.texture.is_modify {
-            parts.reset_textures();
-        }
-        let pc = demo_scripts(kind)
-            .and_then(|d| d.rows.get(row).copied())
-            .unwrap_or(NO_SCRIPT);
-        let mut d = DemoScript {
-            kind,
-            thread: ScriptThread {
-                pc,
-                wait: 1.0,
-                ..ScriptThread::default()
-            },
-            anim_frame: 0.0,
-            events: DemoEvents::EMPTY,
-        };
-        d.run(parts);
-        d
-    }
-
-    /// One frame: the clip advances, then the events.
-    pub fn tick(&mut self, parts: &mut crate::modelpart::ModelParts) {
-        self.anim_frame += 1.0;
-        self.run(parts);
-    }
-
-    /// The effect and sound events the last [`Self::start`] or
-    /// [`Self::tick`] ran.
-    pub fn events(&self) -> &[DemoEvent] {
-        self.events.as_slice()
-    }
-
-    fn run(&mut self, parts: &mut crate::modelpart::ModelParts) {
-        self.events = DemoEvents::EMPTY;
-        let Some(words) = demo_scripts(self.kind).map(|d| d.words) else {
-            return;
-        };
-        let t = &mut self.thread;
-        if t.pc == NO_SCRIPT {
-            return;
-        }
-        if t.wait != f32::MAX {
-            t.wait -= 1.0;
-        }
-        for _ in 0..4096 {
-            let Some(&w) = words.get(t.pc as usize) else {
-                t.pc = NO_SCRIPT;
-                return;
-            };
-            if t.wait == f32::MAX {
-                // A paused script resumes when the clip starts over.
-                if 1.0 <= self.anim_frame {
-                    return;
-                }
-                t.wait = -self.anim_frame;
-            } else if t.wait > 0.0 {
-                return;
-            }
-            let opcode = w >> 26;
-            let value = w & 0x03FF_FFFF;
-            let next = t.pc + command_words(opcode);
-            let word1 = words.get(t.pc as usize + 1).copied().unwrap_or(NO_SCRIPT);
-            match opcode {
-                op::END => {
-                    t.pc = NO_SCRIPT;
-                    return;
-                }
-                op::SYNC_WAIT => t.wait += value as f32,
-                op::ASYNC_WAIT => t.wait = value as f32 - self.anim_frame,
-                op::LOOP_BEGIN => {
-                    if t.script_id + 2 <= STACK_MAX {
-                        t.p_goto[t.script_id] = next;
-                        t.loop_count[t.script_id] = value as i32;
-                        t.script_id += 2;
-                    }
-                }
-                op::LOOP_END => {
-                    if t.script_id >= 2 {
-                        let slot = t.script_id - 2;
-                        t.loop_count[slot] -= 1;
-                        if t.loop_count[slot] != 0 {
-                            t.pc = t.p_goto[slot];
-                            continue;
-                        }
-                        t.script_id -= 2;
-                    }
-                }
-                op::SUBROUTINE => {
-                    if word1 != NO_SCRIPT && t.script_id < STACK_MAX {
-                        t.p_goto[t.script_id] = next;
-                        t.script_id += 1;
-                        t.pc = word1;
-                        continue;
-                    }
-                }
-                op::RETURN => {
-                    if t.script_id == 0 {
-                        t.pc = NO_SCRIPT;
-                        return;
-                    }
-                    t.script_id -= 1;
-                    t.pc = t.p_goto[t.script_id];
-                    continue;
-                }
-                op::GOTO => {
-                    t.pc = word1;
-                    continue;
-                }
-                op::PAUSE_SCRIPT => t.wait = f32::MAX,
-                op::SET_MODEL_PART_ID => {
-                    let joint = sign((w >> 19) & 0x7F, 7);
-                    let part = sign(w & 0x7_FFFF, 19);
-                    if let Ok(joint) = u8::try_from(joint) {
-                        parts.set(joint, part as i8);
-                    }
-                }
-                op::RESET_MODEL_PART_ALL => parts.reset_all(),
-                op::HIDE_MODEL_PART_ALL => parts.hide_all(),
-                op::SET_TEXTURE_PART_ID => {
-                    let (part, id) = texture_part_event(w);
-                    parts.set_texture(part, id);
-                }
-                op::PLAY_FGM => self.events.push(DemoEvent::PlayFgm(value as u16)),
-                op::EFFECT | op::EFFECT_ITEM_HOLD => {
-                    let at = |i: usize| words.get(t.pc as usize + i).copied().unwrap_or(0);
-                    let (w2, w3, w4) = (at(1), at(2), at(3));
-                    self.events.push(DemoEvent::Effect {
-                        kind: ((w >> 10) & 0x1FF) as u16,
-                        joint: crate::fteffect::joint_id(
-                            self.kind,
-                            sign((w >> 19) & 0x7F, 7) as i8,
-                        ),
-                        offset: Vec3::new(
-                            sign(w2 >> 16, 16) as f32,
-                            sign(w2 & 0xFFFF, 16) as f32,
-                            sign(w3 >> 16, 16) as f32,
-                        ),
-                        scatter: Vec3::new(
-                            sign(w3 & 0xFFFF, 16) as f32,
-                            sign(w4 >> 16, 16) as f32,
-                            sign(w4 & 0xFFFF, 16) as f32,
-                        ),
-                        is_scale_pos: opcode == op::EFFECT_ITEM_HOLD,
-                        flag: (w & 0x3FF) as u16,
-                    });
-                }
-                _ => {}
-            }
-            t.pc = next;
-        }
-    }
 }
 
 /// `FTAttributes` fields the hit pipeline reads (generated from the
@@ -764,6 +538,33 @@ pub fn start(f: &mut Fighter, frame_begin: f32) {
     }
 }
 
+/// `ftMainSetStatus(fighter_gobj, nFTDemoStatusNull + row,
+/// FTSTATUS_PRESERVE_NONE, 1.0F, 0.0F)`'s script half for a demo status
+/// (`scSubsysFighterSetStatus`, the `D_ovl1_80390BE8` rows: 0 the selects'
+/// wait, 1 to 4 Win1 to Win4, 5 Lose, then the opening and stage-card
+/// rows): the row's script from the fighter's [`DemoScripts`] starts at
+/// speed 1 from frame 0 and its time-zero commands run, then a frame of
+/// the colour animation. A row without a script leaves every thread
+/// stopped.
+pub fn start_demo(f: &mut Fighter, row: usize) {
+    f.motion_script.threads = [ScriptThread::default(); 2];
+    f.motion_script.effect_threads = [ScriptThread::default(); 2];
+    f.status.timing.anim_speed = 1.0;
+    f.status.anim_frame = 0.0;
+    let pc = demo_scripts(f.kind)
+        .and_then(|d| d.rows.get(row).copied())
+        .filter(|&pc| pc != NO_SCRIPT)
+        .map_or(NO_SCRIPT, |pc| pc | DEMO_BIT);
+    f.motion_script.threads[0] = ScriptThread {
+        pc,
+        wait: 1.0,
+        ..ScriptThread::default()
+    };
+    f.motion_script.effect_threads[0] = f.motion_script.threads[0];
+    advance(f);
+    crate::colanim::run_update(f);
+}
+
 /// `ftMainUpdateMotionEventsAll`: one frame of every running thread. Call
 /// once per frame outside hitlag, after the animation clock advances.
 pub fn advance(f: &mut Fighter) {
@@ -829,8 +630,13 @@ fn run(f: &mut Fighter, thread: usize, pass: Pass) {
     // cap only keeps a data error from hanging the port.
     for _ in 0..4096 {
         let t = *thread_mut(f, pass, thread);
-        let (words, base) = if t.pc != NO_SCRIPT && t.pc & COMMON_BIT != 0 {
+        let (words, base) = if t.pc == NO_SCRIPT {
+            (words, 0)
+        } else if t.pc & COMMON_BIT != 0 {
             (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+        } else if t.pc & DEMO_BIT != 0 {
+            // A demo status's script ([`start_demo`]).
+            (demo_scripts(f.kind).map_or(&[][..], |d| d.words), DEMO_BIT)
         } else {
             (words, 0)
         };
@@ -917,6 +723,15 @@ fn execute(
     let value = w & 0x03FF_FFFF;
     let next = base + (pc as u32) + command_words(opcode);
     let word = |i: usize| words.get(pc + i).copied().unwrap_or(0);
+    // A pointer in the demo words is a plain index into them; the main
+    // and common words' pointers carry their table already.
+    let target = |t: u32| {
+        if t == NO_SCRIPT {
+            t
+        } else {
+            t | (base & DEMO_BIT)
+        }
+    };
     match opcode {
         op::END => {
             thread_mut(f, pass, thread).pc = NO_SCRIPT;
@@ -924,6 +739,8 @@ fn execute(
         }
         op::SYNC_WAIT => thread_mut(f, pass, thread).wait += value as f32,
         op::ASYNC_WAIT => thread_mut(f, pass, thread).wait = value as f32 - anim_frame,
+        // `fp->pkind != nFTPlayerKindDemo`.
+        op::MAKE_ATTACK_COLL | op::MAKE_ATTACK_COLL_SCALED if f.is_demo => {}
         op::MAKE_ATTACK_COLL | op::MAKE_ATTACK_COLL_SCALED => {
             make_attack_coll(f, [w, word(1), word(2), word(3), word(4)], opcode);
         }
@@ -938,6 +755,7 @@ fn execute(
                 );
             }
         }
+        op::SET_ATTACK_COLL_DAMAGE if f.is_demo => {}
         op::SET_ATTACK_COLL_DAMAGE => {
             let id = ((w >> 23) & 7) as usize;
             let damage = ((w >> 15) & 0xFF) as i32;
@@ -974,8 +792,14 @@ fn execute(
         }
         op::CLEAR_ATTACK_COLL_ALL => crate::combat::clear_attack_colls(f),
         // The sound commands. `is_muted` gates them all but
-        // `StopLoopSFX`; only the Characters menu mutes a fighter, and its
-        // fighters run no motion script here, so the gate always passes.
+        // `StopLoopSFX` (the Characters menu's fighter).
+        op::PLAY_FGM_STORE_INFO
+        | op::PLAY_FGM
+        | op::PLAY_LOOP_SFX_STORE_INFO
+        | op::PLAY_VOICE_STORE_INFO
+        | op::PLAY_LOOP_VOICE_STORE_INFO
+        | op::PLAY_SMASH_VOICE
+            if f.is_muted => {}
         // `nFTMotionEventPlayFGMStoreInfo`.
         op::PLAY_FGM_STORE_INFO => crate::fighter_sound::play_fgm_store_info(f, value as u16),
         // `nFTMotionEventPlayFGM`: the handle is dropped.
@@ -998,8 +822,9 @@ fn execute(
             }
         }
         // `nFTMotionEventPlaySmashVoice`: one of `attr->smash_sfx[3]` at
-        // random. The draw comes first and always happens, as the
-        // original's does (RE-468: Mario's up smash in How to Play).
+        // random. The draw comes first and happens whether or not a sound
+        // plays, as the original's does (RE-468: Mario's up smash in How to
+        // Play).
         op::PLAY_SMASH_VOICE => {
             let r = crate::rng::rand_int_range(3) as usize;
             if let Some(a) = combat_attrs(f.kind) {
@@ -1112,7 +937,7 @@ fn execute(
                     })
                     .unwrap_or(NO_SCRIPT)
             } else {
-                word(1)
+                target(word(1))
             };
             let t = thread_mut(f, pass, thread);
             if target == NO_SCRIPT || t.script_id >= STACK_MAX {
@@ -1136,7 +961,7 @@ fn execute(
             return;
         }
         op::GOTO => {
-            thread_mut(f, pass, thread).pc = word(1);
+            thread_mut(f, pass, thread).pc = target(word(1));
             return;
         }
         op::PAUSE_SCRIPT => thread_mut(f, pass, thread).wait = f32::MAX,
@@ -1190,7 +1015,7 @@ fn execute(
             f.model_parts.set_texture(part, id);
         }
         op::SET_PARALLEL_SCRIPT => {
-            let target = word(1);
+            let target = target(word(1));
             if thread == 0 && f.motion_script.threads[1].pc == NO_SCRIPT && target != NO_SCRIPT {
                 f.motion_script.threads[1] = ScriptThread {
                     pc: target,
@@ -1501,6 +1326,40 @@ mod tests {
             active,
             [false, true, true, false, false, false, false, false]
         );
+    }
+
+    /// `fp->pkind == nFTPlayerKindDemo`: the jab's `MakeAttackColl`s are
+    /// read and skipped.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_demo_fighter_makes_no_attack_collision() {
+        let mut f = fighter(FighterKind::Mario);
+        f.is_demo = true;
+        status::set_status(&mut f, Status::Attack11, 0.0, StatusTiming::frames(18.0));
+        for _ in 0..8 {
+            f.status.anim_frame += 1.0;
+            advance(&mut f);
+            assert_eq!(live(&f), 0);
+        }
+    }
+
+    /// `fp->is_muted` skips `PlaySmashVoice` whole, its random draw too.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_muted_fighter_skips_the_smash_voice_draw() {
+        let draws = |muted: bool| {
+            let mut f = fighter(FighterKind::Mario);
+            f.is_muted = muted;
+            crate::rng::set_seed(1);
+            status::set_status(&mut f, Status::AttackHi4, 0.0, StatusTiming::frames(40.0));
+            for _ in 0..40 {
+                f.status.anim_frame += 1.0;
+                advance(&mut f);
+            }
+            crate::rng::seed()
+        };
+        assert_ne!(draws(false), 1);
+        assert_eq!(draws(true), 1);
     }
 
     #[test]

@@ -102,7 +102,7 @@ struct FighterState {
     object: u32,
     skeleton: Box<Skeleton>,
     slot: Option<u32>,
-    demo: ssb_game::modelpart::DemoParts,
+    demo: ssb_game::demo_fighter::DemoFighter,
     played: u32,
     /// The proxy `DObj`'s joint (`mvOpeningRunFighterProcUpdate`).
     proxy: Option<(StageJoint, JointPose, u32)>,
@@ -323,7 +323,8 @@ impl FighterState {
             object,
             skeleton: Box::new(crate::scene::fighter_skeleton(f.kind, 1.0)),
             slot: None,
-            demo: ssb_game::modelpart::DemoParts::start(f.kind, usize::from(f.row)),
+            // `dFTManagerDefaultFighterDesc`: player 0, costume 0, unmuted.
+            demo: ssb_game::demo_fighter::DemoFighter::new(f.kind, 0, 0),
             played: 0,
             proxy: f.proxy.map(|j| {
                 (
@@ -349,7 +350,6 @@ impl FighterState {
             }
         }
         self.row = row;
-        self.demo = ssb_game::modelpart::DemoParts::start(self.kind, usize::from(row));
         self.slot = demo_row_slot(row).map(|s| s as u32);
         // The demo motions are all unflagged: the `animlock` parts stay
         // frozen, and the root scale, read only by a flagged motion, is
@@ -366,6 +366,9 @@ impl FighterState {
         }
         self.transn_base = applies_vel_transn(row).then(|| self.child_translate());
         self.played = 0;
+        // `scSubsysFighterSetStatus`: the row's script from time zero,
+        // after the clip's first frame.
+        self.demo.set_status(usize::from(row));
     }
 
     /// `scSubsysFighterProcUpdate`'s clip play.
@@ -396,7 +399,7 @@ impl FighterState {
         }
         while self.played < f.plays {
             self.play(a.main);
-            self.demo.tick();
+            self.demo.tick(self.skeleton.frame());
             self.run_events(f, effects);
             self.played += 1;
         }
@@ -409,45 +412,39 @@ impl FighterState {
         }
     }
 
-    /// The demo script's last step's sound and effect events, before this
-    /// frame's proxy update (the scene's `func_run` and the fighter's
-    /// update run ahead of `mvOpening*FighterProcUpdate`). An effect is
-    /// placed on its joint (`gmCollisionGetFighterPartsWorldPosition`):
-    /// only TopN (joint 0) has a place here, the one joint an opening demo
-    /// row names (Link's Jump, `D_ovl1_8039198C`'s `DustHeavyDouble`). A
-    /// demo fighter's `lr` is `dFTManagerDefaultFighterDesc`'s, right.
-    fn run_events(&self, f: &Fighter, effects: &mut Vec<DemoEffect>) {
-        use ssb_game::motion::DemoEvent;
-        for e in self.demo.events() {
-            match *e {
-                DemoEvent::PlayFgm(id) => {
-                    ssb_game::sound::play_fgm(id);
-                }
-                DemoEvent::Effect {
-                    kind,
-                    joint,
-                    offset,
-                    scatter,
-                    is_scale_pos,
-                    flag: _,
-                } => {
-                    if joint != 0 {
-                        continue;
-                    }
-                    let mut pos = ssb_game::fteffect::scattered(offset, scatter);
-                    if is_scale_pos {
-                        let size = ssb_game::motion::combat_attrs(self.kind).map_or(1.0, |c| c.size);
-                        pos = Vec3::new(pos.x / size, pos.y / size, pos.z / size);
-                    }
-                    let k = MODEL_SCALE;
-                    let p = self.root(f).transform_point([pos.x / k, pos.y / k, pos.z / k]);
-                    effects.push(DemoEffect {
-                        kind,
-                        pos: Vec3::new(p[0], p[1], p[2]),
-                        lr: 1,
-                    });
-                }
+    /// The effects the demo script queued this step (its sounds played as
+    /// it ran), before this frame's proxy update (the scene's `func_run`
+    /// and the fighter's update run ahead of `mvOpening*FighterProcUpdate`).
+    /// An effect is placed on its joint
+    /// (`gmCollisionGetFighterPartsWorldPosition`): only TopN (joint 0) has
+    /// a place here, the one joint an opening demo row names (Link's Jump,
+    /// `D_ovl1_8039198C`'s `DustHeavyDouble`). A demo fighter's `lr` is
+    /// `dFTManagerDefaultFighterDesc`'s, right.
+    fn run_events(&mut self, f: &Fighter, effects: &mut Vec<DemoEffect>) {
+        use ssb_game::fteffect::FighterEffect;
+        let queued = core::mem::take(&mut self.demo.fighter.effects);
+        for e in queued.iter() {
+            let FighterEffect::Param(r) = *e else {
+                continue;
+            };
+            if r.joint != 0 {
+                continue;
             }
+            let mut pos = ssb_game::fteffect::scattered(
+                r.offset.unwrap_or(Vec3::ZERO),
+                r.scatter.unwrap_or(Vec3::ZERO),
+            );
+            if r.is_scale_pos {
+                let size = ssb_game::motion::combat_attrs(self.kind).map_or(1.0, |c| c.size);
+                pos = Vec3::new(pos.x / size, pos.y / size, pos.z / size);
+            }
+            let k = MODEL_SCALE;
+            let p = self.root(f).transform_point([pos.x / k, pos.y / k, pos.z / k]);
+            effects.push(DemoEffect {
+                kind: r.kind,
+                pos: Vec3::new(p[0], p[1], p[2]),
+                lr: 1,
+            });
         }
     }
 
@@ -896,7 +893,7 @@ impl Runtime {
         crate::profile::stop(crate::profile::Span::MoviePose, t);
         let t = crate::profile::start();
         st.configure_fighter_light(light);
-        let parts = s.demo.parts.draw_parts();
+        let parts = s.demo.parts().draw_parts();
         meshdraw::draw_fighter_posed(
             a.main,
             &object,
@@ -905,7 +902,7 @@ impl Runtime {
             st,
             meshdraw::Look {
                 costume: u32::from(f.costume),
-                textures: s.demo.parts.draw_textures(),
+                textures: s.demo.parts().draw_textures(),
                 parts: parts.as_ref().map(|p| &p[..]),
                 accessory_before: f.kind == FighterKind::Purin,
             },

@@ -50,13 +50,16 @@ pub struct Model {
     slot: Option<u32>,
     skips_scales: bool,
     skeleton: Skeleton,
-    /// The demo status script's parts (RE-426).
-    demo: ssb_game::modelpart::DemoParts,
+    /// The demo fighter: its status script's parts (RE-426), sounds and
+    /// effects.
+    demo: ssb_game::demo_fighter::DemoFighter,
 }
 
-/// The four slots' poses.
+/// The four slots' poses and the scene's particle world
+/// (`efParticleInitAll`, `efManagerInitEffects`).
 pub struct Fighters {
     models: [Option<Box<Model>>; 4],
+    world: crate::demo_world::DemoWorld,
 }
 
 /// Boxed so the session holds a pointer.
@@ -64,42 +67,63 @@ pub struct Fighters {
 pub fn start() -> Box<Fighters> {
     Box::new(Fighters {
         models: [None, None, None, None],
+        world: crate::demo_world::DemoWorld::new(),
     })
 }
 
 /// One tick of the fighters, after [`PlayersVs::tick`].
 pub fn tick(pack: Option<&Pack<'_>>, select: &PlayersVs, f: &mut Fighters) {
-    let fighters: [Option<layer::Fighter>; 4] = core::array::from_fn(|i| select.view.slots[i].fighter);
+    let fighters: [Option<Placed>; 4] =
+        core::array::from_fn(|i| select.view.slots[i].fighter.map(|f| (f, layer::Fighter::position(i))));
     tick_models(pack, &fighters, f);
 }
 
 /// One tick of the Training select's two fighters, after
 /// [`FighterSelect::tick`].
 pub fn tick_training(pack: Option<&Pack<'_>>, select: &FighterSelect, f: &mut Fighters) {
+    use ssb_game::fighter_select::{layer as training, COM, MAN};
     let v = &select.view.slots;
-    tick_models(pack, &[v[0].fighter, v[1].fighter, None, None], f);
+    let placed = |slot: usize| v[slot].fighter.map(|f| (f, training::fighter_position(slot)));
+    tick_models(pack, &[placed(MAN), placed(COM), None, None], f);
 }
 
 /// One tick of the 1P select's fighter, after [`Players1P::tick`].
 pub fn tick_1p(pack: Option<&Pack<'_>>, select: &Players1P, f: &mut Fighters) {
-    tick_models(pack, &[select.view.fighter, None, None, None], f);
+    let placed = select
+        .view
+        .fighter
+        .map(|f| (f, ssb_game::players_1p::layer::FIGHTER_POSITION));
+    tick_models(pack, &[placed, None, None, None], f);
 }
 
 /// One tick of the Bonus Practice select's fighter, after
 /// [`Players1PBonus::tick`]. The poses start from [`start`].
 pub fn tick_bonus(pack: Option<&Pack<'_>>, select: &Players1PBonus, f: &mut Fighters) {
-    tick_models(pack, &[select.view.fighter, None, None, None], f);
+    let placed = select
+        .view
+        .fighter
+        .map(|f| (f, ssb_game::players_1p_bonus::layer::FIGHTER_POSITION));
+    tick_models(pack, &[placed, None, None, None], f);
 }
 
-/// A fighter made again or given its status starts its clip over
-/// (`ftMainSetStatus` plays the first frame at once); otherwise it plays on.
+/// A slot's fighter and where its TopN stands.
+type Placed = (layer::Fighter, [f32; 3]);
+
+/// Link 0's particle `func_run`s, then each fighter's
+/// `scSubsysFighterProcUpdate` (priority 5): a fighter made again or given
+/// its status starts its clip over (`ftMainSetStatus` plays the first
+/// frame at once and runs the script's time-zero events); otherwise the
+/// clip plays on and the script and colour animation run. The effects the
+/// scripts queued are made on their joints; then the effect processes
+/// (priority 3).
 #[inline(never)]
-fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<layer::Fighter>; 4], f: &mut Fighters) {
+fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<Placed>; 4], f: &mut Fighters) {
     let Some(p) = pack else {
         return;
     };
-    for (model, fighter) in f.models.iter_mut().zip(fighters.iter()) {
-        let Some(fighter) = *fighter else {
+    f.world.run(p);
+    for (port, (model, placed)) in f.models.iter_mut().zip(fighters.iter()).enumerate() {
+        let Some((fighter, pos)) = *placed else {
             *model = None;
             continue;
         };
@@ -107,19 +131,28 @@ fn tick_models(pack: Option<&Pack<'_>>, fighters: &[Option<layer::Fighter>; 4], 
             .as_ref()
             .is_none_or(|m| m.serial != fighter.serial || m.kind != fighter.kind);
         if fresh {
-            *model = Some(make_model(p, fighter));
+            *model = Some(make_model(p, fighter, port as u8));
         } else if let Some(m) = model.as_deref_mut() {
             play(p, m);
-            m.demo.tick();
+            m.demo.tick(m.skeleton.frame());
+        }
+        if let Some(m) = model.as_deref_mut() {
+            let stand = crate::demo_world::Stand {
+                pos,
+                yaw: fighter.rotate_y,
+                scale: fighter.scale(),
+            };
+            f.world.make(p, m.object, &m.skeleton, stand, &mut m.demo);
         }
     }
+    f.world.process(p);
 }
 
 /// The fighter's clip from its first frame: `Wait` for
 /// `nFTDemoStatusNull` (submotion row 0 is each fighter's `Wait` figatree),
 /// else the demo status's.
 #[inline(never)]
-fn make_model(p: &Pack<'_>, fighter: layer::Fighter) -> Box<Model> {
+fn make_model(p: &Pack<'_>, fighter: layer::Fighter, port: u8) -> Box<Model> {
     let kind = fighter.kind as u32;
     let slot = match fighter.status {
         None => ssb_rom::anim::SLOT_WAIT,
@@ -136,16 +169,17 @@ fn make_model(p: &Pack<'_>, fighter: layer::Fighter) -> Box<Model> {
         // The select motions are unflagged: the `animlock` parts stay
         // frozen (RE-509).
         skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
-        demo: ssb_game::modelpart::DemoParts::start(
-            fighter.kind,
-            fighter.status.map_or(0, |s| 1 + s.index()),
-        ),
+        // The select's costume is the layer's; the effects need none.
+        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, port, 0),
     });
     if let Some(anim) = p.fighter_anim(kind, slot) {
         m.skeleton.start(p, &anim, 0.0, 1.0);
         m.slot = Some(slot);
         play(p, &mut m);
     }
+    // `ftMainSetStatus` runs the script's time-zero events after the
+    // clip's first frame.
+    m.demo.set_status(fighter.status.map_or(0, |s| 1 + s.index()));
     m
 }
 
@@ -429,7 +463,11 @@ unsafe fn draw_fighters(
             continue;
         };
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let n = m.skeleton.compose(p, &obj, &mut posed);
+        // The parts an effect's joint query marked this frame draw from
+        // their collision locals (RE-509).
+        let queried = m.demo.fighter.queried_joints.get();
+        let lead = m.skeleton.lead_xrotn_pose().is_some() && queried & 1 << 2 != 0;
+        let n = m.skeleton.compose_queried(p, &obj, &mut posed, queried >> 4, lead);
         let base = crate::topn_base(shown.position, fighter.rotate_y, fighter.scale(), m.skeleton.locks.flagged);
         draw_state.configure_fighter_light(LIGHT_ANGLE);
         if let Some(rgba) = shown.tint {
@@ -438,7 +476,7 @@ unsafe fn draw_fighters(
         }
         // A demo fighter's model and texture parts (RE-426) and accessory
         // (RE-425).
-        let parts = m.demo.parts.draw_parts();
+        let parts = m.demo.parts().draw_parts();
         meshdraw::draw_fighter_posed(
             p,
             &obj,
@@ -447,7 +485,7 @@ unsafe fn draw_fighters(
             draw_state,
             meshdraw::Look {
                 costume: u32::from(shown.costume),
-                textures: m.demo.parts.draw_textures(),
+                textures: m.demo.parts().draw_textures(),
                 parts: parts.as_ref().map(|p| &p[..]),
                 accessory_before: fighter.kind == ssb_game::fighter::FighterKind::Purin,
             },
@@ -457,5 +495,7 @@ unsafe fn draw_fighters(
         }
         draw_state.finish_fighter_light();
     }
+    // DL links 10, 15 and 18 of the same camera.
+    f.world.draw(p, cam, draw_state);
     gpu.set_viewport_n64(layer::VIEWPORT);
 }

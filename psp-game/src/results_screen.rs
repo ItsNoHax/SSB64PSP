@@ -29,8 +29,9 @@ pub struct Model {
     /// clip.
     slot: Option<u32>,
     skeleton: Skeleton,
-    /// The demo status script's parts (RE-426).
-    demo: ssb_game::modelpart::DemoParts,
+    /// The demo fighter: its status script's parts (RE-426), sounds and
+    /// effects.
+    demo: ssb_game::demo_fighter::DemoFighter,
 }
 
 /// The scene, its fighters' poses, its emblem, its particles and its 2D
@@ -42,9 +43,8 @@ pub struct Fighters {
     /// `mnVSResultsMakeEmblem`'s DObj, after a contest (RE-420).
     pub emblem: Option<Emblem>,
     /// `efParticleInitAll` and `efManagerInitEffects`: the confetti's
-    /// runtime.
-    particles: Box<ssb_game::particle::Particles>,
-    effects: ssb_game::effect::Effects,
+    /// and the fighters' effects.
+    world: crate::demo_world::DemoWorld,
     /// `lbTransitionMakeTransition`'s wipe over the battle's last frame,
     /// after a contest (RE-464).
     wipe: Option<Transition>,
@@ -85,22 +85,10 @@ pub fn start(pack: Option<&Pack<'_>>, r: &Results, entrants: [Option<(FighterKin
         layer: Layer::new(),
         models: [None, None, None, None],
         emblem,
-        particles: new_particles(),
-        effects: ssb_game::effect::Effects::new(0),
+        world: crate::demo_world::DemoWorld::new(),
         photo_pending: wipe.is_some(),
         wipe,
     })
-}
-
-/// `efParticleInitAll`'s pools, built in place on the heap.
-#[inline(never)]
-fn new_particles() -> Box<ssb_game::particle::Particles> {
-    let mut b = Box::<ssb_game::particle::Particles>::new_uninit();
-    // SAFETY: `write_new` initialises every field.
-    unsafe {
-        ssb_game::particle::Particles::write_new(b.as_mut_ptr());
-        b.assume_init()
-    }
 }
 
 /// `gcSetupCommonDObjs`, `gcAddMObjAll`, `gcAddMatAnimJointAll(..., color)`
@@ -146,19 +134,14 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
     }
     // Link 0 again: `mnVSResultsFuncRun`'s confetti, then the particles'
     // `func_run`s, made after it (RE-420).
-    if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
-        let mut rt = ssb_game::effect::EffectRuntime {
-            particles: &mut f.particles,
-            effects: &mut f.effects,
-            banks: &banks,
-        };
+    f.world.with(p, |rt| {
         if results_emblem::confetti_due(r) {
             for (pos, is_genlink_mask) in results_emblem::CONFETTI {
                 rt.effects.confetti(rt.particles, rt.banks, pos, is_genlink_mask);
             }
         }
         rt.run();
-    }
+    });
     // `mnVSResultsEmblemProcUpdate`.
     if let Some(e) = f.emblem.as_mut() {
         e.state.update(r);
@@ -168,12 +151,26 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
         for (slot, fighter) in f.models.iter_mut().zip(f.scene.fighters) {
             *slot = fighter.map(|fighter| make_model(p, fighter));
         }
-        return;
+    } else {
+        // `scSubsysFighterProcUpdate`: the clip, the status script's
+        // events, the colour animation.
+        for m in f.models.iter_mut().flatten() {
+            play(p, m);
+            m.demo.tick(m.skeleton.frame());
+        }
     }
+    // `ftParamMakeEffect` from the scripts' events, each placed on its
+    // joint as the fighter now stands; then the effect processes
+    // (priority 3, after the fighters' 5).
     for m in f.models.iter_mut().flatten() {
-        play(p, m);
-        m.demo.tick();
+        let stand = crate::demo_world::Stand {
+            pos: [m.fighter.pos.x, m.fighter.pos.y, m.fighter.pos.z],
+            yaw: m.fighter.rotate_y,
+            scale: m.fighter.scale,
+        };
+        f.world.make(p, m.object, &m.skeleton, stand, &mut m.demo);
     }
+    f.world.process(p);
 }
 
 /// `mnVSResultsMakeFighter` and `scSubsysFighterSetStatus`.
@@ -187,10 +184,7 @@ fn make_model(p: &Pack<'_>, fighter: results_scene::Fighter) -> Box<Model> {
         // Win and lose motions are unflagged: the `animlock` parts stay
         // frozen (RE-509).
         skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
-        demo: ssb_game::modelpart::DemoParts::start(
-            fighter.kind,
-            fighter.status.map_or(0, |s| 1 + s.index()),
-        ),
+        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, fighter.player as u8, fighter.costume),
     });
     if let Some(status) = fighter.status {
         let slot = (ssb_rom::anim::SLOT_WIN1 + status.index()) as u32;
@@ -201,6 +195,9 @@ fn make_model(p: &Pack<'_>, fighter: results_scene::Fighter) -> Box<Model> {
             play(p, &mut m);
         }
     }
+    // `ftMainSetStatus` runs the script's time-zero events after the
+    // clip's first frame.
+    m.demo.set_status(fighter.status.map_or(0, |s| 1 + s.index()));
     m
 }
 
@@ -240,7 +237,7 @@ pub unsafe fn draw_all(
         layer,
         models,
         emblem,
-        particles,
+        world,
         wipe,
         ..
     } = f;
@@ -250,7 +247,7 @@ pub unsafe fn draw_all(
         Draw::Fill { rect, color } => meshdraw::fill_rect_n64(rect, color, draw_state),
         Draw::Sprite(piece) => draw_piece(p, draw_state, &piece),
         Draw::Emblem => draw_emblem(gpu, p, draw_state, emblem.as_ref()),
-        Draw::Fighters => draw(gpu, p, draw_state, models, particles, alpha),
+        Draw::Fighters => draw(gpu, p, draw_state, models, world, alpha),
     });
     if let Some(w) = wipe.as_ref() {
         w.draw(p, gpu, draw_state);
@@ -387,7 +384,7 @@ unsafe fn draw(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     models: &[Option<Box<Model>>; 4],
-    particles: &mut ssb_game::particle::Particles,
+    world: &crate::demo_world::DemoWorld,
     alpha: u8,
 ) {
     let cam = &results_scene::CAMERA;
@@ -401,14 +398,18 @@ unsafe fn draw(
             continue;
         };
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let n = m.skeleton.compose(p, &obj, &mut posed);
+        // The parts an effect's joint query marked this frame draw from
+        // their collision locals (RE-509).
+        let queried = m.demo.fighter.queried_joints.get();
+        let lead = m.skeleton.lead_xrotn_pose().is_some() && queried & 1 << 2 != 0;
+        let n = m.skeleton.compose_queried(p, &obj, &mut posed, queried >> 4, lead);
         let pos = m.fighter.pos;
         let base = crate::topn_base([pos.x, pos.y, pos.z], m.fighter.rotate_y, m.fighter.scale, m.skeleton.locks.flagged);
         draw_state.configure_fighter_light(results_scene::LIGHT_ANGLE);
         draw_state.set_fade_alpha(Some(alpha));
         // A demo fighter's model and texture parts (RE-426) and accessory
         // (RE-425).
-        let parts = m.demo.parts.draw_parts();
+        let parts = m.demo.parts().draw_parts();
         meshdraw::draw_fighter_posed(
             p,
             &obj,
@@ -417,7 +418,7 @@ unsafe fn draw(
             draw_state,
             meshdraw::Look {
                 costume: u32::from(m.fighter.costume),
-                textures: m.demo.parts.draw_textures(),
+                textures: m.demo.parts().draw_textures(),
                 parts: parts.as_ref().map(|p| &p[..]),
                 accessory_before: m.fighter.kind == ssb_game::fighter::FighterKind::Purin,
             },
@@ -425,38 +426,7 @@ unsafe fn draw(
         draw_state.finish_fighter_light();
     }
     draw_state.set_fade_alpha(None);
-    // DL links 10, 15 and 18 of the same camera: particle list 4
-    // (`efDisplayZPerspAAXLUProcDisplay`, depth-tested against the
-    // fighters), 1, then 0 and 2. No results camera draws link 25's list 3.
-    if let Some(banks) = ssb_psp_runtime::particles::PackBanks::new(p) {
-        let view = ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up);
-        let proj = ssb_engine::math::Mat4::sy_persp_fast(cam.fovy, cam.aspect, cam.near, cam.far);
-        let camera = ssb_psp_runtime::particles::Camera {
-            view: &view,
-            proj: &proj,
-            screen: false,
-            planes: (cam.near, cam.far),
-            ge_planes: (cam.near, cam.far),
-            rect: n64_rect(cam.viewport),
-        };
-        ssb_psp_runtime::particles::draw_lists(
-            &banks,
-            particles,
-            &camera,
-            &RESULTS_PARTICLE_LISTS,
-            ssb_psp_runtime::particles::DEPTH_TESTED,
-            draw_state,
-        );
-    }
+    // DL links 10, 15 and 18 of the same camera.
+    world.draw(p, cam, draw_state);
     gpu.set_viewport_pillarboxed();
-}
-
-/// The lists `mnVSResultsMakeFighterCamera`'s DL links draw, in link
-/// order: 4 (link 10), 1 (15), 0 and 2 (18).
-const RESULTS_PARTICLE_LISTS: [usize; 4] = [4, 1, 0, 2];
-
-/// A camera's N64 viewport on the PSP screen as `[x, y, w, h]`, as
-/// `Gpu::set_viewport_n64` places it.
-fn n64_rect(rect: [f32; 4]) -> [f32; 4] {
-    ssb_engine::coord::n64_rect_to_psp_xywh(rect)
 }

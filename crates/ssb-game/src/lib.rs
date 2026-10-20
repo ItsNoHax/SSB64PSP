@@ -67,6 +67,7 @@ pub mod computer;
 pub mod costume;
 pub mod countdown;
 pub mod dead;
+pub mod demo_fighter;
 pub mod dokan;
 pub mod effect;
 pub mod effect_order;

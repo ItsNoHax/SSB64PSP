@@ -30,6 +30,7 @@ mod boot_log;
 mod campaign;
 mod capture;
 mod demo_screen;
+mod demo_world;
 mod menus_screen;
 mod opening_screen;
 mod play;
@@ -84,6 +85,9 @@ const STAR_KO_TICK: u64 = 60;
 /// `vsresultsemblem`'s capture tick: results tic 100. A capture build's
 /// results log shows tic 0 before tick 643's update (RE-420).
 const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
+/// `vsresultslink`'s capture tick: a few frames into the first sword
+/// sparkle of Link's Win script.
+const VS_RESULTS_LINK_CAPTURE_TICK: u64 = 780;
 /// `vsshield`'s capture tick (RE-418, RE-438). A capture build's log shows
 /// the CPU's hit setting the player's shield off
 /// (`ftCommonGuardSetOffSetStatus`) in tick 884's update, the only update
@@ -310,6 +314,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Results tic 100: the emblem has shrunk and risen for 61 tics; the
         // text and confetti come at 120 (RE-420).
         GameScene::VsResultsEmblem => VS_RESULTS_EMBLEM_CAPTURE_TICK,
+        // The CPU Link wins; each of his Win picks' scripts sparkles his
+        // sword (joint 11) 5 or 15 frames after it starts at tick 763.
+        GameScene::VsResultsLink => VS_RESULTS_LINK_CAPTURE_TICK,
         // "Go" at 398 with Z held; the CPU's first hit on the shield sets
         // it off on this tick (the capture log's `re418` lines).
         GameScene::VsShield => VS_SHIELD_SET_OFF_TICK,
@@ -661,6 +668,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsKnock
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
+            | GameScene::VsResultsLink
             | GameScene::VsShield
             | GameScene::VsArwing
             | GameScene::VsCar
@@ -905,7 +913,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         };
     }
     // `vsresults`: held left from "Go", the player runs off the stage.
-    if matches!(scene, GameScene::VsResults | GameScene::VsResultsEmblem) {
+    if matches!(scene, GameScene::VsResults | GameScene::VsResultsEmblem | GameScene::VsResultsLink) {
         return if (398..=520).contains(&tick) { -80 } else { 0 };
     }
     // Standing still: the costume and select scenes.
@@ -987,6 +995,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsKnock
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
+            | GameScene::VsResultsLink
             | GameScene::VsShield
             | GameScene::VsArwing
             | GameScene::VsCar
@@ -2791,6 +2800,7 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         | GameScene::VsSuddenDeath
         | GameScene::VsResults
         | GameScene::VsResultsEmblem
+        | GameScene::VsResultsLink
         | GameScene::VsPush
         | GameScene::VsKnock => {
             Some(ssb_game::computer::Behavior::Stand)
@@ -2942,7 +2952,7 @@ fn vs_rules(scene: GameScene) -> VsRules {
             ..VsRules::DEFAULT
         },
         // One stock (`stock_setting` 0).
-        GameScene::VsResults | GameScene::VsResultsEmblem => VsRules {
+        GameScene::VsResults | GameScene::VsResultsEmblem | GameScene::VsResultsLink => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 0,
             ..VsRules::DEFAULT
@@ -3861,7 +3871,8 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             [FighterKind::Mario, FighterKind::Kirby, FighterKind::Fox, FighterKind::Donkey],
             Some([0, 0, 1, 1]),
         ),
-        GameScene::VsResults | GameScene::VsResultsEmblem => return vs_results_roster(),
+        GameScene::VsResults | GameScene::VsResultsEmblem => return vs_results_roster(FighterKind::Kirby),
+        GameScene::VsResultsLink => return vs_results_roster(FighterKind::Link),
         // The N64 reference ROMs' fighters (`~/ppsspp-test/cpufx`).
         GameScene::CpuFxD => ([FighterKind::Ness, FighterKind::Captain, FighterKind::Fox, FighterKind::Purin], None),
         GameScene::CpuFxU => ([FighterKind::Link, FighterKind::Purin, FighterKind::Yoshi, FighterKind::Ness], None),
@@ -3933,9 +3944,11 @@ fn vs_pair_roster(kinds: [ssb_game::fighter::FighterKind; 2]) -> Roster {
 /// `vsresults`' fighters: the player's Luigi against a Kirby CPU, each in
 /// its first royal costume. Luigi's claps are Mario's, played through his
 /// translation scales; Kirby's Win clips lead with a runtime joint.
-fn vs_results_roster() -> Roster {
+/// The results scenes' roster: the player's Luigi, who loses, and the CPU
+/// `winner`.
+fn vs_results_roster(winner: ssb_game::fighter::FighterKind) -> Roster {
     use ssb_game::fighter::FighterKind;
-    let kinds = [FighterKind::Luigi, FighterKind::Kirby];
+    let kinds = [FighterKind::Luigi, winner];
     core::array::from_fn(|port| {
         kinds.get(port).map(|&kind| Entrant {
             kind,

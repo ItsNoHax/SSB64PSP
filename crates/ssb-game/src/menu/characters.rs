@@ -95,27 +95,27 @@ pub enum Motion {
 }
 
 /// `MNCharactersMotion`: what plays and for how many ticks, or
-/// [`UNTIL_END`]. The `FTSTATUS_PRESERVE_*` flags only keep a colour
-/// animation, effect or model part across the change.
+/// [`UNTIL_END`], and the `FTSTATUS_PRESERVE_*` flags its
+/// `ftMainSetStatus` passes (they keep a colour animation, effect or
+/// model part across the change).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Track {
     pub motion: Motion,
     pub length: i32,
+    pub flags: u32,
 }
 
 const NULL: Track = Track {
     motion: Motion::Null,
     length: 1,
+    flags: 0,
 };
 
 use AnyStatus as S;
 
 /// `MNCharactersMotion` as the ROM holds it (`s32 status_id, anim_length;
-/// u32 flags`). The `FTSTATUS_PRESERVE_*` `flags` only keep a colour
-/// animation, effect or model part across a status change, which the demo
-/// fighter's [`Track`] does not carry.
+/// u32 flags`).
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 struct RawTrack {
     status: u32,
     length: i32,
@@ -332,7 +332,11 @@ fn track_of(fk: usize, raw: RawTrack) -> Track {
             }
         }
     };
-    Track { motion, length }
+    Track {
+        motion,
+        length,
+        flags: raw.flags,
+    }
 }
 
 /// A status the candidate lists lack: an error with the ROM's tables, an
@@ -428,6 +432,8 @@ pub struct Fighter {
     pub kind: FighterKind,
     /// The status `ftMainSetStatus` last set.
     pub motion: Motion,
+    /// The `FTSTATUS_PRESERVE_*` flags it was set with.
+    pub flags: u32,
     /// Bumped on every `ftMainSetStatus` and every new fighter: the clip
     /// starts over from frame 0.
     pub serial: u32,
@@ -503,6 +509,7 @@ impl CharactersMenu {
             fighter: Fighter {
                 kind: PAGES[page],
                 motion: Motion::Null,
+                flags: 0,
                 serial: 0,
                 rotate_y: 0.0,
             },
@@ -577,8 +584,9 @@ impl CharactersMenu {
         motion(kind, self.motion_kind, 0)
     }
 
-    fn set_status(&mut self, m: Motion) {
-        self.fighter.motion = m;
+    fn set_status(&mut self, t: Track) {
+        self.fighter.motion = t.motion;
+        self.fighter.flags = t.flags;
         self.fighter.serial = self.fighter.serial.wrapping_add(1);
     }
 
@@ -593,7 +601,7 @@ impl CharactersMenu {
         self.current_track = 0;
         self.current_anim_frame = 0;
         let t = self.set_motion(rand);
-        self.set_status(t.motion);
+        self.set_status(t);
         if t.length != UNTIL_END {
             self.is_use_anim_frames_remain = true;
             self.anim_frames_remain = t.length;
@@ -621,7 +629,7 @@ impl CharactersMenu {
                 self.current_track += 1;
                 let new = self.set_motion(rand);
                 let next = motion(kind, self.motion_kind, self.current_track + 1);
-                self.set_status(new.motion);
+                self.set_status(new);
                 if new.length != UNTIL_END {
                     self.anim_frames_remain = if next.motion == Motion::Null {
                         new.length + 20

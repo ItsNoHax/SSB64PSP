@@ -578,6 +578,14 @@ pub struct Fighter {
     /// `FTStruct::public_knockback`: the knockback the crowd reacts to
     /// ([`crate::public`]).
     pub public_knockback: f32,
+    /// `fp->pkind == nFTPlayerKindDemo`: a select, results or movie
+    /// fighter ([`crate::demo_fighter`]). Its motion scripts make no
+    /// attack collisions, set no attack damage and make no quake.
+    pub is_demo: bool,
+    /// `FTStruct::is_muted`: the motion scripts' sounds are read and
+    /// dropped (all but `StopLoopSFX`). Only `mnCharactersMakeFighter` sets
+    /// it.
+    pub is_muted: bool,
 }
 
 impl Fighter {
@@ -690,6 +698,8 @@ impl Fighter {
             damage_knockback_stack: 0.0,
             sound: crate::fighter_sound::FighterSound::default(),
             public_knockback: 0.0,
+            is_demo: false,
+            is_muted: false,
 
             is_knockback_paused: false,
             hits: crate::combat::FrameHits::default(),

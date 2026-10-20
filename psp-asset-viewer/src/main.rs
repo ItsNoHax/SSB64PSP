@@ -769,7 +769,8 @@ unsafe fn run() -> ! {
     let mut anim_playing = false;
     let mut skeleton = ssb_rom::skeleton::Skeleton::new();
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-    let mut posed_len = 0usize;
+    // Set by each frame's compose before any draw reads it.
+    let mut posed_len: usize;
     if cfg!(feature = "animation_audit_capture") && anim_count > 0 {
         anim_playing = true;
         if let Some(p) = &pack {
@@ -936,8 +937,6 @@ unsafe fn run() -> ! {
                         object_index =
                             start_anim(p, anim_index, &mut skeleton).unwrap_or(object_index);
                     }
-                } else {
-                    posed_len = 0;
                 }
             }
 

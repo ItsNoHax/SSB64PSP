@@ -37,7 +37,7 @@ struct Model {
     slot: u32,
     object: u32,
     skeleton: Skeleton,
-    demo: ssb_game::modelpart::DemoParts,
+    demo: ssb_game::demo_fighter::DemoFighter,
     entrance: spgame::intro::Entrance,
     camera: [f32; 10],
     pos: [f32; 3],
@@ -165,7 +165,8 @@ impl Presentation {
                             );
                             model
                                 .demo
-                                .parts
+                                .fighter
+                                .model_parts
                                 .set_detail_all(ssb_game::modelpart::Detail::Low);
                             self.models.push(model);
                         }
@@ -214,12 +215,13 @@ impl Presentation {
                 if intro.stage == Stage::Yoshi {
                     model
                         .demo
-                        .parts
+                        .fighter
+                        .model_parts
                         .set_detail_all(ssb_game::modelpart::Detail::Low);
                 }
                 if intro.stage == Stage::Kirby {
                     let part = [13, 5, 10, 4, 7, 12, 6, 8][card as usize];
-                    model.demo.parts.set(
+                    model.demo.fighter.model_parts.set(
                         6,
                         if part == 13 {
                             session.manager.kirby_model_part as i8
@@ -287,7 +289,7 @@ impl Presentation {
                         && m.slot != ssb_rom::anim::SLOT_FIGURE_STAND as u32
                     {
                         m.slot = ssb_rom::anim::SLOT_FIGURE_STAND as u32;
-                        m.demo = ssb_game::modelpart::DemoParts::start(m.kind, 10);
+                        m.demo.set_status(10);
                         m.transn = [0.0; 3];
                         if let Some(anim) = p.fighter_anim(m.kind as u32, m.slot) {
                             m.skeleton.start(p, &anim, 0.0, 1.0);
@@ -301,7 +303,9 @@ impl Presentation {
             }
             if !changed && !m.frozen {
                 play(p, m);
-                m.demo.tick();
+                m.demo.tick(m.skeleton.frame());
+                // No particle world here: the rows' effects are dropped.
+                m.demo.fighter.effects.clear();
             }
             if matches!(screen, Screen::Continue(_) | Screen::Ending(_))
                 && ssb_rom::anim::LEADING_RUNTIME_JOINT[m.kind as usize][m.slot as usize]
@@ -575,7 +579,7 @@ fn make_model(
         // The intro and figure motions are unflagged: the `animlock` parts
         // stay frozen (RE-509).
         skeleton: ssb_psp_runtime::scene::fighter_skeleton(kind, 1.0),
-        demo: ssb_game::modelpart::DemoParts::start(kind, row),
+        demo: ssb_game::demo_fighter::DemoFighter::start(kind, 0, costume, row),
         entrance,
         camera,
         pos: [0.0; 3],
@@ -685,7 +689,7 @@ unsafe fn draw_model_ex(
         let forward = (at - eye).normalized();
         gpu.set_constant_fog((Vec3::new(pos[0], pos[1], pos[2]) - eye).dot(forward), rgba);
     }
-    let parts = m.demo.parts.draw_parts();
+    let parts = m.demo.parts().draw_parts();
     meshdraw::draw_fighter_posed(
         p,
         &object,
@@ -694,7 +698,7 @@ unsafe fn draw_model_ex(
         st,
         meshdraw::Look {
             costume: m.costume as u32,
-            textures: m.demo.parts.draw_textures(),
+            textures: m.demo.parts().draw_textures(),
             parts: parts.as_ref().map(|p| &p[..]),
             accessory_before: m.kind == FighterKind::Purin,
         },

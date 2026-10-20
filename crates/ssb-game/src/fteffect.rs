@@ -224,6 +224,11 @@ pub(crate) fn on_set_status(f: &mut Fighter, to: crate::status::AnyStatus) {
     ) {
         return;
     }
+    stop_on_set_status(f);
+}
+
+/// `ftMainSetStatus` without `FTSTATUS_PRESERVE_EFFECT`.
+pub(crate) fn stop_on_set_status(f: &mut Fighter) {
     // `ftParamProcStopEffect` when `is_effect_attach`; a maker still queued
     // would have set it in the source, so its stop is queued behind it.
     let attaching = f.effects.iter().any(|e| match e {
@@ -539,7 +544,8 @@ fn dispatch(f: &mut Fighter, rt: &mut EffectRuntime<'_>, effect: u16, pos: Vec3,
         kind::SPARKLE_WHITE_SCALE => {
             e.ready_at(p, b, false, script::SPARKLE_WHITE_SCALE, pos, 1.0);
         }
-        // `fp->pkind != nFTPlayerKindDemo`: no port battle is a demo.
+        // `fp->pkind != nFTPlayerKindDemo`.
+        kind::QUAKE_MAG0 | kind::QUAKE_MAG1 | kind::QUAKE_MAG2 if f.is_demo => {}
         kind::QUAKE_MAG0 | kind::QUAKE_MAG1 | kind::QUAKE_MAG2 => {
             e.quake((effect - kind::QUAKE_MAG0) as u8);
         }

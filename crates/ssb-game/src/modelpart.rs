@@ -415,40 +415,6 @@ impl ModelParts {
     }
 }
 
-/// A demo fighter's parts (the selects' and the results' fighters,
-/// RE-426): `ftManagerMakeFighter`'s, then `scSubsysFighterSetStatus`
-/// (`ftMainSetStatus` with the make's defaults) and each frame's
-/// `scSubsysFighterProcUpdate`, whose demo-status script swaps the model
-/// and texture parts (Mario's blinks, Kirby's Win mouth, the claps' open
-/// hands).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DemoParts {
-    pub parts: ModelParts,
-    script: crate::motion::DemoScript,
-}
-
-impl DemoParts {
-    /// The fighter made, then set to demo status row `row`
-    /// (`nFTDemoStatusNull + row`: 0 the selects' wait, 1 to 4 Win1 to
-    /// Win4, 5 Lose).
-    pub fn start(kind: FighterKind, row: usize) -> Self {
-        let mut parts = ModelParts::new(kind);
-        let script = crate::motion::DemoScript::start(kind, row, &mut parts);
-        DemoParts { parts, script }
-    }
-
-    /// One `scSubsysFighterProcUpdate` frame.
-    pub fn tick(&mut self) {
-        self.script.tick(&mut self.parts);
-    }
-
-    /// The effect and sound events the last [`Self::start`] or
-    /// [`Self::tick`] ran, for the host to carry out.
-    pub fn events(&self) -> &[crate::motion::DemoEvent] {
-        self.script.events()
-    }
-}
-
 /// `ftMainSetStatus`: `if (!(flags & FTSTATUS_PRESERVE_MODELPART) &&
 /// fp->is_modelpart_modify) ftParamResetModelPartAll(fighter_gobj)`, the
 /// flag from every call that passes it
@@ -646,70 +612,6 @@ mod tests {
             assert!(link.contains(&e), "{e:?}");
         }
         assert_eq!(v(FighterKind::Captain).len(), 5);
-    }
-
-    #[test]
-    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
-    fn mario_demo_blink_follows_the_subroutine_waits() {
-        // scsubsysdatamario.c: sprite 2 for two frames, 3 for three,
-        // 2 for two, then 0. The wait loop calls it again at tick 98.
-        let mut d = DemoParts::start(FighterKind::Mario, 0);
-        let mut ids = Vec::new();
-        for _ in 0..9 {
-            ids.push(d.parts.draw_textures()[0]);
-            d.tick();
-        }
-        assert_eq!(ids, [2, 2, 3, 3, 3, 2, 2, 0, 0]);
-        for _ in 9..98 {
-            d.tick();
-        }
-        assert_eq!(d.parts.draw_textures()[0], 2);
-    }
-
-    #[test]
-    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
-    fn link_opening_jump_plays_its_sound_and_dust_at_time_zero() {
-        use crate::motion::DemoEvent;
-        use ssb_engine::math::Vec3;
-        // `D_ovl1_8039198C` (the opening run's Jump): `PlayFGM(0x62)`, then
-        // `Effect(nEFKindDustHeavyDouble, TopN)`, both before any wait.
-        let mut d = DemoParts::start(FighterKind::Link, 7);
-        assert_eq!(
-            d.events(),
-            [
-                DemoEvent::PlayFgm(0x62),
-                DemoEvent::Effect {
-                    kind: crate::fteffect::kind::DUST_HEAVY_DOUBLE,
-                    joint: 0,
-                    offset: Vec3::ZERO,
-                    scatter: Vec3::ZERO,
-                    is_scale_pos: false,
-                    flag: 0,
-                },
-            ]
-        );
-        d.tick();
-        assert!(d.events().is_empty());
-        // Mario's run row has no script.
-        assert!(DemoParts::start(FighterKind::Mario, 6).events().is_empty());
-    }
-
-    #[test]
-    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
-    fn kirby_win_mouth_changes_at_the_source_frame() {
-        let mut d = DemoParts::start(FighterKind::Kirby, 1);
-        for _ in 0..157 {
-            d.tick();
-        }
-        assert_eq!(d.parts.draw_textures(), [0, 0]);
-        d.tick();
-        assert_eq!(d.parts.draw_textures(), [5, 0]);
-        assert_eq!(
-            DemoParts::start(FighterKind::Kirby, 5)
-                .parts
-                .draw_textures(),
-            [5, 0]
-        );
     }
 
     #[test]
