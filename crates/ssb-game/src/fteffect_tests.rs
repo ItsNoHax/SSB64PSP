@@ -715,6 +715,7 @@ fn thunder_shock_points_enter_topn_frame_as_the_trace_records() {
 /// (`proc_lagend` when hitlag runs out), the update pass (the maker), the
 /// effect processes, then the hit pass (`proc_lagstart`).
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_thunder_shock_spark_lives_six_frames_plus_the_hitlag_it_starts_in() {
     for (hitlag, life_frames) in [(0u16, 6usize), (16, 21), (9, 14)] {
         let bank = bank(20);

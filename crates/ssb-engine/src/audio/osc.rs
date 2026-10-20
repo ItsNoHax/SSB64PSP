@@ -1,10 +1,12 @@
 //! The sequence player's tremolo and vibrato oscillators (`src/sys/audio.c:509-753`:
 //! `syAudioDepth2Cents`, `syAudioInitOsc`, `syAudioUpdateOsc`,
-//! `syAudioStopOsc`), `alCents2Ratio` (`src/libultra/audio/cents2ratio.c`)
-//! and libultra's `sinf` (`src/libultra/gu/sinf.c`).
+//! `syAudioStopOsc`) and `alCents2Ratio` (`src/libultra/audio/cents2ratio.c`).
+//! Their sine is libultra's `sinf` ([`crate::math::sinf`], bit for bit).
 //!
 //! The 32 oscillator states (`SYAUDIO_OSC_STATES_NUM`) are a LIFO free list
 //! linked in index order (`sSYAudioOscStatesAllocFree`, audio.c:959-964).
+
+use crate::math::sinf;
 
 /// `TREMELO_SIN` .. `VIBRATO_ASC_SAW` (`src/sys/audio.h:14-21`).
 pub const TREMELO_SIN: u8 = 1;
@@ -64,63 +66,6 @@ pub fn depth2cents(depth: u8) -> f32 {
         d >>= 1;
     }
     cents
-}
-
-/// The polynomial of libultra's `sinf` (`P[]`, IEEE doubles), rounded to
-/// f32 at compile time.
-const P1: f32 = f64::from_bits(0xbfc5_5554_bc83_656d) as f32;
-const P2: f32 = f64::from_bits(0x3f81_10ed_3804_c2a0) as f32;
-const P3: f32 = f64::from_bits(0xbf29_f6ff_eea5_6814) as f32;
-const P4: f32 = f64::from_bits(0x3ec5_dbdf_0e31_4bfe) as f32;
-/// `rpi` = 1/pi.
-const RPI: f32 = f64::from_bits(0x3fd4_5f30_6dc9_c883) as f32;
-/// Cody-Waite split of pi for f32: `PIHI` has 8 significant bits, so
-/// `n * PIHI` is exact for the small `n` here.
-const PIHI: f32 = 3.140_625;
-const PILO: f32 = (core::f64::consts::PI - 3.140_625) as f32;
-
-/// libultra's `sinf` (`fsin`), evaluated in f32. The original computes the
-/// same range reduction and polynomial in double precision and rounds once;
-/// the PSP has no double-precision FPU, so this port evaluates it in f32
-/// (D-049 deviation: the result can differ from the N64 in the last bits;
-/// see `sinf_matches_libultra_in_vibrato_use`).
-pub fn sinf(x: f32) -> f32 {
-    let ix = x.to_bits() as i32;
-    let xpt = (ix >> 22) & 0x1FF;
-    let poly = |dx: f32| {
-        let xsq = dx * dx;
-        let poly = ((P4 * xsq + P3) * xsq + P2) * xsq + P1;
-        dx + (dx * xsq) * poly
-    };
-    if xpt < 0xFF {
-        // |x| < 1.5
-        if xpt >= 0xE6 {
-            poly(x)
-        } else {
-            x
-        }
-    } else if xpt < 0x136 {
-        // |x| < 2^28
-        let dn = x * RPI;
-        // `ROUND`: half away from zero.
-        let n = if dn >= 0.0 {
-            (dn + 0.5) as i32
-        } else {
-            (dn - 0.5) as i32
-        };
-        let dn = n as f32;
-        let dx = x - dn * PIHI - dn * PILO;
-        let r = poly(dx);
-        if n & 1 == 0 {
-            r
-        } else {
-            -r
-        }
-    } else if x.is_nan() {
-        x
-    } else {
-        0.0
-    }
 }
 
 /// The type-specific part of `SYAudioOsc` (`src/sys/audio.h:97-147`).
@@ -456,33 +401,20 @@ mod tests {
     }
 
     /// Over every input `syAudioUpdateOsc` can pass (`cur / max * 2pi`,
-    /// `max` 4..=259), the f32 port stays within a few ulp of the
-    /// double-precision original (absolute 1e-6 near the zeros), and the
-    /// vibrato's `(s32)(sin * depthcents)` rarely differs.
+    /// `max` 4..=259), the oscillators' `sinf` returns the double-precision
+    /// original's bits.
     #[test]
     fn sinf_matches_libultra_in_vibrato_use() {
-        let mut worst = 0f32;
-        let mut cents_diff = 0;
-        let mut total = 0;
         for max in 4u16..=259 {
             for cur in 0..max {
                 let x = cur as f32 / max as f32 * TWO_PI;
-                let (a, b) = (sinf(x), libultra_sinf(x));
-                worst = worst.max((a - b).abs());
-                for depth in [50u8, 75, 100, 127] {
-                    let dc = depth2cents(depth);
-                    total += 1;
-                    if (a * dc) as i32 != (b * dc) as i32 {
-                        cents_diff += 1;
-                    }
-                }
+                assert_eq!(
+                    sinf(x).to_bits(),
+                    libultra_sinf(x).to_bits(),
+                    "cur {cur} max {max}"
+                );
             }
         }
-        std::eprintln!(
-            "sinf: worst abs error {worst:e}, vibrato cents differ in {cents_diff}/{total}"
-        );
-        assert!(worst < 4e-7, "worst {worst:e}");
-        assert!(cents_diff * 1000 <= total, "{cents_diff}/{total}");
     }
 
     #[test]

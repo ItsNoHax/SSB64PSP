@@ -27,7 +27,6 @@
 2. Thunder Jolt burst spikes (RE-541).
 3. Effects process order (RE-542).
 4. MS8 list in `PLAN.md`, 1P intro first.
-5. `effect.rs` `QUAKE`/`THUNDER_SHOCK` → `ssb-tablegen` AnimJoint player.
 
 ## Blockers
 

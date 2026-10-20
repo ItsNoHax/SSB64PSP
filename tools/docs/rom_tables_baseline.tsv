@@ -48,8 +48,6 @@ crates/ssb-engine/src/math.rs	IDENTITY	port constant: the identity matrix
 crates/ssb-engine/src/math/trig_golden.rs	ANGLE_SPECIALS	test fixture: trig test vectors
 crates/ssb-engine/src/math/trig_golden.rs	UNARY_SPECIALS	test fixture: trig test vectors
 crates/ssb-engine/src/rsp_light.rs	RSQ	port constant: the RSP VRSQ table, computed (ares RSP::power)
-crates/ssb-game/src/effect.rs	QUAKE	open, not layout: effect lives the port precomputes by replaying the ROM's AObjEvent32 scripts (gcPlayAnimAll); crates/ssb-rom/tests/display_effects.rs checks each against the ROM. Generating them needs an AnimJoint player in ssb-tablegen
-crates/ssb-game/src/effect.rs	THUNDER_SHOCK	open, not layout: effect lives the port precomputes by replaying the ROM's AObjEvent32 scripts (gcPlayAnimAll); crates/ssb-rom/tests/display_effects.rs checks each against the ROM. Generating them needs an AnimJoint player in ssb-tablegen
 crates/ssb-game/src/explain.rs	KEY_EVENTS	link-time labels: llSCExplainMain{0,1,2,3}KeyEvent offsets in the How to Play file
 crates/ssb-game/src/item/link_bomb.rs	ATTACK_EVENTS	generated: copies super::attack_events::LINK_BOMB (ssb-tablegen, read from llLinkMainBombAttackEvents); its literals are the zero fill
 crates/ssb-game/src/opening/clash.rs	CORNERS	link-time labels: the corners' ll*DL and ll*AnimJoint offsets (file 0x48) that mvOpeningClash passes as immediates

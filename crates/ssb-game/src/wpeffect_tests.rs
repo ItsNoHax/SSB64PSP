@@ -538,6 +538,7 @@ fn every_clash_of_sixteen_weapons_fits() {
 /// quakes the stronger writes `vel_at` last. A write is taken once, and a
 /// quake past its animation ejects without writing.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_strongest_live_quake_moves_the_camera() {
     let bank = bank(20);
     let mut p = std::boxed::Box::new(Particles::new());

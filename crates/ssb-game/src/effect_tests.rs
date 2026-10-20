@@ -407,6 +407,7 @@ fn display_effects_draw_on_their_desc_links() {
 /// seven plays or at once by `ftParamStopEffect`, which leaves other
 /// fighters' sparks alone.
 #[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_thunder_shock_spark_pauses_with_its_fighter_and_stops_on_its_status_change() {
     let bank = bank(200);
     let (mut p, mut e) = runtime();

@@ -68,6 +68,7 @@ mod capture_captain;
 mod colanim;
 mod computer;
 mod d_arrays;
+mod effect_life;
 mod emit;
 mod ending_data;
 mod fighters;
@@ -113,8 +114,8 @@ pub enum Crate {
     /// `ssb-game`: motion, colour-animation and CPU scripts, status flags,
     /// joint masks and hidden/texture parts, hurtboxes, Falcon Dive's
     /// capture offsets, the items' `ITAttributes`, the item weapons'
-    /// `WPAttributes` and the Smog's scale, Mario's `FTAttributes` physics
-    /// and Kirby's copy table.
+    /// `WPAttributes` and the Smog's scale, Mario's `FTAttributes` physics,
+    /// Kirby's copy table and the quakes' and Thunder Shock's lives.
     Game,
     /// `ssb-rom`: the fighter animation table, the offsets the stage
     /// clear's and staff roll's data arrays hold, the stage clear's pictures,
@@ -168,6 +169,10 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
                 Generated {
                     name: "kirby_attack100.rs",
                     text: kirby_attack100::generate(rom)?,
+                },
+                Generated {
+                    name: "effect_life.rs",
+                    text: effect_life::generate(rom)?,
                 },
                 Generated {
                     name: "hurtboxes.rs",
@@ -259,7 +264,12 @@ pub fn locate_rom(repo: &Path) -> std::result::Result<Option<PathBuf>, String> {
     if let Some(path) = std::env::var_os(ROM_ENV).filter(|p| !p.is_empty()) {
         let path = PathBuf::from(path);
         if !path.is_file() {
-            return Err(format!("{ROM_ENV}={} is not a file", path.display()));
+            let hint = if path.is_relative() {
+                " (use an absolute path)"
+            } else {
+                ""
+            };
+            return Err(format!("{ROM_ENV}={} is not a file{hint}", path.display()));
         }
         return Ok(Some(path));
     }

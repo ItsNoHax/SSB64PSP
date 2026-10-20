@@ -1193,8 +1193,11 @@ pub enum DisplayKind {
 /// `gcPlayAnimAll` calls until each display effect's animation reaches its
 /// end and its `proc_update` ejects it (`anim_frame <= 0`), counting the
 /// one `efManagerMakeEffect` makes. Replayed from the ROM's scripts
-/// (`crates/ssb-rom/tests/display_effects.rs`, RE-415).
+/// (`crates/ssb-rom/tests/display_effects.rs`, RE-415). `QUAKE` and
+/// `THUNDER_SHOCK` are generated from the ROM (D-048); zeros in a stub build.
 pub mod life {
+    include!(concat!(env!("OUT_DIR"), "/effect_life.rs"));
+
     /// `llEFCommonEffects2ShockSmallMatAnimJoint` (the material's clock,
     /// which its `SetAnim` loop zeroes).
     pub const SHOCK_SMALL: u16 = 20;
@@ -1206,15 +1209,10 @@ pub mod life {
     pub const FLY_MDUST: u16 = 26;
     /// `llEFCommonEffects1ImpactWaveAnimJoint`.
     pub const IMPACT_WAVE: u16 = 13;
-    /// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag2...`.
-    pub const QUAKE: [u16; 3] = [19, 31, 31];
     /// `llEFCommonEffects2FireSparkAnimJoint`.
     pub const FIRE_SPARK: u16 = 11;
     /// `llEFCommonEffects3MBallRaysAnimJoint`.
     pub const MBALL_RAYS: u16 = 51;
-    /// `llPikachuSpecial2ThunderShock{0,1,2}AnimJoint`, each counting the
-    /// default animation's play at the make.
-    pub const THUNDER_SHOCK: [u16; 3] = [7, 7, 7];
     /// `llPikachuSpecial3ThunderJoltAnimJoint`: drawn on eight frames, its
     /// make's and seven more, as in the N64 cpufx-s trace (RE-541).
     pub const THUNDER_JOLT: u16 = 9;

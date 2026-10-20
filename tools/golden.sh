@@ -49,6 +49,13 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The build's table generator runs in each crate's directory: hand it an
+# absolute ROM path.
+if [ -n "${SSB64_ROM:-}" ]; then
+  [ -f "$SSB64_ROM" ] || { echo "golden.sh: SSB64_ROM=$SSB64_ROM is not a file" >&2; exit 2; }
+  SSB64_ROM="$(realpath -- "$SSB64_ROM")"
+  export SSB64_ROM
+fi
 MANIFEST="$REPO/tests/golden/scenes.tsv"
 HASHES="$REPO/tests/golden/hashes.tsv"
 LOCAL="$REPO/tests/golden/local"
@@ -83,7 +90,7 @@ if [ "${1:-}" = __capture ]; then
     grep -a -o 'stack tick=[0-9]* peak=[0-9]* size=[0-9]*' \
       "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.txt" || true
     # Free user memory at boot and its lowest (RE-475).
-    grep -a -o 'mem tick=[0-9]* boot=[0-9]* low=[0-9]*[^\r]*' \
+    grep -a -o 'mem tick=[0-9]* boot=[0-9]* low=[0-9]*[^[:cntrl:]]*' \
       "$run/jobs/$job/ppsspp-headless.log" > "$run/stack/$golden-$pass.mem" || true
   fi
   end=$(date +%s.%N)

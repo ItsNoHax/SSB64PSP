@@ -1612,8 +1612,11 @@ pub struct WeaponPool {
     star_rod_smash_desc: bool,
     slots: [Option<Weapon>; MAX_WEAPONS],
     /// PK Fire flames the sparks' hit callbacks made this frame, for
-    /// [`crate::item::ItemPool::take_weapon_spawns`].
+    /// [`crate::item::ItemPool::take_weapon_spawns`]: the first
+    /// `item_spawn_len` slots, all `Some`. Slots past it are never read, so
+    /// no unwritten `None` payload reaches a float operation (RE-531).
     item_spawns: [Option<crate::item::PKFireSpawn>; MAX_WEAPONS],
+    item_spawn_len: usize,
     /// Four `WPAttackColl` victim records, shared by fighters and items.
     /// Fighters use ports; items use `ITEM_RECORD_BASE + slot`.
     hit_records: [[Option<u8>; 4]; MAX_WEAPONS],
@@ -2623,6 +2626,7 @@ impl Default for WeaponPool {
             star_rod_smash_desc: false,
             slots: [None; MAX_WEAPONS],
             item_spawns: [None; MAX_WEAPONS],
+            item_spawn_len: 0,
             hit_records: [[None; 4]; MAX_WEAPONS],
             pending_item_hits: [false; MAX_WEAPONS],
             owners: [None; MAX_OWNERS],
@@ -2654,6 +2658,7 @@ impl WeaponPool {
     pub fn reset(&mut self) {
         self.slots = [None; MAX_WEAPONS];
         self.item_spawns = [None; MAX_WEAPONS];
+        self.item_spawn_len = 0;
         self.hit_records = [[None; 4]; MAX_WEAPONS];
         self.pending_item_hits = [false; MAX_WEAPONS];
         self.owners = [None; MAX_OWNERS];
@@ -3266,16 +3271,16 @@ impl WeaponPool {
     }
 
     fn queue_item_spawn(&mut self, spawn: crate::item::PKFireSpawn) {
-        if let Some(slot) = self.item_spawns.iter_mut().find(|s| s.is_none()) {
+        if let Some(slot) = self.item_spawns.get_mut(self.item_spawn_len) {
             *slot = Some(spawn);
+            self.item_spawn_len += 1;
         }
     }
 
     /// The PK Fire flames made since the last call, in order.
-    pub fn take_item_spawns(&mut self) -> impl Iterator<Item = crate::item::PKFireSpawn> {
-        core::mem::replace(&mut self.item_spawns, [None; MAX_WEAPONS])
-            .into_iter()
-            .flatten()
+    pub fn take_item_spawns(&mut self) -> impl Iterator<Item = crate::item::PKFireSpawn> + '_ {
+        let len = core::mem::take(&mut self.item_spawn_len);
+        self.item_spawns[..len].iter_mut().filter_map(Option::take)
     }
 
     /// A slot's attack as `itProcessSearchHitWeapon` reads it: owner,
