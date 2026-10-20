@@ -49,10 +49,20 @@ pub enum Kind {
     Reflector,
     /// `efManagerSamusGrappleBeamGlowMakeEffect`.
     GrappleGlow,
+    /// `efManagerKirbyCutterDrawMakeEffect`.
+    CutterDraw,
+    /// `efManagerKirbyCutterUpMakeEffect`.
+    CutterUp,
+    /// `efManagerKirbyCutterDownMakeEffect`.
+    CutterDown,
+    /// `efManagerKirbyCutterTrailMakeEffect`.
+    CutterTrail,
+    /// `efManagerNessPKThunderWaveMakeEffect`.
+    PKWave,
 }
 
 impl Kind {
-    pub const COUNT: usize = 10;
+    pub const COUNT: usize = 15;
     pub const ALL: [Kind; Kind::COUNT] = [
         Kind::Shield,
         Kind::YoshiShield,
@@ -64,6 +74,11 @@ impl Kind {
         Kind::Kick,
         Kind::Reflector,
         Kind::GrappleGlow,
+        Kind::CutterDraw,
+        Kind::CutterUp,
+        Kind::CutterDown,
+        Kind::CutterTrail,
+        Kind::PKWave,
     ];
 }
 
@@ -140,6 +155,7 @@ impl FighterStamps {
 pub fn fighter_lives(f: &crate::fighter::Fighter) -> [Life; Kind::COUNT] {
     let shield = f.guard.is_shield && f.kind != crate::fighter::FighterKind::Yoshi;
     let egg_escape = f.yoshi.egg_escape_active;
+    use crate::kirby::CutterEffect as Cutter;
     let counted = |t: Option<u16>| (t.is_some(), t);
     let punch =
         crate::captain::punch_effect_ticks(f).or_else(|| crate::kirby_copy::punch_effect_ticks(f));
@@ -154,6 +170,11 @@ pub fn fighter_lives(f: &crate::fighter::Fighter) -> [Life; Kind::COUNT] {
         counted(crate::captain::kick_effect_ticks(f)),
         counted(crate::status::fox_reflector_effect(f).map(|e| e.ticks)),
         counted(crate::grab::grapple_glow_ticks(f)),
+        counted(crate::kirby::cutter_effect_ticks(f, Cutter::Draw)),
+        counted(crate::kirby::cutter_effect_ticks(f, Cutter::Up)),
+        counted(crate::kirby::cutter_effect_ticks(f, Cutter::Down)),
+        counted(crate::kirby::cutter_effect_ticks(f, Cutter::Trail)),
+        counted(crate::ness::pk_wave_effect_ticks(f)),
     ]
 }
 

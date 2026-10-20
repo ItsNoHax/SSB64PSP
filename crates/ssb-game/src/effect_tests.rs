@@ -389,6 +389,8 @@ fn display_effects_draw_on_their_desc_links() {
         K::StarRodSpark,
         K::FireSpark,
         K::ThunderTrail,
+        K::CaptureKirbyStar,
+        K::LoseKirbyStar,
     ] {
         assert_eq!(k.dl_link(), 15, "{k:?}");
     }
@@ -667,4 +669,138 @@ fn a_remade_fighter_effect_takes_a_new_key() {
     f.purin.sing_effect = Some(3);
     rt.fighter(&mut f);
     assert!(key(&rt) > remade);
+}
+
+/// `efManagerCaptureKirbyStarProcUpdate` (efmanager.c:5837): the star spins
+/// 10 degrees a frame; on each odd `effect_timer` it draws the `y` scatter
+/// (`effect_scale * 250`, truncated), then the `x` scatter (`* 125`), and
+/// makes a Star Rod spark on the side away from the victim's air motion.
+/// The process is not `efManagerHaveStructProcUpdate`'s, so a lag pause
+/// leaves it running; `ftParamStopEffect` ejects it.
+#[test]
+fn a_captured_star_spins_and_sparks_every_other_frame_behind_its_victim() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    let pos = Vec3::new(100.0, 50.0, 0.0);
+    e.fighter_anchors[1] = Some((pos, 1));
+    e.fighter_vel_air_x[1] = 30.0;
+    assert!(e.capture_kirby_star(1, 1.5));
+    let star = |e: &Effects| {
+        *e.displays()
+            .find(|d| d.kind == DisplayKind::CaptureKirbyStar)
+            .unwrap()
+    };
+    let sparks = |e: &Effects| {
+        e.displays()
+            .filter(|d| d.kind == DisplayKind::StarRodSpark)
+            .copied()
+            .collect::<std::vec::Vec<_>>()
+    };
+    assert_eq!(star(&e).scale, Vec3::new(1.5, 1.5, 1.0));
+    // The draws the second and fourth processes make, in order.
+    rng::set_seed(7);
+    let y1 = rng::rand_int_range(375) as f32;
+    let x1 = rng::rand_int_range(187) as f32;
+    let r1 = rng::rand_float() * dtor(360.0);
+    let y2 = rng::rand_int_range(375) as f32;
+    let x2 = rng::rand_int_range(187) as f32;
+    rng::set_seed(7);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    rt.frame();
+    assert!(sparks(rt.effects).is_empty(), "effect_timer 0 makes none");
+    assert_eq!(star(rt.effects).rotate.z, dtor(10.0));
+    // A paused fighter's star still runs.
+    rt.effects.pause_attached(1, true);
+    rt.frame();
+    let s = sparks(rt.effects);
+    assert_eq!(s.len(), 1);
+    assert_eq!(s[0].translate, Vec3::new(100.0 - x1, 50.0 + y1, 0.0));
+    assert_eq!(s[0].rotate.z, r1);
+    assert_eq!(s[0].vel[0], -25.0, "moving right: the spark faces left");
+    assert_eq!(star(rt.effects).rotate.z, dtor(10.0) + dtor(10.0));
+    rt.frame();
+    assert_eq!(sparks(rt.effects).len(), 1);
+    rt.effects.fighter_vel_air_x[1] = 0.0;
+    rt.frame();
+    let s = sparks(rt.effects);
+    assert_eq!(s.len(), 2);
+    let new = s.iter().find(|d| d.vel[0] == 25.0).unwrap();
+    assert_eq!(new.translate, Vec3::new(100.0 + x2, 50.0 + y2, 0.0));
+    rt.effects.stop_attached(1);
+    assert!(rt
+        .effects
+        .displays()
+        .all(|d| d.kind != DisplayKind::CaptureKirbyStar));
+}
+
+/// `efManagerLoseKirbyStarProcUpdate` (efmanager.c:5919): the child flies
+/// `(lr * 20, 80)` under gravity 3 to a terminal -90, spinning 10 degrees a
+/// frame. `lifetime-- <= 0` holds on the 51st process, which makes the star
+/// splash at the child's translate and ejects; nothing pauses or stops it.
+#[test]
+fn a_lost_star_arcs_for_fifty_frames_then_splashes() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    let start = Vec3::new(-300.0, 40.0, 0.0);
+    assert!(e.lose_kirby_star(start, -1));
+    assert_eq!(e.displays().next().unwrap().translate, start);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    let (mut x, mut y, mut vy) = (start.x, start.y, 80.0f32);
+    rt.effects.stop_attached(0);
+    rt.effects.pause_attached(0, true);
+    for n in 1..=50 {
+        rt.frame();
+        x -= 20.0;
+        y += vy;
+        vy = (vy - 3.0).max(-90.0);
+        let d = *rt.effects.displays().next().expect("alive");
+        assert_eq!(d.translate, Vec3::new(x, y, 0.0), "process {n}");
+        assert_eq!(d.vel[1], vy);
+    }
+    assert_eq!(rt.particles.generators().count(), 0);
+    rt.frame();
+    x -= 20.0;
+    y += vy;
+    assert!(rt.effects.displays().next().is_none(), "the 51st ejects");
+    let g: std::vec::Vec<_> = rt.particles.generators().map(|g| g.pos).collect();
+    assert_eq!(
+        g,
+        [Vec3::new(x, y, 0.0)],
+        "the splash, without the root's 210"
+    );
+}
+
+/// The lost star's bound check reads its child's translate against
+/// `map_bound_*` and ejects without a splash.
+#[test]
+fn a_lost_star_past_the_map_bounds_ejects_without_a_splash() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    e.map_bounds = Some(crate::status::BlastZone {
+        top: 10_000.0,
+        bottom: -10_000.0,
+        left: -10_000.0,
+        right: 100.0,
+    });
+    assert!(e.lose_kirby_star(Vec3::ZERO, 1));
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    for _ in 0..5 {
+        rt.frame();
+    }
+    assert_eq!(rt.effects.displays().next().unwrap().translate.x, 100.0);
+    rt.frame();
+    assert!(rt.effects.displays().next().is_none());
+    assert_eq!(rt.particles.generators().count(), 0);
 }

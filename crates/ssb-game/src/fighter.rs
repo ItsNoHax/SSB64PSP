@@ -1248,10 +1248,15 @@ impl Fighter {
             // So does the effect process of an effect no `proc_lagstart`
             // pauses.
             crate::kirby_copy::tick_punch_effect(self);
+            // Unless `proc_lagstart` (`ftParamProcPauseEffect`) holds it.
+            crate::link::tick_spin_effect(self);
+            crate::captain::tick_effects(self);
+            crate::kirby::tick_cutter_effects(self);
             crate::status::tick_fox_reflector_effect(self);
             crate::purin::tick_sing_effect(self);
             crate::grab::tick_grapple_glow(self);
             crate::ness::tick_magnet_effect(self);
+            crate::ness::tick_pk_wave_effect(self);
             crate::capture_yoshi::tick_egg_effect(self);
             // The charging shot is a weapon: only its own hitlag stops it.
             crate::samus::tick_charge_spin(self);

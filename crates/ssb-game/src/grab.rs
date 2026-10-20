@@ -589,8 +589,13 @@ pub enum GrabEvent {
     /// `ftCommonThrownKirbyStarSetStatus` / `...CopyStarSetStatus`.
     KirbyStar { copy: bool, vel: Vec3 },
     /// Sent by the swallowed fighter: `ftCommonCaptureWaitKirbyUpdateBreakoutVars`
-    /// moves Kirby. `up` jumps a grounded Kirby, `push_x` pushes it.
-    KirbyWiggle { up: bool, push_x: Option<f32> },
+    /// moves Kirby. `up` jumps a grounded Kirby, `down` drops it through its
+    /// floor, `push_x` pushes it; any of them restarts its figatree.
+    KirbyWiggle {
+        up: bool,
+        down: bool,
+        push_x: Option<f32>,
+    },
     /// Sent by the swallowed fighter: it broke out, and Kirby takes
     /// `dFTCommonCaptureKirbyKnockbackCatch`.
     KirbyBreakout,
@@ -2190,6 +2195,10 @@ where
     }
     if crate::capture_kirby::is_captured(f.status.status) {
         crate::capture_kirby::update_held(f, holder);
+        if f.status.status == Status::CaptureKirby {
+            // `CaptureKirby`'s `proc_map`, `mpCommonUpdateFighterProjectFloor`.
+            crate::capture_kirby::project_floor(f, floors());
+        }
         return true;
     }
     let pulled = matches!(
@@ -2502,7 +2511,9 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             crate::capture_kirby::set_star(to, copy, vel, crate::thrown::ThrowOwner::of(from));
             record_release(from, to, from.stats.attack);
         }
-        GrabEvent::KirbyWiggle { up, push_x } => crate::kirby::on_wiggle(to, up, push_x),
+        GrabEvent::KirbyWiggle { up, down, push_x } => {
+            crate::kirby::on_wiggle(to, up, down, push_x)
+        }
         GrabEvent::KirbyBreakout => {
             if to.grab.catch.take().is_some() {
                 to.grab.catch_kind = None;

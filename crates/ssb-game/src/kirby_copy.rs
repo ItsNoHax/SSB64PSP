@@ -836,10 +836,12 @@ fn update_punch_effect(f: &mut Fighter) {
             // The effect's own update plays its animation once on the
             // frame it is made.
             f.kirby.copy.captain_punch_effect = Some(1);
+            f.is_effect_attach = true;
             f.motion_script.flags[0] = 0;
         }
     } else if f.motion_script.flags[0] == 1 {
         f.kirby.copy.captain_punch_effect = None;
+        crate::fteffect::stop_attached(f);
         f.motion_script.flags[0] = 2;
     }
 }

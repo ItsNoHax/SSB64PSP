@@ -600,6 +600,26 @@ pub const LIST: &[DArray] = &[
         "dEFManagerThunderJoltEffectDesc.dl_link",
         0x8012_E24C,
     ),
+    dl_link(
+        "EF_MANAGER_NESS_PK_THUNDER_TRAIL_EFFECT_DESC_DL_LINK",
+        "dEFManagerNessPKThunderTrailEffectDesc.dl_link",
+        0x8012_E444,
+    ),
+    dl_link(
+        "EF_MANAGER_NESS_PK_REFLECT_TRAIL_EFFECT_DESC_DL_LINK",
+        "dEFManagerNessPKReflectTrailEffectDesc.dl_link",
+        0x8012_E46C,
+    ),
+    dl_link(
+        "EF_MANAGER_CAPTURE_KIRBY_STAR_EFFECT_DESC_DL_LINK",
+        "dEFManagerCaptureKirbyStarEffectDesc.dl_link",
+        0x8012_E720,
+    ),
+    dl_link(
+        "EF_MANAGER_LOSE_KIRBY_STAR_EFFECT_DESC_DL_LINK",
+        "dEFManagerLoseKirbyStarEffectDesc.dl_link",
+        0x8012_E748,
+    ),
 ];
 
 /// An effect descriptor's `dl_link`: the byte after `flags` in `EFDesc`.

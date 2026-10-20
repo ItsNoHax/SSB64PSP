@@ -150,6 +150,22 @@ pub enum WeaponEffect {
         pos: Vec3,
         lr: i8,
     },
+    /// `efManagerNessPKThunderTrailMakeEffect` (trail 3, at lifetime 158)
+    /// or `efManagerNessPKReflectTrailMakeEffect` (reflected trail 3):
+    /// [`crate::effect::Effects::pk_trail`].
+    PKTrailMake {
+        head: u16,
+        reflected: bool,
+        pos: Vec3,
+        rotate_z: f32,
+    },
+    /// A PK Thunder head that lived through the weapon pass: its trail
+    /// effect's pose this frame ([`crate::effect::Effects::pk_trail_pose`]).
+    PKTrailPose {
+        head: u16,
+        pos: Vec3,
+        rotate_z: Option<f32>,
+    },
     /// `mobj->texture_id_curr = syUtilsRandIntRange(n)`: a thunder trail's
     /// frame, drawn where its `proc_update` draws it.
     /// [`crate::weapon::WeaponPool::flush_effects`] draws it itself and
@@ -478,6 +494,21 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
         }
         WeaponEffect::ThunderJolt { pos, rotate_z } => {
             effects.thunder_jolt(pos, rotate_z);
+        }
+        WeaponEffect::PKTrailMake {
+            head,
+            reflected,
+            pos,
+            rotate_z,
+        } => {
+            effects.pk_trail(head, reflected, pos, rotate_z);
+        }
+        WeaponEffect::PKTrailPose {
+            head,
+            pos,
+            rotate_z,
+        } => {
+            effects.pk_trail_pose(head, pos, rotate_z);
         }
         WeaponEffect::DustHeavy { pos, lr } => {
             effects.dust_heavy(p, banks, pos, lr);

@@ -452,6 +452,13 @@ pub enum GameScene {
     /// `kirbyhat`: Kirby in Training after inhaling and copying the Mario
     /// dummy, wearing Mario's cap (RE-417).
     KirbyHat,
+    /// `kirbyspit`: `kirbyhat`'s inhale, then A spits the dummy out as a
+    /// star; the captured star (`efManagerCaptureKirbyStar*`) and its
+    /// sparks mid-flight.
+    KirbySpit,
+    /// `kirbylose`: `kirbyhat`'s copy, then L: the taunt drops the copy
+    /// and the lost star (`efManagerLoseKirbyStar*`) arcs away.
+    KirbyLose,
     /// `yoshiegg`: Yoshi in Training after an Egg Lay of the Mario dummy,
     /// the dummy in its egg (RE-417).
     YoshiEgg,
@@ -771,10 +778,14 @@ pub enum GameScene {
     /// the floor's roll in `SpecialLwAir` (`ftCaptainSpecialLwAirSetStatus`,
     /// RE-503).
     CaptainKickRoll,
+    /// `kirbycutter`: Kirby in Training on Peach's Castle, walked to the
+    /// left bridge's end, Final Cutter's falling Trail effect mid-life
+    /// (`ftKirbySpecialHiUpdateEffect`, matched to an N64 trace).
+    KirbyCutter,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 192] = [
+    pub const ALL: [GameScene; 195] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -855,6 +866,8 @@ impl GameScene {
         GameScene::RebirthBlast,
         GameScene::PikachuThunder,
         GameScene::KirbyHat,
+        GameScene::KirbySpit,
+        GameScene::KirbyLose,
         GameScene::YoshiEgg,
         GameScene::YoshiShield,
         GameScene::YoshiRollF,
@@ -967,6 +980,7 @@ impl GameScene {
         GameScene::NessJibaku,
         GameScene::KirbyStoneSlope,
         GameScene::CaptainKickRoll,
+        GameScene::KirbyCutter,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1051,6 +1065,8 @@ impl GameScene {
             GameScene::RebirthBlast => "rebirthblast",
             GameScene::PikachuThunder => "pikachuthunder",
             GameScene::KirbyHat => "kirbyhat",
+            GameScene::KirbySpit => "kirbyspit",
+            GameScene::KirbyLose => "kirbylose",
             GameScene::YoshiEgg => "yoshiegg",
             GameScene::YoshiShield => "yoshishield",
             GameScene::YoshiRollF => "yoshirollf",
@@ -1164,6 +1180,7 @@ impl GameScene {
             GameScene::NessJibaku => "nessjibaku",
             GameScene::KirbyStoneSlope => "kirbystoneslope",
             GameScene::CaptainKickRoll => "captainkickroll",
+            GameScene::KirbyCutter => "kirbycutter",
         }
     }
 

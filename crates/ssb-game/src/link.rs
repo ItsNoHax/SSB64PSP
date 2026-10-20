@@ -367,9 +367,14 @@ pub fn set_special_air_hi(f: &mut Fighter) {
 
 /// `efManagerLinkSpinAttackMakeEffect`, from `ftLinkSpecialHiMakeWeapon`
 /// on both Spin Attacks' flag-0 frame. The effect's own update plays its
-/// animation once on the frame it is made.
+/// animation once on the frame it is made. The maker sets `proc_lagstart`
+/// and `proc_lagend` (`efmanager.c:5552`) and the caller
+/// `is_effect_attach`; the `SpecialHi` to `SpecialAirHi` switch keeps the
+/// swirl but clears both procs, so it plays through hitlag from there.
 fn make_spin_effect(f: &mut Fighter) {
     f.link.spin_effect = Some(1);
+    crate::fteffect::set_lag_pauses_effects(f);
+    f.is_effect_attach = true;
 }
 
 /// The Spin Attack swirl's played animation frames, while it exists.
@@ -528,17 +533,22 @@ fn set_attack100_loop(f: &mut Fighter) {
     f.stats.restart();
 }
 
+/// `efManagerHaveStructProcUpdate` on the swirl: [`Fighter`]'s update
+/// calls this in hitlag too, where `ftParamProcPauseEffect` holds it only
+/// while `proc_lagstart` is set.
+pub fn tick_spin_effect(f: &mut Fighter) {
+    if spin_effect_ticks(f).is_some() && !crate::fteffect::effects_held(f) {
+        f.link.spin_effect = f.link.spin_effect.map(|t| t.saturating_add(1));
+    }
+}
+
 /// Link's `proc_update` and `proc_interrupt` callbacks, then the physics
 /// half that drives the Spin Attack weapon.
 pub fn update(f: &mut Fighter) {
     let AnyStatus::Link(current) = f.status.status else {
         return;
     };
-    // `efManagerHaveStructProcUpdate`; `ftParamProcPauseEffect` holds it
-    // through hitlag.
-    if spin_effect_ticks(f).is_some() && !f.is_in_hitlag() {
-        f.link.spin_effect = f.link.spin_effect.map(|t| t.saturating_add(1));
-    }
+    tick_spin_effect(f);
     match current {
         // The battle entry runs in `crate::appear`.
         LinkStatus::AppearR | LinkStatus::AppearL => {}
@@ -1052,6 +1062,45 @@ mod tests {
         // `SpecialHiEnd` is set with `FTSTATUS_PRESERVE_NONE`.
         assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialHiEnd));
         assert_eq!(spin_effect_ticks(&f), None);
+    }
+
+    /// `efManagerLinkSpinAttackMakeEffect` sets `proc_lagstart` (`:5552`)
+    /// and its caller `is_effect_attach`. The ground-to-air switch keeps the
+    /// swirl (`FTSTATUS_PRESERVE_EFFECT`) but `ftMainSetStatus` clears the
+    /// procs (`ftmain.c:4815`), so in `SpecialAirHi` it plays through hitlag;
+    /// the aerial Spin Attack's own maker sets them again.
+    #[test]
+    fn spin_swirl_holds_through_hitlag_until_the_air_switch_clears_lagstart() {
+        let mut f = link(true);
+        set_special_hi(&mut f);
+        assert!(f.is_effect_attach && f.lag_pauses_effects);
+        f.hitlag = 2;
+        status::update(&mut f);
+        assert_eq!(spin_effect_ticks(&f), Some(1), "held");
+        f.hitlag = 0;
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialAirHi));
+        assert!(f.is_effect_attach && !f.lag_pauses_effects);
+        let before = spin_effect_ticks(&f).expect("the switch keeps the swirl");
+        f.hitlag = 2;
+        status::update(&mut f);
+        assert_eq!(spin_effect_ticks(&f), Some(before + 1), "plays on");
+
+        let mut g = link(false);
+        set_special_air_hi(&mut g);
+        assert!(g.is_effect_attach && g.lag_pauses_effects);
+        // `SpecialHiEnd` (`FTSTATUS_PRESERVE_NONE`) stops it.
+        g.effects.clear();
+        set_special_hi_end_status_for_test(&mut g);
+        assert!(!g.is_effect_attach && !g.lag_pauses_effects);
+        assert!(g
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::fteffect::FighterEffect::StopAttached)));
+    }
+
+    fn set_special_hi_end_status_for_test(f: &mut Fighter) {
+        set(f, LinkStatus::SpecialHiEnd, 0.0, 10.0);
     }
 
     #[test]

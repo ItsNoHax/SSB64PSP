@@ -39,7 +39,7 @@ fn scene_stage(scene: GameScene) -> u32 {
         // Kongo Jungle (`gkind::JUNGLE`).
         GameScene::KirbyStoneSlope => 6,
         // Peach's Castle (`gkind::CASTLE`).
-        GameScene::CaptainKickRoll => 4,
+        GameScene::CaptainKickRoll | GameScene::KirbyCutter => 4,
         _ => 0,
     }
 }
@@ -141,6 +141,9 @@ fn intents() -> Vec<Intent> {
         // The kick runs on its TransN, not applied here: the golden's
         // capture log has `SpecialLwAir` at 100.
         intent(S::CaptainKickRoll, K::Captain, &["SpecialLw"], 60, &[]),
+        // Final Cutter rises on its TransN, not applied here: the golden's
+        // capture log has `SpecialHi` at the capture.
+        intent(S::KirbyCutter, K::Kirby, &["SpecialHi"], 95, &[]),
         intent(S::NessMagnet, K::Ness, &["SpecialLw"], 45, &["SpecialLw"]),
         intent(S::LinkBomb, K::Link, &["SpecialLw"], 45, &[]),
         intent(S::Grab, K::Mario, &["Catch"], 125, &["Catch"]),
@@ -228,6 +231,7 @@ fn script_buttons_match_the_engine() {
     assert_eq!(button::B, N64Buttons::B);
     assert_eq!(button::Z, N64Buttons::Z);
     assert_eq!(button::C_UP, N64Buttons::C_UP);
+    assert_eq!(button::L, N64Buttons::L);
 }
 
 #[test]
@@ -235,9 +239,15 @@ fn every_fighter_scene_has_an_intent() {
     let covered: Vec<GameScene> = intents().iter().map(|i| i.scene).collect();
     for scene in GameScene::ALL {
         if script::is_fighter_scene(scene) {
-            // `kirbyhat` and `yoshiegg` need the dummy: out of this replay
-            // (`yoshiegg` has its own).
-            let outside = matches!(scene, GameScene::KirbyHat | GameScene::YoshiEgg);
+            // `kirbyhat`, `kirbyspit`, `kirbylose` and `yoshiegg` need the
+            // dummy: out of this replay (`yoshiegg` has its own).
+            let outside = matches!(
+                scene,
+                GameScene::KirbyHat
+                    | GameScene::KirbySpit
+                    | GameScene::KirbyLose
+                    | GameScene::YoshiEgg
+            );
             assert_eq!(
                 covered.contains(&scene),
                 !outside,

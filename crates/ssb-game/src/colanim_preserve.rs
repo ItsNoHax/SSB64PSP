@@ -303,7 +303,7 @@ pub static PRESERVE_TEXTUREPART: [(u8, u16, u16); 64] = [
 
 /// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_EFFECT`:
 /// columns as in the module documentation.
-pub static PRESERVE_EFFECT: [(u8, u16, u16); 100] = [
+pub static PRESERVE_EFFECT: [(u8, u16, u16); 101] = [
     (0x01, 0xFFFF, 0x00ED), // * -> nFTFoxStatusSpecialLwHit
     (0x01, 0xFFFF, 0x00EE), // * -> nFTFoxStatusSpecialLwEnd
     (0x01, 0xFFFF, 0x00EF), // * -> nFTFoxStatusSpecialLwLoop
@@ -360,7 +360,11 @@ pub static PRESERVE_EFFECT: [(u8, u16, u16); 100] = [
     (0x08, 0x012C, 0x0129), // nFTKirbyStatusCopyYoshiSpecialAirN -> nFTKirbyStatusCopyYoshiSpecialN
     (0x08, 0x012D, 0x012A), // nFTKirbyStatusCopyYoshiSpecialAirNCatch -> nFTKirbyStatusCopyYoshiSpecialNCatch
     (0x08, 0x012E, 0x012B), // nFTKirbyStatusCopyYoshiSpecialAirNRelease -> nFTKirbyStatusCopyYoshiSpecialNRelease
-    (0x08, 0xFFFF, 0x0101), // * -> nFTKirbyStatusSpecialHiLanding
+    // `ftKirbySpecialHiLandingSetStatus`, from `ftKirbySpecialHiProcMap`
+    // (`SpecialHi`, `SpecialAirHi`); `ftKirbySpecialAirHiFallProcMap` lands
+    // with `FTSTATUS_PRESERVE_NONE`.
+    (0x08, 0x0100, 0x0101), // nFTKirbyStatusSpecialHi -> nFTKirbyStatusSpecialHiLanding
+    (0x08, 0x0102, 0x0101), // nFTKirbyStatusSpecialAirHi -> nFTKirbyStatusSpecialHiLanding
     (0x08, 0xFFFF, 0x0103), // * -> nFTKirbyStatusSpecialAirHiFall
     (0x08, 0xFFFF, 0x010E), // * -> nFTKirbyStatusSpecialNLoop
     (0x08, 0xFFFF, 0x010F), // * -> nFTKirbyStatusSpecialNEnd

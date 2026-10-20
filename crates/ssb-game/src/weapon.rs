@@ -2715,7 +2715,19 @@ impl WeaponPool {
                 // head; the owner learns of it from the missing head.
                 if !alive || bounds.is_some_and(|b| out_of_bounds(b, h.position)) {
                     destroy(slot);
-                } else if h.trail_spawn {
+                    continue;
+                }
+                // The head lives on: its trail effect's process (after the
+                // weapons') reads it (`crate::effect::Effects::pk_trail_pose`).
+                let (pos, rotate_z) = h.trail_effect_pose();
+                let mut pose = Emit::default();
+                pose.push(crate::wpeffect::WeaponEffect::PKTrailPose {
+                    head: h.group,
+                    pos,
+                    rotate_z,
+                });
+                self.fx.extend(self.seq[i], &pose);
+                if h.trail_spawn {
                     pending[i] = Some((
                         PKThunderTrail::new(*h, 0),
                         self.stale[i],
@@ -2747,8 +2759,23 @@ impl WeaponPool {
                 }
             }
         }
+        // `wpManagerMakeWeapon` queues the trail's process behind every
+        // running weapon's at its priority, and `gcRunAll` walks on into it:
+        // a trail runs its first update on the frame it is made (N64: the
+        // head and each trail make the next one two frames apart).
         for (trail, stale, team, lr) in pending.into_iter().flatten() {
-            self.insert(Weapon::PKTrail(trail), stale, team, lr);
+            let Some(j) = self.insert_at(Weapon::PKTrail(trail), stale, team, lr) else {
+                continue;
+            };
+            let Some(Weapon::PKTrail(t)) = &mut self.slots[j] else {
+                continue;
+            };
+            if let Some(head) = heads.iter().flatten().find(|h| h.group == t.group) {
+                let mut emit = Emit::default();
+                // Lifetime 160: it makes no trail or effect yet.
+                t.tick(*head, &mut emit);
+                self.fx.extend(self.seq[j], &emit);
+            }
         }
     }
     fn clear_pk_trails(&mut self) {

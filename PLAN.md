@@ -122,16 +122,18 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 |---|---|---|
 | Boss-intro camera thread | `BossCameraAnim` is set after the fighter step; the decomp runs it as a priority-5 thread before the camera. Untraced → boss-intro N64 camera trace, compare per tick | RE-543 |
 | Captain's car | Battle-camera fallback before TopN in bounds unverified (`f1-vs-car`) → warp-boot capture, focus id 2, Captain | RE-523 |
-| PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
-| Unported fighter effects | Kirby Final Cutter Up/Down/Draw/Trail (NoEject, paused by specialhi lagstart); `CaptureKirbyStar`, `LoseKirbyStar`. PK Wave has its own row | RE-540 |
-| `lag_pauses_effects` | Set only for Pikachu (`status.rs:5459`); Link spin, Captain specialn/lw, Kirby specialhi do not. Check owned displays (`FireSpark`, `effect.rs:1971`) made in those statuses | RE-540 |
+| `lag_pauses_effects` | Set for Pikachu, Link spin, Captain, Kirby specialhi; check the remaining statuses that call `proc_lagstart` for owned displays | RE-540, RE-549 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
 | Same-frame makes | Process order modelled; N64 two-fighter confirmation needs a cpufx `mkrom.py` per-port input patch (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
 | Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
 | cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
-| Kirby | Spit stars; Inhale downward wiggle | RE-343, RE-348, RE-376, RE-378, RE-417 |
+| Kirby | Inhale downward wiggle verified vs N64 | RE-343, RE-348, RE-376, RE-378, RE-417 |
+| PK Thunder weapon trail | PSP draws a dark-blue zigzag; N64 shows purple glow and white lightning → N64 capture, fix colour | RE-550 |
+| Kirby spit-throw streak | N64 shows a yellow-green streak around Kirby on the spit throw; unported → find the effect | RE-551 |
+| Kirby copy loss | Rust `lose_copy` plays FGM LoseCopy last (N64 order differs); flag2==1 release lacks `ftKirbySpecialNInitPassiveVars` | RE-551 |
+| Kirby star mesh | Capture star draws the `yoshi_star_mesh` billboard; same ROM object unproven | RE-551 |
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame on dummy in a capture; Bomb critical flash, held bloat | RE-352, RE-382, RE-383 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |

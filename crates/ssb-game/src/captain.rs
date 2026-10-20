@@ -5,6 +5,7 @@ use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 use crate::fighter::Fighter;
+use crate::fteffect;
 use crate::grab::{GrabEvent, ThrowHitDesc};
 use crate::physics;
 use crate::status::{self, AnyStatus, CaptainStatus, StatusTiming};
@@ -116,6 +117,7 @@ pub fn set_special_n(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialN, 0.0, 90.0);
     status::play_anim_events(f);
     init_special_n(f);
+    fteffect::set_lag_pauses_effects(f);
 }
 
 /// `ftCaptainSpecialAirNSetStatus`.
@@ -123,6 +125,7 @@ pub fn set_special_air_n(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialAirN, 0.0, 90.0);
     status::play_anim_events(f);
     init_special_n(f);
+    fteffect::set_lag_pauses_effects(f);
 }
 
 /// `ftCaptainSpecialNInitStatusVars`. `ftMainSetStatus` with
@@ -135,17 +138,20 @@ fn init_special_n(f: &mut Fighter) {
 
 /// `ftCaptainSpecialNUpdateEffect`, from both Falcon Punches'
 /// `proc_physics`. Script flag 0 goes to 1 at motion frame 42, which makes
-/// the flame, and again at frame 55, which stops it.
+/// the flame (`is_effect_attach`), and again at frame 55, which stops it
+/// (`ftParamProcStopEffect`).
 fn update_punch_effect(f: &mut Fighter) {
     if f.captain.punch_effect.is_none() {
         if f.motion_script.flags[0] == 1 {
             // The effect's own update plays its animation once on the
             // frame it is made.
             f.captain.punch_effect = Some(1);
+            f.is_effect_attach = true;
             f.motion_script.flags[0] = 0;
         }
     } else if f.motion_script.flags[0] == 1 {
         f.captain.punch_effect = None;
+        fteffect::stop_attached(f);
         f.motion_script.flags[0] = 2;
     }
 }
@@ -179,6 +185,7 @@ pub fn set_special_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialLw, 0.0, 85.0);
     init_special_lw(f);
     status::play_anim_events(f);
+    fteffect::set_lag_pauses_effects(f);
 }
 
 /// `ftCaptainSpecialAirLwSetStatus`.
@@ -186,6 +193,7 @@ pub fn set_special_air_lw(f: &mut Fighter) {
     set(f, CaptainStatus::SpecialAirLw, 0.0, 50.0);
     init_special_lw(f);
     status::play_anim_events(f);
+    fteffect::set_lag_pauses_effects(f);
 }
 
 /// `ftCaptainSpecialLwProcStatus`. `ftMainSetStatus` with
@@ -206,12 +214,14 @@ fn update_kick_effect(f: &mut Fighter) {
         if f.motion_script.flags[2] == 1 {
             // Made with one `gcPlayAnimAll`, as the Falcon Punch flame.
             f.captain.kick_effect = Some(1);
+            f.is_effect_attach = true;
             f.captain.kick_effect_air =
                 f.status.status == AnyStatus::Captain(CaptainStatus::SpecialAirLw);
             f.motion_script.flags[2] = 0;
         }
     } else if f.motion_script.flags[2] == 2 {
         f.captain.kick_effect = None;
+        fteffect::stop_attached(f);
         f.motion_script.flags[2] = 0;
     }
 }
@@ -347,20 +357,26 @@ pub(crate) fn map_wall(f: &mut Fighter) -> bool {
     true
 }
 
+/// `efManagerNoEjectProcUpdate` on the Falcon Punch and Falcon Kick flames:
+/// [`Fighter`]'s update calls this in hitlag too, where
+/// `ftParamProcPauseEffect` holds them while `proc_lagstart` is set.
+pub fn tick_effects(f: &mut Fighter) {
+    if fteffect::effects_held(f) {
+        return;
+    }
+    if punch_effect_ticks(f).is_some() {
+        f.captain.punch_effect = f.captain.punch_effect.map(|t| t.saturating_add(1));
+    }
+    if kick_effect_ticks(f).is_some() {
+        f.captain.kick_effect = f.captain.kick_effect.map(|t| t.saturating_add(1));
+    }
+}
+
 pub fn update(f: &mut Fighter) {
     let AnyStatus::Captain(current) = f.status.status else {
         return;
     };
-    // `efManagerNoEjectProcUpdate`; `ftParamProcPauseEffect` holds it
-    // through hitlag.
-    if !f.is_in_hitlag() {
-        if punch_effect_ticks(f).is_some() {
-            f.captain.punch_effect = f.captain.punch_effect.map(|t| t.saturating_add(1));
-        }
-        if kick_effect_ticks(f).is_some() {
-            f.captain.kick_effect = f.captain.kick_effect.map(|t| t.saturating_add(1));
-        }
-    }
+    tick_effects(f);
     match current {
         // The battle entry runs in `crate::appear`.
         CaptainStatus::AppearRStart
@@ -426,6 +442,7 @@ pub fn update(f: &mut Fighter) {
                 // `ftPhysicsGetAirVelTransN` turns the kick's run by it.
                 let roll = f.topn_rotate_z;
                 set(f, CaptainStatus::SpecialLwAir, 0.0, 30.0);
+                fteffect::set_lag_pauses_effects(f);
                 f.topn_rotate_z = roll;
                 f.root_motion.rotate_z = roll;
                 f.pose_writes.transn_rotate_z = Some(roll);
@@ -645,6 +662,7 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             f.become_airborne();
             set(f, CaptainStatus::SpecialAirN, frame, 90.0);
             physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+            fteffect::set_lag_pauses_effects(f);
         }
         CaptainStatus::SpecialLw => {
             f.become_airborne();
@@ -664,6 +682,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
             let frame = f.status.anim_frame;
             f.land(y);
             set(f, CaptainStatus::SpecialN, frame, 90.0);
+            fteffect::set_lag_pauses_effects(f);
         }
         CaptainStatus::SpecialAirLw => {
             f.land(y);
@@ -734,6 +753,65 @@ mod tests {
         assert_eq!(made, Some(42.0));
         assert_eq!(stopped, Some(55.0));
         assert_eq!(punch_effect_rotate_y(&f), (-90.0f32).to_radians());
+    }
+
+    /// Every Falcon Punch and Falcon Kick setter and switch sets
+    /// `proc_lagstart = ftParamProcPauseEffect` after `ftMainSetStatus`
+    /// (`ftcaptainspecialn.c:105-173`, `ftcaptainspeciallw.c:221-274`); the
+    /// flames set `is_effect_attach` and their stop runs
+    /// `ftParamProcStopEffect`.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn falcon_flames_attach_and_hold_through_hitlag() {
+        let mut f = captain();
+        set_special_n(&mut f);
+        assert!(f.lag_pauses_effects && !f.is_effect_attach);
+        while punch_effect_ticks(&f).is_none() {
+            status::update(&mut f);
+            apply_ground_physics(&mut f);
+        }
+        assert!(f.is_effect_attach);
+        f.hitlag = 3;
+        update(&mut f);
+        assert_eq!(punch_effect_ticks(&f), Some(1), "held by hitlag");
+        f.hitlag = 0;
+        on_ground_lost(&mut f);
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Captain(CaptainStatus::SpecialAirN)
+        );
+        assert!(f.lag_pauses_effects && f.is_effect_attach);
+        f.effects.clear();
+        while punch_effect_ticks(&f).is_some() {
+            status::update(&mut f);
+            apply_air_physics(&mut f);
+        }
+        assert!(!f.is_effect_attach, "the second flag 0 stops it");
+        assert!(f
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::fteffect::FighterEffect::StopAttached)));
+
+        for air in [false, true] {
+            let mut f = captain();
+            if air {
+                f.become_airborne();
+                set_special_air_lw(&mut f);
+            } else {
+                set_special_lw(&mut f);
+            }
+            assert!(f.lag_pauses_effects, "air {air}");
+        }
+        let mut f = captain();
+        set_special_lw(&mut f);
+        f.become_airborne();
+        f.status.set_time(32.0);
+        update(&mut f);
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Captain(CaptainStatus::SpecialLwAir)
+        );
+        assert!(f.lag_pauses_effects);
     }
 
     #[test]

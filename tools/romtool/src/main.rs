@@ -2550,6 +2550,14 @@ const SHIELD_GRAPH: (u32, u32) = (163, 0x300);
 /// Slap, landings).
 const IMPACT_WAVE_GRAPH: (u32, u32) = (83, 0x7C28);
 
+/// `efManagerMakeEffect` effects whose own display sets head 1 to
+/// `G_RM_AA_XLU_SURF` and `G_AC_NONE` before `gcDrawDObjDLLinksForGObj`
+/// (no `Z_CMP`): the list sets no render mode of its own, so it blends with
+/// no depth test ([`ssb_rom::mesh::Head1Seed::LayerXlu`]). Ness's PK Thunder
+/// trail effect, `efManagerNessPKThunderTrailProcDisplay` (both
+/// `dEFManagerNessPKThunderTrailEffectDesc` and the reflected trail's).
+const EFFECT_XLU_GRAPHS: &[(u32, u32)] = &[(335, 0x9050)];
+
 /// `efManagerMakeEffect` effects on DL link 15 or 18 whose display draws
 /// the tree's `DObjDLLink` lists (`gcDrawDObjTreeDLLinksForGObj`): the
 /// head-1 lists start under `efDisplayCLDProcDisplay`'s state, which every
@@ -2781,6 +2789,11 @@ fn initial_material_for(
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else if (file, graph_offset) == SHIELD_GRAPH {
         ssb_rom::mesh::InitialMaterial::SHIELD_EXTERNAL
+    } else if EFFECT_XLU_GRAPHS.contains(&(file, graph_offset)) {
+        ssb_rom::mesh::InitialMaterial {
+            head1: ssb_rom::mesh::Head1Seed::LayerXlu,
+            ..ssb_rom::mesh::InitialMaterial::SCENE
+        }
     } else if EFFECT_CLD_GRAPHS.contains(&(file, graph_offset))
         || EFFECT_SCALE_X_GRAPHS.contains(&(file, graph_offset))
     {

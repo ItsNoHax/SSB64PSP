@@ -4,8 +4,8 @@
 //! swallowed `FTKind` at the start of file 228 (`KirbyMainMotion`).
 //!
 //! `FTKirbyCopy` (`ftkirby.h`): `u16 copy_id` at +0, `s16
-//! copy_modelpart_id` at +2, `f32 effect_scale` at +4 (presentation; not
-//! emitted), `s32 star_damage` at +8.
+//! copy_modelpart_id` at +2, `f32 effect_scale` at +4 (the Kirby stars'
+//! size and spark scatter), `s32 star_damage` at +8.
 
 use std::fmt::Write;
 
@@ -26,6 +26,7 @@ pub const PLAYABLE: usize = 12;
 pub fn generate(rom: Option<&Source>) -> Result<String> {
     // (copy_id, copy_modelpart_id, star_damage)
     let mut rows = [(0u16, 0i16, 0i32); ROWS];
+    let mut scales = [0f32; ROWS];
     if let Some(rom) = rom {
         let data = rom.file(FILE)?.data;
         for (r, row) in rows.iter_mut().enumerate() {
@@ -35,6 +36,7 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                 be_u16(&data, at + 2)? as i16,
                 be_u32(&data, at + 8)? as i32,
             );
+            scales[r] = f32::from_bits(be_u32(&data, at + 4)?);
         }
     }
     let mut w = emit::header("Kirby's copy table (`dKirbyMainMotion_0x0000`)");
@@ -43,6 +45,15 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
     for (copy_id, _, star_damage) in rows {
         let copy_id = u8::try_from(copy_id).expect("FTKirbyCopy::copy_id fits an FTKind");
         let _ = writeln!(w, "    ({copy_id}, {star_damage}),");
+    }
+    w.push_str("];\n");
+    w.push_str(
+        "/// Per swallowed `FTKind`: `effect_scale`, the captured star's X and Y\n\
+         /// scale and its sparks' scatter (`efManagerCaptureKirbyStar*`).\n",
+    );
+    let _ = writeln!(w, "pub const EFFECT_SCALE: [f32; {ROWS}] = [");
+    for scale in scales {
+        let _ = writeln!(w, "    {},", emit::f32_lit(scale));
     }
     w.push_str("];\n");
     w.push_str(
@@ -67,6 +78,8 @@ mod tests {
         let text = generate(None).unwrap();
         assert!(text.contains("pub const COPY: [(u8, i32); 27]"));
         assert_eq!(text.matches("    (0, 0),").count(), ROWS);
+        assert!(text.contains("pub const EFFECT_SCALE: [f32; 27]"));
+        assert_eq!(text.matches("    0.0,").count(), ROWS);
         assert!(text.contains(
             "pub const COPY_MODELPART_IDS: [u8; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];"
         ));

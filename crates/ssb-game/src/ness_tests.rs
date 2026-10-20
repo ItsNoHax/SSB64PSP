@@ -658,3 +658,290 @@ fn a_landing_blast_keeps_its_hitbox() {
     assert!(attack::apply_hit_from(&mut f, &mut target));
     assert_eq!(target.damage, 30);
 }
+/// `ftNessSpecialHiHoldInitStatusVars` makes the PK Thunder wave
+/// (`efManagerNessPKThunderWaveMakeEffect`) on the Hold entry, with one
+/// play, and sets `is_effect_attach`; the Hold ground/air switches keep
+/// it (`FTNESS_SPECIALHIHOLD_STATUS_FLAGS`); the Jibaku stops it.
+#[test]
+fn pk_wave_starts_on_hold_and_ends_with_the_blast() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    assert_eq!(pk_wave_effect_ticks(&f), None);
+    steps(&mut f, 22);
+    assert!(!thunder_controlling(f.status.status));
+    assert_eq!(pk_wave_effect_ticks(&f), None);
+    steps(&mut f, 1);
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirHiHold));
+    assert_eq!(pk_wave_effect_ticks(&f), Some(1));
+    assert!(f.is_effect_attach);
+    steps(&mut f, 4);
+    assert_eq!(pk_wave_effect_ticks(&f), Some(5));
+    // Landing switches to the grounded Hold: the wave survives.
+    assert!(on_landing(&mut f, 0.0, Vec2::new(0.0, 1.0)));
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialHiHold));
+    assert!(f.is_effect_attach);
+    steps(&mut f, 1);
+    assert_eq!(pk_wave_effect_ticks(&f), Some(6));
+    assert!(on_ground_lost(&mut f));
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirHiHold));
+    steps(&mut f, 1);
+    assert_eq!(pk_wave_effect_ticks(&f), Some(7));
+    // The blast's setter (`FTSTATUS_PRESERVE_NONE`) stops it.
+    f.ness.thunder_position = Some(f.pos + Vec3::new(-100.0, 150.0, 0.0));
+    while thunder_controlling(f.status.status) {
+        status::update(&mut f);
+    }
+    assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirHiJibaku));
+    assert_eq!(pk_wave_effect_ticks(&f), None);
+    assert!(!f.is_effect_attach);
+}
+
+/// The wave's process is bare `gcPlayAnimAll`: it plays through Ness's
+/// hitlag.
+#[test]
+fn pk_wave_keeps_playing_through_hitlag() {
+    let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    while !thunder_controlling(f.status.status) {
+        status::update(&mut f);
+    }
+    steps(&mut f, 2);
+    assert_eq!(pk_wave_effect_ticks(&f), Some(3));
+    let frame = f.status.anim_frame;
+    f.hitlag = 5;
+    for t in 1..=4 {
+        f.tick_interrupt(&surfaces);
+        assert!(f.is_in_hitlag());
+        assert_eq!(pk_wave_effect_ticks(&f), Some(3 + t), "hitlag tick {t}");
+    }
+    assert_eq!(f.status.anim_frame, frame, "the fighter is held");
+    f.tick_interrupt(&surfaces);
+    assert!(!f.is_in_hitlag());
+    assert_eq!(pk_wave_effect_ticks(&f), Some(8));
+}
+
+/// One match frame for the PK Thunder trail effect: link 0 and the effect
+/// link's `func_run`s, the weapons' main processes and their effects, then
+/// the effect processes (priority 3, after the weapon link).
+fn pk_frame(pool: &mut WeaponPool, rt: &mut crate::effect::EffectRuntime<'_>) {
+    rt.run();
+    pool.tick(core::iter::empty, None);
+    pool.flush_effects(rt);
+    rt.effects.process(rt.particles, rt.banks);
+}
+
+fn pk_trail_effects(e: &crate::effect::Effects) -> std::vec::Vec<crate::effect::Display> {
+    use crate::effect::DisplayKind as K;
+    e.displays()
+        .filter(|d| matches!(d.kind, K::NessPKThunderTrail | K::NessPKReflectTrail))
+        .copied()
+        .collect()
+}
+
+/// `efManagerNessPKThunderTrailMakeEffect`: trail 3 makes the effect at
+/// its lifetime 158, and the maker runs its process: the owner's ring
+/// sample ten frames back, two behind trail 3's own (`- 8`), at z 0, turned
+/// by the step into it less 90 degrees. Each later frame's process (after
+/// the weapons) follows the ring; the head's end in the weapon pass
+/// (`wpNessPKThunderHeadProcUpdate`'s status test) sets `Destroy` before
+/// the effect's process, which ejects it unseen that frame.
+#[test]
+fn pk_trail_effect_follows_the_ring_ten_back_and_ends_with_the_head() {
+    let bank = crate::particle::tests::TestBank::new(&[]);
+    let mut particles = std::boxed::Box::new(crate::particle::Particles::new());
+    let mut effects = crate::effect::Effects::new(0);
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut particles,
+        effects: &mut effects,
+        banks: &bank,
+    };
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    assert!(pool.spawn(f.take_weapon_spawn().unwrap()));
+    // Steer, so that the ring's steps turn.
+    input(&mut f, 0, 80, 0);
+    pool.observe_owner(&f);
+    let mut trail3 = std::vec::Vec::new();
+    let mut made = None;
+    for frame in 1..=20 {
+        pk_frame(&mut pool, &mut rt);
+        if let Some(t) = pool.pk_trails().find(|t| t.id == 3) {
+            trail3.push((frame, t.position, t.rotation()));
+        }
+        let fx = pk_trail_effects(rt.effects);
+        if made.is_none() && !fx.is_empty() {
+            made = Some(frame);
+            // Made by trail 3 on its third update (lifetime 158), the
+            // first on its own make's frame.
+            assert_eq!(trail3.len(), 3, "trail 3 frames before the make");
+        }
+        if let Some(m) = made {
+            assert_eq!(fx.len(), 1, "frame {frame}");
+            let d = fx[0];
+            assert_eq!(d.kind, crate::effect::DisplayKind::NessPKThunderTrail);
+            assert_eq!(d.translate.z, 0.0);
+            // Two frames behind trail 3's sample.
+            let back = trail3.iter().find(|&&(t, _, _)| t + 2 == frame);
+            if let Some(&(_, pos, rot)) = back {
+                close(d.translate.x, pos.x);
+                close(d.translate.y, pos.y);
+                close(d.rotate.z, rot);
+            } else {
+                assert!(frame < m + 2 || trail3.is_empty());
+            }
+        }
+    }
+    assert_eq!(made, Some(11), "trail 3 makes the effect");
+    // The head ends in the weapon pass: the effect goes the same frame.
+    status::set_fall(&mut f);
+    pool.observe_owner(&f);
+    pk_frame(&mut pool, &mut rt);
+    assert_eq!(pool.pk_thunders().count(), 0);
+    assert!(pk_trail_effects(rt.effects).is_empty());
+}
+
+/// A head ended after the effect processes (a hit, priority 0) leaves the
+/// trail effect `Destroy`ed but drawn that frame; the next frame's process
+/// ejects it. A head the weapon pass still saw keeps it.
+#[test]
+fn pk_trail_effect_outlives_a_late_head_end_by_one_frame() {
+    let bank = crate::particle::tests::TestBank::new(&[]);
+    let mut particles = std::boxed::Box::new(crate::particle::Particles::new());
+    let mut effects = crate::effect::Effects::new(0);
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut particles,
+        effects: &mut effects,
+        banks: &bank,
+    };
+    use crate::effect::HitEffectSink;
+    rt.run();
+    assert!(rt.effects.pk_trail(7, false, Vec3::new(1.0, 2.0, 3.0), 0.5));
+    // Not started on its make's frame.
+    rt.process();
+    assert_eq!(pk_trail_effects(rt.effects).len(), 1);
+    // A live head writes the pose before the process.
+    rt.run();
+    rt.effects
+        .pk_trail_pose(7, Vec3::new(4.0, 5.0, 9.0), Some(0.25));
+    rt.process();
+    let d = pk_trail_effects(rt.effects)[0];
+    assert_eq!(
+        (d.translate.x, d.translate.y, d.translate.z),
+        (4.0, 5.0, 0.0)
+    );
+    assert_eq!(d.rotate.z, 0.25);
+    // Another head's pose is not this one's.
+    rt.run();
+    rt.effects.pk_trail_pose(8, Vec3::ZERO, None);
+    rt.process();
+    assert!(pk_trail_effects(rt.effects).is_empty());
+}
+
+/// `wpNessPKThunderHeadProcReflector` (priority 0, after the effect
+/// processes) destroys the trails: the trail effect is drawn that frame and
+/// ejected by the next frame's process. The reflected head's trail makes
+/// `efManagerNessPKReflectTrailMakeEffect` (link 18) at its lifetime 158,
+/// turned by the head's own angle less 90 degrees.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn reflected_thunder_swaps_the_trail_effect_for_the_reflect_trail() {
+    use crate::effect::DisplayKind as K;
+    let bank = crate::particle::tests::TestBank::new(&[]);
+    let mut particles = std::boxed::Box::new(crate::particle::Particles::new());
+    let mut effects = crate::effect::Effects::new(0);
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut particles,
+        effects: &mut effects,
+        banks: &bank,
+    };
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    pool.spawn(f.take_weapon_spawn().unwrap());
+    pool.observe_owner(&f);
+    for _ in 0..16 {
+        pk_frame(&mut pool, &mut rt);
+    }
+    let fx = pk_trail_effects(rt.effects);
+    assert_eq!(fx.len(), 1);
+    assert_eq!(fx[0].kind, K::NessPKThunderTrail);
+    let head = pool.pk_thunders().next().unwrap();
+    let mut fox = fighter(FighterKind::Fox, 1, false);
+    fox.pos = head.position - Vec3::new(100.0, 250.0, 0.0);
+    status::set_any_status(
+        &mut fox,
+        AnyStatus::Fox(crate::status::FoxStatus::SpecialAirLwLoop),
+        0.0,
+        StatusTiming::unknown(),
+    );
+    pool.apply_hits(&mut fox);
+    crate::combat::resolve(&mut fox);
+    pool.flush_effects(&mut rt);
+    assert!(pool.pk_thunders().next().unwrap().reflected);
+    // Drawn on the reflection's frame, gone by the next process.
+    assert_eq!(pk_trail_effects(rt.effects).len(), 1);
+    pk_frame(&mut pool, &mut rt);
+    assert!(pk_trail_effects(rt.effects).is_empty());
+    let mut made = None;
+    for frame in 2..=24 {
+        pk_frame(&mut pool, &mut rt);
+        let fx = pk_trail_effects(rt.effects);
+        if let Some(d) = fx.first() {
+            assert_eq!(fx.len(), 1);
+            assert_eq!(d.kind, K::NessPKReflectTrail);
+            assert_eq!(d.kind.dl_link(), 18);
+            let h = pool.pk_thunders().next().unwrap();
+            close(d.rotate.z, h.rotate_z() - core::f32::consts::FRAC_PI_2);
+            made.get_or_insert(frame);
+        }
+    }
+    assert!(made.is_some(), "the reflect trail makes its effect");
+}
+
+/// N64 (warp ROM, grounded Up+B, trace of links 5 and 6): the head's first
+/// update is on its make's frame (t 68), and each trail runs its first
+/// update on the frame it is made, so trails 0-3 come at t 70, 72, 74 and
+/// 76, two frames apart, and trail 3 makes the trail effect at t 78 at the
+/// head's position from t 68.
+#[test]
+fn pk_trails_come_two_frames_apart_and_the_effect_ten_after_the_head() {
+    let bank = crate::particle::tests::TestBank::new(&[]);
+    let mut particles = std::boxed::Box::new(crate::particle::Particles::new());
+    let mut effects = crate::effect::Effects::new(0);
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut particles,
+        effects: &mut effects,
+        banks: &bank,
+    };
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    assert!(pool.spawn(f.take_weapon_spawn().unwrap()));
+    pool.observe_owner(&f);
+    let mut first = [None; 4];
+    let mut made = None;
+    let mut head_first = None;
+    for frame in 1..=12u32 {
+        pk_frame(&mut pool, &mut rt);
+        let head = pool.pk_thunders().next().unwrap().position;
+        head_first.get_or_insert(head);
+        for t in pool.pk_trails() {
+            first[usize::from(t.id)].get_or_insert(frame);
+        }
+        if made.is_none() {
+            if let Some(d) = pk_trail_effects(rt.effects).first() {
+                made = Some(frame);
+                let at = head_first.unwrap();
+                close(d.translate.x, at.x);
+                close(d.translate.y, at.y);
+            }
+        }
+    }
+    assert_eq!(first, [Some(3), Some(5), Some(7), Some(9)]);
+    assert_eq!(made, Some(11));
+}

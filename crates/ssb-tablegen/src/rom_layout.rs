@@ -320,4 +320,25 @@ mod tests {
         }
         assert_eq!(seen.len(), 46);
     }
+
+    /// `dEFManagerLoseKirbyStarEffectDesc` (0x8012E748) is not a row of
+    /// [`EFFECTS`]: it draws the same `llITCommonDataKirbyStarDObjDesc`
+    /// from the same file as `CaptureKirbyStar`, so its object key would
+    /// repeat that row's.
+    #[test]
+    fn the_lost_star_shares_the_captured_stars_object() {
+        let Some(path) = crate::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+            return;
+        };
+        let rom = Source::open(&path).unwrap();
+        let d = OverlayData::new(Some(&rom), OVL2);
+        let (capture, lose) = (0x8012_E720, 0x8012_E748);
+        assert_eq!(EFFECTS.iter().filter(|(_, at)| *at == capture).count(), 1);
+        assert!(EFFECTS.iter().all(|(_, at)| *at != lose));
+        for field in [EF_DESC_FILE_HEAD, EF_DESC_O_DOBJDESC] {
+            let a = d.u32(capture + field).unwrap();
+            assert_ne!(a, 0);
+            assert_eq!(a, d.u32(lose + field).unwrap(), "{field:#x}");
+        }
+    }
 }

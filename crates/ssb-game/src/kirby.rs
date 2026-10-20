@@ -124,6 +124,9 @@ pub struct KirbyState {
     pub jumpaerial_turn_tics: u8,
     /// Final Cutter's wave was made (motion flag 0 consumed).
     pub cutter_spawned: bool,
+    /// Final Cutter's attached effects' played animation frames, by
+    /// [`CutterEffect`] index, while they live.
+    pub cutter_effects: [Option<u16>; CutterEffect::COUNT],
     /// `FTStruct::is_damage_resist` and `damage_resist`. `set_any_status`
     /// clears the flag, as `ftMainSetStatus` does.
     pub is_damage_resist: bool,
@@ -161,6 +164,7 @@ impl Default for KirbyState {
             rapid_is_goto_loop: false,
             jumpaerial_turn_tics: 0,
             cutter_spawned: false,
+            cutter_effects: [None; CutterEffect::COUNT],
             is_damage_resist: false,
             damage_resist: 0,
             stone_duration: 0,
@@ -319,9 +323,15 @@ pub fn damage_check_lose_copy(f: &mut Fighter) {
     }
 }
 
-/// `ftKirbySpecialNLoseCopy`, without its star effect.
+/// `ftKirbySpecialNLoseCopy`: the lost star
+/// (`efManagerLoseKirbyStarMakeEffect`) leaves from where Kirby stands now.
 pub fn lose_copy(f: &mut Fighter) {
     crate::kirby_copy::init_passive_vars(f);
+    f.effects
+        .push(crate::fteffect::FighterEffect::LoseKirbyStar {
+            pos: f.pos,
+            lr: f.facing.sign() as i8,
+        });
     f.kirby.copy_id = FighterKind::Kirby;
     f.model_parts
         .set_default(crate::kirby_copy::COPY_MODELPARTS_JOINT, 0);
@@ -332,9 +342,18 @@ pub fn lose_copy(f: &mut Fighter) {
 /// `FTKirbyCopy[27]` (file 228 + 0x0, `llKirbyMainMotionSpecialNFTKirbyCopy`):
 /// `(copy_id, star_damage)` per swallowed `FTKind`. The model-part column is
 /// [`crate::kirby_copy::COPY_MODELPART_IDS`] (RE-417); the scale column is
-/// presentation. ROM data generated at build time by `ssb-tablegen`, never
+/// [`EFFECT_SCALE`]. ROM data generated at build time by `ssb-tablegen`, never
 /// committed; zeros in stub builds.
 pub use generated_copy::COPY;
+/// `FTKirbyCopy::effect_scale` per swallowed `FTKind`: the captured star's
+/// size and its sparks' scatter (`efManagerCaptureKirbyStar*`). ROM data
+/// generated at build time; zeros in stub builds.
+pub use generated_copy::EFFECT_SCALE;
+
+/// [`EFFECT_SCALE`] for `kind`'s `FTKind` (0 past the table).
+pub fn effect_scale(kind: FighterKind) -> f32 {
+    EFFECT_SCALE.get(kind as usize).copied().unwrap_or(0.0)
+}
 #[allow(clippy::all)]
 pub(crate) mod generated_copy {
     include!(concat!(env!("OUT_DIR"), "/kirby_copy.rs"));
@@ -565,6 +584,10 @@ pub fn set_throw_f(f: &mut Fighter, length: f32) {
 // Final Cutter (`ftkirbyspecialhi.c`)
 // ---------------------------------------------------------------------------
 
+/// `ftKirbySpecialHiSetStatus` and `ftKirbySpecialAirHiSetStatus`:
+/// `ftKirbySpecialHiProcStatus` clears flags 0 to 2, the first frame
+/// plays, then `proc_lagstart`/`proc_lagend` hold the Final Cutter's
+/// effects through hitlag.
 pub fn set_special_hi(f: &mut Fighter) {
     let s = if f.is_grounded() {
         K::SpecialHi
@@ -573,25 +596,149 @@ pub fn set_special_hi(f: &mut Fighter) {
     };
     set_frames(f, s, 0.0, SPECIAL_HI_LENGTH);
     f.kirby.cutter_spawned = false;
+    f.kirby.cutter_effects = [None; CutterEffect::COUNT];
+    f.motion_script.flags[..3].fill(0);
     // The setter plays the first frame (RE-473: the N64 takes off 22
     // frames on and falls 59 frames on).
     status::play_anim_events(f);
+    crate::fteffect::set_lag_pauses_effects(f);
 }
 
-/// `ftKirbySpecialAirHiFallSetStatus`: the vertical velocity survives.
+/// `ftKirbySpecialAirHiFallSetStatus`: the vertical velocity survives, and
+/// the effects too (`FTSTATUS_PRESERVE_EFFECT`).
 fn set_special_air_hi_fall(f: &mut Fighter) {
     let vel_y = f.physics.vel_air.y;
     f.become_airborne();
     set(f, K::SpecialAirHiFall, 0.0, StatusTiming::unknown());
     // The setter plays the first frame (RE-473).
     status::play_anim_events(f);
+    crate::fteffect::set_lag_pauses_effects(f);
     f.physics.jumps_used = f.attributes.jumps_max;
     f.physics.vel_air.y = vel_y;
 }
 
+/// `ftKirbySpecialHiLandingSetStatus`, from `SpecialHi`/`SpecialAirHi`'s
+/// `proc_map`: `FTSTATUS_PRESERVE_EFFECT`, and the first frame plays.
 fn set_special_hi_landing(f: &mut Fighter) {
     set_frames(f, K::SpecialHiLanding, 0.0, SPECIAL_HI_LANDING_LENGTH);
     f.kirby.cutter_spawned = false;
+    status::play_anim_events(f);
+    crate::fteffect::set_lag_pauses_effects(f);
+}
+
+/// `ftKirbySpecialAirHiFallProcMap`'s landing: its own `ftMainSetStatus`
+/// with `FTSTATUS_PRESERVE_NONE` (the falling Cutter's effect stops) and
+/// no first-frame play.
+fn set_special_hi_landing_from_fall(f: &mut Fighter) {
+    set_frames(f, K::SpecialHiLanding, 0.0, SPECIAL_HI_LANDING_LENGTH);
+    f.kirby.cutter_spawned = false;
+    f.kirby.cutter_effects = [None; CutterEffect::COUNT];
+    crate::fteffect::set_lag_pauses_effects(f);
+}
+
+/// Final Cutter's attached effects (`efManagerKirbyCutter*MakeEffect`,
+/// file 348), by motion flag 2's value less 2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CutterEffect {
+    /// `dEFManagerKirbyCutterDrawEffectDesc`: the blade, on joint 17's
+    /// whole matrix (battle matrix function 79), unanimated.
+    Draw,
+    /// `dEFManagerKirbyCutterUpEffectDesc`: the rising swing, at TopN.
+    Up,
+    /// `dEFManagerKirbyCutterDownEffectDesc`: the falling swing, at TopN.
+    Down,
+    /// `dEFManagerKirbyCutterTrailEffectDesc`: the trail, at joint 17.
+    Trail,
+}
+
+impl CutterEffect {
+    pub const COUNT: usize = 4;
+    pub const ALL: [CutterEffect; CutterEffect::COUNT] = [
+        CutterEffect::Draw,
+        CutterEffect::Up,
+        CutterEffect::Down,
+        CutterEffect::Trail,
+    ];
+
+    /// `dobj->user_data.p`: the fighter joint the effect follows.
+    pub const fn joint(self) -> u8 {
+        match self {
+            CutterEffect::Up | CutterEffect::Down => 0,
+            CutterEffect::Draw | CutterEffect::Trail => CUTTER_EFFECT_JOINT,
+        }
+    }
+}
+
+/// `fp->joints[17]`, the Draw and Trail makers' `user_data`.
+pub const CUTTER_EFFECT_JOINT: u8 = 17;
+
+/// `ftKirbySpecialHiUpdateEffect`, first in all four Final Cutter
+/// `proc_physics`. Flag 1 (1) and flag 2 (1) stop every attached effect
+/// (`ftParamProcStopEffect`) once one is attached; flag 2's 2 to 5 make
+/// Draw, Up, Down or Trail (`efManagerMakeEffectForce`), which sets
+/// `is_effect_attach`. A made effect has played its first frame.
+///
+/// One slot per kind: a second Draw made while one lives (a `Landing`
+/// from `SpecialHi`/`AirHi` before frame 3's stop) restarts it instead of
+/// drawing two coincident blades.
+fn update_cutter_effect(f: &mut Fighter) {
+    if f.motion_script.flags[1] == 1 && f.is_effect_attach {
+        stop_cutter_effects(f);
+        f.motion_script.flags[1] = 0;
+    }
+    let kind = match f.motion_script.flags[2] {
+        1 => {
+            if f.is_effect_attach {
+                stop_cutter_effects(f);
+                f.motion_script.flags[2] = 0;
+            }
+            return;
+        }
+        2 => CutterEffect::Draw,
+        3 => CutterEffect::Up,
+        4 => CutterEffect::Down,
+        5 => CutterEffect::Trail,
+        _ => return,
+    };
+    f.kirby.cutter_effects[kind as usize] = Some(1);
+    f.is_effect_attach = true;
+    f.motion_script.flags[2] = 0;
+}
+
+/// `ftParamProcStopEffect`.
+fn stop_cutter_effects(f: &mut Fighter) {
+    f.kirby.cutter_effects = [None; CutterEffect::COUNT];
+    crate::fteffect::stop_attached(f);
+}
+
+/// `kind`'s played animation frames, while it lives: only the Final
+/// Cutter's own switches pass `FTSTATUS_PRESERVE_EFFECT`.
+pub fn cutter_effect_ticks(f: &Fighter, kind: CutterEffect) -> Option<u16> {
+    f.kirby.cutter_effects[kind as usize].filter(|_| {
+        matches!(
+            f.status.status,
+            AnyStatus::Kirby(
+                K::SpecialHi | K::SpecialAirHi | K::SpecialAirHiFall | K::SpecialHiLanding
+            )
+        )
+    })
+}
+
+/// The Up, Down and Trail makers' root `rotate.y`: `lr * 90` degrees.
+pub fn cutter_effect_rotate_y(f: &Fighter) -> f32 {
+    f.facing.sign() * 90.0f32.to_radians()
+}
+
+/// `efManagerNoEjectProcUpdate`: each live cutter effect plays a frame
+/// unless hitlag holds it (`ftParamProcPauseEffect`). [`Fighter`]'s update
+/// calls this in hitlag too.
+pub fn tick_cutter_effects(f: &mut Fighter) {
+    if crate::fteffect::effects_held(f) {
+        return;
+    }
+    for t in f.kirby.cutter_effects.iter_mut().flatten() {
+        *t = t.saturating_add(1);
+    }
 }
 
 /// `ftKirbySpecialHiLandingProcUpdate`'s flag 0: the wave, 200 ahead of
@@ -1060,8 +1207,12 @@ fn copy(f: &mut Fighter) {
     });
 }
 
-/// `ftCommonCaptureWaitKirbyUpdateBreakoutVars`'s writes to Kirby.
-pub fn on_wiggle(f: &mut Fighter, up: bool, push_x: Option<f32>) {
+/// `ftCommonCaptureWaitKirbyUpdateBreakoutVars`'s writes to Kirby: `up`
+/// lifts a grounded Kirby, `down` drops it through its floor line
+/// (`ignore_line_id = floor_line_id`), `push_x` pushes it; then any wiggle
+/// restarts its figatree at frame 0 (`lbCommonAddFighterPartsFigatree`).
+/// The motion script runs on.
+pub fn on_wiggle(f: &mut Fighter, up: bool, down: bool, push_x: Option<f32>) {
     if !matches!(
         f.status.status,
         AnyStatus::Kirby(K::SpecialNWait | K::SpecialAirNWait)
@@ -1071,6 +1222,11 @@ pub fn on_wiggle(f: &mut Fighter, up: bool, push_x: Option<f32>) {
     if up && f.is_grounded() {
         switch_air(f);
         f.physics.vel_air.y = crate::capture_kirby::WIGGLE_VEL;
+    } else if down && f.is_grounded() {
+        let line = f.floor.map(|s| s.line);
+        switch_air(f);
+        f.ignore_line = line;
+        f.physics.vel_air.y = -crate::capture_kirby::WIGGLE_VEL;
     }
     if let Some(x) = push_x {
         if f.is_grounded() {
@@ -1078,6 +1234,9 @@ pub fn on_wiggle(f: &mut Fighter, up: bool, push_x: Option<f32>) {
         } else {
             f.physics.vel_air.x = x;
         }
+    }
+    if up || down || push_x.is_some() {
+        f.status.anim_frame = 0.0;
     }
 }
 
@@ -1114,6 +1273,7 @@ pub fn update(f: &mut Fighter) {
     let AnyStatus::Kirby(current) = f.status.status else {
         return;
     };
+    tick_cutter_effects(f);
     match current {
         K::Attack100Start => {
             if f.status.animation_ended() {
@@ -1331,12 +1491,16 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
     };
     match current {
         K::SpecialHi => {
+            update_cutter_effect(f);
             // Position follows `vel_air` in the source; X is the drift.
             apply_air_vel_transn_yz(f, 1.0);
             cutter_drift(f);
             f.physics.vel_ground.x = f.physics.vel_air.x;
         }
         K::SpecialHiLanding | K::SpecialNThrow => {
+            if current == K::SpecialHiLanding {
+                update_cutter_effect(f);
+            }
             physics::apply_ground_vel_transn(
                 &mut f.physics,
                 f.root_motion,
@@ -1417,15 +1581,21 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         // `proc_physics` is NULL: the velocity carries.
         K::ThrowFFall | K::SpecialAirLwStart | K::SpecialAirLwHold | K::SpecialAirLwFall => {}
         K::SpecialHi => {
+            update_cutter_effect(f);
             apply_air_vel_transn_yz(f, 1.0);
             cutter_drift(f);
         }
         K::SpecialAirHi => {
+            update_cutter_effect(f);
             apply_air_vel_transn_yz(f, FINALCUTTER_AIR_TRANSN_SCALE);
             cutter_drift(f);
         }
-        K::SpecialAirHiFall => cutter_drift(f),
+        K::SpecialAirHiFall => {
+            update_cutter_effect(f);
+            cutter_drift(f);
+        }
         K::SpecialHiLanding => {
+            update_cutter_effect(f);
             apply_air_vel_transn_yz(f, 1.0);
             cutter_drift(f);
         }
@@ -1600,7 +1770,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
         }
         K::SpecialAirHiFall => {
             f.land(y);
-            set_special_hi_landing(f);
+            set_special_hi_landing_from_fall(f);
         }
         K::SpecialHiLanding => f.land(y),
         K::SpecialAirLwStart => {
@@ -1651,6 +1821,229 @@ mod tests {
             false,
             false,
         );
+    }
+
+    fn stopped(f: &Fighter) -> bool {
+        f.effects
+            .iter()
+            .any(|e| matches!(e, crate::fteffect::FighterEffect::StopAttached))
+    }
+
+    /// Every Final Cutter setter sets `proc_lagstart`
+    /// (`ftkirbyspecialhi.c:300-420`). `SpecialHi`/`AirHi` to `Landing` and
+    /// to `AirHiFall` keep the effect (`FTSTATUS_PRESERVE_EFFECT`);
+    /// `ftKirbySpecialAirHiFallProcMap`'s landing passes
+    /// `FTSTATUS_PRESERVE_NONE` and stops it.
+    #[test]
+    fn final_cutter_setters_hold_effects_and_only_the_fall_landing_stops_them() {
+        for ground in [true, false] {
+            let mut f = kirby();
+            if !ground {
+                f.become_airborne();
+            }
+            f.motion_script.flags[..3].fill(7);
+            set_special_hi(&mut f);
+            assert!(f.lag_pauses_effects, "ground {ground}");
+            assert_eq!(f.motion_script.flags[..3], [0, 0, 0]);
+
+            f.is_effect_attach = true;
+            f.effects.clear();
+            f.physics.vel_air.y = -1.0;
+            if ground {
+                f.become_airborne();
+            }
+            f.situation = Situation::Air;
+            assert!(on_landing(&mut f, 0.0));
+            assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialHiLanding));
+            assert!(f.lag_pauses_effects && f.is_effect_attach && !stopped(&f));
+        }
+
+        let mut f = kirby();
+        f.become_airborne();
+        set_special_air_hi_fall(&mut f);
+        assert!(f.lag_pauses_effects);
+        f.is_effect_attach = true;
+        f.effects.clear();
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialHiLanding));
+        assert!(f.lag_pauses_effects, "the landing sets it again");
+        assert!(stopped(&f) && !f.is_effect_attach);
+
+        for (from, to, kept) in [
+            (K::SpecialHi, K::SpecialHiLanding, true),
+            (K::SpecialAirHi, K::SpecialHiLanding, true),
+            (K::SpecialHi, K::SpecialAirHiFall, true),
+            (K::SpecialAirHi, K::SpecialAirHiFall, true),
+            (K::SpecialAirHiFall, K::SpecialHiLanding, false),
+        ] {
+            assert_eq!(
+                crate::colanim::preserved_in(
+                    &crate::colanim::PRESERVE_EFFECT,
+                    FighterKind::Kirby,
+                    AnyStatus::Kirby(from),
+                    AnyStatus::Kirby(to),
+                ),
+                kept,
+                "{from:?} -> {to:?}"
+            );
+        }
+    }
+
+    /// Each frame's made cutter effects (played once) as
+    /// `(status, anim_frame, kind)`, and the kinds live after the frame.
+    fn cutter_frame(
+        f: &Fighter,
+        log: &mut std::vec::Vec<(K, f32, CutterEffect)>,
+    ) -> std::vec::Vec<CutterEffect> {
+        let AnyStatus::Kirby(s) = f.status.status else {
+            unreachable!()
+        };
+        let mut live = std::vec::Vec::new();
+        for kind in CutterEffect::ALL {
+            match cutter_effect_ticks(f, kind) {
+                Some(1) => {
+                    log.push((s, f.status.anim_frame, kind));
+                    live.push(kind);
+                }
+                Some(_) => live.push(kind),
+                None => {}
+            }
+        }
+        live
+    }
+
+    /// `dKirbyMainMotion_0x1978`, the Final Cutter's parallel script, sets
+    /// flag 2 to Draw at frame 2, and flag 1 (stop) with Up at 21, Draw at
+    /// 24, Down at 46, Draw at 50, Trail at 52 and Draw at 58;
+    /// `ftKirbySpecialHiUpdateEffect` makes each on that frame's
+    /// `proc_physics`. One lives at a time; `AirHiFall` keeps the last
+    /// Draw; the fall's landing stops it, `FinalCutterLand`'s flag 2 makes a
+    /// Draw and its flag 1 at frame 3 stops it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn final_cutter_effects_follow_the_parallel_script() {
+        let mut f = kirby();
+        f.situation = Situation::Ground;
+        f.effects.clear();
+        set_special_hi(&mut f);
+        let mut log = std::vec::Vec::new();
+        let mut n = 0;
+        while f.status.status != AnyStatus::Kirby(K::SpecialAirHiFall) {
+            status::update(&mut f);
+            if f.is_grounded() {
+                apply_ground_physics(&mut f);
+            } else {
+                apply_air_physics(&mut f);
+            }
+            let live = cutter_frame(&f, &mut log);
+            assert!(live.len() <= 1, "frame {}: {live:?}", f.status.anim_frame);
+            n += 1;
+            assert!(n < 80);
+        }
+        use CutterEffect as C;
+        assert_eq!(
+            log,
+            [
+                (K::SpecialHi, 2.0, C::Draw),
+                (K::SpecialHi, 21.0, C::Up),
+                (K::SpecialHi, 24.0, C::Draw),
+                (K::SpecialHi, 46.0, C::Down),
+                (K::SpecialHi, 50.0, C::Draw),
+                (K::SpecialHi, 52.0, C::Trail),
+                (K::SpecialHi, 58.0, C::Draw),
+            ]
+        );
+        // The fall keeps the Draw and plays it on.
+        let draw = cutter_effect_ticks(&f, C::Draw).expect("kept");
+        apply_air_physics(&mut f);
+        update(&mut f);
+        assert_eq!(cutter_effect_ticks(&f, C::Draw), Some(draw + 1));
+
+        assert!(f.is_effect_attach);
+        f.effects.clear();
+        assert!(on_landing(&mut f, 0.0));
+        assert!(stopped(&f) && !f.is_effect_attach);
+        assert_eq!(cutter_effect_ticks(&f, C::Draw), None);
+        log.clear();
+        let mut stop = None;
+        while f.status.status == AnyStatus::Kirby(K::SpecialHiLanding) {
+            f.effects.clear();
+            status::update(&mut f);
+            apply_ground_physics(&mut f);
+            if f.status.status != AnyStatus::Kirby(K::SpecialHiLanding) {
+                break;
+            }
+            let live = cutter_frame(&f, &mut log);
+            if !log.is_empty() && live.is_empty() && stop.is_none() {
+                assert!(stopped(&f));
+                stop = Some(f.status.anim_frame);
+            }
+        }
+        // No first-frame play: the Draw comes with the first update.
+        assert_eq!(log, [(K::SpecialHiLanding, 1.0, C::Draw)]);
+        assert_eq!(stop, Some(3.0));
+    }
+
+    /// `ftParamProcPauseEffect` holds the cutter effects through hitlag;
+    /// [`Fighter`]'s hitlag update ticks them otherwise.
+    #[test]
+    fn cutter_effects_hold_in_hitlag_only_while_lagstart_is_set() {
+        let mut f = kirby();
+        f.situation = Situation::Ground;
+        set_special_hi(&mut f);
+        f.motion_script.flags[2] = 3;
+        apply_ground_physics(&mut f);
+        assert_eq!(cutter_effect_ticks(&f, CutterEffect::Up), Some(1));
+        assert!(f.is_effect_attach);
+        let lives = crate::effect_order::fighter_lives(&f);
+        assert_eq!(
+            lives[crate::effect_order::Kind::CutterUp as usize],
+            (true, Some(1))
+        );
+        assert_eq!(
+            lives.iter().filter(|(live, _)| *live).count(),
+            1,
+            "only the Up"
+        );
+        f.hitlag = 2;
+        tick_cutter_effects(&mut f);
+        assert_eq!(cutter_effect_ticks(&f, CutterEffect::Up), Some(1));
+        f.lag_pauses_effects = false;
+        tick_cutter_effects(&mut f);
+        assert_eq!(cutter_effect_ticks(&f, CutterEffect::Up), Some(2));
+        // Flag 2's 1 stops it.
+        f.hitlag = 0;
+        f.motion_script.flags[2] = 1;
+        apply_ground_physics(&mut f);
+        assert_eq!(cutter_effect_ticks(&f, CutterEffect::Up), None);
+        assert!(!f.is_effect_attach);
+        assert_eq!(f.motion_script.flags[2], 0);
+    }
+
+    /// `ftCommonCaptureWaitKirbyProcInterrupt`'s down wiggle
+    /// (`ftcommoncapturekirby.c:154`): a grounded Kirby drops through its
+    /// floor line at -20, and the figatree restarts.
+    #[test]
+    fn a_down_wiggle_drops_grounded_kirby_through_its_floor() {
+        let mut f = kirby();
+        set(&mut f, K::SpecialNWait, 12.0, StatusTiming::unknown());
+        f.floor = Some(crate::ground::Standing {
+            line: 9,
+            flags: crate::collision::flags::PASS,
+            normal: Vec2::new(0.0, 1.0),
+        });
+        on_wiggle(&mut f, false, true, None);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialAirNWait));
+        assert_eq!(f.ignore_line, Some(9));
+        assert_eq!(f.physics.vel_air.y, -crate::capture_kirby::WIGGLE_VEL);
+        assert_eq!(f.status.anim_frame, 0.0);
+
+        // In the air the down wiggle only restarts the figatree.
+        f.status.anim_frame = 5.0;
+        f.physics.vel_air.y = -3.0;
+        on_wiggle(&mut f, false, true, None);
+        assert_eq!(f.physics.vel_air.y, -3.0);
+        assert_eq!(f.status.anim_frame, 0.0);
     }
 
     #[test]
@@ -1715,6 +2108,23 @@ mod tests {
             }
         }
         assert_eq!(f.status.status, AnyStatus::Kirby(K::Attack100End));
+    }
+
+    /// `FTKirbyCopy::effect_scale`: every kind has one, and each polygon
+    /// and Giant Donkey Kong repeat their base fighter's (12 + 1 redundant
+    /// copies agree).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_captured_stars_scale_is_positive_and_polygons_copy_their_base() {
+        assert!(EFFECT_SCALE.iter().all(|&s| s > 0.0 && s <= 4.0));
+        for i in 0..12 {
+            assert_eq!(EFFECT_SCALE[14 + i], EFFECT_SCALE[i], "kind {i}");
+        }
+        assert_eq!(
+            effect_scale(FighterKind::GiantDonkey),
+            effect_scale(FighterKind::Donkey)
+        );
+        assert_eq!(effect_scale(FighterKind::Mario), EFFECT_SCALE[0]);
     }
 
     #[test]

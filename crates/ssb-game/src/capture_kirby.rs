@@ -10,13 +10,24 @@
 //! [`crate::grab::Holder::kirby_dist`]. The victim's wiggle writes Kirby's
 //! velocity and status; it travels as [`GrabEvent::KirbyWiggle`].
 //!
-//! ## Documented deviations
-//!
-//! * **Drop-through wiggle.** A downward wiggle tests the victim's stale
-//!   `floor_flags & 0x4000` and makes Kirby ignore its floor line. Map
-//!   collision has no pass-through line flag here, so it is not ported.
+//! A downward wiggle tests the victim's `coll_data.floor_flags & 0x4000`
+//! (the pass-through flag), which only `CaptureKirby`'s floor projections
+//! write ([`CaptureKirbyState::floor_flags`]), and makes a grounded Kirby
+//! ignore its own floor line.
 //!
 //! Star floor/ceiling/wall reflection consumes the shared map contacts.
+//!
+//! Both star statuses' `proc_update` makes the captured star once
+//! (`ftCommonThrownKirbyStarMakeEffect`, queued as
+//! [`crate::fteffect::FighterEffect::CaptureKirbyStar`]); each release stops
+//! it and makes a star splash, whose `is_effect_attach` keeps it from being
+//! made again.
+//!
+//! ## Documented deviations
+//!
+//! * **Stale floor flags.** A victim with no floor below it through the
+//!   whole pull keeps the flags its last projection or landing left; the
+//!   port keeps a grounded victim's floor and otherwise none.
 //!
 //! * **Visual scale.** The swallow and star shrink the victim's first joint
 //!   (`FTCOMMON_CAPTUREKIRBY_MAGNITUDE_*`); that is presentation.
@@ -69,6 +80,10 @@ pub struct CaptureKirbyState {
     pub flag1: i32,
     /// Motion flag 2: 1 copy star, 2 spit star, 3 releasing.
     pub flag2: u8,
+    /// The victim's `coll_data.floor_flags`: its floor's at the capture,
+    /// then each `CaptureKirby` floor projection that finds a line
+    /// (`mpCommonUpdateFighterProjectFloor`). `CaptureWaitKirby` leaves it.
+    pub floor_flags: u16,
 }
 
 pub fn is_captured(status: crate::status::AnyStatus) -> bool {
@@ -96,15 +111,32 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.is_catch_or_capture = false;
     f.grab.is_catchstatus = false;
     f.facing = holder.facing.flipped();
+    let floor_flags = f.floor.map_or(0, |s| s.flags);
     f.become_airborne();
     status::set_status(f, Status::CaptureKirby, 0.0, StatusTiming::unknown());
     // `ftCommonCaptureKirbyProcCapture` plays the first frame (RE-474).
     status::play_anim_events(f);
-    f.kirby_capture = CaptureKirbyState::default();
+    f.kirby_capture = CaptureKirbyState {
+        floor_flags,
+        ..CaptureKirbyState::default()
+    };
     f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     physics::stop_all(&mut f.physics);
     f.hitstun = 0;
     place(f, holder);
+}
+
+/// `mpCommonUpdateFighterProjectFloor` (`mpProcessSetCollProjectFloorID`):
+/// the floor below the victim's map-box bottom. Only a found line writes
+/// `floor_flags`.
+pub fn project_floor<I>(f: &mut Fighter, floors: I)
+where
+    I: IntoIterator<Item = (u16, crate::collision::Segment)>,
+{
+    let probe = Vec2::new(f.pos.x, f.pos.y + f.coll.bottom);
+    if let Some(below) = crate::collision::project_floor(floors, probe) {
+        f.kirby_capture.floor_flags = below.flags;
+    }
 }
 
 /// `ftCommonCaptureKirbyUpdatePositionsAll`'s placement half: Kirby's
@@ -169,18 +201,28 @@ pub fn update_captured(f: &mut Fighter) {
         crate::status::AnyStatus::Kirby(KirbyStatus::SpecialNWait | KirbyStatus::SpecialAirNWait)
     ) {
         let (x, y) = (i32::from(f.stick.x), i32::from(f.stick.y));
-        let mut up = false;
+        let (mut up, mut down) = (false, false);
         if y >= WIGGLE_STICK_RANGE_MIN && f.stick.tap_y < WIGGLE_BUFFER_TICS_MAX {
             f.stick.tap_y = crate::status::STICKBUFFER_MAX;
             up = true;
+        } else if y <= -WIGGLE_STICK_RANGE_MIN
+            && f.stick.tap_y < WIGGLE_BUFFER_TICS_MAX
+            && f.kirby_capture.floor_flags & crate::collision::flags::PASS != 0
+        {
+            f.stick.tap_y = crate::status::STICKBUFFER_MAX;
+            down = true;
         }
         let mut push = None;
         if x.abs() >= WIGGLE_STICK_RANGE_MIN + 3 && f.stick.tap_x < WIGGLE_BUFFER_TICS_MAX * 2 {
             f.stick.tap_x = crate::status::STICKBUFFER_MAX;
             push = Some(if x < 0 { -WIGGLE_VEL } else { WIGGLE_VEL });
         }
-        if up || push.is_some() {
-            f.grab.send(GrabEvent::KirbyWiggle { up, push_x: push });
+        if up || down || push.is_some() {
+            f.grab.send(GrabEvent::KirbyWiggle {
+                up,
+                down,
+                push_x: push,
+            });
         }
     }
     let before = f.grab.breakout_wait;
@@ -245,6 +287,8 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, owner: crate::thrown::Th
         lr: if vel.x < 0.0 { -1.0 } else { 1.0 },
         flag1: if copy { 10 } else { 30 },
         flag2: if copy { 1 } else { 2 },
+        // The star's own map pass writes the floor from here on.
+        floor_flags: f.kirby_capture.floor_flags,
     };
     if !copy {
         grab::init_breakout(f, STAR_BREAKOUT_INPUTS_MIN);
@@ -304,7 +348,9 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             }
             f.is_invisible = false;
             hurtbox::set_hit_status_all(f, HitStatus::Normal);
+            crate::fteffect::stop_attached(f);
             escape(f);
+            star_splash(f);
         }
         2 => {
             s.flag1 = 4;
@@ -318,6 +364,9 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             };
             f.physics.vel_air.y = STAR_RELEASE_VEL_Y;
             f.physics.vel_air.x = lr * STAR_RELEASE_VEL_X;
+            // The captured star ends in a splash.
+            crate::fteffect::stop_attached(f);
+            star_splash(f);
             // Only `is_invisible`: the shadow stays hidden until the
             // escape's `ftMainSetStatus`.
             f.is_invisible = false;
@@ -328,6 +377,15 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         _ => {}
     }
     true
+}
+
+/// `efManagerStarSplashMakeEffect(&TopN translate, (-vel_air.x < 0) ? -1 :
+/// +1)`: success sets `is_effect_attach`, which keeps the star statuses'
+/// `proc_update` from making the captured star again.
+fn star_splash(f: &mut Fighter) {
+    let lr = if -f.physics.vel_air.x < 0.0 { -1 } else { 1 };
+    f.effects
+        .push(crate::fteffect::FighterEffect::StarSplash { pos: f.pos, lr });
 }
 
 fn release_countdown(f: &mut Fighter) {
@@ -434,6 +492,49 @@ mod tests {
         // the damage status's `ftMainSetStatus` clears the wait, and only
         // level-3 knockback of 130 or more sets 10.
         assert_eq!(f.interface.tag_wait, 0);
+    }
+
+    /// The down wiggle needs the victim's projected floor to be passable
+    /// (`coll_data.floor_flags & MAP_VERTEX_COLL_PASS`), which only
+    /// `mpCommonUpdateFighterProjectFloor` writes.
+    #[test]
+    fn a_down_wiggle_needs_a_passable_floor_below_the_victim() {
+        let kirby = Fighter::new(FighterKind::Kirby, 0, 3);
+        let mut holder = crate::grab::holder_of(&kirby);
+        holder.status = crate::status::AnyStatus::Kirby(KirbyStatus::SpecialNWait);
+        for (flags, sent) in [(crate::collision::flags::PASS, true), (0, false)] {
+            let mut f = Fighter::new(FighterKind::Mario, 1, 3);
+            f.pos = Vec3::new(0.0, 300.0, 0.0);
+            project_floor(
+                &mut f,
+                [(
+                    4,
+                    crate::collision::Segment {
+                        x1: -500,
+                        y1: 0,
+                        x2: 500,
+                        y2: 0,
+                        flags,
+                    },
+                )],
+            );
+            assert_eq!(f.kirby_capture.floor_flags, flags);
+            set_capture_wait(&mut f);
+            f.grab.holder = Some(holder);
+            f.grab.breakout_wait = 1000;
+            f.stick.y = -80;
+            f.stick.tap_y = 0;
+            f.grab.outbox = Default::default();
+            update_captured(&mut f);
+            let wiggle = f.grab.outbox.iter().flatten().find_map(|e| match e {
+                GrabEvent::KirbyWiggle { up, down, push_x } => Some((*up, *down, *push_x)),
+                _ => None,
+            });
+            assert_eq!(wiggle.is_some(), sent, "flags {flags:#x}");
+            if sent {
+                assert_eq!(wiggle, Some((false, true, None)));
+            }
+        }
     }
 
     #[test]

@@ -5454,9 +5454,7 @@ pub fn set_fsmash(f: &mut Fighter) {
     play_anim_events(f);
     if base == crate::fighter::FighterKind::Pikachu {
         f.pikachu.thunder_shock_gfx = 0;
-        // `proc_lagstart = ftParamProcPauseEffect`,
-        // `proc_lagend = ftParamProcResumeEffect`.
-        f.lag_pauses_effects = true;
+        crate::fteffect::set_lag_pauses_effects(f);
     }
 }
 
@@ -6057,8 +6055,17 @@ pub fn update(f: &mut Fighter) {
     if crate::grab::update(f) {
         return;
     }
-    // The stars' `proc_update` only makes their effect.
+    // The stars' `proc_update` only makes their effect
+    // (`ftCommonThrownKirbyStarMakeEffect`): once, while none is attached.
     if crate::capture_kirby::is_star(f.status.status) {
+        let queued = f
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::fteffect::FighterEffect::CaptureKirbyStar));
+        if !f.is_effect_attach && !queued {
+            f.effects
+                .push(crate::fteffect::FighterEffect::CaptureKirbyStar);
+        }
         return;
     }
     let AnyStatus::Common(current) = f.status.status else {

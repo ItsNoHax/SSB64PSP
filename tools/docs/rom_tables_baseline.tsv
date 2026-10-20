@@ -5,57 +5,29 @@
 # gone. Rows are layout, fixtures, tooling, port constants and function-body constants,
 # never ROM data: generate that with crates/ssb-tablegen instead.
 # path	item	reason
-crates/ssb-game/src/colanim_preserve.rs	PRESERVE_COLANIM	decomp code sites: ftMainSetStatus flag columns per call
-crates/ssb-game/src/colanim_preserve.rs	PRESERVE_MODELPART	decomp code sites: ftMainSetStatus flag columns per call
-crates/ssb-game/src/colanim_preserve.rs	PRESERVE_TEXTUREPART	decomp code sites: ftMainSetStatus flag columns per call
-crates/ssb-game/src/colanim_preserve.rs	PRESERVE_EFFECT	decomp code sites: ftMainSetStatus flag columns per call
-crates/ssb-game/src/countdown_tests.rs	SIZES	test fixture
-crates/ssb-game/src/explain.rs	ARROWS	vertex data in archive file 0xC6 (a relocatable file, not an overlay d* array)
-crates/ssb-game/src/hud_tests.rs	SIZES	test fixture
-crates/ssb-game/src/opening/fighters.rs	SCENES	the scenes' function-body constants (mvOpening* scene functions: name origin, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the generated opening_scenes.rs, its name letters from the generated mvOpening*MakeName offsets and pos
-crates/ssb-rom/src/effect.rs	ENTRY_ANIMS	link-time labels (llFoxSpecial2EntryArwing*, llCaptainSpecial2_*, llITCommonDataMBallThrown*, llKirbySpecial2EntryStar* offsets) that the efManager*Entry*MakeEffect functions pass as immediates to gcAddAnimJointAll, plus port slots; no d* array in the decomp holds them
-crates/ssb-rom/src/fighter.rs	EXPECTED	test fixture
-crates/ssb-rom/src/ground_obj.rs	OBJECTS	link-time labels (ll*DObjDesc offsets that grPupupuInitAll, grJungleMakeTaruCann, ... pass as immediates) plus port fields (display link, instance count, build kind) that no d* array holds; follow-up: derive the object list from the stage init functions
-crates/ssb-rom/src/ground_obj.rs	ANIMS	link-time labels: ll*AnimJoint offsets that the grJungle/grYamabuki/grZebes/grInishie/grCastle/itMonster/itPakkun functions pass as immediates, ordered and named by the port; the dGRPupupuWhispy* entries are indices into the generated arrays
-crates/ssb-rom/src/mmonster.rs	VISUALS	link-time labels (llITCommonData*DObjDesc and *AnimJoint offsets that the itMonster*InitVars and MakeItem functions write as immediates) plus port fields (appear_node, status); no d* array holds them
-crates/ssb-rom/src/opening.rs	DL_GRAPHS	link-time labels (ll*DL and ll*MObjSub offsets that the mv*/mn* scene functions pass to gcAddDObjForGObj as immediates); no d* array in the decomp holds them
-crates/ssb-rom/src/particle.rs	BANKS	cartridge ROM ranges of each particle bank pair: the linker section symbols that efParticleSetupBankID callers pass as immediates (scripts_lo/hi, textures_lo/hi), named by the port; no d* array holds them
-crates/ssb-rom/src/sprite_offsets.rs	GAME_STATUS	layout: file 82's sprite manifest (reloc_data.us.h order), which ssb-tablegen indexes the dIFCommon* sprite tables by; its letters and lamps are what those tables name, and Rod, Frame and RodShadow are code immediates
-crates/ssb-rom/tests/demo_clips.rs	FRAMES	test fixture: N64 measurements or expected ROM values
-crates/ssb-rom/tests/explain_movement.rs	N64	test fixture: N64 measurements or expected ROM values
-crates/ssb-rom/tests/explain_movement.rs	N64_HITS	test fixture: N64 measurements or expected ROM values
-crates/ssb-rom/tests/explain_movement.rs	N64_GRABS	test fixture: N64 measurements or expected ROM values
-crates/ssb-engine/src/audio/synth.rs	GET_RATE	test fixture: _getRate/_getVol compiled as C
-crates/ssb-engine/src/math/sqrt_golden.rs	SPECIALS	test fixture: sqrt test vectors
-crates/ssb-game/src/camera.rs	DEFAULT_EYE	function-body constants: gmCameraMakeDefaultCamera writes this eye as immediates after copying dGMCameraCObjVecDefault (gm/gmcamera.c:1157-1171); no d* value is copied
-crates/ssb-game/src/spgame/staffroll.rs	CAMERA_EYE	function-body constants: scStaffrollMakeCamera's eye (scstaffroll.c:2177-2180); the dGCPerspDefault projection it names is not copied
-crates/ssb-rom/src/audio.rs	SBK	layout: the cartridge ROM range of S1_music.sbk (the linker section symbol that dSYAudioPublicSettings.sbk_start points at) and its size
-crates/ssb-rom/src/bonus1.rs	MODEL	link-time labels: llITBonus1ObjectFileID and the target tree's DObjDesc offset in it; the module doc names dSC1PBonusStageTargetDescs, which bonus1_courses.rs generates
-crates/ssb-rom/src/effect.rs	YOSHI_EGG_LAY_KEY	link-time labels: the egg's file ID and ll*DObjDesc offset, the key the port finds the effect tree by; dEFManagerYoshiEggLayAnimJoints is named, not copied
-crates/ssb-rom/src/effect.rs	PIKACHU_THUNDER_SHOCK_KEY	link-time labels: llPikachuSpecial2 file ID and llPikachuSpecial2ThunderShockDObjDesc offset, the key the port finds the effect tree by; the EFDesc is named, not copied
-crates/ssb-rom/src/effect.rs	FOX_REFLECTOR_KEY	link-time labels: llFoxSpecial2 file ID and llFoxSpecial2ReflectorDObjDesc offset, the key the port finds the effect tree by; the d* arrays are named, not copied
-crates/ssb-rom/src/scene_roots.rs	FIGHTER_MAIN	generated: copies crate::fighter::FIGHTER_FILES (ssb-tablegen fighter_files.rs, read from dFTManagerDataFiles); its literals are the kind count
-crates/ssb-rom/src/sprite.rs	STOCKS_ZAKO	link-time labels: llFTStocksZakoFileID and llFTStocksZakoSprite, which mnPlayers1PGame passes as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/sprite.rs	SELECT_COMMON	link-time labels: llMNSelectCommonFileID and llMNSelectCommonStoneBackgroundSprite, which the mnPlayers* scenes pass as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
-crates/ssb-rom/src/transition.rs	EXPECTED_FILES	test fixture: the llLBTransition*FileID labels (reloc_data_symbols.us.txt) the generated dLBTransitionDescs is checked against
-crates/ssb-rom/tests/backup.rs	DEFAULT_BACKUP_ROM	layout: the symbol's address and its segment's ROM and VRAM start, to find the array in the ROM
-crates/ssb-rom/tests/explain_movement.rs	N64_SEEDS	test fixture: N64 measurements (RE-468, RE-472)
-crates/ssb-rom/tests/special_hi_pitch.rs	FOX	test fixture: N64 measurements or expected ROM values
-crates/ssb-rom/tests/special_hi_pitch.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
-crates/ssb-rom/tests/special_hi_pitch.rs	BOUND	test fixture: N64 measurements or expected ROM values
-crates/ssb-rom/tests/special_hi_pitch.rs	QUICK_END	test fixture: N64 measurements or expected ROM values
 crates/ssb-engine/src/audio/fgm.rs	ZERO	port constant: the empty FGM player
 crates/ssb-engine/src/audio/golden.rs	FGMS	test fixture: the golden audio scenario's FGM calls
 crates/ssb-engine/src/audio/n64ref.rs	B_MENU	test fixture: N64 audio captures' call timelines (RE-479)
 crates/ssb-engine/src/audio/n64ref.rs	C_ATTRACT	test fixture: N64 audio captures' call timelines (RE-479)
+crates/ssb-engine/src/audio/synth.rs	GET_RATE	test fixture: _getRate/_getVol compiled as C
 crates/ssb-engine/src/math.rs	IDENTITY	port constant: the identity matrix
+crates/ssb-engine/src/math/sqrt_golden.rs	SPECIALS	test fixture: sqrt test vectors
 crates/ssb-engine/src/math/trig_golden.rs	ANGLE_SPECIALS	test fixture: trig test vectors
 crates/ssb-engine/src/math/trig_golden.rs	UNARY_SPECIALS	test fixture: trig test vectors
 crates/ssb-engine/src/rsp_light.rs	RSQ	port constant: the RSP VRSQ table, computed (ares RSP::power)
+crates/ssb-game/src/camera.rs	DEFAULT_EYE	function-body constants: gmCameraMakeDefaultCamera writes this eye as immediates after copying dGMCameraCObjVecDefault (gm/gmcamera.c:1157-1171); no d* value is copied
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_COLANIM	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_EFFECT	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_MODELPART	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_TEXTUREPART	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/countdown_tests.rs	SIZES	test fixture
+crates/ssb-game/src/explain.rs	ARROWS	vertex data in archive file 0xC6 (a relocatable file, not an overlay d* array)
 crates/ssb-game/src/explain.rs	KEY_EVENTS	link-time labels: llSCExplainMain{0,1,2,3}KeyEvent offsets in the How to Play file
+crates/ssb-game/src/hud_tests.rs	SIZES	test fixture
 crates/ssb-game/src/item/link_bomb.rs	ATTACK_EVENTS	generated: copies super::attack_events::LINK_BOMB (ssb-tablegen, read from llLinkMainBombAttackEvents); its literals are the zero fill
 crates/ssb-game/src/opening/clash.rs	CORNERS	link-time labels: the corners' ll*DL and ll*AnimJoint offsets (file 0x48) that mvOpeningClash passes as immediates
 crates/ssb-game/src/opening/fighters.rs	JUNGLE_CAMERA_SLOT	layout: llMVOpeningJungleFileID and the camera's offset, packed into a pack slot key
+crates/ssb-game/src/opening/fighters.rs	SCENES	the scenes' function-body constants (mvOpening* scene functions: name origin, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the generated opening_scenes.rs, its name letters from the generated mvOpening*MakeName offsets and pos
 crates/ssb-game/src/opening/movie.rs	PARTICLE_DISPLAYS	function-body constants: efDisplayInitAll's display links and list ids, written as immediates
 crates/ssb-game/src/opening/newcomers.rs	NEWCOMERS	link-time labels: each newcomer's FTKind, file ID and ll*DObjDesc/AnimJoint offsets that mvOpeningNewcomersMakeAll passes as immediates
 crates/ssb-game/src/opening/run.rs	FIGHTER_ANIM_JOINTS	link-time labels: the proxies' ll*AnimJoint offsets in llMVOpeningRunMainFileID, code immediates in mvOpeningRunMakeFighters
@@ -63,21 +35,32 @@ crates/ssb-game/src/particle.rs	EMPTY	port constants: the identity matrix and th
 crates/ssb-game/src/particle.rs	IDENTITY	port constants: the identity matrix and the empty pool slot
 crates/ssb-game/src/players_vs_layer.rs	SHUTTER_SCISSORS	function-body constants: mnPlayersVSShutter{1..4}PProcDisplay's lbCommonSetSpriteScissor immediates
 crates/ssb-game/src/players_vs_layer.rs	SPOTLIGHT_DESC	layout: a (file, offset) pair, checked against the pack by crates/ssb-rom/tests/select_spotlight.rs
+crates/ssb-game/src/players_vs_layer.rs	SPOTLIGHT_SCALES	function-body constants: the selects' *SpotlightProcUpdate local sizes[] (mnplayersvs.c:4038-4042, mnplayers1pgame.c:3098-3102)
 crates/ssb-game/src/results_layer.rs	STOCK_ROWS	function-body constants: mnVSResultsDrawResults{Time,Stock}Royal's row y positions and x offsets, written as immediates
 crates/ssb-game/src/results_layer.rs	TIME_ROWS	function-body constants: mnVSResultsDrawResults{Time,Stock}Royal's row y positions and x offsets, written as immediates
 crates/ssb-game/src/spgame/challenger.rs	DECALS	function-body constants: sc1PChallengerMakeDecals' positions and colours, written as immediates (sc1pchallenger.c:154-176)
+crates/ssb-game/src/spgame/staffroll.rs	CAMERA_EYE	function-body constants: scStaffrollMakeCamera's eye (scstaffroll.c:2177-2180); the dGCPerspDefault projection it names is not copied
 crates/ssb-game/src/wpeffect.rs	CLASH_FX_MAX	port constant: a queue capacity computed from the weapon-pair count
+crates/ssb-rom/src/audio.rs	SBK	layout: the cartridge ROM range of S1_music.sbk (the linker section symbol that dSYAudioPublicSettings.sbk_start points at) and its size
+crates/ssb-rom/src/bonus1.rs	MODEL	link-time labels: llITBonus1ObjectFileID and the target tree's DObjDesc offset in it; the module doc names dSC1PBonusStageTargetDescs, which bonus1_courses.rs generates
 crates/ssb-rom/src/campaign.rs	CLEAR	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/campaign.rs	CONTINUE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/campaign.rs	INTRO	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
+crates/ssb-rom/src/effect.rs	ENTRY_ANIMS	link-time labels (llFoxSpecial2EntryArwing*, llCaptainSpecial2_*, llITCommonDataMBallThrown*, llKirbySpecial2EntryStar* offsets) that the efManager*Entry*MakeEffect functions pass as immediates to gcAddAnimJointAll, plus port slots; no d* array in the decomp holds them
+crates/ssb-rom/src/effect.rs	FOX_REFLECTOR_KEY	link-time labels: llFoxSpecial2 file ID and llFoxSpecial2ReflectorDObjDesc offset, the key the port finds the effect tree by; the d* arrays are named, not copied
 crates/ssb-rom/src/effect.rs	MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS	layout: (file, ll*DObjDesc offset) keys the port excludes
+crates/ssb-rom/src/effect.rs	PIKACHU_THUNDER_SHOCK_KEY	link-time labels: llPikachuSpecial2 file ID and llPikachuSpecial2ThunderShockDObjDesc offset, the key the port finds the effect tree by; the EFDesc is named, not copied
 crates/ssb-rom/src/effect.rs	PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS	layout: the node-3 script offsets in file 347 under llPikachuSpecial2ThunderShock{0,1,2}MatAnimJoint
+crates/ssb-rom/src/effect.rs	YOSHI_EGG_LAY_KEY	link-time labels: the egg's file ID and ll*DObjDesc offset, the key the port finds the effect tree by; dEFManagerYoshiEggLayAnimJoints is named, not copied
 crates/ssb-rom/src/ending.rs	MESSAGE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/ending.rs	MESSAGE_COLLAGE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/ending.rs	STAFFROLL	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/explain.rs	SPRITES	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/figatree.rs	RATE	port constants: the figatree decoder's fixed-point scales (ftAnimParseDObjFigatree's code)
 crates/ssb-rom/src/figatree.rs	VALUE	port constants: the figatree decoder's fixed-point scales (ftAnimParseDObjFigatree's code)
+crates/ssb-rom/src/fighter.rs	EXPECTED	test fixture
+crates/ssb-rom/src/ground_obj.rs	ANIMS	link-time labels: ll*AnimJoint offsets that the grJungle/grYamabuki/grZebes/grInishie/grCastle/itMonster/itPakkun functions pass as immediates, ordered and named by the port; the dGRPupupuWhispy* entries are indices into the generated arrays
+crates/ssb-rom/src/ground_obj.rs	OBJECTS	link-time labels (ll*DObjDesc offsets that grPupupuInitAll, grJungleMakeTaruCann, ... pass as immediates) plus port fields (display link, instance count, build kind) that no d* array holds; follow-up: derive the object list from the stage init functions
 crates/ssb-rom/src/menu_pack.rs	BACKUP_CLEAR	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/menu_pack.rs	CHARACTERS	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/menu_pack.rs	MAIN	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
@@ -91,26 +74,44 @@ crates/ssb-rom/src/menu_pack.rs	VS_MODE	layout: a SpriteFile manifest (the file 
 crates/ssb-rom/src/menu_pack.rs	VS_OPTIONS	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/menu_pack.rs	VS_RECORD	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/mesh.rs	ZERO	port constant: the empty combiner term
+crates/ssb-rom/src/mmonster.rs	VISUALS	link-time labels (llITCommonData*DObjDesc and *AnimJoint offsets that the itMonster*InitVars and MakeItem functions write as immediates) plus port fields (appear_node, status); no d* array holds them
 crates/ssb-rom/src/opening.rs	CORNERS	link-time labels: the clash corners' ll*MObjSub, DL, MatAnimJoint and AnimJoint offsets (file 0x48)
+crates/ssb-rom/src/opening.rs	DL_GRAPHS	link-time labels (ll*DL and ll*MObjSub offsets that the mv*/mn* scene functions pass to gcAddDObjForGObj as immediates); no d* array in the decomp holds them
 crates/ssb-rom/src/opening.rs	FIGHTER_SCENE_KINDS	function-body constants: the order the opening's scene functions run the fighter scenes, as FTKind ordinals
 crates/ssb-rom/src/opening.rs	ROOM_SCENE3_INIT	function-body constants: mvOpeningRoomInitScene{3,4}Cameras write the eye, at and fovy as immediates (mvopeningroom.c:817-828)
 crates/ssb-rom/src/opening.rs	ROOM_SCENE4_INIT	function-body constants: mvOpeningRoomInitScene{3,4}Cameras write the eye, at and fovy as immediates (mvopeningroom.c:817-828)
 crates/ssb-rom/src/pack.rs	GAPS	port constant: shell-sort gap sequence
-crates/ssb-rom/src/scene_roots.rs	STAGE_PREVIEW_MODELS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
-crates/ssb-rom/src/scene_roots.rs	STAGE_WALLPAPERS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
+crates/ssb-rom/src/particle.rs	BANKS	cartridge ROM ranges of each particle bank pair: the linker section symbols that efParticleSetupBankID callers pass as immediates (scripts_lo/hi, textures_lo/hi), named by the port; no d* array holds them
 crates/ssb-rom/src/scene.rs	IDENTITY	port constant: the identity matrix
 crates/ssb-rom/src/scene.rs	INVS	test fixture: matrix inputs
+crates/ssb-rom/src/scene_roots.rs	FIGHTER_MAIN	generated: copies crate::fighter::FIGHTER_FILES (ssb-tablegen fighter_files.rs, read from dFTManagerDataFiles); its literals are the kind count
+crates/ssb-rom/src/scene_roots.rs	STAGE_PREVIEW_MODELS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
+crates/ssb-rom/src/scene_roots.rs	STAGE_WALLPAPERS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
 crates/ssb-rom/src/sector.rs	DESC_FIELDS	layout: GRSectorDesc field offsets and the nodes func_ovl2_80107D50 starts them on
-crates/ssb-rom/src/sprite_offsets.rs	BATTLE_PAUSE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/sprite.rs	DIAG	port constants: neighbour offsets for the sprite edge fill
 crates/ssb-rom/src/sprite.rs	ITEM_ARROW	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/sprite.rs	MN_MAPS	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/sprite.rs	ORTHO	port constants: neighbour offsets for the sprite edge fill
 crates/ssb-rom/src/sprite.rs	PLAYERS_1P_MODE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/sprite.rs	PLAYERS_COMMON	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
+crates/ssb-rom/src/sprite.rs	SELECT_COMMON	link-time labels: llMNSelectCommonFileID and llMNSelectCommonStoneBackgroundSprite, which the mnPlayers* scenes pass as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
+crates/ssb-rom/src/sprite.rs	STOCKS_ZAKO	link-time labels: llFTStocksZakoFileID and llFTStocksZakoSprite, which mnPlayers1PGame passes as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
 crates/ssb-rom/src/sprite.rs	TRAINING_TABLES	layout: offsets, counts and strides of the Training sprite tables in their file
+crates/ssb-rom/src/sprite_offsets.rs	BATTLE_PAUSE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
+crates/ssb-rom/src/sprite_offsets.rs	GAME_STATUS	layout: file 82's sprite manifest (reloc_data.us.h order), which ssb-tablegen indexes the dIFCommon* sprite tables by; its letters and lamps are what those tables name, and Rod, Frame and RodShadow are code immediates
 crates/ssb-rom/src/stage.rs	EXPLAIN_WALLPAPER_GROUND	link-time labels: GRKind and each map's ll*MapMapHeader offset
 crates/ssb-rom/src/stage.rs	ONE_P_WALLPAPER_GROUNDS	link-time labels: GRKind and each map's ll*MapMapHeader offset
+crates/ssb-rom/src/transition.rs	EXPECTED_FILES	test fixture: the llLBTransition*FileID labels (reloc_data_symbols.us.txt) the generated dLBTransitionDescs is checked against
+crates/ssb-rom/tests/backup.rs	DEFAULT_BACKUP_ROM	layout: the symbol's address and its segment's ROM and VRAM start, to find the array in the ROM
+crates/ssb-rom/tests/demo_clips.rs	FRAMES	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64_GRABS	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64_HITS	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/explain_movement.rs	N64_SEEDS	test fixture: N64 measurements (RE-468, RE-472)
+crates/ssb-rom/tests/special_hi_pitch.rs	BOUND	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_hi_pitch.rs	FOX	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_hi_pitch.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_hi_pitch.rs	QUICK_END	test fixture: N64 measurements or expected ROM values
 psp-asset-viewer/src/addr_diag.rs	PROBES	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/main.rs	TRIANGLE	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/normal_diag.rs	CASES	tooling: render-validation probe fixtures, no ROM data
@@ -129,10 +130,13 @@ psp-runtime/src/scene.rs	CAPTAIN_FALCON_PUNCH_EFFECT_KEY	link-time labels: (file
 psp-runtime/src/scene.rs	DEAD_EXPLODE_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	DEAD_EXPLODE_MAT_SCRIPTS	layout: the blast's material script offsets in file 84 under llEFCommonEffects2DeadExplode{1..4}MatAnimJoint
 psp-runtime/src/scene.rs	ENTRY_PARTS	layout: (file, ll*DObjDesc offset) keys of the entry effects, through ssb_rom::effect::slot
+psp-runtime/src/scene.rs	KIRBY_CUTTER_EFFECT_KEYS	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	KIRBY_CUTTER_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
 psp-runtime/src/scene.rs	LINK_BOMB_ITEM_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
 psp-runtime/src/scene.rs	LINK_SPIN_ATTACK_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	LINK_SPIN_ATTACK_WEAPON_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
+psp-runtime/src/scene.rs	NESS_PK_TRAIL_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
+psp-runtime/src/scene.rs	NESS_PK_WAVE_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	NESS_PSI_MAGNET_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	PURIN_SING_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	REBIRTH_HALO_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
@@ -147,6 +151,7 @@ tools/romtool/src/filter_coverage.rs	PHASES	tooling: texture-filter coverage exp
 tools/romtool/src/filter_coverage.rs	TRAIN_BASES	tooling: texture-filter coverage experiment parameters, no ROM data
 tools/romtool/src/main.rs	DIRECT_WEAPON_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	EFFECT_CLD_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+tools/romtool/src/main.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of effect trees drawn XLU; the dEFManager*EffectDesc is named, not copied
 tools/romtool/src/main.rs	IMPACT_WAVE_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	ITEM_MAT_ANIMS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	KIRBY_COPY_TABLE	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
@@ -157,4 +162,3 @@ tools/romtool/src/residual_fixes.rs	CASES	tooling: residual review fixtures (scr
 tools/romtool/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
-crates/ssb-game/src/players_vs_layer.rs	SPOTLIGHT_SCALES	function-body constants: the selects' *SpotlightProcUpdate local sizes[] (mnplayersvs.c:4038-4042, mnplayers1pgame.c:3098-3102)

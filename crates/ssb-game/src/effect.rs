@@ -231,6 +231,13 @@ pub struct Effects {
     /// flush left them ([`EffectRuntime`]'s `fighter`): what an attached
     /// effect's process reads from `DObjGetStruct(ep->fighter_gobj)`.
     pub fighter_anchors: [Option<(Vec3, i8)>; 4],
+    /// Each port's fighter `physics.vel_air.x`, stamped with
+    /// [`Self::fighter_anchors`]: the side a captured star's sparks fly to.
+    pub fighter_vel_air_x: [f32; 4],
+    /// `gMPCollisionGroundData->map_bound_*`, as the host supplies them
+    /// ([`HitEffectSink::map_bounds`]); `None` skips the lost star's bound
+    /// check.
+    pub map_bounds: Option<crate::status::BlastZone>,
     /// The fighters' own link-15 effects' creation stamps
     /// ([`Self::stamp_fighter`], RE-542).
     fighter_stamps: crate::effect_order::FighterStamps,
@@ -260,6 +267,8 @@ impl Effects {
             leaves_xf: NIL,
             dust_xf: NIL,
             fighter_anchors: [None; 4],
+            fighter_vel_air_x: [0.0; 4],
+            map_bounds: None,
             fighter_stamps: crate::effect_order::FighterStamps::default(),
         };
         for i in 0..EFFECT_ALLOC_NUM {
@@ -976,6 +985,10 @@ pub trait HitEffectSink {
         }
     }
 
+    /// `gMPCollisionGroundData->map_bound_*` for this frame's effect
+    /// processes (the lost Kirby star's bound check).
+    fn map_bounds(&mut self, _bounds: crate::status::BlastZone) {}
+
     /// Whether the last [`crate::wpeffect::WeaponEffect::TwisterMake`]
     /// made its effect (`grHyruleMakeTwister` returns `NULL` when not).
     /// Without a runtime the Twister still comes.
@@ -1016,6 +1029,7 @@ impl HitEffectSink for EffectRuntime<'_> {
     fn fighter(&mut self, f: &mut crate::fighter::Fighter) {
         self.effects.fighter_anchors[usize::from(f.port & 3)] =
             Some((f.pos, f.facing.sign() as i8));
+        self.effects.fighter_vel_air_x[usize::from(f.port & 3)] = f.physics.vel_air.x;
         // The process's own link-15 effects, before the effects it queued
         // (`crate::effect_order`, RE-542).
         self.effects.stamp_fighter(f);
@@ -1036,6 +1050,10 @@ impl HitEffectSink for EffectRuntime<'_> {
 
     fn twister_made(&mut self) -> bool {
         self.effects.twister_xf != NIL
+    }
+
+    fn map_bounds(&mut self, bounds: crate::status::BlastZone) {
+        self.effects.map_bounds = Some(bounds);
     }
 }
 
@@ -1197,6 +1215,32 @@ pub enum DisplayKind {
     /// (`efManagerPikachuThunderJoltMakeEffect`). No `EFFECT_FLAG_USERDATA`,
     /// so no struct; it ends with its animation (RE-541).
     ThunderJolt,
+    /// `dEFManagerNessPKThunderTrailEffectDesc`: the PK Thunder's last
+    /// trail segment, made by trail 3 (`efManagerNessPKThunderTrailMakeEffect`)
+    /// on DL link 15. Its process follows the owner's trail ring ten
+    /// samples back; the head's end ejects it. Unanimated.
+    NessPKThunderTrail,
+    /// `dEFManagerNessPKReflectTrailEffectDesc`: the reflected PK Thunder's
+    /// last segment (`efManagerNessPKReflectTrailMakeEffect`), on DL link 18,
+    /// ten frames of travel behind the reflected head. Unanimated.
+    NessPKReflectTrail,
+    /// `dEFManagerCaptureKirbyStarEffectDesc`: the star around a fighter
+    /// Kirby spat out (`efManagerCaptureKirbyStarMakeEffect`), on DL link
+    /// 15, attached to the victim. Its root `DObj` stands
+    /// `EFCOMMON_CAPTUREKIRBYSTAR_SPARK_OFF_Y` (210) up; the child's
+    /// matrix kind 0x50 moves it to the victim's `TopN` and kind 0x2E
+    /// billboards it. [`Display::rotate`] and [`Display::scale`] are the
+    /// child's spin and the victim's `FTKirbyCopy::effect_scale`. Its
+    /// process is set directly (no `efManagerHaveStructProcUpdate`), so a
+    /// lag pause does not hold it; `ftParamProcStopEffect` ejects it.
+    /// Unanimated.
+    CaptureKirbyStar,
+    /// `dEFManagerLoseKirbyStarEffectDesc`: the star Kirby drops on losing
+    /// a copy ability (`efManagerLoseKirbyStarMakeEffect`), on DL link 15,
+    /// not attached. Root 210 up as above; [`Display::translate`] and
+    /// [`Display::rotate`] are the child's position (kind `Tra`) and spin
+    /// (kind 0x2E). Unanimated.
+    LoseKirbyStar,
 }
 
 /// Which side of the camera's process (priority 3, Camera link 9) a quake's
@@ -1281,6 +1325,16 @@ impl DisplayKind {
             }
             DisplayKind::VulcanJab => d::EF_MANAGER_VULCAN_JAB_EFFECT_DESC_DL_LINK[0],
             DisplayKind::ThunderJolt => d::EF_MANAGER_THUNDER_JOLT_EFFECT_DESC_DL_LINK[0],
+            DisplayKind::NessPKThunderTrail => {
+                d::EF_MANAGER_NESS_PK_THUNDER_TRAIL_EFFECT_DESC_DL_LINK[0]
+            }
+            DisplayKind::NessPKReflectTrail => {
+                d::EF_MANAGER_NESS_PK_REFLECT_TRAIL_EFFECT_DESC_DL_LINK[0]
+            }
+            DisplayKind::CaptureKirbyStar => {
+                d::EF_MANAGER_CAPTURE_KIRBY_STAR_EFFECT_DESC_DL_LINK[0]
+            }
+            DisplayKind::LoseKirbyStar => d::EF_MANAGER_LOSE_KIRBY_STAR_EFFECT_DESC_DL_LINK[0],
         }
     }
 
@@ -1307,7 +1361,11 @@ impl DisplayKind {
             | DisplayKind::ThunderTrail
             | DisplayKind::YoshiEggEscape
             | DisplayKind::ContainerSmash
-            | DisplayKind::VulcanJab => return None,
+            | DisplayKind::VulcanJab
+            | DisplayKind::NessPKThunderTrail
+            | DisplayKind::NessPKReflectTrail
+            | DisplayKind::CaptureKirbyStar
+            | DisplayKind::LoseKirbyStar => return None,
         })
     }
 
@@ -1323,6 +1381,10 @@ impl DisplayKind {
                 | DisplayKind::YoshiEggEscape
                 | DisplayKind::ContainerSmash
                 | DisplayKind::VulcanJab
+                | DisplayKind::NessPKThunderTrail
+                | DisplayKind::NessPKReflectTrail
+                | DisplayKind::CaptureKirbyStar
+                | DisplayKind::LoseKirbyStar
         )
     }
 }
@@ -1374,6 +1436,12 @@ pub struct Display {
     fighter: Option<u8>,
     /// `ep->is_pause_effect`: `efManagerHaveStructProcUpdate` skips it.
     pub paused: bool,
+    /// `effect_vars.pkthunder.owner_gobj`, as the weapon group of the PK
+    /// Thunder head the trail effect follows.
+    pk_head: u16,
+    /// `effect_vars.pkthunder.status` is still `Active`: the head lived
+    /// through this frame's weapon pass ([`Effects::pk_trail_pose`]).
+    pk_alive: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1421,6 +1489,8 @@ impl Display {
             owner: 0,
             fighter: None,
             paused: false,
+            pk_head: 0,
+            pk_alive: false,
         }
     }
 }
@@ -1535,6 +1605,9 @@ impl Effects {
     pub fn func_run(&mut self) {
         for d in self.displays.iter_mut().flatten() {
             d.started = true;
+            // Every frame's weapon pass reaffirms a live head
+            // ([`Self::pk_trail_pose`]).
+            d.pk_alive = false;
         }
     }
 
@@ -1583,7 +1656,7 @@ impl Effects {
     }
 
     /// One display effect's `proc_update`.
-    fn display_proc(&mut self, _p: &mut Particles, _banks: &dyn Banks, i: usize) {
+    fn display_proc(&mut self, p: &mut Particles, banks: &dyn Banks, i: usize) {
         let Some(mut d) = self.displays[i] else {
             return;
         };
@@ -1680,6 +1753,75 @@ impl Effects {
                 d.vel[1] += d.add[1];
                 d.translate.y += d.vel[1];
                 d.lifetime -= 1;
+                self.displays[i] = Some(d);
+            }
+            // `efManagerNessPKThunderTrailProcUpdate` and
+            // `efManagerNessPKReflectTrailProcUpdate`: `Destroy` ejects;
+            // otherwise the head's pass already wrote this frame's pose.
+            DisplayKind::NessPKThunderTrail | DisplayKind::NessPKReflectTrail => {
+                if !d.pk_alive {
+                    self.eject_display(i);
+                }
+            }
+            // `efManagerCaptureKirbyStarProcUpdate`. `lifetime` is
+            // `effect_timer`; the root's `translate.z = 0` keeps it at 0.
+            DisplayKind::CaptureKirbyStar => {
+                d.rotate.z += dtor(10.0);
+                let port = usize::from(d.owner & 3);
+                let spark = if d.lifetime % 2 != 0 {
+                    self.fighter_anchors[port].map(|(mut pos, _)| {
+                        // `copy[fp->fkind].effect_scale * 250` and `* 125`,
+                        // truncated to the `s32` range.
+                        pos.y += rng::rand_int_range((d.scale.x * 250.0) as i32) as f32;
+                        let lr = if self.fighter_vel_air_x[port] > 0.0 {
+                            pos.x -= rng::rand_int_range((d.scale.x * 125.0) as i32) as f32;
+                            -1
+                        } else {
+                            pos.x += rng::rand_int_range((d.scale.x * 125.0) as i32) as f32;
+                            1
+                        };
+                        (pos, lr)
+                    })
+                } else {
+                    None
+                };
+                d.lifetime += 1;
+                self.displays[i] = Some(d);
+                if let Some((pos, lr)) = spark {
+                    self.star_rod_spark(pos, lr);
+                }
+            }
+            // `efManagerLoseKirbyStarProcUpdate`: the splash stands at the
+            // child's translate, without the root's 210.
+            DisplayKind::LoseKirbyStar => {
+                d.rotate.z += dtor(10.0);
+                d.translate.x += d.vel[0];
+                d.translate.y += d.vel[1];
+                d.vel[1] -= 3.0;
+                if d.vel[1] < -90.0 {
+                    d.vel[1] = -90.0;
+                }
+                let expired = d.lifetime <= 0;
+                d.lifetime -= 1;
+                let t = d.translate;
+                if expired {
+                    crate::sound::play_fgm(crate::sound::id::nSYAudioFGMKirbyStarPing1);
+                    let gen = if d.lr == -1 {
+                        script::STAR_SPLASH_GEN_L
+                    } else {
+                        script::STAR_SPLASH_GEN_R
+                    };
+                    self.generator_at(p, banks, gen, t);
+                    self.eject_display(i);
+                    return;
+                }
+                if self
+                    .map_bounds
+                    .is_some_and(|b| b.bottom > t.y || b.right < t.x || b.left > t.x || b.top < t.y)
+                {
+                    self.eject_display(i);
+                    return;
+                }
                 self.displays[i] = Some(d);
             }
             // `efManagerPikachuThunderTrailProcUpdate`.
@@ -1904,6 +2046,37 @@ impl Effects {
         true
     }
 
+    /// `efManagerCaptureKirbyStarMakeEffect(fighter_gobj)`: a non-forced
+    /// struct attached to the victim `owner`; `scale` is the victim's
+    /// `FTKirbyCopy::effect_scale` (the child's `scale.x` and `.y`;
+    /// `.z` 1), `effect_timer` 0. `false` as the source returns `NULL`.
+    pub fn capture_kirby_star(&mut self, owner: u8, scale: f32) -> bool {
+        let Some(i) = self.make_display(DisplayKind::CaptureKirbyStar) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.owner = owner;
+        d.fighter = Some(owner);
+        d.scale = Vec3::new(scale, scale, 1.0);
+        d.lifetime = 0;
+        true
+    }
+
+    /// `efManagerLoseKirbyStarMakeEffect(fighter_gobj)`: a non-forced,
+    /// unattached struct whose child starts at the fighter's `TopN`
+    /// translate `pos`, flying `(lr * 20, 80)` for a lifetime of 50.
+    pub fn lose_kirby_star(&mut self, pos: Vec3, lr: i8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::LoseKirbyStar) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        d.vel = [f32::from(lr) * 20.0, 80.0];
+        d.lifetime = 50;
+        d.lr = lr;
+        true
+    }
+
     /// `efManagerStarRodSparkMakeEffect`.
     pub fn star_rod_spark(&mut self, pos: Vec3, lr: i8) -> bool {
         let Some(i) = self.make_display(DisplayKind::StarRodSpark) else {
@@ -1952,6 +2125,55 @@ impl Effects {
         d.lifetime = i32::from(lifetime);
         d.index = if texture == 3 { 3 } else { 0 };
         true
+    }
+
+    /// `efManagerNessPKThunderTrailMakeEffect` (`reflected` false) and
+    /// `efManagerNessPKReflectTrailMakeEffect`: a struct (`NoForce`) and a
+    /// `GObj` following the PK Thunder head of weapon group `head`, whose
+    /// `translate.z` is 0. The makers run the process once:
+    /// `pos` and `rotate_z` are its pose ([`crate::ness_weapon::PKThunder::
+    /// trail_effect_pose`]); the reflected one's `rotate.z` is the head's
+    /// less 90 degrees and never changes.
+    pub fn pk_trail(&mut self, head: u16, reflected: bool, pos: Vec3, rotate_z: f32) -> bool {
+        let kind = if reflected {
+            DisplayKind::NessPKReflectTrail
+        } else {
+            DisplayKind::NessPKThunderTrail
+        };
+        let Some(i) = self.make_display(kind) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.pk_head = head;
+        d.pk_alive = true;
+        d.translate = Vec3::new(pos.x, pos.y, 0.0);
+        d.rotate.z = rotate_z;
+        true
+    }
+
+    /// The PK Thunder head of weapon group `head` lived through this
+    /// frame's weapon pass: its trail effect's process, which runs after
+    /// the weapons' (priority 3, effect link 6 after weapon link 5), writes
+    /// `pos` (x and y) and, unless reflected, `rotate_z`. Every head end
+    /// (`wpNessPKThunderHeadSetDestroyTrails`) skips this, which is the
+    /// effect's `Destroy`: a head ended in the weapon pass ejects it the
+    /// same frame, unseen; one ended by a hit or a reflection (priority 0
+    /// and 1, after the effects) leaves it drawn once more.
+    pub fn pk_trail_pose(&mut self, head: u16, pos: Vec3, rotate_z: Option<f32>) {
+        for d in self.displays.iter_mut().flatten() {
+            if matches!(
+                d.kind,
+                DisplayKind::NessPKThunderTrail | DisplayKind::NessPKReflectTrail
+            ) && d.pk_head == head
+            {
+                d.pk_alive = true;
+                d.translate.x = pos.x;
+                d.translate.y = pos.y;
+                if let Some(r) = rotate_z {
+                    d.rotate.z = r;
+                }
+            }
+        }
     }
 
     /// `efManagerPikachuThunderJoltMakeEffect(pos, rotate)`: no struct; the

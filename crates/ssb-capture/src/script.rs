@@ -54,6 +54,11 @@ const STONE_SLOPE_B_TICK: u64 = 120;
 /// `captainkickroll`'s Down+B, Captain Falcon facing left on Peach's
 /// Castle's roof (RE-503).
 const KICK_ROLL_B_TICK: u64 = 60;
+/// `kirbycutter`'s route: Kirby dashes left from the jab's end to the left
+/// bridge's end on Peach's Castle (x -1940, where the N64 trace's Kirby
+/// stops), then Up+B there.
+const CUTTER_RUN: core::ops::Range<u64> = 30..70;
+const CUTTER_B_TICK: u64 = 95;
 
 /// The delay of the jump route the dummy scenes follow. The route was
 /// found for a fighter standing free from tick 13; the jab runs to tick 25
@@ -67,6 +72,7 @@ pub mod button {
     pub const B: u16 = 0x4000;
     pub const Z: u16 = 0x2000;
     pub const C_UP: u16 = 0x0008;
+    pub const L: u16 = 0x0020;
 }
 
 /// One tick of the scripted pad.
@@ -114,6 +120,8 @@ macro_rules! scripted_scene {
             | $crate::GameScene::NessMagnet
             | $crate::GameScene::LinkBomb
             | $crate::GameScene::KirbyHat
+            | $crate::GameScene::KirbySpit
+            | $crate::GameScene::KirbyLose
             | $crate::GameScene::YoshiEgg
             | $crate::GameScene::PikachuThunder
             | $crate::GameScene::PikachuAir
@@ -134,6 +142,7 @@ macro_rules! scripted_scene {
             | $crate::GameScene::NessJibaku
             | $crate::GameScene::KirbyStoneSlope
             | $crate::GameScene::CaptainKickRoll
+            | $crate::GameScene::KirbyCutter
     };
 }
 
@@ -214,6 +223,10 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // top platform near tick 102, and `SpecialHiLanding` frame 3 makes
         // the wave. It is some 6 of its 20 frames old here.
         Kirby => 108,
+        // Up+B at 95 on the bridge's end: `SpecialHi` frame 52 makes the
+        // Trail, which falls with Kirby until frame 58. `SpecialHi` frame
+        // 54 here, the Trail's third play: the N64 trace's screenshot.
+        KirbyCutter => CUTTER_B_TICK + 54,
         // A from tick 50 on every other tick: jabs 1-3, then the rapid jab,
         // whose loop makes a puff at its frames 0, 6, 11, 16 and 21 (RE-513).
         KirbyJab => 110,
@@ -256,6 +269,12 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // ticks after the press as the original capture at 92.
         PikachuThunder => 132,
         KirbyHat => 260 + ROUTE_DELAY,
+        // A at 170 spits the dummy; its star flies with the captured-star
+        // effect and its sparks.
+        KirbySpit => 200 + ROUTE_DELAY,
+        // L at 250, once the copy is over, drops it; the lost star is
+        // rising on its arc.
+        KirbyLose => 262 + ROUTE_DELAY,
         // The egg laid at 293 lands on the top platform at 334; the
         // Training CPU wiggles it open at 458 (`ftComputer`'s `YoshiEgg`
         // wiggle), so the capture is the egg at rest some 46 ticks in.
@@ -330,14 +349,16 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
         // dummy's platform, then B: Kirby inhales and, with a second B from
         // `SpecialNWait`, copies (`ftKirbySpecialNCopyCheckGotoCopy`); Yoshi's
         // tongue swallows and lays the dummy.
-        KirbyHat | YoshiEgg => match tick {
+        KirbyHat | KirbySpit | KirbyLose | YoshiEgg => match tick {
             4 | 8 => button::A,
-            t if scene == KirbyHat && (t == 13 + ROUTE_DELAY || t == 30 + ROUTE_DELAY) => {
+            t if scene != YoshiEgg && (t == 13 + ROUTE_DELAY || t == 30 + ROUTE_DELAY) => {
                 button::C_UP
             }
-            t if scene == KirbyHat && (t == 108 + ROUTE_DELAY || t == 170 + ROUTE_DELAY) => {
+            t if scene == KirbySpit && t == 170 + ROUTE_DELAY => button::A,
+            t if scene != YoshiEgg && (t == 108 + ROUTE_DELAY || t == 170 + ROUTE_DELAY) => {
                 button::B
             }
+            t if scene == KirbyLose && t == 250 + ROUTE_DELAY => button::L,
             // Yoshi's jab (to tick 31) shortens his walk, which ends at 123
             // under the left platform (RE-516). He jumps twice straight up
             // and lands on that platform at tick 238, 384 units right of the
@@ -365,10 +386,11 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
             _ => 0,
         },
         // `kirbystoneslope`, `captainkickroll`: Down+B once standing.
-        KirbyStoneSlope | CaptainKickRoll => match tick {
+        KirbyStoneSlope | CaptainKickRoll | KirbyCutter => match tick {
             4 | 8 => button::A,
             STONE_SLOPE_B_TICK if scene == KirbyStoneSlope => button::B,
             KICK_ROLL_B_TICK if scene == CaptainKickRoll => button::B,
+            CUTTER_B_TICK if scene == KirbyCutter => button::B,
             _ => 0,
         },
         PikachuAir => match tick {
@@ -465,6 +487,13 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
                 0
             }
         }
+        KirbyCutter => {
+            if CUTTER_RUN.contains(&tick) {
+                -127
+            } else {
+                0
+            }
+        }
         LinkBomb => {
             if tick == 325 {
                 80
@@ -479,7 +508,7 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
                 0
             }
         }
-        Grab | Jab | KirbyHat => {
+        Grab | Jab | KirbyHat | KirbySpit | KirbyLose => {
             if (14 + ROUTE_DELAY..52 + ROUTE_DELAY).contains(&tick) {
                 -30
             } else {
@@ -547,6 +576,7 @@ fn stick_y(scene: GameScene, tick: u64) -> i8 {
         -57
     } else if (scene == Superjump && tick == 150)
         || (matches!(scene, LinkSpin | Yoshi | Kirby | Purin | NessThunder) && tick == SPECIAL_TICK)
+        || (scene == KirbyCutter && tick == CUTTER_B_TICK)
     {
         80
     } else if (matches!(scene, SamusBomb | YoshiBomb | CaptainKick | LinkBomb)

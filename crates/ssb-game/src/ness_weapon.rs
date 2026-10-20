@@ -145,6 +145,25 @@ impl PKThunder {
             self.angle - core::f32::consts::FRAC_PI_2
         }
     }
+    /// The trail effect's process (`efManagerNessPKThunderTrailProcUpdate`)
+    /// against this head: the owner's ring sample ten frames back
+    /// (`pkthunder_trail_id - 10`) and `rotate.z` from the sample before
+    /// it, less 90 degrees. Reflected
+    /// (`efManagerNessPKReflectTrailProcUpdate`): the head's position less
+    /// ten frames of its velocity, and no `rotate.z` write.
+    pub fn trail_effect_pose(&self) -> (Vec3, Option<f32>) {
+        if self.reflected {
+            let pos = self.position - self.velocity * (5.0 * 2.0);
+            return (Vec3::new(pos.x, pos.y, 0.0), None);
+        }
+        let index = (self.cursor + 12 - 10) % 12;
+        let pos = self.history[index];
+        let prev = self.history[(index + 11) % 12];
+        (
+            Vec3::new(pos.x, pos.y, 0.0),
+            Some(sy_arc_tan2(pos.y - prev.y, pos.x - prev.x) - core::f32::consts::FRAC_PI_2),
+        )
+    }
     pub(super) fn tick<I, F>(
         &mut self,
         surfaces: F,
@@ -281,6 +300,7 @@ impl PKThunderTrail {
     }
     pub(super) fn tick(&mut self, head: PKThunder, fx: &mut Emit) {
         self.spawn_next = self.id < 3 && self.lifetime == 158;
+        let make_effect = self.id == 3 && self.lifetime == 158;
         self.lifetime = self.lifetime.saturating_sub(1);
         if head.reflected {
             self.position = head.position - head.velocity * ((self.id as f32 + 1.5) * 2.0);
@@ -291,6 +311,20 @@ impl PKThunderTrail {
             self.position = Vec3::new(pos.x, pos.y, 0.0);
             self.rotation =
                 sy_arc_tan2(pos.y - prev.y, pos.x - prev.x) - core::f32::consts::FRAC_PI_2;
+        }
+        // The last trail's `lifetime == WPPKTHUNDER_SPAWN_TRAIL_FRAME` makes
+        // the trail effect, before `wpMainDecLifeCheckExpire` and the
+        // frame's texture: the unreflected maker runs its process once; the
+        // reflected one takes the head's `rotate.z` less 90 degrees first.
+        if make_effect {
+            let (pos, rotate_z) = head.trail_effect_pose();
+            fx.push(Fx::PKTrailMake {
+                head: head.group,
+                reflected: head.reflected,
+                pos,
+                rotate_z: rotate_z
+                    .unwrap_or_else(|| head.rotate_z() - core::f32::consts::FRAC_PI_2),
+            });
         }
         // `wpNessPKThunderTrailProcUpdate`'s (and the reflected trail's)
         // frame: `syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)`.

@@ -316,3 +316,117 @@ fn egg_lay_animations_match_the_rom() {
         }
     }
 }
+
+/// Kirby's Final Cutter effects (`dEFManagerKirbyCutter*EffectDesc`, file
+/// 348): packed objects, a transform animation for Up, Down and Trail, and
+/// none for the unanimated Draw (`o_anim_joint` 0).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn kirby_cutter_effects_are_packed() {
+    let Some(bytes) = pack_bytes() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    use ssb_rom::effect::slot;
+    for (key, slot, animated) in [
+        ((348, 0x2888), slot::KIRBY_CUTTER_DRAW, false),
+        ((348, 0x12E8), slot::KIRBY_CUTTER_UP, true),
+        ((348, 0x2390), slot::KIRBY_CUTTER_DOWN, true),
+        ((348, 0x0DF8), slot::KIRBY_CUTTER_TRAIL, true),
+    ] {
+        assert_eq!(ssb_rom::effect::MANAGER_EFFECT_KEYS[slot], key);
+        let object = (0..pack.object_count())
+            .filter_map(|i| pack.object(i))
+            .find(|o| (o.source_file, o.source_offset) == key);
+        assert!(object.is_some(), "{key:x?} packed");
+        assert_eq!(
+            pack.effect_anim(slot as u32).is_some(),
+            animated,
+            "{key:x?}"
+        );
+        if animated {
+            let (data, scripts) = packed_scripts(&pack, key);
+            assert!(!scripts.is_empty());
+            for &script in &scripts {
+                let mut joint = StageJoint::start_changed(script, 0.0);
+                let mut pose = JointPose {
+                    rotate: [0.0; 3],
+                    translate: [0.0; 3],
+                    scale: [1.0; 3],
+                };
+                // Each script decodes for 8 plays.
+                for _ in 0..8 {
+                    joint.tick(data, 1.0, &mut pose).unwrap();
+                }
+            }
+        }
+    }
+}
+
+/// Ness's PK Thunder effects (file 335): the trail and the reflected
+/// trail share the one-mesh, unanimated object at 0x9050
+/// (`dEFManagerNessPKThunderTrailEffectDesc`,
+/// `dEFManagerNessPKReflectTrailEffectDesc`); the wave (0x9A10) is a
+/// three-DObj tree whose node 1 loops a scale animation and whose node 2
+/// holds the mesh.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn ness_pk_thunder_effects_are_packed() {
+    let Some(bytes) = pack_bytes() else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    use ssb_rom::effect::slot;
+    let object = |key: (u32, u32)| {
+        (0..pack.object_count())
+            .filter_map(|i| pack.object(i))
+            .find(|o| (o.source_file, o.source_offset) == key)
+            .unwrap_or_else(|| panic!("{key:x?} packed"))
+    };
+    let trail_key = ssb_rom::effect::MANAGER_EFFECT_KEYS[slot::NESS_PK_REFLECT_TRAIL];
+    assert_eq!(trail_key, (335, 0x9050));
+    assert!(pack
+        .effect_anim(slot::NESS_PK_REFLECT_TRAIL as u32)
+        .is_none());
+    let trail = object(trail_key);
+    assert_eq!(trail.node_count, 1);
+    let mesh = pack.node(trail.first_node).unwrap().mesh;
+    assert_ne!(mesh, ssb_rom::pack::NodeDesc::NO_MESH);
+    // `efManagerNessPKThunderTrailProcDisplay`: `G_RM_AA_XLU_SURF` on head
+    // 1, and the list sets no render mode: blended, no depth test or write.
+    {
+        use ssb_rom::pack::flags;
+        let m = pack.mesh(mesh).unwrap();
+        assert!(m.prim_count > 0);
+        for pr in (0..m.prim_count).map(|i| pack.prim(m.first_prim + i).unwrap()) {
+            assert_ne!(pr.flags & flags::HEAD1, 0);
+            assert_ne!(pr.flags & flags::ALPHA_BLEND, 0);
+            assert_eq!(pr.flags & (flags::DEPTH_TEST | flags::DEPTH_WRITE), 0);
+        }
+    }
+
+    let wave_key = ssb_rom::effect::MANAGER_EFFECT_KEYS[slot::NESS_PK_THUNDER_WAVE];
+    assert_eq!(wave_key, (335, 0x9A10));
+    let wave = object(wave_key);
+    assert_eq!(wave.node_count, 3);
+    let meshes: Vec<bool> = (0..3)
+        .map(|i| pack.node(wave.first_node + i).unwrap().mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+        .collect();
+    assert_eq!(meshes, [false, false, true]);
+    assert!(pack
+        .effect_anim(slot::NESS_PK_THUNDER_WAVE as u32)
+        .is_some());
+    let (data, scripts) = packed_scripts(&pack, wave_key);
+    assert_eq!(scripts.len(), 1, "node 1's scale script only");
+    let mut joint = StageJoint::start_changed(scripts[0], 0.0);
+    let mut pose = JointPose {
+        rotate: [0.0; 3],
+        translate: [0.0; 3],
+        scale: [1.0; 3],
+    };
+    // A looping script: it never ends while the hold lasts.
+    for _ in 0..120 {
+        joint.tick(data, 1.0, &mut pose).unwrap();
+        assert!(!joint.ended());
+    }
+}

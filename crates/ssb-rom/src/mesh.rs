@@ -282,7 +282,8 @@ pub enum Head1Seed {
     EffectCld,
     /// `grDisplayLayer{0,2,3}SecProcDisplay`: `G_RM_AA_XLU_SURF` with
     /// `G_ZBUFFER` cleared, so a stage layer's head-1 lists blend with no
-    /// depth test (RE-422).
+    /// depth test (RE-422); also `efManagerNessPKThunderTrailProcDisplay`'s
+    /// `G_RM_AA_XLU_SURF` (no `Z_CMP`).
     LayerXlu,
 }
 

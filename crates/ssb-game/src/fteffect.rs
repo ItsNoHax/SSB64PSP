@@ -134,6 +134,18 @@ pub enum FighterEffect {
     /// `ftKirbySpecialNLoopProcUpdate`: success clears motion flag 0 and
     /// sets `is_effect_attach`.
     KirbyInhaleWind,
+    /// `efManagerCaptureKirbyStarMakeEffect(fighter_gobj)` from
+    /// `ftCommonThrownKirbyStarMakeEffect` (both star statuses'
+    /// `proc_update`): success sets `is_effect_attach`.
+    CaptureKirbyStar,
+    /// `efManagerLoseKirbyStarMakeEffect(fighter_gobj)` from
+    /// `ftKirbySpecialNLoseCopy`: Kirby's `TopN` translate and `lr` then.
+    /// Not attached.
+    LoseKirbyStar { pos: Vec3, lr: i8 },
+    /// `efManagerStarSplashMakeEffect(&pos, lr)` from a star status's
+    /// release (`ftCommonThrownCommonStarUpdatePhysics`): success sets
+    /// `is_effect_attach`.
+    StarSplash { pos: Vec3, lr: i8 },
     /// `ftParamProcStopEffect`: ejects the effects attached to the fighter.
     StopAttached,
     /// `ftParamProcPauseEffect` (`true`) or `ftParamProcResumeEffect`.
@@ -248,7 +260,9 @@ pub(crate) fn stop_on_set_status(f: &mut Fighter) {
 /// behind it.
 pub(crate) fn stop_attached(f: &mut Fighter) {
     let attaching = f.effects.iter().any(|e| match e {
-        FighterEffect::ThunderShock { .. } | FighterEffect::KirbyInhaleWind => true,
+        FighterEffect::ThunderShock { .. }
+        | FighterEffect::KirbyInhaleWind
+        | FighterEffect::CaptureKirbyStar => true,
         FighterEffect::Param(r) => r.kind == kind::FIRE_SPARK,
         _ => false,
     });
@@ -256,6 +270,27 @@ pub(crate) fn stop_attached(f: &mut Fighter) {
         f.effects.push(FighterEffect::StopAttached);
     }
     f.is_effect_attach = false;
+}
+
+/// `fp->proc_lagstart = ftParamProcPauseEffect; fp->proc_lagend =
+/// ftParamProcResumeEffect;`. Set after `ftMainSetStatus`, which clears
+/// both ([`on_set_status`]): Link's swirl maker, Captain Falcon's
+/// Falcon Punch and Falcon Kick setters and switches, Kirby's Final Cutter
+/// setters, Pikachu's `AttackS4`.
+pub(crate) fn set_lag_pauses_effects(f: &mut Fighter) {
+    f.lag_pauses_effects = true;
+}
+
+/// Whether an effect whose `ep->fighter_gobj` is `f` and whose update reads
+/// `is_pause_effect` (`efManagerHaveStructProcUpdate`,
+/// `efManagerNoEjectProcUpdate`) holds its frame now: `proc_lagstart` ran
+/// `ftParamProcPauseEffect` at the hitlag start, which walks the effects
+/// only while `is_effect_attach` holds, and `proc_lagend` has not run yet.
+/// The port's own-clock effects (Link's swirl, the Falcon flames, the Final
+/// Cutter's) read this; world effects are paused by
+/// [`FighterEffect::Pause`].
+pub fn effects_held(f: &Fighter) -> bool {
+    f.is_in_hitlag() && f.lag_pauses_effects && f.is_effect_attach
 }
 
 /// `FTAttributes` fields the effects read, for any fighter kind (a polygon
@@ -281,7 +316,19 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
         return;
     }
     let queue = core::mem::take(&mut f.effects);
-    for e in queue.iter() {
+    // A queued stop came from `stop_attached`, which cleared
+    // `is_effect_attach` at once: set again by now, a synchronous maker
+    // (the Final Cutter's, Link's swirl) attached after the last stop, and
+    // that stop must leave it set. Earlier stops clear only what this
+    // flush's queued makers attached.
+    let attached_after_stop = f.is_effect_attach;
+    let last_stop = queue
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e, FighterEffect::StopAttached))
+        .map(|(i, _)| i)
+        .last();
+    for (i, e) in queue.iter().enumerate() {
         match *e {
             FighterEffect::EggEscape { epoch } => {
                 if rt.effects.yoshi_egg_escape(f.port) && epoch == f.yoshi.egg_escape_epoch {
@@ -324,10 +371,30 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
                     f.is_effect_attach = true;
                 }
             }
+            FighterEffect::CaptureKirbyStar => {
+                let scale = crate::kirby::effect_scale(f.kind);
+                if rt.effects.capture_kirby_star(f.port, scale) {
+                    f.is_effect_attach = true;
+                }
+            }
+            FighterEffect::LoseKirbyStar { pos, lr } => {
+                rt.effects.lose_kirby_star(pos, lr);
+            }
+            FighterEffect::StarSplash { pos, lr } => {
+                let id = if lr == -1 {
+                    script::STAR_SPLASH_GEN_L
+                } else {
+                    script::STAR_SPLASH_GEN_R
+                };
+                if rt.effects.generator_at(rt.particles, rt.banks, id, pos) != crate::particle::NIL
+                {
+                    f.is_effect_attach = true;
+                }
+            }
             FighterEffect::StopAttached => {
                 rt.effects
                     .stop_attached_particles(rt.particles, rt.banks, f.port);
-                f.is_effect_attach = false;
+                f.is_effect_attach = attached_after_stop && Some(i) == last_stop;
             }
             FighterEffect::Pause(paused) => {
                 if f.is_effect_attach {

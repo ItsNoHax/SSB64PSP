@@ -1321,15 +1321,19 @@ fn log_capture_state(
             );
         }
     }
-    if capture_scene == Some(GameScene::Kirby) {
+    if matches!(capture_scene, Some(GameScene::Kirby | GameScene::KirbyCutter)) {
+        // The cutter effects' plays, Draw/Up/Down/Trail (`None`: not live).
+        let effects = ssb_game::kirby::CutterEffect::ALL
+            .map(|kind| ssb_game::kirby::cutter_effect_ticks(&player.fighter, kind));
         let line = alloc::format!(
-            "kirby status={:?} anim_frame={:.1} cutters={:?}\n",
+            "kirby status={:?} anim_frame={:.1} cutters={:?} cutter_effects={:?}\n",
             player.fighter.status.status,
             player.fighter.status.anim_frame,
             weapons
                 .cutters()
                 .map(|c| (c.lifetime, c.anim_ticks, c.position.x))
                 .collect::<alloc::vec::Vec<_>>(),
+            effects,
         );
         unsafe {
             psp::sys::sceIoWrite(
@@ -1838,6 +1842,8 @@ fn physics_pass(
         left: stage.bounds.left as f32,
         right: stage.bounds.right as f32,
     };
+    // `gMPCollisionGroundData->map_bound_*` for the effect processes.
+    effects.map_bounds(blast_zone);
     for f in s.iter().flatten() {
         items.observe_owner(&f.fighter);
     }
@@ -2132,7 +2138,13 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             ssb_game::fighter::FighterKind::Captain
         }
         Some(
-            GameScene::Kirby | GameScene::KirbyHat | GameScene::KirbyJab | GameScene::KirbyStoneSlope,
+            GameScene::Kirby
+            | GameScene::KirbyHat
+            | GameScene::KirbySpit
+            | GameScene::KirbyLose
+            | GameScene::KirbyJab
+            | GameScene::KirbyStoneSlope
+            | GameScene::KirbyCutter,
         ) => {
             ssb_game::fighter::FighterKind::Kirby
         }
@@ -2464,7 +2476,12 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         Some(GameScene::TrainingSector | GameScene::TrainingArwing) => {
             ssb_game::stage_select::gkind::SECTOR
         }
-        Some(GameScene::TrainingCastle | GameScene::TrainingBumper | GameScene::CaptainKickRoll) => {
+        Some(
+            GameScene::TrainingCastle
+            | GameScene::TrainingBumper
+            | GameScene::CaptainKickRoll
+            | GameScene::KirbyCutter,
+        ) => {
             ssb_game::stage_select::gkind::CASTLE
         }
         Some(GameScene::TrainingHyrule | GameScene::TrainingTwister) => {
@@ -6337,6 +6354,11 @@ struct DrawAssets {
     shield: Option<ssb_rom::pack::ObjectDesc>,
     /// Ness's PSI Magnet field and its transform animation.
     magnet: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Ness's PK Thunder wave (`efManagerNessPKThunderWaveMakeEffect`) and
+    /// its animation.
+    pk_wave: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// The PK Thunder trail effect's DObj (both trail effects).
+    pk_trail_fx: Option<ssb_rom::pack::ObjectDesc>,
     /// Jigglypuff's Sing notes and their transform animation.
     sing: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// Pikachu's Thunder Shock spark and its three animations.
@@ -6345,6 +6367,9 @@ struct DrawAssets {
     cutter: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The Falcon Kick flame tree and its transform animation.
     falcon_kick: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
+    /// Kirby's Final Cutter effects, in `ssb_game::kirby::CutterEffect`
+    /// order, with their transform animations (none for the Draw blade).
+    kirby_cutter_fx: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 4],
     grapple_glow: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The KO blast and the respawn halo, with their transform animations
     /// (RE-412).
@@ -6504,6 +6529,14 @@ impl DrawAssets {
             ),
             magnet: ssb_psp_runtime::scene::ness_psi_magnet_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            pk_wave: ssb_psp_runtime::scene::manager_effect(
+                p,
+                ssb_psp_runtime::scene::NESS_PK_WAVE_EFFECT_KEY,
+            ),
+            pk_trail_fx: ssb_psp_runtime::scene::object_keyed(
+                p,
+                ssb_psp_runtime::scene::NESS_PK_TRAIL_EFFECT_KEY,
+            ),
             sing: ssb_psp_runtime::scene::purin_sing_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             thunder_shock: ssb_psp_runtime::scene::pikachu_thunder_shock_effect(p),
@@ -6511,6 +6544,8 @@ impl DrawAssets {
                 .zip(p.weapon_anim(ssb_rom::pack::AnimDesc::WEAPON_ANIM_KIRBY_CUTTER)),
             falcon_kick: ssb_psp_runtime::scene::captain_falcon_kick_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
+            kirby_cutter_fx: ssb_psp_runtime::scene::KIRBY_CUTTER_EFFECT_KEYS
+                .map(|key| ssb_psp_runtime::scene::kirby_cutter_effect(p, key)),
             grapple_glow: ssb_psp_runtime::scene::samus_grapple_beam_effect(p)
                 .and_then(|(object, slot)| Some((object, p.effect_anim(slot)?))),
             dead_explode: ssb_psp_runtime::scene::manager_effect(
@@ -6651,7 +6686,11 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         | K::ThunderTrail
         | K::YoshiEggEscape
         | K::ContainerSmash
-        | K::ThunderShock { .. } => return None,
+        | K::ThunderShock { .. }
+        | K::NessPKThunderTrail
+        | K::NessPKReflectTrail
+        | K::CaptureKirbyStar
+        | K::LoseKirbyStar => return None,
     })
 }
 
@@ -7102,6 +7141,54 @@ fn draw_one_display(
             draw_vulcan_jab(gpu, p, draw_state, assets, d, camera);
             return;
         }
+        // `llNessModelPKThunderTrailDObjDesc`: one `TraRotRpyRSca` DObj at
+        // the effect's translation, turned by its `rotate.z`.
+        K::NessPKThunderTrail | K::NessPKReflectTrail => {
+            let mesh = assets.pk_trail_fx.as_ref().and_then(|o| {
+                p.node(o.first_node)
+                    .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                    .and_then(|n| p.mesh(n.mesh))
+            });
+            if let Some(mesh) = mesh {
+                gpu.model_transform(
+                    [d.translate.x, d.translate.y, d.translate.z],
+                    [d.rotate.x, d.rotate.y, d.rotate.z],
+                    ms,
+                );
+                // SAFETY: the mesh is the pack's, read under the frame's
+                // display list like every display effect's.
+                unsafe { meshdraw::draw_mesh(p, &mesh, draw_state, None, None) };
+            }
+            return;
+        }
+        // `llITCommonDataKirbyStarDObjDesc`'s star: the root 210 up
+        // (`EFCOMMON_*KIRBYSTAR_*_OFF_Y`), the child at the victim's `TopN`
+        // (kind 0x50, the captured star) or its own translate (the lost
+        // star), then kind 0x2E: faced to the camera, spun by its
+        // `rotate.z`, scaled in X and Y.
+        K::CaptureKirbyStar | K::LoseKirbyStar => {
+            let base = if d.kind == K::CaptureKirbyStar {
+                match fighters.iter().flatten().find(|f| f.port == d.owner) {
+                    Some(f) => f.pos,
+                    None => return,
+                }
+            } else {
+                d.translate
+            };
+            if let Some(mesh) = assets.yoshi_star_mesh.as_ref() {
+                let pos = base + ssb_engine::math::Vec3::new(0.0, 210.0, 0.0);
+                gpu.model_transform_billboard(
+                    pos,
+                    eye,
+                    camera.at,
+                    d.rotate.z,
+                    [ms * d.scale.x, ms * d.scale.y],
+                );
+                // SAFETY: as the PK trail's above.
+                unsafe { meshdraw::draw_mesh(p, mesh, draw_state, None, None) };
+            }
+            return;
+        }
         _ => {}
     }
     let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref())
@@ -7452,6 +7539,8 @@ impl FxSlot {
 #[derive(Default)]
 struct PortFx {
     magnet: FxSlot,
+    /// Ness's PK Thunder wave.
+    pk_wave: FxSlot,
     sing: FxSlot,
     spin: FxSlot,
     /// The Spin Attack weapon's graphic.
@@ -7460,6 +7549,8 @@ struct PortFx {
     /// `EFDesc`, and a fighter is one or the other.
     punch: FxSlot,
     kick: FxSlot,
+    /// Kirby's Final Cutter effects, by `ssb_game::kirby::CutterEffect`.
+    cutter: [FxSlot; 4],
     reflector: ReflectorFx,
 }
 
@@ -8458,6 +8549,8 @@ impl EffectVisuals {
             use PlayRule::Effect;
             let (object, anim) = pair(&assets.magnet);
             v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0, Effect);
+            let (object, anim) = pair(&assets.pk_wave);
+            v.pk_wave.sync(p, f.and_then(ssb_game::ness::pk_wave_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.sing);
             v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.spin_effect);
@@ -8472,6 +8565,14 @@ impl EffectVisuals {
             v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0, Effect);
             let (object, anim) = pair(&assets.falcon_kick);
             v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0, Effect);
+            for (i, kind) in ssb_game::kirby::CutterEffect::ALL.into_iter().enumerate() {
+                let (object, anim) = assets.kirby_cutter_fx[i]
+                    .as_ref()
+                    .map(|(o, a)| (o, a.as_ref()))
+                    .unzip();
+                let ticks = f.and_then(|f| ssb_game::kirby::cutter_effect_ticks(f, kind));
+                v.cutter[i].sync(p, ticks, object, anim.flatten(), 1.0, Effect);
+            }
             v.reflector.sync(
                 p,
                 assets.reflector.as_ref().map(|(_, anims)| anims),
@@ -11322,6 +11423,47 @@ unsafe fn draw_fighter_effect(
         }
     }
 
+    // Ness's PK Thunder wave (`dEFManagerNessPKThunderWaveEffectDesc`).
+    // The root is battle matrix function 80 (`func_ovl0_800C99CC`): a pure
+    // translation to joint 5's world position, then `RotRpyR` by the
+    // maker's `rotate.y` (`lr` * 90 degrees); the root's own translation
+    // is never read. Node 1 is `Tra` then kind 46 (a camera-facing quad
+    // keeping `gGCScaleX`, the composed `scale.x`); node 2 draws the mesh
+    // at node 1's position, sized by node 1's `scale.x` times its own.
+    if let (K::PKWave, Some(fx), Some((object, _))) = (kind, v.pk_wave.live(), assets.pk_wave.as_ref()) {
+        let n1 = object.first_node + 1;
+        let n2 = object.first_node + 2;
+        if let Some(mesh) = p
+            .node(n2)
+            .filter(|node| node.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+            .and_then(|node| p.mesh(node.mesh))
+        {
+            let pose1 = stage_pose(&fx.anim, n1);
+            let pose2 = stage_pose(&fx.anim, n2);
+            let t1 = pose1.map_or([0.0; 3], |pose| pose.translate);
+            let t2 = pose2.map_or([0.0; 3], |pose| pose.translate);
+            let s1 = pose1.map_or(1.0, |pose| pose.scale[0]);
+            let s2 = pose2.map_or([1.0; 2], |pose| [pose.scale[0], pose.scale[1]]);
+            let off = [t1[0] + t2[0] * s1, t1[1] + t2[1] * s1, t1[2] + t2[2] * s1];
+            // `RotRpyR` by +-90 degrees about y: x' = z * lr, z' = -x * lr.
+            let lr = f.facing.sign();
+            let pos = f.joint_world(ssb_game::ness::PK_WAVE_JOINT, ssb_engine::math::Vec3::ZERO)
+                + ssb_engine::math::Vec3::new(off[2] * lr, off[1], -off[0] * lr);
+            let spin = pose2.map_or(0.0, |pose| pose.rotate[2]);
+            gpu.model_transform_billboard(
+                pos,
+                pl.camera.eye,
+                pl.camera.at,
+                spin,
+                [
+                    meshdraw::MODEL_SCALE * s1 * s2[0],
+                    meshdraw::MODEL_SCALE * s1 * s2[1],
+                ],
+            );
+            meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&fx.materials));
+        }
+    }
+
     // Jigglypuff's Sing notes. The root is battle matrix function 79 - 66 =
     // 13, `func_ovl0_800C994C`: TopN's whole world matrix. Node 1 adds kind
     // 70 (`func_ovl0_800CA194`), a camera-facing spin by `rotate.z`; nodes
@@ -11467,6 +11609,105 @@ unsafe fn draw_fighter_effect(
             Some(&fx.materials),
             0,
         );
+    }
+
+    // Kirby's Final Cutter effects. The Up and Down swings and the trail
+    // are the Falcon Kick's case: battle matrix function 80 replaces the
+    // root's desc translate with TopN's (the swings) or joint 17's (the
+    // trail) world position, and `RotRpyR` applies the root's rotate, whose
+    // y the makers set to `lr * 90` degrees (x and z stay the desc's: the
+    // trail's root is pitched 90 degrees); no animation touches the root.
+    // The Draw blade is battle matrix function 79: joint 17's whole world
+    // matrix, which the query marks (`func_ovl2_800EDBA4`), in place of the
+    // root's own (its desc TRS, 1443 up and pitched, is never drawn);
+    // unanimated.
+    let cutter = match kind {
+        K::CutterDraw => Some(ssb_game::kirby::CutterEffect::Draw),
+        K::CutterUp => Some(ssb_game::kirby::CutterEffect::Up),
+        K::CutterDown => Some(ssb_game::kirby::CutterEffect::Down),
+        K::CutterTrail => Some(ssb_game::kirby::CutterEffect::Trail),
+        _ => None,
+    };
+    if let Some(cutter) = cutter {
+        let i = cutter as usize;
+        let (Some(fx), Some((object, _))) = (v.cutter[i].live(), assets.kirby_cutter_fx[i].as_ref()) else {
+            return;
+        };
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; 8];
+        let n = fx.anim.compose(p, object, &mut posed);
+        if n == 0 {
+            return;
+        }
+        // The root's composed matrix is replaced by the matrix function's:
+        // `place` undoes it under every node.
+        let Some(root_inverse) = posed[0].inverse_affine() else {
+            return;
+        };
+        let joint = cutter.joint();
+        let root = if cutter == ssb_game::kirby::CutterEffect::Draw {
+            ssb_rom::scene::Mat4::IDENTITY
+        } else {
+            let r = p.node(object.first_node).map_or([0.0; 3], |n| n.rest_rotate);
+            ssb_rom::scene::Mat4::from_tr_display(
+                [0.0; 3],
+                [r[0], ssb_game::kirby::cutter_effect_rotate_y(f), r[2]],
+            )
+        };
+        let place = root.mul(&root_inverse);
+        for m in &mut posed[..n] {
+            *m = place.mul(m);
+        }
+        if cutter == ssb_game::kirby::CutterEffect::Draw {
+            f.mark_joint_query(joint);
+            let Some(m) = f.joint_transforms[usize::from(joint)] else {
+                return;
+            };
+            let ms = meshdraw::MODEL_SCALE;
+            let axis = |i: usize| psp::sys::ScePspFVector4 {
+                x: m.axes[i].x * ms,
+                y: m.axes[i].y * ms,
+                z: m.axes[i].z * ms,
+                w: 0.0,
+            };
+            let base = psp::sys::ScePspFMatrix4 {
+                x: axis(0),
+                y: axis(1),
+                z: axis(2),
+                w: psp::sys::ScePspFVector4 {
+                    x: m.origin.x,
+                    y: m.origin.y,
+                    z: m.origin.z,
+                    w: 1.0,
+                },
+            };
+            meshdraw::draw_object_posed(
+                p,
+                object,
+                &base,
+                &posed[..n],
+                None,
+                draw_state,
+                material_anim,
+                Some(&fx.materials),
+                0,
+            );
+            return;
+        }
+        let pos = f.joint_world(joint, ssb_engine::math::Vec3::ZERO);
+        gpu.model_transform([pos.x, pos.y, pos.z], [0.0; 3], meshdraw::MODEL_SCALE);
+        let base = gpu.model_matrix();
+        meshdraw::draw_object_posed(
+            p,
+            object,
+            &base,
+            &posed[..n],
+            None,
+            draw_state,
+            material_anim,
+            Some(&fx.materials),
+            0,
+        );
+        return;
     }
 
     // The Reflector hexagon (`dEFManagerFoxReflectorEffectDesc`): the

@@ -231,6 +231,13 @@ pub const NESS_PK_THUNDER_SOURCE: (u32, u32) = (335, 0x7C98);
 /// The PK Thunder trail (file 239 + 0x40): file 335's `DObjDLLink` array,
 /// packed as a one-node object.
 pub const NESS_PK_TRAIL_SOURCE: (u32, u32) = (335, 0x8B40);
+/// `dEFManagerNessPKThunderTrailEffectDesc` and
+/// `dEFManagerNessPKReflectTrailEffectDesc`'s one DObj
+/// (`llNessModelPKThunderTrailDObjDesc`), no animation.
+pub const NESS_PK_TRAIL_EFFECT_KEY: (u32, u32) = (335, 0x9050);
+/// `dEFManagerNessPKThunderWaveEffectDesc`: file 335's three-node wave
+/// tree and its animation.
+pub const NESS_PK_WAVE_EFFECT_KEY: (u32, u32) = (335, 0x9A10);
 
 /// `dEFManagerNessPsychicMagnetEffectDesc`: file 352's field tree, at slot
 /// 33 of `ssb_rom::effect::MANAGER_EFFECT_KEYS`.
@@ -537,6 +544,24 @@ pub fn captain_falcon_kick_effect(pack: &Pack<'_>) -> Option<(ObjectDesc, u32)> 
             (object.source_file, object.source_offset) == CAPTAIN_FALCON_KICK_EFFECT_KEY
         })?;
     Some((object, slot as u32))
+}
+
+/// `dEFManagerKirbyCutter{Draw,Up,Down,Trail}EffectDesc`: file 348's
+/// blade, rising and falling swings and trail, in
+/// `ssb_game::kirby::CutterEffect` order.
+pub const KIRBY_CUTTER_EFFECT_KEYS: [(u32, u32); 4] =
+    [(348, 0x2888), (348, 0x12E8), (348, 0x2390), (348, 0x0DF8)];
+
+/// A Final Cutter effect's object and its transform animation; the Draw
+/// blade has none (`o_anim_joint` 0).
+pub fn kirby_cutter_effect(
+    pack: &Pack<'_>,
+    key: (u32, u32),
+) -> Option<(ObjectDesc, Option<ssb_rom::pack::AnimDesc>)> {
+    let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&k| k == key)?;
+    Some((object_keyed(pack, key)?, pack.effect_anim(slot as u32)))
 }
 
 /// `dEFManagerSamusGrappleBeamEffectDesc`: file 349's two-node glow tree,

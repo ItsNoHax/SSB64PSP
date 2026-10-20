@@ -34,6 +34,10 @@ pub struct NessState {
     /// `gcPlayAnimAll` calls it has run. Presentation only; read it through
     /// [`magnet_effect_ticks`].
     pub magnet_effect: Option<u16>,
+    /// The `efManagerNessPKThunderWaveMakeEffect` field: how many
+    /// `gcPlayAnimAll` calls it has run. Presentation only; read it through
+    /// [`pk_wave_effect_ticks`].
+    pub pk_wave_effect: Option<u16>,
 }
 pub fn is_ness(k: FighterKind) -> bool {
     crate::grab::base_kind(k) == FighterKind::Ness
@@ -204,6 +208,8 @@ pub fn set_special_hi(f: &mut Fighter) {
     f.ness.thunder_position = None;
     f.ness.thunder_destroyed = false;
     f.ness.thunder_collide = false;
+    // `FTSTATUS_PRESERVE_NONE` stops any earlier wave.
+    f.ness.pk_wave_effect = None;
     if !ground {
         f.physics.vel_air.x /= 2.0;
         f.physics.vel_air.y = 0.0;
@@ -221,7 +227,6 @@ fn set_thunder_hold(f: &mut Fighter) {
             N::SpecialAirHiHold
         },
     );
-    f.physics.jumps_used = f.attributes.jumps_max;
     f.ness.thunder_motion = f.motion.count;
     let mut pos = f.joint_query(12, Vec3::ZERO);
     pos.z = 0.0;
@@ -233,6 +238,44 @@ fn set_thunder_hold(f: &mut Fighter) {
         facing: f.facing.sign(),
         stale: crate::stale::WeaponStale::of(f),
     });
+    // `ftNessSpecialHiHoldInitStatusVars`, after `ftNessSpecialHiMakePKThunder`:
+    // the setter's `FTSTATUS_PRESERVE_LOOPSFX` stopped any attached effect,
+    // so the wave is made unless the first frame's events attached one.
+    if !f.is_effect_attach {
+        make_pk_wave_effect(f);
+        f.is_effect_attach = true;
+    }
+    f.physics.jumps_used = f.attributes.jumps_max;
+}
+
+/// The PK Thunder wave's played animation frames, while it exists. Only
+/// the Hold ground/air switches pass `FTSTATUS_PRESERVE_EFFECT`
+/// (`FTNESS_SPECIALHIHOLD_STATUS_FLAGS`); `SpecialHiEnd`, the Jibaku
+/// statuses and every other status stop it.
+pub fn pk_wave_effect_ticks(f: &Fighter) -> Option<u16> {
+    f.ness
+        .pk_wave_effect
+        .filter(|_| thunder_controlling(f.status.status))
+}
+
+/// `efManagerNessPKThunderWaveMakeEffect`: `efManagerMakeEffectNoForce` of
+/// `dEFManagerNessPKThunderWaveEffectDesc` plays the animation once when it
+/// is made; `user_data` is joint [`PK_WAVE_JOINT`], `rotate.y` is
+/// `lr * 90` degrees and `translate.z` is 0.
+fn make_pk_wave_effect(f: &mut Fighter) {
+    f.ness.pk_wave_effect = Some(1);
+}
+
+/// `fp->joints[5]`, the wave's `user_data`.
+pub const PK_WAVE_JOINT: u8 = 5;
+
+/// The wave's own process is bare `gcPlayAnimAll`, which never reads
+/// `is_pause_effect`: the wave plays through Ness's hitlag.
+/// [`Fighter`]'s update calls this in hitlag too.
+pub fn tick_pk_wave_effect(f: &mut Fighter) {
+    if pk_wave_effect_ticks(f).is_some() {
+        f.ness.pk_wave_effect = f.ness.pk_wave_effect.map(|t| t.saturating_add(1));
+    }
 }
 fn set_thunder_end(f: &mut Fighter) {
     set(
@@ -456,6 +499,7 @@ pub fn update(f: &mut Fighter) {
         return;
     };
     tick_magnet_effect(f);
+    tick_pk_wave_effect(f);
     match s {
         N::SpecialHiStart | N::SpecialAirHiStart => {
             if f.status.animation_ended() {

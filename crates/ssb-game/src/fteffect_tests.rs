@@ -642,6 +642,40 @@ fn a_status_change_stops_the_attached_thunder_shock() {
     assert_eq!(rt.effects.displays().count(), 0);
 }
 
+/// `ftKirbySpecialHiUpdateEffect` stops the attached effects and makes the
+/// next one in one `proc_physics` (frame 21: stop, then Up): the queued
+/// stop's flush must not clear the `is_effect_attach` the synchronous
+/// maker set after it, or frame 24's stop is skipped and frame 25's stops
+/// the new Draw. A maker queued before the stop is still cleared by it.
+#[test]
+fn a_flushed_stop_keeps_an_attach_made_after_it() {
+    let bank = bank(20);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+    f.is_effect_attach = true;
+    stop_attached(&mut f);
+    // The synchronous maker, after the stop in source order.
+    f.is_effect_attach = true;
+    flush(&mut f, &mut rt);
+    assert!(f.is_effect_attach);
+
+    let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
+    f.situation = Situation::Ground;
+    f.effects.push(FighterEffect::ThunderShock {
+        pos: Vec3::new(0.0, 100.0, 50.0),
+        gfx: 2,
+    });
+    stop_attached(&mut f);
+    flush(&mut f, &mut rt);
+    assert!(!f.is_effect_attach);
+}
+
 /// RE-512 trace s3 (Pikachu port 0 at (-1222.5, 1022), `lr` 1, TopN scale
 /// 0.95): `func_ovl2_800EE018` takes the spark's joint-11 world point `A`
 /// into TopN's frame `B` through the inverse of TopN's collision matrix,
@@ -1108,4 +1142,99 @@ fn a_paused_fighters_attached_particle_keeps_running_and_following() {
     );
     let t = rt.particles.transform(wind[0]).translate;
     assert_eq!((t.x, t.y), (500.0 + 800.0, 230.0), "following its owner");
+}
+
+/// `ftCommonThrownKirbyStarProcUpdate` makes the captured star once
+/// (`is_effect_attach` guards `ftCommonThrownKirbyStarMakeEffect`), attached
+/// to the spat fighter; the Fall's `ftMainSetStatus` stops it.
+#[test]
+fn a_spat_star_makes_its_effect_once_and_the_fall_stops_it() {
+    use crate::effect::HitEffectSink;
+    let bank = bank(200);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Mario, 1, 4);
+    crate::capture_kirby::set_star(
+        &mut f,
+        false,
+        Vec3::new(120.0, 0.0, 0.0),
+        crate::thrown::ThrowOwner {
+            port: 0,
+            kind: FighterKind::Kirby,
+            team: 0,
+        },
+    );
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    let stars = |e: &Effects| {
+        e.displays()
+            .filter(|d| d.kind == DisplayKind::CaptureKirbyStar)
+            .map(|d| d.owner)
+            .collect::<std::vec::Vec<_>>()
+    };
+    status::update(&mut f);
+    status::update(&mut f);
+    let queued = f
+        .effects
+        .iter()
+        .filter(|e| matches!(e, FighterEffect::CaptureKirbyStar))
+        .count();
+    assert_eq!(queued, 1);
+    rt.fighter(&mut f);
+    assert!(f.is_effect_attach);
+    assert_eq!(stars(rt.effects), [1]);
+    // The release (`flag2` 2) stops the star and makes a splash, whose
+    // `is_effect_attach` keeps the star from being made again through the
+    // four countdown frames (N64: gone at the release, Fall four frames
+    // later).
+    let mut released = None;
+    for n in 0..40 {
+        status::update(&mut f);
+        crate::capture_kirby::apply_air_physics(&mut f);
+        rt.fighter(&mut f);
+        if f.status.status == Status::Fall {
+            assert_eq!(released.map(|r| n - r), Some(4));
+            break;
+        }
+        if f.kirby_capture.flag2 == 3 {
+            released.get_or_insert(n);
+            assert!(stars(rt.effects).is_empty());
+            assert!(f.is_effect_attach, "the splash's");
+            assert_eq!(rt.particles.generators().count(), 1);
+        } else {
+            assert_eq!(stars(rt.effects), [1]);
+        }
+    }
+    assert_eq!(f.status.status, Status::Fall);
+    assert!(stars(rt.effects).is_empty());
+    assert!(!f.is_effect_attach);
+}
+
+/// `ftKirbySpecialNLoseCopy` drops the lost star from where Kirby stands,
+/// facing Kirby's way; it is not attached.
+#[test]
+fn losing_a_copy_drops_the_lost_star() {
+    let bank = bank(200);
+    let mut p = std::boxed::Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    let mut f = Fighter::new(FighterKind::Kirby, 2, 4);
+    f.kirby.copy_id = FighterKind::Mario;
+    f.pos = Vec3::new(-250.0, 30.0, 0.0);
+    f.facing = crate::fighter::Facing::Left;
+    crate::kirby::lose_copy(&mut f);
+    assert_eq!(f.kirby.copy_id, FighterKind::Kirby);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    flush(&mut f, &mut rt);
+    let d = *rt.effects.displays().next().unwrap();
+    assert_eq!(d.kind, DisplayKind::LoseKirbyStar);
+    assert_eq!(d.translate, f.pos);
+    assert_eq!(d.vel, [-20.0, 80.0]);
+    assert!(!f.is_effect_attach);
 }
