@@ -192,7 +192,9 @@ pub struct Battle {
     /// `sIFCommonIsAnnouncedSecond`: the last five seconds' voices.
     announced_seconds: [bool; 5],
     /// `gSCManagerBattleState->gkind`, which the timer reads for Mushroom
-    /// Kingdom's hurry music. `None` where the host has not set it.
+    /// Kingdom's hurry music ([`Battle::on_stage`]). `None` where the
+    /// host has not set it: the 1P game and bonus battles, whose stages
+    /// never hurry.
     pub gkind: Option<u8>,
 }
 
@@ -288,6 +290,13 @@ impl Battle {
         self.is_team_battle = is_team_battle;
         self.is_team_attack = is_team_attack;
         self.init_placement();
+        self
+    }
+
+    /// `gSCManagerBattleState->gkind = gkind`: the stage the scene loads
+    /// (for VS, [`vs_battle_gkind`]; for the auto demo, its ground order).
+    pub fn on_stage(mut self, gkind: u8) -> Battle {
+        self.gkind = Some(gkind);
         self
     }
 
@@ -899,6 +908,17 @@ impl Battle {
                 .iter()
                 .position(|p| p.present && p.stock_count != -1),
         }
+    }
+}
+
+/// `scVSBattleStartScene`: the battle state's stage. A save carrying
+/// `LBBACKUP_ERROR_VSBATTLECASTLE` forces Peach's Castle; the scene data
+/// keeps the selected stage (RE-460).
+pub fn vs_battle_gkind(scene_gkind: u8, error_flags: u8) -> u8 {
+    if error_flags & crate::backup::ERROR_VS_BATTLE_CASTLE != 0 {
+        crate::stage_select::gkind::CASTLE
+    } else {
+        scene_gkind
     }
 }
 

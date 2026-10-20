@@ -25,8 +25,8 @@
 use crate::fighter::FighterKind;
 use crate::players_1p::layer::{mode, number, FILE_PLAYERS_1P_MODE, GATE_LUTS, KIND_TEXT_X};
 use crate::players_vs::layer::{
-    self as vs, common, piece, rom, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_GAME_MODES,
-    FILE_PLAYERS_COMMON, FLASH_LENGTH,
+    self as vs, common, piece, rom, Fighter, Flash, Piece, Spotlight, FILE_EMBLEMS,
+    FILE_GAME_MODES, FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::results_scene::FIGHTER_SCALES;
 
@@ -83,6 +83,9 @@ const BEST_TASK_COUNT_DIGITS: ([u8; 3], [u8; 3]) =
 const TOTAL_TIME_DIGITS: ([u8; 3], [u8; 3]) =
     rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_TOTAL_TIME_COLORS_2);
 
+/// `mnPlayers1PBonusMakeSpotlight`'s `translate`.
+pub const SPOTLIGHT_TRANSLATE: [f32; 3] = [-700.0, -850.0, 0.0];
+
 /// The scene's display state.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -104,6 +107,7 @@ pub struct View {
     /// The puck GObj's flags as `mnPlayers1PBonusPuckProcUpdate` last set
     /// them.
     pub puck_shown: bool,
+    pub spotlight: Spotlight,
     /// Runs of `mnPlayers1PBonusMakeHiScore`; the fighter's record draws
     /// once one has run.
     pub hiscore_made: u32,
@@ -122,6 +126,7 @@ impl Default for View {
             fighter: None,
             is_status_selected: false,
             puck_shown: false,
+            spotlight: Spotlight::default(),
             hiscore_made: 0,
         }
     }
@@ -201,26 +206,41 @@ impl Players1PBonus {
         self.view.flash = None;
     }
 
-    /// The display GObjs' processes, once per tick after the logic's, as
-    /// the 1P select orders them: "Press Start"'s ready check (link 22),
-    /// the flash (26), the banner's ready check (28), the portraits' slide
-    /// and the fighter's turn. Both ready checks read the armed start
-    /// (`sMNPlayers1PBonusIsSelected`) and share one blink counter.
-    pub(super) fn view_tick(&mut self) {
-        let ready = self.is_selected;
-        self.view.ready_press = vs::step_ready(&mut self.view.ready_blink, ready);
-        vs::step_flash(&mut self.view.flash);
-        self.view.ready_banner = vs::step_ready(&mut self.view.ready_blink, ready);
-        for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
-            if let Some(next) = vs::next_portrait_x(i, *x) {
-                *x = next;
-            }
-        }
+    /// The display processes linked before the puck's (20): the fighter's
+    /// turn (`mnPlayers1PBonusFighterProcUpdate`, link 3) and the
+    /// portraits' slide (18).
+    pub(super) fn view_tick_before_puck(&mut self) {
         let selected = self.slot.is_fighter_selected;
         let v = &mut self.view;
         if let Some(f) = v.fighter.as_mut() {
             vs::turn_fighter(f, &mut v.is_status_selected, selected);
         }
+        for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
+            if let Some(next) = vs::next_portrait_x(i, *x) {
+                *x = next;
+            }
+        }
+    }
+
+    /// Links 21 and 22, between the puck and the puck adjust (24): the
+    /// spotlight (`mnPlayers1PBonusSpotlightProcUpdate`, 21) and "Press
+    /// Start"'s ready check (22). Both ready checks read the armed start
+    /// (`sMNPlayers1PBonusIsSelected`) and share one blink counter.
+    pub(super) fn view_tick_before_adjust(&mut self) {
+        let slot = &self.slot;
+        self.view
+            .spotlight
+            .step(slot.kind, slot.is_fighter_selected);
+        let ready = self.is_selected;
+        self.view.ready_press = vs::step_ready(&mut self.view.ready_blink, ready);
+    }
+
+    /// Links past the puck adjust: the flash (26) and the banner's ready
+    /// check (28).
+    pub(super) fn view_tick(&mut self) {
+        vs::step_flash(&mut self.view.flash);
+        let ready = self.is_selected;
+        self.view.ready_banner = vs::step_ready(&mut self.view.ready_blink, ready);
     }
 
     /// The fighter's `translate`, scale and costume, when it draws.

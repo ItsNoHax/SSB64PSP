@@ -202,7 +202,10 @@ pub fn ground_hazard_knockback(
         ((((add * 0.1) + (add * hit_damage as f32 * 0.05)) * weight * 1.4) + 18.0) * scale
             + kb_base as f32
     };
-    crate::stale::apply_ratio_and_handicap(base, 100, attack_handicap, defend_handicap).min(2500.0)
+    crate::attack::random_knockback(
+        crate::stale::apply_ratio_and_handicap(base, 100, attack_handicap, defend_handicap)
+            .min(2500.0),
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,8 @@
 //! hand cursor, the player's puck, the portrait grid, the recall, the
 //! costume picks, the level, stock and (hidden) time options, the ready
 //! check and the scene and backup data it saves. [`layer`] holds its
-//! presentation; the spotlight stays with the host.
+//! presentation, the spotlight's flicker and scale included; no host draws
+//! the spotlight model yet.
 //!
 //! The scene has one slot (`sMNPlayers1PGameSlot`), for the port in
 //! `gSCManagerSceneData.player` (`sMNPlayers1PGameManPlayer`). Unlike the
@@ -14,7 +15,8 @@
 //! One [`Players1P::tick`] runs the scene's processes in the original
 //! order: `mnPlayers1PGameFuncRun` (the scene GObj's `func_run`), then the
 //! cursor (process priority 2, paused once START is accepted), then the
-//! puck and the puck adjust (priority 1, links 20 and 24).
+//! priority-1 processes by GObj link: the fighter, the puck, the
+//! spotlight, the puck adjust and the display threads.
 //!
 //! The original reads START and the idle timer from every controller
 //! (`scSubsysControllerGetPlayerTapButtons`,
@@ -81,19 +83,6 @@ pub struct Saved {
 }
 
 impl Saved {
-    /// The same fields as the portable frontend's select returns them,
-    /// for [`spgame::frontend::Frontend::start`].
-    pub fn selection(&self) -> spgame::select::Selection {
-        spgame::select::Selection {
-            player: self.scene.player,
-            kind: self.scene.kind,
-            costume: self.scene.costume,
-            time_limit: self.scene.time_limit,
-            difficulty: self.difficulty,
-            stocks: self.stock_count,
-        }
-    }
-
     /// Writes the saved values into the 1P Game's scene data and backup,
     /// with `spgame_stage` reset to 0, then counts the `lbBackupWrite`.
     /// The portable [`spgame::SceneData`] always names a fighter, so a
@@ -434,7 +423,14 @@ impl Players1P {
         if !self.is_start {
             self.cursor_update(input, taps);
         }
+        // Priority 1 then runs in GObj link order (`gcLinkGObjProcess`):
+        // the fighter (3) and portraits (18), the puck (20), the
+        // spotlight (21), "Press Start" (22), the level and stock threads
+        // (23), the puck adjust (24), the flash (26) and the banner (28).
+        // A fighter made by the puck (20) first turns next tick.
+        self.view_tick_before_puck();
         self.puck_update();
+        self.view_tick_before_adjust();
         self.puck_adjust();
         self.view_tick();
         self.pending

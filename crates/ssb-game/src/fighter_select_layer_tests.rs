@@ -154,6 +154,8 @@ fn a_hovered_fighter_turns_and_plays_its_status_once_placed() {
         (f.kind, f.status, f.hidden),
         (FighterKind::Kirby, None, false)
     );
+    // Made by the puck (link 20) after the fighters' turn (link 3).
+    assert_eq!(f.rotate_y, 0.0);
     assert!(s.view.slots[MAN].name_shown);
     let kirby = FighterKind::Kirby as usize;
     let name = sprites_at(&s, FILE_PLAYERS_COMMON, common::NAMES[kirby])[0];
@@ -256,11 +258,11 @@ fn the_ready_banner_and_press_start_blink_on_one_counter() {
         press.push(s.view.ready_press);
     }
     // Two steps a tick: shown while the count is below 30 of 40.
-    // The banner steps to 1, 3, .. 39; "Press Start" to 2, 4, .. 38, then
-    // 40, which wraps to 0.
-    assert!(banner[..15].iter().all(|&b| b) && banner[15..].iter().all(|&b| !b));
-    assert!(press[..14].iter().all(|&b| b) && press[14..19].iter().all(|&b| !b));
-    assert!(press[19]);
+    // "Press Start" (link 22) steps first, to 1, 3, .. 39; the banner
+    // (link 32) to 2, 4, .. 38, then 40, which wraps to 0.
+    assert!(press[..15].iter().all(|&b| b) && press[15..].iter().all(|&b| !b));
+    assert!(banner[..14].iter().all(|&b| b) && banner[14..19].iter().all(|&b| !b));
+    assert!(banner[19]);
     // Once placed and facing front, each plays its selected status at once.
     assert_eq!(
         s.view.slots[MAN].fighter.unwrap().status,
@@ -294,4 +296,28 @@ fn the_draw_order_follows_the_cameras() {
     let puck = at(&|d| matches!(d, Draw::Puck { .. }));
     let cursor = at(&|d| matches!(d, Draw::Sprite(p) if p.offset == common::CURSORS[0]));
     assert!(stone < fire && fire < card && card < fighters && fighters < puck && puck < cursor);
+}
+
+/// `mnPlayers1PTrainingSpotlightProcUpdate` (link 21): the player's
+/// spotlight flickers under its held fighter at the fighter's size; the
+/// placed CPU's stays hidden. `mnPlayers1PTrainingMakeSpotlight` puts the
+/// player's at x -830 and the others at 830.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_spotlight_flickers_under_the_held_fighter() {
+    let mut s = first_visit();
+    idle(&mut s);
+    assert!(s.view.slots.iter().all(|v| !v.spotlight.shown));
+    hover(&mut s, FighterKind::Donkey);
+    assert!(s.view.slots[MAN].spotlight.shown);
+    assert_eq!(s.view.slots[MAN].spotlight.scale, 2.0);
+    idle(&mut s);
+    assert!(!s.view.slots[MAN].spotlight.shown);
+    idle(&mut s);
+    assert!(s.view.slots[MAN].spotlight.shown);
+    assert!(!s.view.slots[COM].spotlight.shown);
+    tap(&mut s, N64Buttons::A);
+    assert!(!s.view.slots[MAN].spotlight.shown);
+    assert_eq!(spotlight_translate(MAN), [-830.0, -870.0, 0.0]);
+    assert_eq!(spotlight_translate(COM), [830.0, -870.0, 0.0]);
 }

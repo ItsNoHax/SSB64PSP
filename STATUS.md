@@ -16,12 +16,12 @@
 
 ## Current work
 
-- Landed: hit-status preservation (RE-414, RE-356); `f1-vs-shield-damage` rebaselined (6 native px, Mario eye part in DownWaitU).
-  - Other goldens unchanged.
+- Landed: select process order by GObj link (1P, VS, training, bonus; RE-411, RE-448, RE-450); spotlight state; `spgame::select` removed; anti-piracy consumers incl. VS Castle (RE-460); `rgb_lerp` pack audit (RE-527); DK shoulder-lift gate; Thunder Jolt burst measured (RE-541).
+- `f1-vs-players` rebaselined (1212 native px, P1 Yoshi, decomp order). Other goldens unchanged.
 
 ## Next
 
-1. Thunder Jolt burst spikes (RE-541).
+1. Select spotlight draw (PLAN).
 2. Results animation one-tick lag (PLAN).
 3. MS8 list in `PLAN.md`, 1P intro first.
 
@@ -32,15 +32,15 @@
 
 ## Verification
 
-Baseline: hit-status preservation.
+Baseline: frontend and audit tidy.
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace` with `SSB64_ROM` | pass |
+| `cargo test --workspace` with `SSB64_ROM` | pass (`whispys_right_wind` flaked once under load, RE-508) |
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | full matrix verified, `f1-vs-shield-damage` rebaselined |
+| Goldens | full matrix verified, `f1-vs-players` rebaselined |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

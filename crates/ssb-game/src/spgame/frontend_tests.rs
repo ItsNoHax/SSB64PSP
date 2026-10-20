@@ -1,211 +1,8 @@
 use super::{
-    bonus::Bonus, continue_scene, frontend, intro, manager::Scene, results, select, stage_clear, *,
+    bonus::Bonus, continue_scene, frontend, intro, manager::Scene, results, stage_clear, *,
 };
-use crate::{costume::costume_common_id, fighter_select::CursorStatus};
+use crate::costume::costume_common_id;
 use ssb_engine::input::{ControllerState, N64Buttons};
-
-fn tick_select(s: &mut select::Select, tap: u16) -> Option<select::Outcome> {
-    s.tick(ControllerState::default(), N64Buttons(tap))
-}
-fn picked() -> select::Select {
-    select::Select::new(
-        select::Selection {
-            kind: Some(FighterKind::Mario),
-            ..Default::default()
-        },
-        CHARACTER_MASK_STARTER,
-    )
-}
-
-#[test]
-fn select_start_uses_strict_sixty_tick_gate_then_thirty_tick_wait() {
-    let mut s = picked();
-    for _ in 0..59 {
-        assert_eq!(tick_select(&mut s, 0), None);
-    }
-    assert_eq!(tick_select(&mut s, N64Buttons::START), None); // 60
-    assert_eq!(tick_select(&mut s, N64Buttons::START), None); // 61
-    let cursor = s.cursor;
-    for _ in 0..29 {
-        assert_eq!(
-            s.tick(
-                ControllerState {
-                    stick_x: 80,
-                    ..Default::default()
-                },
-                N64Buttons(N64Buttons::B)
-            ),
-            None
-        );
-        assert_eq!(s.cursor, cursor);
-    }
-    assert!(matches!(
-        tick_select(&mut s, 0),
-        Some(select::Outcome::Proceed(_))
-    ));
-    assert_eq!(tick_select(&mut s, 0), None);
-}
-
-#[test]
-fn unplaced_preview_cannot_start_and_is_not_saved_on_back() {
-    let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
-    s.cursor = (60.0, 60.0); // held puck on Mario
-    for _ in 0..61 {
-        tick_select(&mut s, 0);
-    }
-    assert_eq!(s.selection.kind, Some(FighterKind::Mario));
-    assert_eq!(tick_select(&mut s, N64Buttons::START), None);
-    assert!(!s.is_ready());
-    let Some(select::Outcome::Back(selection)) = tick_select(&mut s, N64Buttons::B) else {
-        panic!("Back");
-    };
-    assert_eq!(selection.kind, None);
-}
-
-#[test]
-fn select_c_button_places_and_changes_costume_without_training_cpu_constraints() {
-    let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
-    s.cursor = (60.0, 60.0);
-    tick_select(&mut s, 0);
-    tick_select(&mut s, N64Buttons::C_RIGHT);
-    assert!(s.selected);
-    assert_eq!(
-        s.selection.costume,
-        costume_common_id(FighterKind::Mario, 1)
-    );
-    tick_select(&mut s, N64Buttons::C_DOWN);
-    assert_eq!(
-        s.selection.costume,
-        costume_common_id(FighterKind::Mario, 2)
-    );
-    assert_eq!(s.cursor_status, CursorStatus::Hover);
-}
-
-#[test]
-#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
-fn locked_portrait_cannot_be_placed() {
-    let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
-    s.cursor = (15.0, 60.0); // Luigi
-    tick_select(&mut s, 0);
-    tick_select(&mut s, N64Buttons::A);
-    assert_eq!(s.selection.kind, None);
-    assert!(!s.selected);
-}
-
-#[test]
-fn b_recalls_then_grabs_at_eleven_and_unlocks_at_thirty() {
-    let mut s = picked();
-    for _ in 0..10 {
-        tick_select(&mut s, 0);
-    }
-    assert_eq!(tick_select(&mut s, N64Buttons::B), None);
-    assert!(s.recalling);
-    for _ in 0..9 {
-        assert_eq!(tick_select(&mut s, N64Buttons::B), None);
-    }
-    assert_eq!(tick_select(&mut s, 0), None);
-    assert_eq!(s.cursor_status, CursorStatus::Grab);
-    for _ in 0..19 {
-        assert_eq!(tick_select(&mut s, 0), None);
-    }
-    assert!(!s.recalling);
-    assert!(matches!(
-        tick_select(&mut s, N64Buttons::B),
-        Some(select::Outcome::Back(_))
-    ));
-}
-
-#[test]
-fn settings_hitboxes_toggle_time_and_clamp_difficulty_and_stocks() {
-    let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
-    s.cursor = (190.0, 9.0); // deliberately outside cursor movement bounds, at source box edge
-    tick_select(&mut s, N64Buttons::A);
-    assert_eq!(s.selection.time_limit, 100);
-    tick_select(&mut s, N64Buttons::A);
-    assert_eq!(s.selection.time_limit, 5);
-    s.cursor = (238.0, 152.0);
-    for _ in 0..10 {
-        tick_select(&mut s, N64Buttons::A);
-    }
-    assert_eq!(s.selection.difficulty, Difficulty::VeryHard);
-    s.cursor = (170.0, 152.0);
-    for _ in 0..10 {
-        tick_select(&mut s, N64Buttons::A);
-    }
-    assert_eq!(s.selection.difficulty, Difficulty::VeryEasy);
-    s.cursor = (238.0, 172.0);
-    for _ in 0..10 {
-        tick_select(&mut s, N64Buttons::A);
-    }
-    assert_eq!(s.selection.stocks, 4);
-    s.cursor = (170.0, 172.0);
-    for _ in 0..10 {
-        tick_select(&mut s, N64Buttons::A);
-    }
-    assert_eq!(s.selection.stocks, 0);
-}
-
-#[test]
-fn idle_deadline_is_checked_before_new_input_and_input_resets_it() {
-    let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
-    for _ in 0..17999 {
-        tick_select(&mut s, 0);
-    }
-    assert!(matches!(
-        tick_select(&mut s, N64Buttons::START),
-        Some(select::Outcome::Timeout(_))
-    ));
-    // Input at the previous tick moves the deadline, even with no edge.
-    let mut s2 = picked();
-    s2.tick(
-        ControllerState {
-            buttons: N64Buttons(N64Buttons::A),
-            ..Default::default()
-        },
-        N64Buttons(0),
-    );
-    for _ in 0..17999 {
-        assert_eq!(tick_select(&mut s2, 0), None);
-    }
-    assert!(matches!(
-        tick_select(&mut s2, 0),
-        Some(select::Outcome::Timeout(_))
-    ));
-}
-
-#[test]
-fn hidden_preview_keeps_turning_before_next_model_is_made() {
-    let mut s = select::Select::new(Default::default(), CHARACTER_MASK_STARTER);
-    s.cursor = (60.0, 60.0);
-    tick_select(&mut s, 0); // new Mario made after the fighter process
-    assert_eq!(s.view.fighter_rotate_y, 0.0);
-    s.cursor = (60.0, 170.0);
-    tick_select(&mut s, 0);
-    assert!(s.view.fighter_hidden);
-    let hidden_rotation = s.view.fighter_rotate_y;
-    tick_select(&mut s, 0);
-    assert!(s.view.fighter_rotate_y > hidden_rotation);
-    s.cursor = (60.0, 60.0);
-    tick_select(&mut s, 0);
-    assert!(!s.view.fighter_hidden);
-    assert!(s.view.fighter_rotate_y > hidden_rotation);
-}
-
-#[test]
-fn ready_gobjs_share_clock_but_have_separate_visibility() {
-    let mut s = picked();
-    for _ in 0..14 {
-        tick_select(&mut s, 0);
-    }
-    tick_select(&mut s, 0);
-    assert!(s.view.ready_press);
-    assert!(!s.view.ready_banner);
-    for _ in 0..5 {
-        tick_select(&mut s, 0);
-    }
-    assert!(!s.view.ready_press);
-    assert!(s.view.ready_banner);
-}
 
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
@@ -536,24 +333,27 @@ fn timed_ledger_matches_final_ledger_for_every_stage_and_difficulty() {
 
 #[test]
 fn frontend_saves_select_once_and_requests_real_bonus_scene() {
+    use crate::players_1p::{self, Outcome, Players1P};
     let mut backup = Backup::default();
-    let mut f = frontend::Frontend::new(
-        select::Selection {
+    let mut select = Players1P::new(
+        players_1p::SceneData {
             kind: Some(FighterKind::Mario),
             ..Default::default()
         },
         &backup,
     );
-    let mut events = alloc::vec::Vec::new();
+    let mut saved = None;
     for t in 1..=91 {
-        f.tick(
-            t,
-            Default::default(),
-            N64Buttons(if t == 61 { N64Buttons::START } else { 0 }),
-            &mut backup,
-            |e| events.push(e),
-        );
+        let tap = N64Buttons(if t == 61 { N64Buttons::START } else { 0 });
+        if let Some(Outcome::Proceed(s)) = select.tick(Default::default(), tap) {
+            assert_eq!(t, 91);
+            saved = Some(s);
+        }
     }
+    let mut scene = SceneData::default();
+    saved.expect("Proceed").apply(&mut scene, &mut backup);
+    let mut f = frontend::Frontend::campaign(scene, &backup);
+    let mut events = alloc::vec::Vec::new();
     assert_eq!(backup.writes, 1);
     assert!(matches!(f.screen, frontend::Screen::Intro(_)));
     f.session.as_mut().unwrap().data.stage = Stage::Bonus1 as u8;
@@ -584,7 +384,7 @@ fn frontend_saves_select_once_and_requests_real_bonus_scene() {
 #[test]
 fn frontend_continue_halves_once_and_retry_keeps_campaign_stage() {
     let mut backup = Backup::default();
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     let mut s = session::Session::new(
         SceneData {
             stage: Stage::Fox as u8,
@@ -620,7 +420,7 @@ fn frontend_continue_halves_once_and_retry_keeps_campaign_stage() {
 #[test]
 fn frontend_stage_clear_commits_ledger_once_before_next_intro() {
     let mut backup = Backup::default();
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     let mut s = session::Session::new(Default::default(), &backup);
     s.data.score = 1000;
     s.data.time_remain = 10;
@@ -651,32 +451,13 @@ fn host_select_campaign_starts_at_the_first_intro() {
         ..Default::default()
     };
     let f = frontend::Frontend::campaign(data, &backup);
+    assert_eq!(backup.writes, 0);
     let frontend::Screen::Intro(intro) = &f.screen else {
         panic!("intro");
     };
     assert_eq!((intro.stage, intro.player), (Stage::Link, FighterKind::Fox));
     let session = f.session.as_ref().unwrap();
     assert_eq!(session.manager.scene, Scene::Intro);
-    assert_eq!(f.selection.kind, Some(FighterKind::Fox));
-    assert_eq!(f.selection.stocks, backup.spgame_stock_count);
-}
-
-#[test]
-fn a_host_select_starts_the_campaign_at_its_intro_without_saving_again() {
-    let backup = Backup::default();
-    let selection = select::Selection {
-        kind: Some(FighterKind::Fox),
-        costume: 2,
-        ..Default::default()
-    };
-    assert!(frontend::Frontend::start(select::Selection::default(), &backup).is_none());
-    let f = frontend::Frontend::start(selection, &backup).unwrap();
-    assert!(matches!(f.screen, frontend::Screen::Intro(_)));
-    let session = f.session.as_ref().unwrap();
-    assert_eq!(session.manager.scene, Scene::Intro);
-    assert_eq!(session.data.fkind, FighterKind::Fox);
-    assert_eq!(session.data.costume, 2);
-    assert_eq!(backup.writes, 0);
 }
 
 /// A whole campaign through the frontend, A every 30 ticks: each stage's
@@ -689,7 +470,7 @@ fn campaign_walk() -> u32 {
         unlock_mask: !0,
         ..Default::default()
     };
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     f.session = Some(alloc::boxed::Box::new(session::Session::new(
         SceneData {
             fkind: FighterKind::Kirby,

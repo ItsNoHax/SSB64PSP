@@ -1,13 +1,15 @@
 //! The Training character select — `mn/mnplayers/mnplayers1ptraining.c`:
 //! the hand cursor, the two pucks (the player's and the CPU's), the portrait
 //! grid, the recall, the costume picks and syncs, the ready check and the
-//! scene data it saves. [`layer`] holds its presentation; the
-//! spotlight stays with the host.
+//! scene data it saves. [`layer`] holds its presentation, the spotlights'
+//! flicker and size included; no host draws the spotlight model yet.
 //!
 //! One [`FighterSelect::tick`] runs the scene's processes in the original
 //! order: `mnPlayers1PTrainingFuncRun` (the scene GObj's `func_run`), then
-//! the cursor (process priority 2), then the player's and the CPU's puck,
-//! the puck adjust and the costume sync (priority 1, by link: 20, 26, 31).
+//! the cursor (process priority 2), then priority 1 by GObj link: the
+//! fighters and portraits (3, 18), the player's and the CPU's puck (20),
+//! the spotlights (21), "Press Start" (22), the puck adjust and glow (26), the flashes (30), the
+//! costume sync (31) and the banner (32).
 //!
 //! `gSCManagerSceneData.player` is 0 until a 1P game changes it, so the
 //! player is slot 0 and the CPU slot 1. The other two slots are
@@ -331,10 +333,20 @@ impl FighterSelect {
         let paused = self.func_run(input, taps);
         if !paused {
             self.cursor_update(input, taps);
+        }
+        // Priority 1 then runs in GObj link order (`gcLinkGObjProcess`):
+        // the fighters (3) and portraits (18), the pucks (20), the
+        // spotlights (21), "Press Start" (22), the puck adjust and glow (26), the flashes (30), the
+        // costume sync (31) and the banner (32). A fighter made by a puck
+        // first turns next tick.
+        self.view_tick_before_puck();
+        if !paused {
             self.puck_update(MAN);
             self.puck_update(COM);
         }
+        self.view_tick_before_adjust();
         self.puck_adjust();
+        self.view_tick_after_adjust();
         self.costume_sync();
         self.view_tick();
         self.pending

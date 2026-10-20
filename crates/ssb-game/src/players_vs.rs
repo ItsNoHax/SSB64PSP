@@ -6,18 +6,20 @@
 //! the ready check, and the battle settings saved on the way out
 //! (`mnPlayersVSSetSceneData`). The display GObjs' state (portraits,
 //! gates and shutters, names, levels, flashes, blinking, puck glow, the
-//! ready banner and the fighters' turn and status) is [`layer`]'s (RE-411);
-//! the logic updates it at the source's call sites, as it makes the
-//! scene's sounds and announcer voices. Drawing and the spotlight stay
-//! with the host.
+//! ready banner, the fighters' turn and status and the spotlights' flicker
+//! and size) is [`layer`]'s (RE-411); the logic updates it at the source's
+//! call sites, as it makes the scene's sounds and announcer voices.
+//! Drawing stays with the host; no host draws the spotlight model yet.
 //!
 //! One [`PlayersVs::tick`] runs the scene's processes in the original
 //! order: `mnPlayersVSFuncRun` (the scene GObj's `func_run`), then the
 //! cursors (process priority 2, in the order their GObjs were made), then
-//! the four pucks, the puck adjust and the costume sync (priority 1, by
-//! link: 20, 26, 31). `mnPlayersVSPauseSlotProcesses` stops the cursors
-//! and pucks for the rest of the scene, including the rest of the tick it
-//! is called in.
+//! priority 1 by GObj link: the fighters and portraits (3, 18), the four
+//! pucks (20), the spotlights, "Press Start" and the shutters (21 to 23),
+//! the puck adjust and glow (26), the levels and arrows (28), the flashes (30), the costume
+//! sync (31) and the banner (32). `mnPlayersVSPauseSlotProcesses` stops
+//! the cursors and pucks for the rest of the scene, including the rest of
+//! the tick it is called in.
 //!
 //! Controllers: `sMNPlayersVSControllerOrders[p] != -1` is
 //! `connected[p]`, given to [`PlayersVs::new`] and changed with
@@ -28,9 +30,6 @@
 //! them the same way), so a one-controller host passes port 0 and
 //! [`Pad::default`] for the rest. `ControllerState::connected` is not
 //! used.
-//!
-//! Not ported:
-//! - The spotlight (`mnPlayersVSMakeSpotlight`), a 3D model.
 
 use ssb_engine::input::{ControllerState, N64Buttons};
 
@@ -867,12 +866,22 @@ impl PlayersVs {
                 self.cursor_update(p, &pads[p], time_byte);
             }
         }
+        // Priority 1 then runs in GObj link order (`gcLinkGObjProcess`):
+        // the fighters (3) and portraits (18), the pucks (20), the
+        // spotlights (21), "Press Start" (22) and the shutters (23), the
+        // puck adjust and glow (26),
+        // the levels and arrows (28), the flashes (30), the costume sync
+        // (31) and the banner (32). A fighter made by a puck first turns
+        // next tick.
+        self.view_tick_before_puck();
         for p in 0..PLAYERS {
             if !self.is_slot_paused {
                 self.puck_update(p, time_byte);
             }
         }
+        self.view_tick_before_adjust();
         self.puck_adjust();
+        self.view_tick_after_adjust();
         self.costume_sync();
         self.view_tick();
         self.pending

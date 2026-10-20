@@ -298,16 +298,18 @@ fn the_fighter_turns_until_placed_then_plays_its_selected_status() {
     hover(&mut s, FighterKind::Yoshi);
     let f = s.view.slots[0].fighter.unwrap();
     assert_eq!((f.kind, f.status), (FighterKind::Yoshi, None));
-    assert!((f.rotate_y - dtor(2.0)).abs() < 1e-6);
+    // Made by the puck (link 20) after the fighters' turn (link 3): it
+    // first turns the next tick.
+    assert_eq!(f.rotate_y, 0.0);
     for _ in 0..9 {
         idle(&mut s);
     }
     let f = s.view.slots[0].fighter.unwrap();
-    assert!((f.rotate_y - dtor(20.0)).abs() < 1e-4);
+    assert!((f.rotate_y - dtor(18.0)).abs() < 1e-4);
     let serial = f.serial;
     tap(&mut s, N64Buttons::A);
-    // The tap's tick turns it to 40; then 20 a tick until past 360, which
-    // 360 itself is not: 17 more.
+    // The tap's tick turns it to 38; then 20 a tick until past 360: 17
+    // more.
     let mut ticks = 1;
     while s.view.slots[0].fighter.unwrap().status.is_none() {
         idle(&mut s);
@@ -340,7 +342,10 @@ fn the_ready_banner_blinks_thirty_of_forty_counts() {
     assert!(!s.view.ready_banner && !s.view.ready_press);
     toggle_kind(&mut s, 1);
     assert!(s.is_ready());
-    // Two GObjs step one counter: each tick counts twice.
+    // Two GObjs step one counter: each tick counts twice, "Press Start"
+    // (link 22) before the banner (link 32). The CP toggle's tick left it
+    // at 2: "Press Start" steps to 3, 5, .. 39 and the banner to 4, 6, ..
+    // 40, which wraps to 0.
     let mut banner = Vec::new();
     let mut press = Vec::new();
     for _ in 0..40 {
@@ -350,6 +355,9 @@ fn the_ready_banner_blinks_thirty_of_forty_counts() {
     }
     assert_eq!(banner.iter().filter(|&&b| b).count(), 30);
     assert_eq!(press.iter().filter(|&&b| b).count(), 30);
+    assert!(press[..14].iter().all(|&b| b) && press[14..19].iter().all(|&b| !b));
+    assert!(banner[..13].iter().all(|&b| b) && banner[13..18].iter().all(|&b| !b));
+    assert!(banner[18] && !press[18]);
     let d = draws(&s);
     assert!(
         s.view.ready_banner
@@ -502,4 +510,34 @@ fn the_draw_order_follows_the_cameras() {
         (text[0].x, text[0].y, text[0].prim),
         (30.0, 131.0, Some([0; 3]))
     );
+}
+
+/// `mnPlayersVSSpotlightProcUpdate` (link 21): under a fighter whose puck
+/// is held the spotlight shows on alternate ticks at its kind's size; a
+/// placed fighter or an empty slot hides it. `mnPlayersVSMakeSpotlight`
+/// puts the four 840 apart from x -1250.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_spotlight_flickers_under_a_held_fighter() {
+    let mut s = first_visit(BattleState::default());
+    assert!(s.view.slots.iter().all(|v| v.spotlight.shown));
+    idle(&mut s);
+    assert!(s.view.slots.iter().all(|v| !v.spotlight.shown));
+    hover(&mut s, FighterKind::Donkey);
+    assert!(s.view.slots[0].spotlight.shown);
+    assert_eq!(s.view.slots[0].spotlight.scale, 2.0);
+    idle(&mut s);
+    assert!(!s.view.slots[0].spotlight.shown);
+    idle(&mut s);
+    assert!(s.view.slots[0].spotlight.shown);
+    hover(&mut s, FighterKind::Fox);
+    assert_eq!(s.view.slots[0].spotlight.scale, 1.5);
+    tap(&mut s, N64Buttons::A);
+    assert!(s.slots[0].is_fighter_selected);
+    assert!(!s.view.slots[0].spotlight.shown);
+    idle(&mut s);
+    assert!(!s.view.slots[0].spotlight.shown);
+    assert!(s.view.slots[1..].iter().all(|v| !v.spotlight.shown));
+    assert_eq!(spotlight_translate(0), [-1250.0, -850.0, 0.0]);
+    assert_eq!(spotlight_translate(3), [1270.0, -850.0, 0.0]);
 }

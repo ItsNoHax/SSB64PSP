@@ -1449,6 +1449,7 @@ fn pack_mesh(
                     original_coverage
                 };
                 let animated = prim.material.mat_anim;
+                count_rgb_lerp_swaps(&t, animated.and_then(|key| mat_anim_data.get(&key)));
                 let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
                 let alpha_policy =
                     ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
@@ -1779,6 +1780,38 @@ struct TexturePartStats {
 thread_local! {
     static TEXTURE_PART_STATS: std::cell::RefCell<TexturePartStats> =
         std::cell::RefCell::new(TexturePartStats::default());
+}
+
+/// RE-527 guard: primitives whose texture the converter rewrites
+/// (`TextureRef::rgb_lerp`, `rgb_unused`) and the material animations that
+/// swap them at runtime. Image swaps (`convert_mat_anim_sprite`, texture
+/// parts) convert through the same `TextureRef` and so are rewritten too;
+/// `convert_mat_anim_palette` is not, so a palette swap on such a
+/// primitive would draw the raw palette and fails the pack.
+#[derive(Default)]
+struct RgbLerpStats {
+    lerped: usize,
+    lerped_sprite_anim: usize,
+    lerped_palette_anim: usize,
+    unused_palette_anim: usize,
+}
+
+thread_local! {
+    static RGB_LERP_STATS: std::cell::RefCell<RgbLerpStats> =
+        std::cell::RefCell::new(RgbLerpStats::default());
+}
+
+fn count_rgb_lerp_swaps(t: &ssb_rom::mesh::TextureRef, anim: Option<&MatAnimData>) {
+    RGB_LERP_STATS.with(|s| {
+        let mut s = s.borrow_mut();
+        let palettes = anim.is_some_and(|a| !a.palettes.is_empty());
+        if t.rgb_lerp.is_some() {
+            s.lerped += 1;
+            s.lerped_sprite_anim += usize::from(anim.is_some_and(|a| !a.sprites.is_empty()));
+            s.lerped_palette_anim += usize::from(palettes);
+        }
+        s.unused_palette_anim += usize::from(t.rgb_unused && palettes);
+    });
 }
 
 /// `sprites[id]` of a texture part's `MObj` for every id the scripts set,
@@ -5518,6 +5551,21 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             s.prims, s.sprites, s.unresolved, s.lowered
         );
     });
+    let unlerped_swaps = RGB_LERP_STATS.with(|s| {
+        let s = s.borrow();
+        println!(
+            "  rgb lerp    {} primitives ({} with image swaps, {} with palette swaps); \
+             {} rgb-unused primitives with palette swaps",
+            s.lerped, s.lerped_sprite_anim, s.lerped_palette_anim, s.unused_palette_anim
+        );
+        s.lerped_palette_anim + s.unused_palette_anim
+    });
+    if unlerped_swaps != 0 {
+        return Err(format!(
+            "{unlerped_swaps} primitives swap palettes the converter does not rewrite (RE-527)"
+        )
+        .into());
+    }
 
     // RE-426: each fighter's high- and low-detail objects, including the
     // fighters that share another's graphs.

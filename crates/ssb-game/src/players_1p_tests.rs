@@ -21,6 +21,15 @@ fn first_visit() -> Players1P {
     Players1P::new(SceneData::default(), &Backup::default())
 }
 
+/// A return visit with Mario placed.
+fn mario_placed() -> Players1P {
+    let scene = SceneData {
+        kind: Some(FighterKind::Mario),
+        ..SceneData::default()
+    };
+    Players1P::new(scene, &Backup::default())
+}
+
 /// Puts the cursor where the held puck's centre lands on `kind`'s
 /// portrait, then lets one tick update the cursor and the puck.
 fn hover_portrait(s: &mut Players1P, kind: FighterKind) {
@@ -106,6 +115,7 @@ fn a_places_in_the_first_costume_and_c_buttons_pick_others() {
     tap(&mut s, N64Buttons::C_LEFT);
     assert!(s.slot.is_selected);
     assert_eq!(s.slot.costume, costume_common_id(FighterKind::Link, 3));
+    assert_eq!(s.slot.cursor_status, CursorStatus::Hover);
 }
 
 #[test]
@@ -240,10 +250,12 @@ fn saved_data_reaches_the_campaign() {
     assert_eq!(scene.fkind, FighterKind::Pikachu);
     assert_eq!(scene.stage, 0);
     assert_eq!(backup.writes, 1);
-    let selection = s.saved().selection();
-    assert_eq!(selection.kind, Some(FighterKind::Pikachu));
-    assert_eq!(selection.campaign().unwrap().fkind, FighterKind::Pikachu);
-    assert_eq!(selection.stocks, backup.spgame_stock_count);
+    assert_eq!(backup.spgame_stock_count, s.saved().stock_count);
+    let f = spgame::frontend::Frontend::campaign(scene, &backup);
+    let session = f.session.as_ref().unwrap();
+    assert_eq!(session.data.fkind, FighterKind::Pikachu);
+    assert_eq!(session.manager.scene, spgame::manager::Scene::Intro);
+    assert_eq!(backup.writes, 1);
     // A puck left unplaced saves no fighter.
     let mut s = first_visit();
     hover_portrait(&mut s, FighterKind::Pikachu);
@@ -325,4 +337,181 @@ fn b_back_to_the_1p_menu_stops_the_music_and_sounds() {
     assert!(matches!(tap(&mut s, N64Buttons::B), Some(Outcome::Back(_))));
     assert_eq!(r.take(), [Call::StopBgmAll, Call::StopAllFgm]);
     crate::sound::uninstall();
+}
+
+#[test]
+fn start_is_read_from_tick_61_and_the_wait_pauses_the_cursor() {
+    let mut s = mario_placed();
+    for _ in 0..59 {
+        assert_eq!(idle(&mut s), None);
+    }
+    // `total_tics > 60`: START on tick 60 is not read.
+    assert_eq!(tap(&mut s, N64Buttons::START), None);
+    assert!(!s.is_start);
+    assert_eq!(tap(&mut s, N64Buttons::START), None);
+    assert!(s.is_start);
+    let cursor = s.slot.cursor;
+    for _ in 0..29 {
+        // Neither the stick nor B reaches the paused cursor.
+        assert_eq!(s.tick(pad(0, 80, 0), N64Buttons(N64Buttons::B)), None);
+        assert_eq!(s.slot.cursor, cursor);
+    }
+    assert!(matches!(idle(&mut s), Some(Outcome::Proceed(_))));
+    assert_eq!(idle(&mut s), None);
+}
+
+#[test]
+fn an_unplaced_preview_cannot_start_and_saves_no_fighter_on_back() {
+    let mut s = first_visit();
+    s.slot.cursor = (60.0, 60.0); // The held puck on Mario.
+    for _ in 0..61 {
+        idle(&mut s);
+    }
+    assert_eq!(s.slot.kind, Some(FighterKind::Mario));
+    assert_eq!(tap(&mut s, N64Buttons::START), None);
+    assert!(!s.is_ready() && !s.is_start);
+    let Some(Outcome::Back(saved)) = tap(&mut s, N64Buttons::B) else {
+        panic!("expected Back");
+    };
+    assert_eq!(saved.scene.kind, None);
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_locked_portrait_cannot_be_placed() {
+    let mut s = first_visit();
+    s.slot.cursor = (15.0, 60.0); // Luigi, locked in the starter mask.
+    idle(&mut s);
+    tap(&mut s, N64Buttons::A);
+    assert_eq!(s.slot.kind, None);
+    assert!(!s.slot.is_selected);
+}
+
+#[test]
+fn b_recalls_grabs_on_the_eleventh_tick_and_frees_b_on_the_thirtieth() {
+    let mut s = mario_placed();
+    for _ in 0..10 {
+        idle(&mut s);
+    }
+    assert_eq!(tap(&mut s, N64Buttons::B), None);
+    assert!(s.slot.is_recalling);
+    // B neither recalls again nor backs out while the puck flies.
+    for _ in 0..9 {
+        assert_eq!(tap(&mut s, N64Buttons::B), None);
+    }
+    assert_ne!(s.slot.cursor_status, CursorStatus::Grab);
+    assert_eq!(idle(&mut s), None);
+    assert_eq!(s.slot.cursor_status, CursorStatus::Grab);
+    for _ in 0..18 {
+        assert_eq!(idle(&mut s), None);
+    }
+    assert!(s.slot.is_recalling);
+    assert_eq!(idle(&mut s), None);
+    assert!(!s.slot.is_recalling);
+    assert!(matches!(tap(&mut s, N64Buttons::B), Some(Outcome::Back(_))));
+}
+
+#[test]
+fn the_settings_hitboxes_reach_their_edges() {
+    let mut s = first_visit();
+    // The cursor sits outside its own move range, at the time arrow's
+    // corner (210, 12).
+    s.slot.cursor = (190.0, 9.0);
+    tap(&mut s, N64Buttons::A);
+    assert_eq!(s.time_setting, TIMELIMIT_INFINITE);
+    tap(&mut s, N64Buttons::A);
+    assert_eq!(s.time_setting, 5);
+    let press_ten = |s: &mut Players1P, cursor: (f32, f32)| {
+        s.slot.cursor = cursor;
+        for _ in 0..10 {
+            tap(s, N64Buttons::A);
+        }
+    };
+    // Each arrow's corner: (258 or 190, 155 or 175).
+    press_ten(&mut s, (238.0, 152.0));
+    assert_eq!(s.level, Difficulty::VeryHard as i32);
+    press_ten(&mut s, (170.0, 152.0));
+    assert_eq!(s.level, Difficulty::VeryEasy as i32);
+    press_ten(&mut s, (238.0, 172.0));
+    assert_eq!(s.stock, STOCK_MAX);
+    press_ten(&mut s, (170.0, 172.0));
+    assert_eq!(s.stock, 0);
+}
+
+#[test]
+fn the_idle_deadline_wins_on_its_tick_and_held_input_moves_it() {
+    let mut s = first_visit();
+    for _ in 0..RETURN_TICS - 1 {
+        assert_eq!(idle(&mut s), None);
+    }
+    // Checked before the START is read.
+    assert!(matches!(
+        tap(&mut s, N64Buttons::START),
+        Some(Outcome::Timeout(_))
+    ));
+    // A held button with no tap still counts as input.
+    let mut s = mario_placed();
+    s.tick(pad(N64Buttons::A, 0, 0), N64Buttons(0));
+    for _ in 0..RETURN_TICS - 1 {
+        assert_eq!(idle(&mut s), None);
+    }
+    assert!(matches!(idle(&mut s), Some(Outcome::Timeout(_))));
+}
+
+#[test]
+fn a_hidden_preview_keeps_turning_and_a_new_fighter_turns_next_tick() {
+    let turn = |s: &Players1P| s.view.fighter.unwrap().rotate_y;
+    let mut s = first_visit();
+    s.slot.cursor = (60.0, 60.0);
+    // Mario is made by the puck (link 20), after the fighter's turn (3).
+    idle(&mut s);
+    assert_eq!(turn(&s), 0.0);
+    s.slot.cursor = (60.0, 170.0);
+    idle(&mut s);
+    assert!(s.view.fighter.unwrap().hidden);
+    let hidden = turn(&s);
+    assert!(hidden > 0.0);
+    idle(&mut s);
+    assert!(turn(&s) > hidden);
+    s.slot.cursor = (60.0, 60.0);
+    idle(&mut s);
+    assert!(!s.view.fighter.unwrap().hidden);
+    assert!(turn(&s) > hidden);
+}
+
+#[test]
+fn press_start_and_the_banner_share_one_blink_clock() {
+    let mut s = mario_placed();
+    for _ in 0..15 {
+        idle(&mut s);
+    }
+    assert!(s.view.ready_press);
+    assert!(!s.view.ready_banner);
+    for _ in 0..5 {
+        idle(&mut s);
+    }
+    assert!(!s.view.ready_press);
+    assert!(s.view.ready_banner);
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_spotlight_flickers_under_an_unplaced_fighter() {
+    let mut s = first_visit();
+    idle(&mut s);
+    assert!(!s.view.spotlight.shown);
+    hover_portrait(&mut s, FighterKind::Donkey);
+    assert!(s.view.spotlight.shown);
+    assert_eq!(s.view.spotlight.scale, 2.0);
+    idle(&mut s);
+    assert!(!s.view.spotlight.shown);
+    idle(&mut s);
+    assert!(s.view.spotlight.shown);
+    hover_portrait(&mut s, FighterKind::Fox);
+    assert_eq!(s.view.spotlight.scale, 1.5);
+    tap(&mut s, N64Buttons::A);
+    assert!(s.is_ready());
+    assert!(!s.view.spotlight.shown);
+    idle(&mut s);
+    assert!(!s.view.spotlight.shown);
 }

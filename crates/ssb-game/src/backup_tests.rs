@@ -354,3 +354,83 @@ fn a_vs_battle_totals_damage_taken_and_given_to_other_players() {
     b.collect_damage(&mut f);
     assert_eq!(b.players[1].total_damage_all, 17);
 }
+
+/// Sets the mirrored `error_flags` for one test and clears them on drop.
+struct TamperedSave;
+impl TamperedSave {
+    fn with(flags: u8) -> Self {
+        set_error_flags(flags);
+        TamperedSave
+    }
+}
+impl Drop for TamperedSave {
+    fn drop(&mut self) {
+        set_error_flags(0);
+    }
+}
+
+fn stick(f: &mut crate::fighter::Fighter, x: i8, y: i8) -> (i8, i8) {
+    f.set_input(
+        ssb_engine::input::ControllerState {
+            stick_x: x,
+            stick_y: y,
+            ..Default::default()
+        },
+        false,
+        false,
+    );
+    (f.input.stick_x, f.input.stick_y)
+}
+
+#[test]
+fn half_stick_range_halves_the_clamped_stick_toward_zero() {
+    let mut f = crate::fighter::Fighter::new(FighterKind::Mario, 0, 3);
+    assert_eq!(stick(&mut f, 79, -79), (79, -79));
+    let _flags = TamperedSave::with(ERROR_HALF_STICK_RANGE);
+    // ftmain.c:1315: clamped to ±80 first, then `*= 0.5F` into an s8.
+    assert_eq!(stick(&mut f, 127, -128), (40, -40));
+    assert_eq!(stick(&mut f, 79, -79), (39, -39));
+    assert_eq!(stick(&mut f, 1, -1), (0, 0));
+}
+
+#[test]
+fn random_knockback_replaces_the_formula_with_one_draw() {
+    let kb = || crate::attack::knockback(50, 0, 12, 0, 100, 10, 1.0, 9, 9);
+    let hazard = || crate::hazard::ground_hazard_knockback(50, 0, 12, 0, 100, 10, 1.0, 9, 9);
+    crate::rng::set_seed(1234);
+    let normal = kb();
+    assert_eq!(hazard(), normal);
+    assert_eq!(crate::rng::seed(), 1234, "no draw without the flag");
+
+    let _flags = TamperedSave::with(ERROR_RANDOM_KNOCKBACK);
+    for get in [&kb as &dyn Fn() -> f32, &hazard] {
+        crate::rng::set_seed(1234);
+        let expect = crate::rng::rand_float() * 200.0;
+        crate::rng::set_seed(1234);
+        let random = get();
+        assert_eq!(random, expect);
+        assert!((0.0..200.0).contains(&random));
+        assert_ne!(random, normal);
+    }
+}
+
+#[test]
+fn vs_castle_forces_the_battle_stage_only() {
+    use crate::battle::vs_battle_gkind;
+    use crate::stage_select::gkind;
+    let zebes = gkind::ZEBES;
+    assert_eq!(vs_battle_gkind(zebes, 0), zebes);
+    assert_eq!(vs_battle_gkind(zebes, !ERROR_VS_BATTLE_CASTLE), zebes);
+    assert_eq!(
+        vs_battle_gkind(zebes, ERROR_VS_BATTLE_CASTLE),
+        gkind::CASTLE
+    );
+}
+
+#[test]
+fn clearing_all_data_clears_the_error_flags() {
+    let mut b = played();
+    b.error_flags = ERROR_VS_BATTLE_CASTLE | ERROR_RANDOM_KNOCKBACK;
+    b.clear_all_data();
+    assert_eq!(b.error_flags, 0);
+}

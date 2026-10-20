@@ -358,7 +358,7 @@ fn a_cleared_campaign_runs_the_ending_staff_roll_and_congratulations_into_a_chal
         spgame_difficulty: Difficulty::Normal,
         ..Backup::default()
     };
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     f.session = Some(Box::new(finished_boss_session(&backup)));
     f.staffroll_assets = Some(frontend::StaffrollAssets {
         credits: credits(),
@@ -408,7 +408,7 @@ fn a_cleared_campaign_runs_the_ending_staff_roll_and_congratulations_into_a_chal
 #[test]
 fn without_its_assets_the_staff_roll_stays_a_host_request() {
     let mut backup = Backup::default();
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     let mut s = finished_boss_session(&backup);
     s.manager.scene = Scene::Staffroll;
     f.session = Some(Box::new(s));
@@ -428,7 +428,7 @@ fn without_its_assets_the_staff_roll_stays_a_host_request() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_won_challenge_shows_its_newcomer_message_then_returns_to_startup() {
     let mut backup = Backup::default();
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     let mut s = finished_boss_session(&backup);
     s.data.stage = Stage::Ness as u8;
     s.manager.scene = Scene::Battle;
@@ -463,7 +463,7 @@ fn the_classic_mario_message_follows_a_newcomers_when_due() {
     for (i, r) in backup.spgame_records.iter_mut().enumerate() {
         r.is_spgame_complete = CHARACTER_MASK_STARTER & (1 << i) != 0;
     }
-    let mut f = frontend::Frontend::new(Default::default(), &backup);
+    let mut f = frontend::Frontend::campaign(Default::default(), &backup);
     let mut s = finished_boss_session(&backup);
     s.data.stage = Stage::Purin as u8;
     s.manager.scene = Scene::Battle;

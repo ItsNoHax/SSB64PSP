@@ -5,8 +5,8 @@
 //! `mn1PModeInitVars` has no default case: entered from the mode select,
 //! the menu keeps the option it last had (the overlay's BSS), which the
 //! host keeps for it. `mn1PModeFuncStart`'s anti-piracy check
-//! (`gSYMainDmemOK`, `LBBACKUP_ERROR_HALFSTICKRANGE`) is not ported, as a
-//! genuine console never fails it; the US build's subtitle GObj draws
+//! (`gSYMainDmemOK`, `LBBACKUP_ERROR_HALFSTICKRANGE`) is not ported: it
+//! cannot fail on a PSP (RE-460); the US build's subtitle GObj draws
 //! nothing.
 
 use super::{

@@ -1283,11 +1283,20 @@ const SHOULDERED_DAMAGE: i32 = 8;
 fn set_shouldered(f: &mut Fighter, staled: StaledThrow) -> i32 {
     set_thrown(f, Status::Shouldered, None);
     init_breakout(f, (f32::from(f.damage) * 0.08 + 14.0) as i32);
-    let damage = if f.invincible_frames == 0 {
+    // `ftParamGetBestHitStatusAll(fighter_gobj) != nGMHitStatusNormal`,
+    // read after the thrown status reset the body's hit status.
+    let damage = if crate::hazard::best_hit_status_all(f) == crate::combat::HitStatus::Normal {
         staled.damage
     } else {
         0
     };
+    if damage != 0 {
+        // `ftCommonDamageUpdateDamageColAnim(.., ftParamGetCommonKnockback(..), 0)`:
+        // a normal-element hit is `DamageCommon` at any knockback, so only
+        // the tampered-save random draw (RE-460) is kept.
+        let kb = crate::attack::random_knockback(0.0);
+        crate::colanim::update_damage_colanim(f, kb, crate::combat::Element::Normal);
+    }
     f.add_damage(damage);
     damage
 }
@@ -2452,8 +2461,10 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::KirbyEat { is_kirby } => crate::capture_kirby::on_eaten(to, is_kirby),
         GrabEvent::KirbyDamage { staled } => {
             // `ftCommonDamageUpdateDamageColAnim(victim, knockback, 0)`: a
-            // normal-element hit is `DamageCommon` at any knockback.
-            crate::colanim::update_damage_colanim(to, 0.0, crate::combat::Element::Normal);
+            // normal-element hit is `DamageCommon` at any knockback, so only
+            // the tampered-save random draw (RE-460) is kept.
+            let kb = crate::attack::random_knockback(0.0);
+            crate::colanim::update_damage_colanim(to, kb, crate::combat::Element::Normal);
             to.add_damage(staled.damage);
             record_throw(from, to, staled, staled.damage);
         }
@@ -2645,6 +2656,48 @@ mod tests {
         capture_captain(&mut airborne, catcher.port, holder);
         update_capture_captain(&mut airborne, holder);
         assert!(airborne.pos.x < 500.0 && airborne.pos.x >= 320.0);
+    }
+
+    /// `ftCommonCaptureShoulderedSetStatus`: the lift's damage flashes
+    /// `DamageCommon` (ftcommoncapture.c:153); an intangible victim takes
+    /// neither.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_shoulder_lift_damage_flashes_the_victim() {
+        let dk = grounded(FighterKind::Donkey, 0, 0.0);
+        let mut victim = grounded(FighterKind::Mario, 1, 100.0);
+        let dealt = set_shouldered(&mut victim, StaledThrow::of(&dk, SHOULDERED_DAMAGE));
+        assert!(dealt > 0);
+        assert_eq!(
+            victim.colanim.id,
+            crate::colanim::ColAnimId::FIGHTER_DAMAGE_COMMON
+        );
+
+        let mut intangible = grounded(FighterKind::Mario, 2, 100.0);
+        intangible.invincible_frames = 10;
+        let before = intangible.colanim.id;
+        assert_eq!(
+            set_shouldered(&mut intangible, StaledThrow::of(&dk, SHOULDERED_DAMAGE)),
+            0
+        );
+        assert_eq!(intangible.colanim.id, before);
+    }
+
+    /// `ftParamGetBestHitStatusAll(victim) != nGMHitStatusNormal` zeroes the
+    /// lift's damage (ftcommoncapture.c:147): a Starman's
+    /// `star_hitstatus` counts, as do the hurtboxes' own statuses.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_shoulder_lift_skips_any_non_normal_hit_status() {
+        let dk = grounded(FighterKind::Donkey, 0, 0.0);
+        let mut starred = grounded(FighterKind::Mario, 1, 100.0);
+        starred.star_invincible_frames = 100;
+        let before = starred.colanim.id;
+        assert_eq!(
+            set_shouldered(&mut starred, StaledThrow::of(&dk, SHOULDERED_DAMAGE)),
+            0
+        );
+        assert_eq!((starred.damage, starred.colanim.id), (0, before));
     }
 
     fn grounded(kind: FighterKind, port: u8, x: f32) -> Fighter {

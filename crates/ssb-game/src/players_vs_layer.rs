@@ -367,6 +367,53 @@ impl Fighter {
     }
 }
 
+/// `mnPlayersVSSpotlightProcUpdate`'s `sizes` (the 1P Game's, Training's
+/// and Bonus Practice's copies are the same), by fighter kind: the DObj's
+/// x and y scale (each stores y twice and leaves z).
+pub const SPOTLIGHT_SCALES: [f32; 12] =
+    [1.5, 1.5, 2.0, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5];
+
+/// A select's spotlight GObj (`mnPlayersVSMakeSpotlight` and its copies:
+/// `llMNPlayersSpotlightDObjDesc` with its `MObjSub`s, DL link 9 under the
+/// fighter camera, process link 21). Made shown, at the desc's scale 1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spotlight {
+    /// The GObj not `GOBJ_FLAG_HIDDEN`.
+    pub shown: bool,
+    /// The DObj's `scale.x` and `scale.y`.
+    pub scale: f32,
+}
+
+impl Default for Spotlight {
+    fn default() -> Self {
+        Spotlight {
+            shown: true,
+            scale: 1.0,
+        }
+    }
+}
+
+impl Spotlight {
+    /// `mnPlayersVSSpotlightProcUpdate`: under a fighter whose puck is held
+    /// (`fkind` set, `is_fighter_selected` clear) the GObj shows on
+    /// alternate ticks at the kind's size; otherwise it is hidden.
+    pub fn step(&mut self, fkind: Option<FighterKind>, is_fighter_selected: bool) {
+        match fkind {
+            Some(kind) if !is_fighter_selected => {
+                self.shown = !self.shown;
+                self.scale = SPOTLIGHT_SCALES[(kind as usize).min(11)];
+            }
+            _ => self.shown = false,
+        }
+    }
+}
+
+/// `mnPlayersVSMakeSpotlight`: slot `player`'s spotlight `translate`, 840
+/// apart from x -1250 at y -850 (under the slot's fighter).
+pub fn spotlight_translate(player: usize) -> [f32; 3] {
+    [(player * 840) as f32 - 1250.0, -850.0, 0.0]
+}
+
 /// A slot's display GObjs.
 #[derive(Debug, Clone, Default)]
 pub struct SlotView {
@@ -396,6 +443,7 @@ pub struct SlotView {
     is_status_selected: bool,
     /// The puck GObj's flags as `mnPlayersVSPuckProcUpdate` last set them.
     pub puck_shown: bool,
+    pub spotlight: Spotlight,
 }
 
 /// The scene's display state.
@@ -690,30 +738,59 @@ impl PlayersVs {
         self.view.slots[p].is_status_selected = false;
     }
 
-    /// The display GObjs' processes, once per tick after the logic's: the
-    /// portraits' slide (`mnPlayersVSPortraitProcUpdate`), the shutters
-    /// (`mnPlayersVSShutterProcUpdate`), the levels
-    /// (`mnPlayersVSHandicapLevelProcUpdate`), the arrows and flashes'
-    /// threads, the fighters (`mnPlayersVSFighterProcUpdate`), the puck
-    /// glow (`mnPlayersVSUpdatePuckGlowColor`) and the two ready GObjs'
-    /// `mnPlayersVSReadyProcUpdate`.
-    pub(super) fn view_tick(&mut self) {
+    /// The display processes linked before the pucks' (20): the fighters
+    /// (`mnPlayersVSFighterProcUpdate`, link 3) and the portraits' slide
+    /// (`mnPlayersVSPortraitProcUpdate`, 18).
+    pub(super) fn view_tick_before_puck(&mut self) {
+        for p in 0..PLAYERS {
+            self.fighter_update(p);
+        }
         for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
             if let Some(next) = next_portrait_x(i, *x) {
                 *x = next;
             }
         }
+    }
+
+    /// Links 21 to 23, between the pucks and the puck adjust (26): the
+    /// spotlights (`mnPlayersVSSpotlightProcUpdate`, 21), "Press Start"'s
+    /// `mnPlayersVSReadyProcUpdate` (22) and the shutters
+    /// (`mnPlayersVSShutterProcUpdate`, 23).
+    pub(super) fn view_tick_before_adjust(&mut self) {
+        for p in 0..PLAYERS {
+            let slot = &self.slots[p];
+            self.view.slots[p]
+                .spotlight
+                .step(slot.fkind, slot.is_fighter_selected);
+        }
+        let ready = self.is_ready();
+        self.view.ready_press = self.ready_update(ready);
         for p in 0..PLAYERS {
             self.shutter_update(p);
+        }
+    }
+
+    /// Links 26 to 30, after the puck adjust: the puck glow
+    /// (`mnPlayersVSUpdatePuckGlowColor`, 26), the levels
+    /// (`mnPlayersVSHandicapLevelProcUpdate`) and arrows' threads (28) and
+    /// the flashes' threads (30).
+    pub(super) fn view_tick_after_adjust(&mut self) {
+        self.glow_update();
+        for p in 0..PLAYERS {
             self.handicap_level_update(p);
             self.arrow_update(p);
-            self.flash_update(p);
-            self.fighter_update(p);
         }
-        self.glow_update();
+        for p in 0..PLAYERS {
+            self.flash_update(p);
+        }
+    }
+
+    /// Link 32, after the costume sync (31): the banner's
+    /// `mnPlayersVSReadyProcUpdate`, on the same blink counter as "Press
+    /// Start".
+    pub(super) fn view_tick(&mut self) {
         let ready = self.is_ready();
         self.view.ready_banner = self.ready_update(ready);
-        self.view.ready_press = self.ready_update(ready);
     }
 
     /// `mnPlayersVSShutterProcUpdate`.

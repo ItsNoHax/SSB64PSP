@@ -26,8 +26,8 @@
 use crate::d_arrays as g;
 use crate::fighter::FighterKind;
 use crate::players_vs::layer::{
-    self as vs, common, piece, rom, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_PLAYERS_COMMON,
-    FLASH_LENGTH,
+    self as vs, common, piece, rom, Fighter, Flash, Piece, Spotlight, FILE_EMBLEMS,
+    FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::results_scene::FIGHTER_SCALES;
 
@@ -178,6 +178,9 @@ impl Arrows {
     }
 }
 
+/// `mnPlayers1PGameMakeSpotlight`'s `translate`.
+pub const SPOTLIGHT_TRANSLATE: [f32; 3] = [-1100.0, -850.0, 0.0];
+
 /// The scene's display state.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -196,6 +199,9 @@ pub struct View {
     /// `sMNPlayers1PGameSlot.player`, the fighter GObj.
     pub fighter: Option<Fighter>,
     is_status_selected: bool,
+    /// The spotlight GObj (`mnPlayers1PGameMakeSpotlight`): under an
+    /// unplaced fighter it shows on alternate ticks.
+    pub spotlight: Spotlight,
     /// The puck GObj's flags as `mnPlayers1PGamePuckProcUpdate` last set
     /// them.
     pub puck_shown: bool,
@@ -218,6 +224,7 @@ impl Default for View {
             flash: None,
             fighter: None,
             is_status_selected: false,
+            spotlight: Spotlight::default(),
             puck_shown: false,
             level_arrows: Arrows::default(),
             stock_arrows: Arrows::default(),
@@ -312,11 +319,29 @@ impl Players1P {
     /// back to its own link.
     pub(super) fn v_placement_priorities(&mut self) {}
 
-    /// The display GObjs' processes, once per tick after the logic's, by
-    /// GObj link: "Press Start"'s ready check (22), the level and stock
-    /// threads (23), the flash (26), the banner's ready check (28), the
-    /// portraits' slide and the fighter's turn.
-    pub(super) fn view_tick(&mut self) {
+    /// The display processes linked before the puck's (20): the fighter's
+    /// turn (`mnPlayers1PGameFighterProcUpdate`, link 3; a hidden fighter
+    /// keeps turning) and the portraits' slide (18).
+    pub(super) fn view_tick_before_puck(&mut self) {
+        let selected = self.slot.is_fighter_selected;
+        let v = &mut self.view;
+        if let Some(f) = v.fighter.as_mut() {
+            vs::turn_fighter(f, &mut v.is_status_selected, selected);
+        }
+        for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
+            if let Some(next) = vs::next_portrait_x(i, *x) {
+                *x = next;
+            }
+        }
+    }
+
+    /// Links 21 to 23, between the puck and the puck adjust (24): the
+    /// spotlight (`mnPlayers1PGameSpotlightProcUpdate`), "Press Start"'s
+    /// ready check and the level and stock threads.
+    pub(super) fn view_tick_before_adjust(&mut self) {
+        self.view
+            .spotlight
+            .step(self.slot.kind, self.slot.is_fighter_selected);
         let ready = self.is_ready();
         self.view.ready_press = vs::step_ready(&mut self.view.ready_blink, ready);
         self.view
@@ -325,18 +350,14 @@ impl Players1P {
         self.view
             .stock_arrows
             .step(self.stock <= 0, self.stock >= super::STOCK_MAX);
+    }
+
+    /// Links past the puck adjust: the flash (26) and the banner's ready
+    /// check (28), on the same blink clock as "Press Start".
+    pub(super) fn view_tick(&mut self) {
         vs::step_flash(&mut self.view.flash);
+        let ready = self.is_ready();
         self.view.ready_banner = vs::step_ready(&mut self.view.ready_blink, ready);
-        for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
-            if let Some(next) = vs::next_portrait_x(i, *x) {
-                *x = next;
-            }
-        }
-        let selected = self.slot.is_fighter_selected;
-        let v = &mut self.view;
-        if let Some(f) = v.fighter.as_mut() {
-            vs::turn_fighter(f, &mut v.is_status_selected, selected);
-        }
     }
 
     /// The fighter's `translate`, scale and costume, when it draws.

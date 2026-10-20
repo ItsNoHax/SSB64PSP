@@ -10,8 +10,8 @@
 //!
 //! The original's scene calls block until the scene returns; here the
 //! manager is a state machine the host advances with each scene's result.
-//! [`frontend`] owns the select and the intro, stage-clear and continue
-//! controllers, and after the last stage the [`ending`] movie, the
+//! [`frontend`] owns the intro, stage-clear and continue controllers
+//! (the select is [`crate::players_1p`]), and after the last stage the [`ending`] movie, the
 //! [`staffroll`], the [`congra`] picture, the [`challenger`] warning and
 //! the unlock [`message`]. [`bonus_stage`] owns Break the Targets' separate battle
 //! and objective accounting; PSP drawing and scene orchestration live in
@@ -30,7 +30,6 @@ pub mod live;
 pub mod manager;
 pub mod message;
 pub mod results;
-pub mod select;
 pub mod session;
 pub mod setup;
 pub mod staffroll;

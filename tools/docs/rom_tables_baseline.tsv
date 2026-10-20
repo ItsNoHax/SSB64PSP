@@ -152,3 +152,4 @@ tools/romtool/src/residual_fixes.rs	CASES	tooling: residual review fixtures (scr
 tools/romtool/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
+crates/ssb-game/src/players_vs_layer.rs	SPOTLIGHT_SCALES	function-body constants: the selects' *SpotlightProcUpdate local sizes[] (mnplayersvs.c:4038-4042, mnplayers1pgame.c:3098-3102)

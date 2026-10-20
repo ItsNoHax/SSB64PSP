@@ -157,6 +157,27 @@ fn mushroom_kingdom_hurries_its_music_at_thirty_seconds() {
     assert!(r.take().is_empty());
 }
 
+/// `scVSBattleStartScene`: the VS battle state takes the scene's stage,
+/// or Peach's Castle under `LBBACKUP_ERROR_VSBATTLECASTLE`.
+#[test]
+fn a_vs_battle_on_mushroom_kingdom_hurries_unless_the_castle_is_forced() {
+    use crate::stage_select::gkind;
+    let r = Recorder::install();
+    let hurried = |error_flags: u8| {
+        crate::music::reset();
+        crate::music::set_play_bgm(nSYAudioBGMInishie);
+        let stage = crate::battle::vs_battle_gkind(gkind::INISHIE, error_flags);
+        let mut b = Battle::new(Rule::Time, 1, 0, two_players()).on_stage(stage);
+        while b.time_remain != 1800 {
+            b.begin_frame();
+        }
+        crate::music::bgm_default() == nSYAudioBGMInishieHurry
+    };
+    assert!(hurried(0));
+    assert!(!hurried(crate::backup::ERROR_VS_BATTLE_CASTLE));
+    r.take();
+}
+
 #[test]
 fn the_countdown_says_three_two_one_go() {
     let r = Recorder::install();

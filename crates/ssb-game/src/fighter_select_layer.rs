@@ -26,8 +26,8 @@
 use crate::d_arrays as d;
 use crate::fighter::FighterKind;
 use crate::players_vs::layer::{
-    self as vs, common, piece, rom, Draw, Fighter, Flash, Piece, FILE_EMBLEMS, FILE_GAME_MODES,
-    FILE_PLAYERS_COMMON, FLASH_LENGTH,
+    self as vs, common, piece, rom, Draw, Fighter, Flash, Piece, Spotlight, FILE_EMBLEMS,
+    FILE_GAME_MODES, FILE_PLAYERS_COMMON, FLASH_LENGTH,
 };
 use crate::players_vs::DrawKey;
 
@@ -93,6 +93,15 @@ pub struct SlotView {
     /// set them.
     pub puck_shown: bool,
     pub puck_draw: DrawKey,
+    pub spotlight: Spotlight,
+}
+
+/// `mnPlayers1PTrainingMakeSpotlight`: slot `slot`'s spotlight
+/// `translate`, the player's (`sMNPlayers1PTrainingManPlayer`) at x -830 and
+/// the CPU's at 830, both at y -870.
+pub fn spotlight_translate(slot: usize) -> [f32; 3] {
+    let x = if slot == MAN { -830.0 } else { 830.0 };
+    [x, -870.0, 0.0]
 }
 
 /// The scene's display state.
@@ -252,29 +261,56 @@ impl FighterSelect {
         self.view.slots[puck].puck_draw = self.draw_key(DL_PUCK, pr + 1);
     }
 
-    /// The display GObjs' processes, once per tick after the logic's: the
-    /// portraits' slide (`mnPlayers1PTrainingPortraitProcUpdate`), the
-    /// flashes' threads, the fighters (`mnPlayers1PTrainingFighterProcUpdate`),
-    /// the puck glow (`mnPlayers1PTrainingPuckGlowProcUpdate`) and the two
-    /// ready GObjs' `mnPlayers1PTrainingReadyProcUpdate`.
-    pub(super) fn view_tick(&mut self) {
-        for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
-            if let Some(next) = vs::next_portrait_x(i, *x) {
-                *x = next;
-            }
-        }
+    /// The display processes linked before the pucks' (20): the fighters
+    /// (`mnPlayers1PTrainingFighterProcUpdate`, link 3) and the portraits'
+    /// slide (`mnPlayers1PTrainingPortraitProcUpdate`, 18).
+    pub(super) fn view_tick_before_puck(&mut self) {
         for slot in [MAN, COM] {
-            vs::step_flash(&mut self.view.slots[slot].flash);
             let selected = self.slots[slot].is_fighter_selected;
             let v = &mut self.view.slots[slot];
             if let Some(f) = v.fighter.as_mut() {
                 vs::turn_fighter(f, &mut v.is_status_selected, selected);
             }
         }
+        for (i, x) in self.view.portrait_x.iter_mut().enumerate() {
+            if let Some(next) = vs::next_portrait_x(i, *x) {
+                *x = next;
+            }
+        }
+    }
+
+    /// Links 21 and 22, between the pucks and the puck adjust (26): the
+    /// spotlights (`mnPlayers1PTrainingSpotlightProcUpdate`, 21) and "Press
+    /// Start"'s `mnPlayers1PTrainingReadyProcUpdate` (22). The source makes
+    /// four spotlights; the two slots past the CPU's never have a fighter,
+    /// so theirs stay hidden and are not kept.
+    pub(super) fn view_tick_before_adjust(&mut self) {
+        for slot in [MAN, COM] {
+            let s = &self.slots[slot];
+            self.view.slots[slot]
+                .spotlight
+                .step(s.kind, s.is_fighter_selected);
+        }
+        let ready = self.is_ready();
+        self.view.ready_press = vs::step_ready(&mut self.view.ready_blink, ready);
+    }
+
+    /// Links 26 to 30, after the puck adjust: the puck glow
+    /// (`mnPlayers1PTrainingPuckGlowProcUpdate`, 26) and the flashes'
+    /// threads (30).
+    pub(super) fn view_tick_after_adjust(&mut self) {
         vs::step_glow(&mut self.view.glow, &mut self.view.glow_up);
+        for slot in [MAN, COM] {
+            vs::step_flash(&mut self.view.slots[slot].flash);
+        }
+    }
+
+    /// Link 32, after the costume sync (31): the banner's
+    /// `mnPlayers1PTrainingReadyProcUpdate`, on the same blink counter as
+    /// "Press Start".
+    pub(super) fn view_tick(&mut self) {
         let ready = self.is_ready();
         self.view.ready_banner = vs::step_ready(&mut self.view.ready_blink, ready);
-        self.view.ready_press = vs::step_ready(&mut self.view.ready_blink, ready);
     }
 
     /// What draws, back to front.

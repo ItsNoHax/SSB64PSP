@@ -4,7 +4,8 @@
 //! the player's puck, the portrait grid, the costume picks, the title that
 //! switches between the two practices, the auto-start once a fighter is
 //! placed, and the scene data it saves. [`layer`] holds its presentation,
-//! with the records; the spotlight stays with the host.
+//! with the records and the spotlight's flicker and size; no host draws
+//! the spotlight model yet.
 //!
 //! The scene is a copy of `mnPlayers1PGame` (`crate::players_1p`) with the
 //! options removed. What differs:
@@ -25,8 +26,10 @@
 //!   data, and the bonus stage reads which practice from `scene_prev`.
 //!
 //! One [`Players1PBonus::tick`] runs the processes in the 1P select's
-//! order: `mnPlayers1PBonusFuncRun`, the cursor (priority 2), then the puck
-//! and the puck adjust (priority 1, links 20 and 24).
+//! order: `mnPlayers1PBonusFuncRun`, the cursor (priority 2), then
+//! priority 1 by GObj link: the fighter and portraits (3, 18), the puck
+//! (20), the spotlight (21), "Press Start" (22), the puck adjust (24), the flash (26) and the
+//! banner (28).
 //!
 //! The original reads the idle timer from every controller
 //! (`scSubsysControllerCheckNoInputAll`); here, as in the other selects,
@@ -248,7 +251,13 @@ impl Players1PBonus {
         self.pending = None;
         self.func_run(input, taps);
         self.cursor_update(input, taps);
+        // Priority 1 then runs in GObj link order (`gcLinkGObjProcess`):
+        // the fighter (3) and portraits (18), the puck (20), the spotlight
+        // (21), "Press Start" (22), the puck adjust (24), the flash (26) and the banner (28). A
+        // fighter made by the puck first turns next tick.
+        self.view_tick_before_puck();
         self.puck_update();
+        self.view_tick_before_adjust();
         self.puck_adjust();
         self.view_tick();
         self.pending

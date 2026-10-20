@@ -169,7 +169,17 @@ pub fn knockback(
         attack_handicap,
         defend_handicap,
     );
-    knockback.min(2500.0)
+    random_knockback(knockback.min(2500.0))
+}
+
+/// `LBBACKUP_ERROR_RANDOMKNOCKBACK` (ftparam.c:1469, :1496): the knockback
+/// replaced by `syUtilsRandFloat() * 200`, a draw only under the flag.
+pub(crate) fn random_knockback(knockback: f32) -> f32 {
+    if crate::backup::error_flags() & crate::backup::ERROR_RANDOM_KNOCKBACK != 0 {
+        crate::rng::rand_float() * 200.0
+    } else {
+        knockback
+    }
 }
 
 /// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, for callers that

@@ -136,7 +136,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
 | cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
 | Kirby | Spit stars; Inhale downward wiggle | RE-343, RE-348, RE-376, RE-378, RE-417 |
-| Thunder Jolt spikes | Cleaner than N64's ragged ones (CI4, coverage-as-alpha render mode 0x00553048); unmeasured | RE-541 |
+| Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame on dummy in a capture; Bomb critical flash, held bloat | RE-352, RE-382, RE-383 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
 | Camera | Special camera modes; cpufx-u el56-70 MAE 23.9-29.7 vs N64 after RE-542 | RE-406, RE-538, RE-542 |
@@ -159,17 +159,14 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Select spotlight | Both character selects under held puck; VS select CPU colour animation; locked shadows' noise | RE-411 |
+| Select spotlight draw | No host draws `mn*MakeSpotlight` (file 22 `MNPlayersSpotlight`, DL link 9) in any select; state is ported (`Spotlight`). Needs pack pairing, host model, new golden; acceptance: N64 capture of a held fighter. Also VS select CPU colour animation; locked shadows' noise | RE-411, RE-448 |
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
 | Battle-stage lights | Fixed-direction light bake (RE-065 deviation) → display-list lights as movies use; A/B battle rows vs N64, PSP CPU cost | RE-065, RE-529 |
-| `rgb_lerp` audit | Materials with runtime image or palette swaps draw un-lerped → audit all | RE-527 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
-| Anti-piracy | Validators that set `error_flags` | RE-460, RE-461 |
 | 1P ending | Ending room background matanim; N64 compare ending, staff roll, challenger; CP/heart tags; observed loss/win handoffs | RE-459 |
 | 1P bonus stages | N64 pause capture, PSP comparison | RE-456 |
 | Master Hand | `is_use_fogcolor` darkening; wallpaper effects' matanims; comet ENV tint; defeat-zoom struck joint; boss stock snap; hit-by-player capture; magnifiers hidden before "Go" | RE-457 |
 | Special fighters | Intro Polygons darker, Metal Mario reflection duller than N64; unobserved: 30-Polygon clear, DK Defender/Perfect bonuses | RE-458 |
-| 1P select controllers | Reconcile `players_1p` with `spgame::select` | RE-448, RE-450 |
 | 1P shade | Yoshi same-costume shade | RE-450, RE-453 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 

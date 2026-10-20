@@ -3,14 +3,13 @@
 //! ending, staff roll, congratulations, challenger and message scenes run
 //! here; the staff roll needs the host's [`StaffrollAssets`].
 use super::{
-    challenger, congra, continue_scene, ending, intro, manager::Scene, message, select,
-    session::Session, staffroll, stage_clear, Backup,
+    challenger, congra, continue_scene, ending, intro, manager::Scene, message, session::Session,
+    staffroll, stage_clear, Backup,
 };
 use alloc::boxed::Box;
 use ssb_engine::input::{ControllerState, N64Buttons};
 
 pub enum Screen {
-    Select(select::Select),
     Intro(intro::Intro),
     Continue(continue_scene::Continue),
     StageClear(stage_clear::StageClear),
@@ -33,8 +32,6 @@ pub struct StaffrollAssets {
 pub struct Frontend {
     pub screen: Screen,
     pub session: Option<Box<Session>>,
-    /// The remembered select fields, including a null/unplaced fighter.
-    pub selection: select::Selection,
     /// The staff roll's ROM data; without it the staff roll stays a host
     /// request.
     pub staffroll_assets: Option<StaffrollAssets>,
@@ -47,50 +44,17 @@ pub enum Event {
 }
 
 impl Frontend {
-    pub fn new(selection: select::Selection, backup: &Backup) -> Self {
-        Self {
-            screen: Screen::Select(select::Select::new(selection, backup.fighter_mask)),
-            session: None,
-            selection,
-            staffroll_assets: None,
-        }
-    }
-
     /// A campaign begun by a host-drawn select (`players_1p`), which has
     /// already applied its scene and backup data. Starts at the manager's
     /// first requested scene, as a ready Proceed does.
     pub fn campaign(data: super::SceneData, backup: &Backup) -> Self {
-        let selection = select::Selection {
-            player: data.player,
-            kind: Some(data.fkind),
-            costume: data.costume,
-            time_limit: data.time_limit,
-            difficulty: backup.spgame_difficulty,
-            stocks: backup.spgame_stock_count,
-        };
         let mut frontend = Self {
             screen: Screen::Host(Scene::Startup),
             session: Some(Box::new(Session::new(data, backup))),
-            selection,
             staffroll_assets: None,
         };
         frontend.sync(backup);
         frontend
-    }
-
-    /// A host whose own select already saved `selection` and proceeded
-    /// (`nSCKind1PGame`): the campaign begins at its first scene. `None`
-    /// for an unplaced fighter, which cannot proceed.
-    pub fn start(selection: select::Selection, backup: &Backup) -> Option<Self> {
-        let session = Session::new(selection.campaign()?, backup);
-        let mut frontend = Self {
-            screen: Screen::Host(Scene::Startup),
-            session: Some(Box::new(session)),
-            selection,
-            staffroll_assets: None,
-        };
-        frontend.sync(backup);
-        Some(frontend)
     }
 
     /// Called after the host consumes a Battle/BonusStage/other scene.
@@ -150,28 +114,6 @@ impl Frontend {
         mut emit: impl FnMut(Event),
     ) {
         let advance = match &mut self.screen {
-            Screen::Select(select) => {
-                if let Some(outcome) = select.tick(input, taps) {
-                    let (selection, scene) = match outcome {
-                        select::Outcome::Proceed(s) => (s, None),
-                        select::Outcome::Back(s) => (s, Some(Scene::ModeMenu)),
-                        select::Outcome::Timeout(s) => (s, Some(Scene::Startup)),
-                    };
-                    self.selection = selection;
-                    selection.save(backup);
-                    if let Some(scene) = scene {
-                        self.screen = Screen::Host(scene);
-                        emit(Event::Host(scene));
-                    } else {
-                        self.session = Some(Box::new(Session::new(
-                            selection.campaign().expect("ready selection"),
-                            backup,
-                        )));
-                        self.sync(backup);
-                    }
-                }
-                false
-            }
             Screen::Intro(intro) => {
                 let frame = intro.tick(scheduler_tic, taps);
                 if frame.proceed {

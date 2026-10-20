@@ -59,6 +59,28 @@ pub const ERROR_1PGAME_MARIO: u8 = 1 << 2;
 /// `LBBACKUP_ERROR_VSBATTLECASTLE`.
 pub const ERROR_VS_BATTLE_CASTLE: u8 = 1 << 3;
 
+// The `LBBACKUP_ERROR_*` flags are set only by the anti-piracy validators
+// (`mn1PModeFuncStart`, `mnVSModeFuncStart`, `scVSBattleStartBattle`,
+// `sc1PGameFuncStart`), which probe N64 RSP memory and ROM code; they are
+// not ported and could not fail on a PSP (RE-460). A save imported from a
+// tampered cartridge can still carry the flags, so their consumers are.
+game_static! {
+    /// `gSCManagerBackupData.error_flags` as the fighters read it
+    /// (`ftMainProcUpdateInterrupt`, `ftParamGetCommonKnockback`); the host
+    /// mirrors its backup's each frame.
+    static ERROR_FLAGS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+}
+
+/// Mirrors the backup's `error_flags` for the battle code.
+pub fn set_error_flags(flags: u8) {
+    ERROR_FLAGS.with(|v| v.store(flags, core::sync::atomic::Ordering::Relaxed));
+}
+
+/// The mirrored `gSCManagerBackupData.error_flags`.
+pub fn error_flags() -> u8 {
+    ERROR_FLAGS.with(|v| v.load(core::sync::atomic::Ordering::Relaxed))
+}
+
 /// `I_MIN_TO_TICS(60)`: an unbeaten bonus stage's time.
 pub const BONUS_TIME_DEFAULT: u32 = 60 * 60 * 60;
 

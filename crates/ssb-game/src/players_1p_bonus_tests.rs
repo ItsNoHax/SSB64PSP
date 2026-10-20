@@ -64,6 +64,12 @@ fn every_visit_starts_holding_an_empty_puck() {
     assert_eq!(s.slot.kind, Some(FighterKind::Kirby));
     assert_eq!(s.slot.cursor_status, CursorStatus::Grab);
     assert_eq!(s.view.fighter.map(|f| f.kind), Some(FighterKind::Kirby));
+    // Made by the puck (link 20) after the fighter's turn (link 3): it
+    // first turns the next tick.
+    assert_eq!(s.view.fighter.map(|f| f.rotate_y), Some(0.0));
+    idle(&mut s);
+    let turned = s.view.fighter.map(|f| f.rotate_y).unwrap();
+    assert!((turned - crate::players_vs::layer::dtor(2.0)).abs() < 1e-6);
     // Locked Ness: no fighter, but the records still read his portrait.
     hover_portrait(&mut s, FighterKind::Ness);
     assert_eq!(s.slot.kind, None);
@@ -340,4 +346,27 @@ fn the_ready_banner_follows_the_armed_start() {
         shown += usize::from(s.view.ready_banner);
     }
     assert!(shown > 0 && shown < 40);
+}
+
+/// `mnPlayers1PBonusSpotlightProcUpdate` (link 21): under the held
+/// fighter the spotlight at (-700, -850, 0) shows on alternate ticks at
+/// the fighter's size; placing it hides it.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_spotlight_flickers_under_the_held_fighter() {
+    let mut s = select(BonusKind::Targets);
+    idle(&mut s);
+    assert!(!s.view.spotlight.shown);
+    hover_portrait(&mut s, FighterKind::Donkey);
+    assert!(s.view.spotlight.shown);
+    assert_eq!(s.view.spotlight.scale, 2.0);
+    idle(&mut s);
+    assert!(!s.view.spotlight.shown);
+    idle(&mut s);
+    assert!(s.view.spotlight.shown);
+    hover_portrait(&mut s, FighterKind::Fox);
+    assert_eq!(s.view.spotlight.scale, 1.5);
+    tap(&mut s, N64Buttons::A);
+    assert!(!s.view.spotlight.shown);
+    assert_eq!(layer::SPOTLIGHT_TRANSLATE, [-700.0, -850.0, 0.0]);
 }

@@ -4130,13 +4130,19 @@ fn enter_training(
             d.computer.trait_kind = ssb_game::computer::attack::Trait::Default;
             d.computer.behavior = ssb_game::computer::Behavior::Default;
         }
+        // `scVSBattleStartScene` / `scAutoDemoStartScene`: the battle state
+        // names the stage loaded (`gkind`, already through
+        // `vs_battle_gkind` for VS), which the timer reads for Mushroom
+        // Kingdom's hurry music.
         if rules.demo {
-            return ssb_game::battle::Battle::new_demo(players);
+            return ssb_game::battle::Battle::new_demo(players).on_stage(gkind);
         }
-        ssb_game::battle::Battle::new(rules.rule, rules.time_limit, rules.stocks, players).with_teams(
-            rules.team_rules.is_team_battle,
-            rules.team_rules.is_team_attack,
-        )
+        ssb_game::battle::Battle::new(rules.rule, rules.time_limit, rules.stocks, players)
+            .with_teams(
+                rules.team_rules.is_team_battle,
+                rules.team_rules.is_team_attack,
+            )
+            .on_stage(gkind)
     });
     index
 }
@@ -4506,10 +4512,17 @@ unsafe fn session_frame(
                     } else {
                         training_roster(s.training_scene)
                     };
-                    s.enter(pack.as_ref(), saved.gkind, roster, s.vs.then_some(s.vs_menu_rules));
+                    // `scVSBattleStartScene`: a tampered save forces the
+                    // VS stage (RE-460); `scene_gkind` keeps the selection.
+                    let gkind = if s.vs {
+                        ssb_game::battle::vs_battle_gkind(saved.gkind, s.backup.error_flags)
+                    } else {
+                        saved.gkind
+                    };
+                    s.enter(pack.as_ref(), gkind, roster, s.vs.then_some(s.vs_menu_rules));
                     // `scVSBattleStartBattle` / `sc1PTrainingModeFuncStart`.
                     if s.vs {
-                        if let Some(bgm_id) = stage_bgm_id(pack.as_ref(), saved.gkind) {
+                        if let Some(bgm_id) = stage_bgm_id(pack.as_ref(), gkind) {
                             ssb_game::music::start_battle(bgm_id);
                         }
                     } else {
@@ -4724,7 +4737,7 @@ unsafe fn session_frame(
             let entered = sudden.and_then(|battle| {
                 start_sudden_death(
                     pack.as_ref(),
-                    s.scene_gkind,
+                    ssb_game::battle::vs_battle_gkind(s.scene_gkind, s.backup.error_flags),
                     s.roster,
                     battle,
                     &mut s.vs_battle,
@@ -4750,7 +4763,11 @@ unsafe fn session_frame(
                     // `mnVSResultsFuncStart`'s `mnVSResultsSaveBackup`.
                     if let Some(transfer) = s.vs_transfer.take() {
                         let kinds = s.roster.map(|e| e.map(|e| e.kind));
-                        ssb_game::results::save_backup(&mut s.backup, &transfer, kinds, s.scene_gkind);
+                        let gkind = ssb_game::battle::vs_battle_gkind(
+                            s.scene_gkind,
+                            s.backup.error_flags,
+                        );
+                        ssb_game::results::save_backup(&mut s.backup, &transfer, kinds, gkind);
                     }
                     let (results, fighters) = s
                         .vs_battle
@@ -5297,6 +5314,8 @@ unsafe fn run() -> ! {
         });
         let update_start = profile::start();
         if !deterministic_capture_frozen(capture_spec, sim_frame_index) {
+            // `gSCManagerBackupData.error_flags` as the fighters read it.
+            ssb_game::backup::set_error_flags(s.backup.error_flags);
             session_frame(
                 &mut s,
                 &pack,

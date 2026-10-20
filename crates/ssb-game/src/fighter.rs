@@ -986,6 +986,12 @@ impl Fighter {
         let max = crate::status::STICK_MAX;
         input.stick_x = (i32::from(input.stick_x)).clamp(-max, max) as i8;
         input.stick_y = (i32::from(input.stick_y)).clamp(-max, max) as i8;
+        // `LBBACKUP_ERROR_HALFSTICKRANGE` (ftmain.c:1315): the clamped range
+        // halved, truncated toward zero as the s8 store does.
+        if crate::backup::error_flags() & crate::backup::ERROR_HALF_STICK_RANGE != 0 {
+            input.stick_x = (f32::from(input.stick_x) * 0.5) as i8;
+            input.stick_y = (f32::from(input.stick_y) * 0.5) as i8;
+        }
         if input.buttons.contains(ssb_engine::input::N64Buttons::R) {
             input.buttons.0 |= ssb_engine::input::N64Buttons::A | ssb_engine::input::N64Buttons::Z;
         }
