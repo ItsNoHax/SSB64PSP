@@ -19,11 +19,11 @@
 - Landed: Kirby roster-A2 entry camera (RE-543).
   - Entry zoom reads the live fighter position each camera tick.
   - 8 entry-window goldens rebaselined.
-  - Open: N64 camera eye/at trace, rec 320-340.
+  - N64 camera trace: PSP camera is the N64's delayed one tick (RE-543); gap open.
 
 ## Next
 
-1. N64 camera eye/at trace for the A2 entry, rec 320-340 (RE-543).
+1. Entry zoom starts one tick late vs N64 (RE-543): fix, re-trace A2 rec 299-345.
 2. Thunder Jolt burst spikes (RE-541).
 3. Effects process order (RE-542).
 4. MS8 list in `PLAN.md`, 1P intro first.
