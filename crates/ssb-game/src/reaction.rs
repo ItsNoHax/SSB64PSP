@@ -287,25 +287,34 @@ pub fn damage_air_proc_map(f: &mut Fighter, sweep: &crate::map::DamageMoved) {
 }
 
 /// `ftCommonWallDamageCheckGoto`: left wall, then right wall, then ceiling.
+/// The impact wave stands at TopN's `x, y` (z 0) moved to the struck side
+/// of the collision diamond.
 fn wall_damage_check_goto(f: &mut Fighter, sweep: &crate::map::DamageMoved) -> bool {
     let mask = sweep.mask_curr;
-    let normal = if mask & crate::map::MASK_LWALL != 0 {
-        sweep.lwall_normal
+    let (x, y, c) = (f.pos.x, f.pos.y, f.coll);
+    let (normal, pos) = if mask & crate::map::MASK_LWALL != 0 {
+        (sweep.lwall_normal, (x + c.width, y + c.center))
     } else if mask & crate::map::MASK_RWALL != 0 {
-        sweep.rwall_normal
+        (sweep.rwall_normal, (x - c.width, y + c.center))
     } else if mask & crate::map::MASK_CEIL != 0 {
-        sweep.ceil_normal
+        (sweep.ceil_normal, (x, y + c.top))
     } else {
         return false;
     };
-    set_wall_damage(f, normal);
+    set_wall_damage(f, normal, ssb_engine::math::Vec3::new(pos.0, pos.1, 0.0));
     true
 }
 
 /// `ftCommonWallDamageSetStatus`: the fighter's whole velocity reflects off
 /// the surface at 80% as damage velocity, with fresh hitstun for that speed
 /// and 15 frames of intangibility. It faces away from its new direction.
-pub fn set_wall_damage(f: &mut Fighter, normal: ssb_engine::math::Vec2) {
+/// First an impact wave at `pos` and a magnitude-2 quake.
+pub fn set_wall_damage(
+    f: &mut Fighter,
+    normal: ssb_engine::math::Vec2,
+    pos: ssb_engine::math::Vec3,
+) {
+    crate::fteffect::surface_impact(f, pos, normal, false);
     let mut vx = f.physics.vel_air.x + f.physics.vel_knockback.x;
     let mut vy = f.physics.vel_air.y + f.physics.vel_knockback.y;
     // `lbCommonReflect2D`.

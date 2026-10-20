@@ -4210,8 +4210,13 @@ unsafe fn draw_frame(
                     scenes_ref(pl, &s.dummies).map(|x| x.map(|x| &x.fighter)),
                     &s.weapons,
                     &s.items,
-                    s.damage_hud.effects.last_seq(),
                 );
+                // Each fighter process's flush stamped its link-15 effects
+                // (`ssb_game::effect_order`, RE-542); this catches a change
+                // made outside one (none in a match), as it stands now.
+                for f in scenes_ref(pl, &s.dummies).into_iter().flatten() {
+                    s.damage_hud.effects.stamp_fighter(&f.fighter);
+                }
                 effect_visuals.sync_entry(
                     p,
                     draw_assets,
@@ -7261,8 +7266,6 @@ struct EffectVisuals {
     /// every Thunder Jolt in the air play their own animations.
     weapons: alloc::vec::Vec<WeaponFx>,
     items: [ItemVisual; MAX_ITEM_VISUALS],
-    /// The counter [`PortFx::stamps`] draw from.
-    order: ssb_game::effect_order::CreationOrder,
 }
 
 impl EffectVisuals {
@@ -7282,7 +7285,6 @@ impl EffectVisuals {
             ptr::addr_of_mut!((*p).eggs).write(Default::default());
             ptr::addr_of_mut!((*p).ports).write(Default::default());
             ptr::addr_of_mut!((*p).weapons).write(Default::default());
-            ptr::addr_of_mut!((*p).order).write(Default::default());
             for i in 0..MAX_ITEM_VISUALS {
                 ptr::addr_of_mut!((*p).items[i]).write(Default::default());
             }
@@ -7414,10 +7416,6 @@ struct PortFx {
     punch: FxSlot,
     kick: FxSlot,
     reflector: ReflectorFx,
-    /// Each display-link-15 effect's creation stamp, by
-    /// [`ssb_game::effect_order::Kind`], the shield bubble's and Yoshi's
-    /// eggs' included: link 15 draws in creation order across ports.
-    stamps: [ssb_game::effect_order::Stamp; ssb_game::effect_order::Kind::COUNT],
 }
 
 /// One weapon pool slot's players, keyed by the weapon's kind and
@@ -8364,7 +8362,6 @@ impl EffectVisuals {
         fighters: [Option<&ssb_game::fighter::Fighter>; 4],
         weapons: &ssb_game::weapon::WeaponPool,
         items: &ssb_game::item::ItemPool,
-        last_seq: u32,
     ) {
         // The items in pool order; a kind change or a play count that went
         // back restarts a player.
@@ -8404,9 +8401,6 @@ impl EffectVisuals {
         }
 
         self.sync_weapons(p, assets, weapons);
-        // This frame's new fighter effects sort before the display effects
-        // it made, after earlier frames' (`ssb_game::effect_order`, RE-542).
-        self.order.begin(last_seq);
         if self.ports.len() < 4 {
             self.ports.resize_with(4, Default::default);
         }
@@ -8418,11 +8412,11 @@ impl EffectVisuals {
             }
             use PlayRule::Effect;
             let (object, anim) = pair(&assets.magnet);
-            let magnet = v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0, Effect);
+            v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.sing);
-            let sing = v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0, Effect);
+            v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.spin_effect);
-            let spin = v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0, Effect);
+            v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0, Effect);
             let (object, anim) = pair(&assets.spin_weapon);
             let ticks = f.and_then(ssb_game::link::spin_weapon_display).map(|(_, t)| t);
             v.spin_weapon.sync(p, ticks, object, anim, 1.0, PlayRule::Weapon);
@@ -8430,41 +8424,14 @@ impl EffectVisuals {
                 ssb_game::captain::punch_effect_ticks(f)
                     .or_else(|| ssb_game::kirby_copy::punch_effect_ticks(f))
             });
-            let punch = v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0, Effect);
+            v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0, Effect);
             let (object, anim) = pair(&assets.falcon_kick);
-            let kick = v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0, Effect);
+            v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0, Effect);
             v.reflector.sync(
                 p,
                 assets.reflector.as_ref().map(|(_, anims)| anims),
                 f.and_then(ssb_game::status::fox_reflector_effect),
             );
-            // Stamp the link-15 effects in port order, each port's in kind
-            // order, with the liveness the draw tests.
-            use ssb_game::effect_order::Kind as K;
-            let egg_escape = f.is_some_and(|f| f.yoshi.egg_escape_active);
-            let lives = [
-                (K::Shield, f.is_some_and(shield_bubble_live), false),
-                (
-                    K::YoshiShield,
-                    !egg_escape && f.is_some_and(ssb_game::combat::is_yoshi_egg_shield),
-                    false,
-                ),
-                (K::YoshiEggEscape, egg_escape, false),
-                (K::Magnet, v.magnet.live().is_some(), magnet),
-                (K::Sing, v.sing.live().is_some(), sing),
-                (K::Spin, v.spin.live().is_some(), spin),
-                (K::Punch, v.punch.live().is_some(), punch),
-                (K::Kick, v.kick.live().is_some(), kick),
-                (K::Reflector, v.reflector.live().is_some(), false),
-                (
-                    K::GrappleGlow,
-                    f.and_then(ssb_game::grab::grapple_glow_ticks).is_some(),
-                    false,
-                ),
-            ];
-            for (kind, live, remade) in lives {
-                self.order.stamp(&mut v.stamps[kind as usize], live, remade);
-            }
         }
     }
 
@@ -10644,16 +10611,9 @@ unsafe fn draw_items_weapons_effects(
     // `wpMainReflectorRotateWeaponModel`; the burst has no display list.
     if let Some(bullet) = assets.boss_bullet.as_ref() {
         for shot in weapons.boss_bullets().filter(|b| !b.exploded) {
-            // `syUtilsArcTan2` of the cross product is scale-free.
-            let (vx, vy) = (shot.velocity.x, shot.velocity.y);
-            let (yaw, pitch) = if vx > 0.0 {
-                (core::f32::consts::FRAC_PI_2, ssb_engine::math::sy_arc_tan2(-vy, vx))
-            } else {
-                (-core::f32::consts::FRAC_PI_2, ssb_engine::math::sy_arc_tan2(-vy, -vx))
-            };
             gpu.model_transform_xyz(
                 [shot.position.x, shot.position.y, shot.position.z],
-                [pitch, yaw, 0.0],
+                ssb_game::weapon::reflector_rotate(shot.velocity),
                 [meshdraw::MODEL_SCALE; 3],
             );
             let base = gpu.model_matrix();
@@ -11067,15 +11027,11 @@ unsafe fn draw_link15_effects(
     }
 
     // Link 15's priority-2 effects in the order they were made.
-    let mut stamps = [[ssb_game::effect_order::Stamp::default(); ssb_game::effect_order::Kind::COUNT]; 4];
-    for (row, v) in stamps.iter_mut().zip(effect_visuals.ports.iter()) {
-        *row = v.stamps;
-    }
     let mut entries = [ssb_game::effect_order::Entry::EMPTY; ssb_game::effect_order::MAX_ENTRIES];
     let displays = effects
         .display_seqs()
         .filter(|&(_, slot)| effects.display_at(slot).is_some_and(|d| d.kind.dl_link() == 15));
-    let n = ssb_game::effect_order::collect(&stamps, displays, &mut entries);
+    let n = ssb_game::effect_order::collect(effects.fighter_stamp_rows(), displays, &mut entries);
     let scenes = scenes_ref(pl, dummies);
     let fighters = scenes.map(|s| s.map(|s| &s.fighter));
     for e in &entries[..n] {
@@ -11087,9 +11043,14 @@ unsafe fn draw_link15_effects(
                 }
                 continue;
             }
-            Item::Fighter { port, kind } => (usize::from(port), kind),
+            Item::Fighter { port, kind } => (port, kind),
         };
-        let (Some(Some(scene)), Some(v)) = (scenes.get(port), effect_visuals.ports.get(port)) else {
+        // The stamps are by port; the scenes and their players by
+        // [`scenes_ref`] index.
+        let Some(i) = scenes.iter().position(|s| s.is_some_and(|s| s.fighter.port == port)) else {
+            continue;
+        };
+        let (Some(Some(scene)), Some(v)) = (scenes.get(i), effect_visuals.ports.get(i)) else {
             continue;
         };
         match kind {
@@ -11107,11 +11068,6 @@ unsafe fn draw_link15_effects(
             kind => draw_fighter_effect(gpu, draw_state, p, pl, &scene.fighter, v, assets, material_anim, kind),
         }
     }
-}
-
-/// Whether a fighter's shield bubble lives: Yoshi's guard is his egg.
-fn shield_bubble_live(f: &ssb_game::fighter::Fighter) -> bool {
-    f.guard.is_shield && f.kind != ssb_game::fighter::FighterKind::Yoshi
 }
 
 /// One fighter's shield bubble (`efManagerShieldMakeEffect`, RE-384). Its

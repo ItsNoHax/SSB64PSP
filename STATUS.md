@@ -16,13 +16,12 @@
 
 ## Current work
 
-- Landed: effects process order step B (RE-542).
-  - Camera after items/weapons/effects, magnitude-0 quake before it, POW Block quake.
-  - 7 goldens rebaselined (5 camera order, 2 Onix quake).
+- Landed: fighter link-15 make order (process order, RE-542, RE-538, RE-540); trig chunks 4-5 (RE-503).
+  - Goldens unchanged; chunk 5 has unit tests only (PLAN: Chunk 5 golden).
 
 ## Next
 
-1. Effects process order, step C: fighter link-15 make stamps (RE-542).
+1. Demo fighter motion-script events (RE-461, RE-528): next gameplay batch.
 2. Thunder Jolt burst spikes (RE-541).
 3. MS8 list in `PLAN.md`, 1P intro first.
 
@@ -33,7 +32,7 @@
 
 ## Verification
 
-Baseline: RE-542 step B.
+Baseline: fighter link-15 make order, trig chunks 4-5.
 
 | Check | Result |
 |---|---|
@@ -41,7 +40,7 @@ Baseline: RE-542 step B.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | full matrix verified, 7 rebaselined (RE-542) |
+| Goldens | full matrix verified, none rebaselined |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

@@ -231,6 +231,9 @@ pub struct Effects {
     /// flush left them ([`EffectRuntime`]'s `fighter`): what an attached
     /// effect's process reads from `DObjGetStruct(ep->fighter_gobj)`.
     pub fighter_anchors: [Option<(Vec3, i8)>; 4],
+    /// The fighters' own link-15 effects' creation stamps
+    /// ([`Self::stamp_fighter`], RE-542).
+    fighter_stamps: crate::effect_order::FighterStamps,
 }
 
 impl Default for Effects {
@@ -257,6 +260,7 @@ impl Effects {
             leaves_xf: NIL,
             dust_xf: NIL,
             fighter_anchors: [None; 4],
+            fighter_stamps: crate::effect_order::FighterStamps::default(),
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -1012,6 +1016,9 @@ impl HitEffectSink for EffectRuntime<'_> {
     fn fighter(&mut self, f: &mut crate::fighter::Fighter) {
         self.effects.fighter_anchors[usize::from(f.port & 3)] =
             Some((f.pos, f.facing.sign() as i8));
+        // The process's own link-15 effects, before the effects it queued
+        // (`crate::effect_order`, RE-542).
+        self.effects.stamp_fighter(f);
         crate::fteffect::flush(f, self);
     }
 
@@ -1466,6 +1473,23 @@ impl Effects {
     /// The `GObj` counter: the `seq` of the last effect made.
     pub fn last_seq(&self) -> u32 {
         self.seq
+    }
+
+    /// Stamps `f`'s link-15 effects ([`crate::effect_order::fighter_lives`])
+    /// at the counter as it stands: where the fighter process that made
+    /// them ends ([`EffectRuntime`]'s `fighter`).
+    pub fn stamp_fighter(&mut self, f: &crate::fighter::Fighter) {
+        let lives = crate::effect_order::fighter_lives(f);
+        self.fighter_stamps.stamp(f.port, &lives, self.seq);
+    }
+
+    /// Each port's link-15 fighter-effect stamps, by
+    /// [`crate::effect_order::Kind`]: what the draw merges with
+    /// [`Self::display_seqs`] ([`crate::effect_order::collect`]).
+    pub fn fighter_stamp_rows(
+        &self,
+    ) -> &[[crate::effect_order::Stamp; crate::effect_order::Kind::COUNT]; 4] {
+        self.fighter_stamps.rows()
     }
     /// `itBoxContainerSmashMakeEffect` and
     /// `itTaruBombContainerSmashMakeEffect`, which differ only in their

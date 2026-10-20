@@ -1887,18 +1887,33 @@ pub(crate) fn ground_callback(f: &mut Fighter, floor: Option<Standing>) -> bool 
     crate::captain::map_wall(f)
 }
 
+#[cfg(test)]
 pub(crate) fn air_callback(f: &mut Fighter) {
+    air_callback_at(f, f.pos);
+}
+
+/// The air statuses' `proc_map` callbacks; `translate` is TopN's
+/// translation when the map process began, before the collision moved it.
+pub(crate) fn air_callback_at(f: &mut Fighter, translate: Vec3) {
     let contacts = f.map_contacts;
     if matches!(
         f.status.status,
         AnyStatus::Common(Status::ThrownKirbyStar | Status::ThrownCopyStar)
     ) {
-        if let Some(hit) = contacts
-            .ceiling
-            .or(contacts.left_wall)
-            .or(contacts.right_wall)
-        {
-            crate::capture_kirby::on_landing(f, f.pos.y, hit.normal);
+        // Ceiling, then left wall, then right wall; the wave on the struck
+        // side of the collision diamond.
+        let (c, t) = (f.coll, translate);
+        let hit = if let Some(hit) = contacts.ceiling {
+            Some((hit, Vec3::new(t.x, t.y + c.top, t.z)))
+        } else if let Some(hit) = contacts.left_wall {
+            Some((hit, Vec3::new(t.x + c.width, t.y + c.center, t.z)))
+        } else {
+            contacts
+                .right_wall
+                .map(|hit| (hit, Vec3::new(t.x - c.width, t.y + c.center, t.z)))
+        };
+        if let Some((hit, wave)) = hit {
+            crate::capture_kirby::on_landing(f, f.pos.y, hit.normal, wave);
         }
         return;
     }

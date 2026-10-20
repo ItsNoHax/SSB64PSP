@@ -351,14 +351,18 @@ fn is_kirby(kind: FighterKind) -> bool {
     crate::kirby::is_kirby(kind)
 }
 
-/// `ftCommonThrownCommonStarProcMap`'s floor case: the star reflects off
-/// the floor instead of landing, and a reflection that turns it around
-/// ends its travel. Returns `true` for a star status.
-pub fn on_landing(f: &mut Fighter, floor_y: f32, normal: Vec2) -> bool {
+/// `ftCommonThrownCommonStarProcMap`: the star reflects off the floor (or
+/// the ceiling or a wall) instead of landing, and a reflection that turns
+/// it around ends its travel. Then a magnitude-2 quake and an impact wave at
+/// `wave`: TopN's translation as the map process found it, before the
+/// collision moved it, put on the struck side of the collision diamond.
+/// Returns `true` for a star status.
+pub fn on_landing(f: &mut Fighter, floor_y: f32, normal: Vec2, wave: Vec3) -> bool {
     if !is_star(f.status.status) {
         return false;
     }
     f.pos.y = floor_y;
+    crate::fteffect::surface_impact(f, wave, normal, true);
     let v = f.physics.vel_air;
     let dot = v.x * normal.x + v.y * normal.y;
     if dot < 0.0 {

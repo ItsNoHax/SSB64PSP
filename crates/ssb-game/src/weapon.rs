@@ -307,6 +307,25 @@ pub struct BossBullet {
     pub lifetime: u16,
 }
 
+/// `wpMainReflectorRotateWeaponModel` (`wp/wpmain.c:170`): the model
+/// rotation `[x, y, z]` that turns a weapon along `vel`. The velocity is
+/// `syVectorNorm3D`'d (a multiply by `1 / |vel|`) before its cross product
+/// with `(0, 0, -1)` (moving right) or `(0, 0, +1)`, whose `x` and `y` give
+/// the pitch: the normalisation moves the ratio `syUtilsArcTan2` takes by an
+/// ulp for some velocities (RE-503).
+pub fn reflector_rotate(vel: Vec3) -> [f32; 3] {
+    use ssb_engine::math::{f_cst_dtor32, sy_arc_tan2};
+    let dir_z = if vel.x > 0.0 { -1.0 } else { 1.0 };
+    let mut v = vel;
+    crate::slope_contour::norm3(&mut v);
+    let angle = crate::slope_contour::cross(v, Vec3::new(0.0, 0.0, dir_z));
+    if dir_z == -1.0 {
+        [sy_arc_tan2(angle.x, angle.y), f_cst_dtor32(90.0), 0.0]
+    } else {
+        [sy_arc_tan2(-angle.x, angle.y), f_cst_dtor32(-90.0), 0.0]
+    }
+}
+
 impl BossBullet {
     fn new(spawn: WeaponSpawn, hard: bool) -> Self {
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
@@ -6101,5 +6120,86 @@ mod tests {
             p.velocity.x = -p.velocity.x.abs();
         }
         assert_eq!(pool.cpu_threats().next().unwrap().lr, -1.0);
+    }
+}
+
+#[cfg(test)]
+mod reflector_rotate_tests {
+    use super::*;
+    use ssb_engine::math::sy_arc_tan2;
+
+    /// The renderer's former formula: the cross product of the raw
+    /// velocity, which divides `vy / vx` unscaled.
+    fn raw_pitch(v: Vec3) -> f32 {
+        if v.x > 0.0 {
+            sy_arc_tan2(-v.y, v.x)
+        } else {
+            sy_arc_tan2(-v.y, -v.x)
+        }
+    }
+
+    /// `wpMainReflectorRotateWeaponModel` spelled out step by step:
+    /// `syVectorNorm3D` then `lbCommonCross3D` with `(0, 0, -+1)`.
+    fn decomp(vel: Vec3) -> [f32; 3] {
+        let dz: f32 = if vel.x > 0.0 { -1.0 } else { 1.0 };
+        let mag = ssb_engine::math::sqrt_exact(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+        // A zero vector returns as it is.
+        let (x, y, z) = if mag == 0.0 {
+            (vel.x, vel.y, vel.z)
+        } else {
+            (
+                vel.x * (1.0 / mag),
+                vel.y * (1.0 / mag),
+                vel.z * (1.0 / mag),
+            )
+        };
+        let ax = y * dz - z * 0.0;
+        let ay = z * 0.0 - x * dz;
+        let deg = |d: f32| ssb_engine::math::f_cst_dtor32(d);
+        if dz == -1.0 {
+            [sy_arc_tan2(ax, ay), deg(90.0), 0.0]
+        } else {
+            [sy_arc_tan2(-ax, ay), deg(-90.0), 0.0]
+        }
+    }
+
+    /// The normalised velocity's ratio rounds differently from the raw
+    /// one: (-160, -24) pitches an ulp lower than the unscaled formula gave.
+    #[test]
+    fn the_velocity_is_normalised_before_the_cross_product() {
+        let v = Vec3::new(-160.0, -24.0, 0.0);
+        let r = reflector_rotate(v);
+        assert_eq!(r[0].to_bits(), 0x3e18_769b);
+        assert_eq!(raw_pitch(v).to_bits(), 0x3e18_769c);
+        assert_eq!(r.map(f32::to_bits), decomp(v).map(f32::to_bits));
+        assert_eq!(r[1], -core::f32::consts::FRAC_PI_2);
+    }
+
+    /// Over a grid of velocities in both directions the port matches the
+    /// decomp's steps bit for bit; the raw formula differs on many.
+    #[test]
+    fn the_rotation_matches_the_decomp_over_a_velocity_grid() {
+        let mut raw_differs = 0;
+        for x in -200..=200 {
+            for y in -60..=60 {
+                let v = Vec3::new(x as f32 * 0.8, y as f32 * 0.5, (y % 3) as f32);
+                let r = reflector_rotate(v);
+                assert_eq!(r.map(f32::to_bits), decomp(v).map(f32::to_bits), "{v:?}");
+                if v.z == 0.0 && r[0].to_bits() != raw_pitch(v).to_bits() {
+                    raw_differs += 1;
+                }
+            }
+        }
+        assert!(raw_differs > 1000);
+        // Master Hand's bullets (`vel = { 160 * lr, -25 }`): the same either
+        // way.
+        for lr in [-1.0, 1.0] {
+            let v = Vec3::new(
+                crate::boss::BULLET_VEL_X * lr,
+                crate::boss::BULLET_VEL_Y,
+                0.0,
+            );
+            assert_eq!(reflector_rotate(v)[0].to_bits(), raw_pitch(v).to_bits());
+        }
     }
 }

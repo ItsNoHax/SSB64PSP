@@ -976,7 +976,7 @@ fn a_struck_wall_bounces_a_tumble_into_wall_damage() {
         Vec3::new(10.0, 0.0, 0.0),
     );
     f.physics.vel_knockback = Vec3::new(90.0, -20.0, 0.0);
-    crate::reaction::set_wall_damage(&mut f, Vec2::new(-1.0, 0.0));
+    crate::reaction::set_wall_damage(&mut f, Vec2::new(-1.0, 0.0), Vec3::ZERO);
     assert_eq!(f.status.status, AnyStatus::Common(Status::WallDamage));
     // `lbCommonReflect2D` of (100, -20) off (-1, 0), scaled by 0.8.
     assert_eq!(f.physics.vel_knockback, Vec3::new(-80.0, -16.0, 0.0));
@@ -1251,4 +1251,112 @@ fn map_queries_compute_nothing_on_unwritten_stack() {
     assert!(off.0.floor.is_none() && walk.0.floor.is_some() && edge.1.floor_edge);
     assert!(rise.contacts.ceiling.is_some() && past.contacts.right_wall.is_some());
     assert!(land.moved.floor.is_some() && shot.is_some());
+}
+
+/// The fighter's queued surface-strike effects (RE-503).
+fn impacts(f: &Fighter) -> std::vec::Vec<crate::fteffect::FighterEffect> {
+    use crate::fteffect::FighterEffect as E;
+    f.effects
+        .iter()
+        .copied()
+        .filter(|e| matches!(e, E::ImpactWave { .. } | E::Quake(_)))
+        .collect()
+}
+
+fn wave(pos: Vec3, normal: Vec2) -> crate::fteffect::FighterEffect {
+    crate::fteffect::FighterEffect::ImpactWave {
+        pos,
+        rotate: ssb_engine::math::sy_arc_tan2(-normal.x, normal.y),
+    }
+}
+
+/// `ftCommonWallDamageCheckGoto`: the wave on the struck side of the
+/// diamond at TopN's `x, y` (z 0), then a magnitude-2 quake.
+#[test]
+fn wall_damage_makes_an_impact_wave_then_a_quake() {
+    use crate::fteffect::FighterEffect as E;
+    for (mask, offset) in [
+        (MASK_LWALL, Vec2::new(10.0, 10.0)),
+        (MASK_RWALL, Vec2::new(-10.0, 10.0)),
+        (MASK_CEIL, Vec2::new(0.0, 20.0)),
+    ] {
+        let mut f = fighter(
+            FighterKind::Mario,
+            AnyStatus::Common(Status::DamageFlyN),
+            Vec3::new(10.0, 0.0, 0.0),
+        );
+        f.pos = Vec3::new(100.0, 50.0, 7.0);
+        f.physics.vel_knockback = Vec3::new(90.0, 40.0, 0.0);
+        let normal = Vec2::new(-0.6, 0.8);
+        let sweep = DamageMoved {
+            moved: Moved {
+                pos: f.pos,
+                floor: None,
+            },
+            contacts: Contacts::default(),
+            mask_curr: mask,
+            collide: true,
+            lwall_normal: normal,
+            rwall_normal: normal,
+            ceil_normal: normal,
+        };
+        crate::reaction::damage_air_proc_map(&mut f, &sweep);
+        assert_eq!(f.status.status, AnyStatus::Common(Status::WallDamage));
+        let pos = Vec3::new(100.0 + offset.x, 50.0 + offset.y, 0.0);
+        assert_eq!(impacts(&f), [wave(pos, normal), E::Quake(2)], "{mask:#x}");
+    }
+}
+
+/// `ftNessSpecialAirHiJibakuBoundSetStatus`: a bound off the ceiling makes
+/// the wave at the diamond's top, then the quake.
+#[test]
+fn pk_thunder_bound_makes_an_impact_wave_then_a_quake() {
+    use crate::fteffect::FighterEffect as E;
+    let mut f = fighter(
+        FighterKind::Ness,
+        AnyStatus::Ness(NessStatus::SpecialAirHiJibaku),
+        Vec3::new(0.0, 80.0, 0.0),
+    );
+    f.pos = Vec3::new(-30.0, 200.0, 0.0);
+    let normal = Vec2::new(0.0, -1.0);
+    f.map_contacts.ceiling = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal,
+    });
+    air_callback(&mut f);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Ness(NessStatus::SpecialAirHiBound)
+    );
+    assert_eq!(
+        impacts(&f),
+        [wave(Vec3::new(-30.0, 220.0, 0.0), normal), E::Quake(2)]
+    );
+}
+
+/// `ftCommonThrownCommonStarProcMap`: the star's quake comes first, then
+/// the wave at TopN's translation from before the collision moved it, on
+/// the struck side of the diamond.
+#[test]
+fn a_kirby_star_bounce_makes_a_quake_then_an_impact_wave() {
+    use crate::fteffect::FighterEffect as E;
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::ThrownKirbyStar),
+        Vec3::new(-50.0, 0.0, 0.0),
+    );
+    f.pos = Vec3::new(40.0, 60.0, 0.0);
+    let normal = Vec2::new(1.0, 0.0);
+    f.map_contacts.right_wall = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal,
+    });
+    let before = Vec3::new(35.0, 60.0, 0.0);
+    air_callback_at(&mut f, before);
+    assert_eq!(
+        impacts(&f),
+        [E::Quake(2), wave(Vec3::new(25.0, 70.0, 0.0), normal)]
+    );
 }

@@ -556,3 +556,115 @@ fn display_effects_draw_in_make_order_not_pool_order() {
     assert_eq!(xs(&mut rt.effects.displays()), [3.0, 2.0], "pool order");
     assert_eq!(xs(&mut rt.effects.displays_in_make_order()), [2.0, 3.0]);
 }
+
+/// Link 15's live items in draw order, as the renderer collects them.
+fn link15(e: &Effects) -> std::vec::Vec<crate::effect_order::Item> {
+    use crate::effect_order::{collect, Entry, MAX_ENTRIES};
+    let mut out = [Entry::EMPTY; MAX_ENTRIES];
+    let n = collect(e.fighter_stamp_rows(), e.display_seqs(), &mut out);
+    out[..n].iter().map(|e| e.item).collect()
+}
+
+fn shield(port: u8, kind: crate::fighter::FighterKind) -> crate::fighter::Fighter {
+    crate::fighter::Fighter::new(kind, port, 3)
+}
+
+/// RE-542: each fighter process's flush stamps its fighter's link-15
+/// effects, so a shield port 1 raised in the interrupt pass (priority 5)
+/// draws under one port 0 raised in the physics pass (4), though port 0
+/// comes first in each pass.
+#[test]
+fn fighter_effects_are_stamped_in_process_order() {
+    use crate::effect_order::{Item, Kind};
+    use crate::fighter::FighterKind;
+    let bank = bank(20);
+    let (mut p, mut e) = runtime();
+    let mut f0 = shield(0, FighterKind::Mario);
+    let mut f1 = shield(1, FighterKind::Fox);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    // Interrupt pass: port 1 raises its shield.
+    f1.guard.is_shield = true;
+    rt.fighter(&mut f0);
+    rt.fighter(&mut f1);
+    // Physics pass: port 0 raises its.
+    f0.guard.is_shield = true;
+    rt.fighter(&mut f0);
+    rt.fighter(&mut f1);
+    let shield = |port| Item::Fighter {
+        port,
+        kind: Kind::Shield,
+    };
+    assert_eq!(link15(&e), [shield(1), shield(0)]);
+}
+
+/// A display effect made between two fighters' flushes draws between their
+/// link-15 effects: the stamp takes the counter as it stands.
+#[test]
+fn a_display_made_between_two_flushes_draws_between_their_effects() {
+    use crate::effect_order::{Item, Kind};
+    use crate::fighter::FighterKind;
+    let bank = bank(20);
+    let (mut p, mut e) = runtime();
+    let mut f0 = shield(0, FighterKind::Mario);
+    let mut f1 = shield(1, FighterKind::Fox);
+    f0.guard.is_shield = true;
+    f1.guard.is_shield = true;
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    rt.fighter(&mut f0);
+    let seq = rt.effects.mball_rays(Vec3::ZERO).unwrap();
+    rt.fighter(&mut f1);
+    let slot = e.display_seqs().find(|&(s, _)| s == seq).unwrap().1;
+    let shield = |port| Item::Fighter {
+        port,
+        kind: Kind::Shield,
+    };
+    assert_eq!(link15(&e), [shield(0), Item::Display(slot), shield(1)]);
+}
+
+/// Sing's notes ejected and made again between two flushes (the play
+/// count went back) take a new key; playing on keeps it.
+#[test]
+fn a_remade_fighter_effect_takes_a_new_key() {
+    use crate::effect_order::Kind;
+    use crate::fighter::FighterKind;
+    use crate::status::{AnyStatus, PurinStatus};
+    let bank = bank(20);
+    let (mut p, mut e) = runtime();
+    let mut f = shield(0, FighterKind::Purin);
+    f.status.status = AnyStatus::Purin(PurinStatus::SpecialHi);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    let key =
+        |rt: &EffectRuntime<'_>| rt.effects.fighter_stamp_rows()[0][Kind::Sing as usize].key();
+    f.purin.sing_effect = Some(5);
+    rt.fighter(&mut f);
+    let first = key(&rt);
+    assert!(first.is_some());
+    f.purin.sing_effect = Some(6);
+    rt.fighter(&mut f);
+    assert_eq!(key(&rt), first);
+    f.purin.sing_effect = Some(1);
+    rt.fighter(&mut f);
+    let remade = key(&rt);
+    assert!(remade > first);
+    f.purin.sing_effect = Some(1);
+    rt.fighter(&mut f);
+    assert_eq!(key(&rt), remade);
+    f.purin.sing_effect = None;
+    rt.fighter(&mut f);
+    assert_eq!(key(&rt), None);
+    f.purin.sing_effect = Some(3);
+    rt.fighter(&mut f);
+    assert!(key(&rt) > remade);
+}

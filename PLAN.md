@@ -105,8 +105,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Slope contour | Kirby Eat/CatchEat: slope step right before PlayAnimEventsAll (0x80163018, 0x801630A0); `explain_movement` parity; golden for motion_id -2 hold (Guard or Down-wait on slope) | RE-510 |
 | Thunder Shock spark | Ejection on status change unobserved on N64 → longer Pikachu trace | RE-512 |
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
-| Dropped ArcTan2 | Impact waves and quake: wall-damage (reaction.rs), capture-Kirby star (capture_kirby.rs), Ness bound (ness.rs); needs an fteffect request with world pos and rotate | RE-503 |
-| Trig misc | Reflector rotate normalisation (wpmain.c:170); `topn_rotate_z` for Kirby Stone and Captain Dive; `UpdateModelPitch` joint-4 pitch (FlyRoll, Fox, Pikachu, Ness); `boss.rs:904` CST vs CLC; `is_have_attacks3/hi3/lw3` gates | RE-503 |
+| Dropped ArcTan2 | Chunk 6 (`scene.rs`); `boss.rs:904` CST vs CLC; `is_have_attacks3/hi3/lw3` gates | RE-503 |
 | Trig goldens | PK Thunder steering, hazard spin, ArcSin sites | RE-503 |
 | `tan` | Still differs | RE-503–RE-505 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
@@ -127,7 +126,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Thunder trail, PK Wave | Needs N64 capture. Trail: `efManagerPKThunderTrailMakeEffect`, 335 + 0x9050, link 15; reflected trail link 18. PK Wave: 335 + 0x9A10, joint 5; made at `ftNessSpecialHiHold` start (ftnessspecialhi.c:318), drawn nowhere | RE-413, RE-415, RE-416, RE-427 |
 | Samus fire spark | Up smash, forward air; 84 + 0x2040. Needs matrix kind 0x49 billboard along joint 16, Samus capture | RE-427 |
 | Demo fighter effects | Results and select demo fighters; effects on joints ≠ 0 need RE-528 | RE-528 |
-| Same-frame makes | Fighter link-15 stamps: port order, not process order (all priority-5 before priority-4); stamps move out of `EffectVisuals::sync` into the interrupt/physics/capture passes. Needs warp ROM with distinct per-port inputs (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
+| Same-frame makes | Process order modelled; N64 two-fighter confirmation needs a cpufx `mkrom.py` per-port input patch (cpufx ROMs mirror controller 0) | RE-538, RE-540, RE-542 |
+| Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | cpufx tick map | cpufx-n/u: 399+el; clean trace: 398+el; cpufx-d: 399 | RE-540 |
 | Paused particles | Attached particle effects ignore pause (`ftParamPauseEffect` reaches displays only) | RE-540 |
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |

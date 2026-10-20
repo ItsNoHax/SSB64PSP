@@ -2332,7 +2332,7 @@ impl Fighter {
                 self.floor = None;
                 return;
             }
-            crate::map::air_callback(self);
+            crate::map::air_callback_at(self, want);
         }
 
         match moved.floor {
@@ -2382,7 +2382,7 @@ impl Fighter {
                 {
                     return;
                 }
-                if crate::capture_kirby::on_landing(self, moved.pos.y, f.normal) {
+                if crate::capture_kirby::on_landing(self, moved.pos.y, f.normal, want) {
                     self.floor = None;
                     return;
                 }

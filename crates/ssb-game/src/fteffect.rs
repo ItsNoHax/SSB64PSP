@@ -138,6 +138,12 @@ pub enum FighterEffect {
     StopAttached,
     /// `ftParamProcPauseEffect` (`true`) or `ftParamProcResumeEffect`.
     Pause(bool),
+    /// `efManagerImpactWaveMakeEffect(pos, SYVECTOR_AXIS_Z, rotate)` at a
+    /// struck surface ([`surface_impact`]).
+    ImpactWave { pos: Vec3, rotate: f32 },
+    /// `efManagerQuakeMakeEffect(magnitude)`, called directly (no
+    /// `ftParamMakeEffect` demo check).
+    Quake(u8),
 }
 
 /// Requests a fighter can queue between two flushes. A frame's worst case
@@ -316,9 +322,45 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
                     rt.effects.pause_attached(f.port, paused);
                 }
             }
+            FighterEffect::ImpactWave { pos, rotate } => {
+                rt.effects.impact_wave(pos, IMPACT_WAVE_AXIS_Z, rotate);
+            }
+            FighterEffect::Quake(magnitude) => {
+                rt.effects.quake(magnitude);
+            }
         }
     }
     f.effects.dropped = queue.dropped;
+}
+
+/// `SYVECTOR_AXIS_Z` (`1 << nSYVectorAxisZ`): the impact wave's `index`.
+const IMPACT_WAVE_AXIS_Z: u8 = 4;
+
+/// A surface strike's impact wave and magnitude-2 quake, queued in the
+/// order the source makes them (`quake_first`: the Kirby stars'
+/// `ftCommonThrownCommonStarProcMap`; wave first: wall damage,
+/// `ftCommonWallDamageSetStatus`, and Ness's PK Thunder bound,
+/// `ftNessSpecialAirHiJibakuBoundSetStatus`). The wave stands at `pos`,
+/// turned by `syUtilsArcTan2(-angle->x, angle->y)` of the surface's
+/// `normal` (RE-503).
+pub fn surface_impact(
+    f: &mut Fighter,
+    pos: Vec3,
+    normal: ssb_engine::math::Vec2,
+    quake_first: bool,
+) {
+    let wave = FighterEffect::ImpactWave {
+        pos,
+        rotate: ssb_engine::math::sy_arc_tan2(-normal.x, normal.y),
+    };
+    let quake = FighterEffect::Quake(2);
+    let (a, b) = if quake_first {
+        (quake, wave)
+    } else {
+        (wave, quake)
+    };
+    f.effects.push(a);
+    f.effects.push(b);
 }
 
 /// `ftParamGetEffectJointPosition`: the next of the five

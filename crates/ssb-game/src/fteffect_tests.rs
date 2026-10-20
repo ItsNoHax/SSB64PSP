@@ -1020,3 +1020,50 @@ fn donkey_kongs_box_smash_makes_the_crate_staves() {
     assert_eq!(piece, crate::effect::SmashPiece::Box);
     assert!(pieces.iter().all(|s| s.pos == pieces[0].pos));
 }
+
+/// A surface strike's queue makes, in its order, the impact wave (axis Z,
+/// turned by the surface) and a magnitude-2 quake, whose camera write
+/// lands after the camera's process (RE-503).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_surface_impact_flushes_a_wave_and_a_late_quake_in_queue_order() {
+    use crate::effect::QuakeSlot;
+    let bank = bank(20);
+    for quake_first in [false, true] {
+        let mut p = Box::new(Particles::new());
+        let mut e = Effects::new(0);
+        let mut f = mario();
+        let normal = ssb_engine::math::Vec2::new(-0.6, 0.8);
+        let pos = Vec3::new(12.0, 34.0, 0.0);
+        surface_impact(&mut f, pos, normal, quake_first);
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        };
+        flush(&mut f, &mut rt);
+        let kinds: std::vec::Vec<DisplayKind> = e.displays().map(|d| d.kind).collect();
+        let (wave, quake) = (DisplayKind::ImpactWave, DisplayKind::Quake { magnitude: 2 });
+        let want = if quake_first {
+            [quake, wave]
+        } else {
+            [wave, quake]
+        };
+        assert_eq!(kinds, want);
+        let d = e.displays().find(|d| d.kind == wave).unwrap();
+        assert_eq!(d.translate, pos);
+        assert_eq!(d.rotate.z, ssb_engine::math::sy_arc_tan2(0.6, 0.8));
+        assert_eq!(d.index, 4);
+        let mut rt = EffectRuntime {
+            particles: &mut p,
+            effects: &mut e,
+            banks: &bank,
+        };
+        rt.frame();
+        assert_eq!(rt.effects.take_quake(QuakeSlot::BeforeCamera), None);
+        assert!(rt
+            .effects
+            .take_quake(QuakeSlot::AfterCamera)
+            .is_some_and(|(m, _)| m == 2));
+    }
+}

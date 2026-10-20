@@ -234,11 +234,15 @@ pub(crate) fn map_end_blast(f: &mut Fighter) {
 
 pub(crate) fn map_blast_contacts(f: &mut Fighter) {
     let contacts = f.map_contacts;
-    for (hit, wall) in [
-        (contacts.ceiling, false),
-        (contacts.left_wall, true),
-        (contacts.right_wall, true),
+    // The bound's impact wave: TopN's `x, y` (z 0), moved to each struck
+    // side of the collision diamond in turn, as the source moves one `pos`.
+    let mut pos = Vec3::new(f.pos.x, f.pos.y, 0.0);
+    for (hit, side) in [
+        (contacts.ceiling, 0.0),
+        (contacts.left_wall, 1.0),
+        (contacts.right_wall, -1.0),
     ] {
+        let wall = side != 0.0;
         // A flag and a defined contact: the hardware trapped on this loop
         // speculating the normal's compare onto a `None` (RE-531).
         let (found, hit) = crate::map::contact_or_none(hit);
@@ -257,6 +261,13 @@ pub(crate) fn map_blast_contacts(f: &mut Fighter) {
                 Facing::Left
             };
             set(f, N::SpecialAirHiBound);
+            if wall {
+                pos.x += side * f.coll.width;
+                pos.y += f.coll.center;
+            } else {
+                pos.y += f.coll.top;
+            }
+            crate::fteffect::surface_impact(f, pos, hit.normal, false);
         } else if wall {
             // `ftNessSpecialHiCollideWallPhysics` (active US source).
             let lr = f.facing.sign();
