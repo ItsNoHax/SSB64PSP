@@ -463,7 +463,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (85 + 0x2AC0) with the fighters' head-0 depth state, as the Arwing and
 // the car: N64 RDRAM walks find their lists under `G_RM_AA_ZB_OPA_SURF`
 // with `G_ZBUFFER` (RE-567). No layout change.
-pub const VERSION: u32 = 128;
+// 129 seeds the boss comets' tree (114 + 0x8960) with
+// `SC1PGameBossWallpaper0ProcDisplay`'s PRIM and ENV, so its
+// `(PRIM - ENV) * TEXEL0 + ENV` lists convert as texture blend, and binds
+// the boss wallpaper effects' `o_matanim_joint` scripts (file 114) to their
+// `MObj`s (RE-457). No layout change.
+pub const VERSION: u32 = 129;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

@@ -7,15 +7,17 @@
 //! their alpha, root transform and how many plays each has had; this module
 //! keeps each effect's joint clocks in step with those plays and draws its
 //! packed graph. The scripts are file 114's own bytes, which the pack
-//! already carries for the stage's layer animations. The effects'
-//! material animations are not played: their primitives draw their rest
-//! materials at the controller's alpha (RE-457).
+//! already carries for the stage's layer animations. An effect with
+//! materials also plays its `o_matanim_joint` scripts (texture, palette and
+//! UV tracks) on its `MObj`s, at the same speed; the colours stay the
+//! display callback's PRIM and ENV (RE-457).
 
 use ssb_game::spgame::boss::{BossWallpaper, Display, Effect, EFFECT_ASSETS, EFFECT_FILE, MAX_EFFECTS};
 use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::StageJoint;
-use ssb_rom::pack::{ObjectDesc, Pack, MODEL_SCALE};
+use ssb_rom::pack::{ObjectDesc, Pack, TextureDesc, MODEL_SCALE};
 use ssb_rom::scene::Mat4;
+use ssb_rom::skeleton::EffectMaterialAnimator;
 
 /// The most nodes an effect graph has (`llGRLastMapEffects1DObjDesc`: 9).
 const MAX_NODES: usize = 12;
@@ -28,6 +30,8 @@ struct Visual {
     joints: [StageJoint; MAX_NODES],
     live: [bool; MAX_NODES],
     poses: [JointPose; MAX_NODES],
+    /// The `MObj`s' material scripts, for an effect with materials.
+    mats: Option<alloc::boxed::Box<EffectMaterialAnimator>>,
     plays: u32,
 }
 
@@ -92,6 +96,9 @@ impl BossEffects {
                         v.live[i] = false;
                     }
                 }
+                if let Some(m) = v.mats.as_mut() {
+                    m.tick_speed(pack, e.anim_speed);
+                }
             }
         }
     }
@@ -153,7 +160,17 @@ impl BossEffects {
                 light1: None,
                 light2: None,
             });
-            crate::meshdraw::draw_object_posed(pack, &v.object, &base, &posed[..n], None, st, None, None, 0);
+            crate::meshdraw::draw_object_posed(
+                pack,
+                &v.object,
+                &base,
+                &posed[..n],
+                None,
+                st,
+                None,
+                v.mats.as_deref(),
+                0,
+            );
             st.color_override = None;
         }
     }
@@ -192,6 +209,10 @@ fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Opt
             }
         }
     }
+    let mats = asset
+        .matanim_joint
+        .zip(asset.mobjsub)
+        .and_then(|(table, subs)| start_materials(pack, &object, count, table, subs));
     Some(Visual {
         serial: e.serial,
         object,
@@ -199,9 +220,50 @@ fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Opt
         joints,
         live,
         poses: rest,
+        mats,
         // The make's `gcPlayAnimAll` is the first of `Effect::plays`.
         plays: 0,
     })
+}
+
+/// `lbCommonAddTreeDObjsAnimAll`'s materials: every `MObj` of node `n`
+/// plays `o_matanim_joint[n][m]` from frame 0, `m` its place in
+/// `o_mobjsub[n]`. The pack binds one script per `MObj`; a tree two
+/// effects share (`llGRLastMapEffects2_1`) restarts it on this effect's.
+fn start_materials(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    count: usize,
+    table: u32,
+    subs: u32,
+) -> Option<alloc::boxed::Box<EffectMaterialAnimator>> {
+    let mut mats = alloc::boxed::Box::new(EffectMaterialAnimator::new());
+    for n in 0..count {
+        let Some(mesh) = pack
+            .node(object.first_node + n as u32)
+            .and_then(|node| pack.mesh(node.mesh))
+        else {
+            continue;
+        };
+        for j in 0..mesh.prim_count {
+            let Some(prim) = pack.prim(mesh.first_prim + j) else {
+                continue;
+            };
+            if prim.mat_anim == TextureDesc::NO_ANIM {
+                continue;
+            }
+            let Some(desc) = pack.mat_anim(prim.mat_anim) else {
+                continue;
+            };
+            let script = pack
+                .mat_anim_file(&desc)
+                .and_then(|file| ssb_rom::matanim::mobj_script(file, table, subs, n, desc.source_offset));
+            if let Some(script) = script {
+                mats.restart(prim.mat_anim, script);
+            }
+        }
+    }
+    (!mats.is_empty()).then_some(mats)
 }
 
 /// Every node's matrix: the root from the controller's transform, the

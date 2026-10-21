@@ -258,7 +258,9 @@ pub fn on_set_status(f: &mut Fighter, preserve_hitstatus: bool) {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HurtHit {
     /// The `placement` column.
-    pub placement: usize,
+    pub placement: u8,
+    /// The `joint_id` column (`FTDamageCollDesc::joint_id`).
+    pub joint: u8,
     pub hitstatus: HitStatus,
     /// The box's centre in the world (`gmCollisionGetWorldPosition` of its
     /// offset), which the hit effects' impact point takes.
@@ -314,7 +316,8 @@ pub fn search_attack(
             .unwrap_or((desc.offset, desc.size));
         if test_rectangle(&t, pos_curr, pos_prev, radius, state, offset, size) {
             return Some(HurtHit {
-                placement: usize::from(desc.placement),
+                placement: desc.placement,
+                joint: desc.joint,
                 hitstatus,
                 center: t.point(offset),
             });
@@ -328,7 +331,8 @@ pub fn search_attack(
         || (state == AttackState::Interpolate
             && crate::attack::spheres_overlap(pos_prev, radius, f.pos, MARIO_HURTBOX_RADIUS));
     touches.then_some(HurtHit {
-        placement: DAMAGE_INDEX_N,
+        placement: DAMAGE_INDEX_N as u8,
+        joint: 0,
         hitstatus: f.damage_colls.hitstatus[0],
         center: f.pos,
     })

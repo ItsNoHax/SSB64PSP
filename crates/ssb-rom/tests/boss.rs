@@ -244,3 +244,109 @@ fn the_pack_carries_master_hands_motions_and_cameras() {
         .filter_map(|i| pack.object(i))
         .any(|o| o.source_file == 344 && o.source_offset == 0x2CB8));
 }
+
+/// The boss wallpaper effects' materials (RE-457): the comets' lists take
+/// `SC1PGameBossWallpaper0ProcDisplay`'s PRIM and ENV as a texture blend,
+/// and every effect with materials binds each `MObj` to its own
+/// `o_matanim_joint` script, which then plays through the packed sprites
+/// and palettes exactly as file 114's script replays.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_pack_binds_the_boss_wallpaper_materials() {
+    use ssb_rom::matanim::{MaterialJoint, TRACK_PALETTE_ID, TRACK_TEXTURE_ID_CURRENT};
+    use ssb_rom::pack::{flags, TextureDesc};
+    let (Some(bytes), Some(rom)) = (pack_bytes(), rom_bytes()) else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let f = last_file(&rom);
+    let mut palettes_seen = Vec::new();
+    for (w, row) in ssb_game::spgame::boss::EFFECT_ASSETS.iter().enumerate() {
+        for (e, asset) in row.iter().enumerate() {
+            let Some(asset) = asset else { continue };
+            let object = (0..pack.object_count())
+                .filter_map(|i| pack.object(i))
+                .find(|o| o.source_file == 114 && o.source_offset == asset.graph)
+                .unwrap_or_else(|| panic!("w{w} e{e}: graph {:#x} not packed", asset.graph));
+            let prims: Vec<(usize, ssb_rom::pack::PrimDesc)> = (0..object.node_count)
+                .filter_map(|n| {
+                    Some((
+                        n as usize,
+                        pack.mesh(pack.node(object.first_node + n)?.mesh)?,
+                    ))
+                })
+                .flat_map(|(n, m)| (0..m.prim_count).map(move |j| (n, m.first_prim + j)))
+                .filter_map(|(n, i)| Some((n, pack.prim(i)?)))
+                .collect();
+            assert!(!prims.is_empty(), "w{w} e{e}");
+            if (w, e) == (0, 0) {
+                assert!(prims
+                    .iter()
+                    .all(|(_, p)| p.flags & flags::TEXTURE_BLEND != 0));
+            }
+            let animated: Vec<_> = prims
+                .iter()
+                .filter(|(_, p)| p.mat_anim != TextureDesc::NO_ANIM)
+                .collect();
+            let (Some(table), Some(subs)) = (asset.matanim_joint, asset.mobjsub) else {
+                assert!(animated.is_empty(), "w{w} e{e}");
+                continue;
+            };
+            assert!(!animated.is_empty(), "w{w} e{e}: no material bound");
+            // An independent reading: every boss effect node chains one `MObj`.
+            let table_scripts =
+                ssb_rom::matanim::resolve_scripts(&f, table, object.node_count as usize, |_| 1);
+            let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::new();
+            let mut joints: Vec<(u32, MaterialJoint)> = Vec::new();
+            for &&(n, p) in &animated {
+                let desc = pack.mat_anim(p.mat_anim).unwrap();
+                let file = pack.mat_anim_file(&desc).unwrap();
+                assert_eq!(file, &f.data[..]);
+                let script =
+                    ssb_rom::matanim::mobj_script(file, table, subs, n, desc.source_offset)
+                        .unwrap_or_else(|| panic!("w{w} e{e} n{n}: no script"));
+                assert_eq!(table_scripts[n][0], Some(script), "w{w} e{e} n{n}");
+                mats.restart(p.mat_anim, script);
+                if !joints.iter().any(|(i, _)| *i == p.mat_anim) {
+                    joints.push((p.mat_anim, MaterialJoint::start(script, 0.0)));
+                }
+            }
+            for _ in 0..200 {
+                mats.tick(&pack);
+                for (i, j) in &mut joints {
+                    j.tick(&f.data, 1.0).unwrap();
+                    let desc = pack.mat_anim(*i).unwrap();
+                    if let Some(v) = j.track_value(TRACK_PALETTE_ID) {
+                        let v = v as u32;
+                        assert!(
+                            v < desc.palette_count,
+                            "w{w} e{e}: palette {v} of {}",
+                            desc.palette_count
+                        );
+                        assert_eq!(
+                            mats.resolved_palette(&pack, *i),
+                            Some(desc.first_palette + v)
+                        );
+                        palettes_seen.push((w, v));
+                    }
+                    if let Some(v) = j.track_value(TRACK_TEXTURE_ID_CURRENT) {
+                        let v = v as u32;
+                        assert!(
+                            v < desc.texture_count,
+                            "w{w} e{e}: sprite {v} of {}",
+                            desc.texture_count
+                        );
+                        assert_eq!(
+                            mats.resolved_texture(&pack, *i),
+                            Some(desc.textures[v as usize])
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // Wallpaper 2's loop starts at palette 0, wallpaper 3's run ends on 17:
+    // the shared tree's entry carries both.
+    assert!(palettes_seen.contains(&(2, 0)));
+    assert!(palettes_seen.contains(&(3, 17)));
+}

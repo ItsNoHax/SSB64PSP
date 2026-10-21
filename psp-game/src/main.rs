@@ -2630,11 +2630,33 @@ unsafe fn training_frame(
                     );
                 }
             }
+            // `sc1PGameBossDefeatInterfaceProcUpdate`, before this tick's
+            // `gcRunAll`: `sc1PGameBossAddBossInterface` snaps Master
+            // Hand's stock icon (`ifCommonPlayerStockMakeStockSnap`).
+            if let (Some(boss), Some(b), Some(bk)) = (boss.as_deref(), battle.as_ref(), banks.as_ref()) {
+                if let Some(own) = damage_hud.damage.get(usize::from(boss.port)).filter(|_| b.boss_update) {
+                    let (x, y) = ssb_game::hud::stock_snap_position_at(own.pos_x, own.pos_y);
+                    damage_hud.effects.stock_snap(&mut damage_hud.particles, bk, x, y);
+                }
+            }
             // `ifCommonBattleInterfaceProcUpdate`: at the battle's end the
-            // particles run on, lists 2 and 3 only.
-            if matches!(status, GameStatus::End | GameStatus::BossDefeat | GameStatus::Set) {
+            // particles run on, lists 2 and 3 only. Master Hand's defeat
+            // (`sc1PGameBossDefeatInterfaceProcUpdate`) resumes neither
+            // particle object: they stay paused, the snap's first frame on
+            // screen, until `sc1PGameBossDefeatInterfaceProcSet` resumes
+            // every object and the slow motion's `gcRunAll` ticks run them
+            // (whole world, [`Frame::Run`]); its Set ticks run them all.
+            let boss_defeat = battle.as_ref().is_some_and(|b| b.boss_defeat.is_some());
+            let run_particles = if boss_defeat {
+                status == GameStatus::Set
+            } else {
+                matches!(status, GameStatus::End | GameStatus::BossDefeat | GameStatus::Set)
+            };
+            if run_particles {
                 if let Some(b) = banks.as_ref() {
-                    damage_hud.particles.skip = !((1 << 2) | (1 << 3));
+                    if !boss_defeat {
+                        damage_hud.particles.skip = !((1 << 2) | (1 << 3));
+                    }
                     ssb_game::particle::run(&mut damage_hud.particles, b, &mut damage_hud.effects);
                 }
             }
@@ -9101,6 +9123,10 @@ unsafe fn draw_fighter_model(
     // `ftDisplayMainCalcFogColor` with no shade: `G_RM_FOG_PRIM_A` blends
     // the fighter towards `color1` by its alpha.
     let fog = f.fighter.colanim.color();
+    // `ENV` (`ftDisplayMainDrawAll`): `colanim.color2` first, else Master
+    // Hand's `fog_color` while `is_use_fogcolor` is set, else the white
+    // light colour (RE-457).
+    draw_state.fog_env = f.fighter.boss.fog.filter(|_| !f.fighter.colanim.is_use_color2);
     if let Some(rgba) = fog {
         let (eye, at) = (camera.eye, camera.at);
         let view = (at - eye).normalized();
@@ -9127,6 +9153,7 @@ unsafe fn draw_fighter_model(
     if fog.is_some() {
         gpu.clear_fog();
     }
+    draw_state.fog_env = None;
     draw_state.finish_fighter_light();
 }
 

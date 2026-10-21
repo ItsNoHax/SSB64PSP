@@ -438,3 +438,61 @@ fn walk_in_hitlag_keeps_its_masks() {
     assert!(f.map_contacts.floor);
     assert_eq!(f.map_contacts_prev, prev);
 }
+
+/// `ftMainProcessHitCollisionStatsMain` records the struck box's joint
+/// (ftmain.c:2869/2906/2941; 0 for the stage, :2982) and
+/// `sc1PGameBossSetCameraZoom` centres the defeat zoom on it.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_struck_joint_sets_the_defeat_zoom() {
+    use crate::combat::{HitSource, WeaponAttack, WeaponContact};
+    use crate::fighter::JointTransform;
+    let origin = |joint: u8| Vec3::new(f32::from(joint) * 2000.0, 0.0, 0.0);
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    let descs = crate::hurtbox::damage_colls(FighterKind::Boss).unwrap();
+    for d in descs {
+        f.joint_transforms[usize::from(d.joint)] = Some(JointTransform {
+            axes: [Vec3::X, Vec3::Y, Vec3::Z],
+            origin: origin(d.joint),
+        });
+    }
+    let last = *descs.last().unwrap();
+    assert_ne!(last.joint, 0);
+    assert_ne!(last.joint, descs[0].joint);
+    let at = origin(last.joint) + last.offset;
+    // Inside the weapon search's `hit_detect_range` of the fighter.
+    f.pos = at;
+    let attack = WeaponAttack {
+        stat: crate::spgame::live::AttackStat::default(),
+        object: crate::spgame::bonus::DamageObject::Other,
+        hitbox: crate::attack::mario_jab1_hitbox(),
+        pos_curr: at,
+        pos_prev: at,
+        source: HitSource::Weapon { vel_x: 0.0 },
+        handicap: 9,
+        can_shield: false,
+        owner: Some(0),
+        is_hitlag_victim: None,
+        fgm_id: None,
+    };
+    assert_eq!(
+        crate::combat::weapon_hit(&mut f, attack),
+        WeaponContact::Hurt(true)
+    );
+    crate::combat::resolve(&mut f);
+    assert_eq!(f.damage_joint_id, last.joint);
+    assert_eq!(defeat_zoom_at(&f), origin(last.joint));
+    // A hit with no damage box (the stage's, a direct hit) writes 0.
+    let pos = f.pos;
+    assert!(crate::combat::direct_hit(
+        &mut f,
+        crate::attack::mario_jab1_hitbox(),
+        pos,
+        1.0,
+        9,
+        crate::combat::DamageBy::World,
+    ));
+    crate::combat::resolve(&mut f);
+    assert_eq!(f.damage_joint_id, 0);
+}

@@ -75,10 +75,16 @@ pub const PUNCH_END_FRAMES: f32 = 60.0;
 pub const SLAM_FRAMES: f32 = 130.0;
 pub const APPEAR_FRAMES: f32 = 600.0;
 
-/// The joint the host's defeat zoom centres on: the palm's, the first
-/// hurtbox's (`dBossMain_attr.damage_coll_descs[0]`), standing in for the
-/// joint last struck (`fp->damage_joint_id`, RE-457).
-pub const DEFEAT_ZOOM_JOINT: u8 = 20;
+/// `sc1PGameBossSetCameraZoom`'s target (sc1pgame.c:1913-1928): the world
+/// position of the joint last struck (`fp->joints[fp->damage_joint_id]`,
+/// `gmCollisionGetFighterPartsWorldPosition`, which queries the joint,
+/// RE-511). The eye sits 3000 in front: [`DEFEAT_ZOOM_EYE_Z`].
+pub fn defeat_zoom_at(f: &Fighter) -> Vec3 {
+    f.joint_query(f.damage_joint_id, Vec3::ZERO)
+}
+
+/// `sc1PGameBossSetCameraZoom`: `world_pos.z + 3000.0F` for the eye.
+pub const DEFEAT_ZOOM_EYE_Z: f32 = 3000.0;
 
 /// `WPYUBIBULLETVEL_X`, `..._Y`.
 pub const BULLET_VEL_X: f32 = 160.0;

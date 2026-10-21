@@ -1016,6 +1016,10 @@ struct MatAnimData {
     /// RE-424: the highest `PRIM_LOD_FRAC` byte the replay reaches, from the
     /// `SetLFrac` track or its rest value.
     max_lod_frac: u8,
+    /// Other scripts the runtime restarts this `MObj` on (the boss
+    /// wallpaper's shared tree, [`resolve_boss_mat_anims`]): their palette
+    /// states join the base script's in [`reachable_palettes`].
+    extra_scripts: Vec<u32>,
 }
 
 fn texture_cache_key(
@@ -1915,21 +1919,23 @@ fn reachable_palettes(
     } else {
         Some(key.source_file as u16)
     })?;
-    let mut joint = ssb_rom::matanim::MaterialJoint::start(key.script, 0.0);
     let mut reached = std::collections::BTreeSet::new();
-    for _ in 0..MAT_ANIM_REPLAY_FRAMES {
-        joint.tick(file, 1.0).ok()?;
-        let texture = joint
-            .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
-            .map(|v| (v.max(0.0) as usize).min(data.sprites.len().saturating_sub(1)));
-        // `palettes[(s32)palette_id]` for any live kind (RE-325/RE-326).
-        if texture == sprite_slot {
-            if let Some(value) = joint.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
-                reached.insert((value.max(0.0) as usize).min(data.palettes.len() - 1));
+    for &script in core::iter::once(&key.script).chain(&data.extra_scripts) {
+        let mut joint = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
+        for _ in 0..MAT_ANIM_REPLAY_FRAMES {
+            joint.tick(file, 1.0).ok()?;
+            let texture = joint
+                .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
+                .map(|v| (v.max(0.0) as usize).min(data.sprites.len().saturating_sub(1)));
+            // `palettes[(s32)palette_id]` for any live kind (RE-325/RE-326).
+            if texture == sprite_slot {
+                if let Some(value) = joint.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
+                    reached.insert((value.max(0.0) as usize).min(data.palettes.len() - 1));
+                }
             }
-        }
-        if joint.ended() || joint.looped() {
-            break;
+            if joint.ended() || joint.looped() {
+                break;
+            }
         }
     }
     reached
@@ -2563,6 +2569,11 @@ const IMPACT_WAVE_GRAPH: (u32, u32) = (83, 0x7C28);
 /// `wpDisplayPKThunderProcDisplay` under PRIM and ENV by `trail_id`.
 const PK_THUNDER_TRAIL_GRAPH: (u32, u32) = (335, 0x8B40);
 
+/// Final Destination's boss comets (`llGRLastMapEffects0DObjDesc`, file
+/// 114): `ssb_game::spgame::boss::EFFECT_ASSETS[0][0]`, drawn by
+/// `SC1PGameBossWallpaper0ProcDisplay` under PRIM and ENV by `color_id`.
+const BOSS_COMET_GRAPH: (u32, u32) = (114, 0x8960);
+
 /// `efManagerMakeEffect` effects whose own display sets head 1 to
 /// `G_RM_AA_XLU_SURF` and `G_AC_NONE` before `gcDrawDObjDLLinksForGObj`
 /// (no `Z_CMP`): the list sets no render mode of its own, so it blends with
@@ -2769,6 +2780,30 @@ fn seed_player_interface_commands(key: (u32, u32), decoded: &mut [Vec<ssb_rom::d
                         m: 0,
                         l: 0,
                         rgba: [r, g, b, 0xFF],
+                    },
+                    Cmd::SetEnvColor([er, eg, eb, 0xFF]),
+                ],
+            );
+        }
+        return;
+    }
+    if key == BOSS_COMET_GRAPH {
+        // SC1PGameBossWallpaper0ProcDisplay, before the tree's lists: PRIM
+        // white at the effect's alpha and ENV the comet's colour
+        // (`dSC1PGameBossCometEnvColor*[color_id]`). The lists'
+        // `(PRIM - ENV) * TEXEL0 + ENV` reads both and sets neither, and no
+        // `MObj` sets either register. Colour 0's pair; the renderer
+        // replaces both per effect.
+        use ssb_game::spgame::boss::COMET_ENV_COLORS as ENV;
+        if let Some(cmds) = decoded.first_mut() {
+            let [er, eg, eb] = ENV[0];
+            cmds.splice(
+                0..0,
+                [
+                    Cmd::SetPrimColor {
+                        m: 0,
+                        l: 0,
+                        rgba: [0xFF; 4],
                     },
                     Cmd::SetEnvColor([er, eg, eb, 0xFF]),
                 ],
@@ -3288,6 +3323,7 @@ fn resolve_one_mat_anim(
             // `texture_id_curr` is a `u16`: the live float truncates.
             max_current: max_current.max(0.0) as usize,
             max_lod_frac,
+            extra_scripts: Vec::new(),
         },
     ))
 }
@@ -3548,6 +3584,90 @@ fn resolve_ground_mat_anims(
     refs
 }
 
+/// Final Destination's boss wallpaper effects (`sc1PGameBossMakeWallpaperEffect`):
+/// each effect with materials adds its `o_matanim_joint` table to its tree
+/// (`lbCommonAddTreeDObjsAnimAll`). `tables` are the tables of every effect
+/// drawing this graph, in `EFFECT_ASSETS` order: `llGRLastMapEffects2_1`
+/// serves two (wallpaper 2's palette loop and wallpaper 3's palette run).
+/// A primitive names one `MatAnimDesc`, so the entry keeps the first
+/// script, the widest `palettes[]`/`sprites[]` any of them reaches (each a
+/// prefix of the same `MObjSub` arrays) and the other scripts, whose
+/// palette states [`reachable_palettes`] adds; the runtime restarts the
+/// entry on its own effect's script.
+fn resolve_boss_mat_anims(
+    file: &ssb_rom::archive::File,
+    tables: &[u32],
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
+) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
+    let sub_at = |node: usize, m: usize| {
+        materials
+            .get(node)?
+            .get(m)
+            .map(|s| (s.at, s.palette_entries))
+    };
+    let scripts: Vec<Vec<Vec<Option<u32>>>> = tables
+        .iter()
+        .map(|&t| {
+            ssb_rom::matanim::resolve_scripts(file, t, materials.len(), |n| materials[n].len())
+        })
+        .collect();
+    let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
+        materials.iter().map(|c| vec![None; c.len()]).collect();
+    for (node, chain) in materials.iter().enumerate() {
+        for (m, material) in chain.iter().enumerate() {
+            let mut own: Vec<u32> = Vec::new();
+            for t in &scripts {
+                if let Some(s) = t.get(node).and_then(|c| c.get(m)).copied().flatten() {
+                    if !own.contains(&s) {
+                        own.push(s);
+                    }
+                }
+            }
+            let resolve = |script: u32| {
+                resolve_one_mat_anim(
+                    file,
+                    node,
+                    m,
+                    script,
+                    &sub_at,
+                    material.mat_anim_tracks,
+                    material.mat_anim_uv_mode,
+                    material.mat_anim_tile_params,
+                )
+            };
+            let mut base: Option<(ssb_rom::mesh::MatAnimRef, MatAnimData)> = None;
+            for &s in &own {
+                let Some((r, other)) = resolve(s) else {
+                    continue;
+                };
+                let Some((_, data)) = base.as_mut() else {
+                    base = Some((r, other));
+                    continue;
+                };
+                if other.palettes.len() > data.palettes.len() {
+                    data.palettes = other.palettes;
+                }
+                if other.sprites.len() > data.sprites.len() {
+                    data.sprites = other.sprites;
+                }
+                data.drives_lod |= other.drives_lod;
+                data.max_current = data.max_current.max(other.max_current);
+                data.max_lod_frac = data.max_lod_frac.max(other.max_lod_frac);
+                data.uv_static &= other.uv_static;
+                data.extra_scripts.push(s);
+            }
+            let Some((r, mut data)) = base else {
+                continue;
+            };
+            refs[node][m] = Some(r);
+            data.uv_half = material.mat_anim_uv_half;
+            mat_anim_data.entry(r).or_insert(data);
+        }
+    }
+    refs
+}
+
 /// For a scene graph's own material animation (a stage layer's
 /// `MPGroundDesc::p_matanim_joints`, or one of the 26 manager-effect
 /// `EFDesc::o_matanim_joint` tables with a non-NULL entry -- RE-175), resolves
@@ -3587,6 +3707,19 @@ fn resolve_layer_mat_anims(
                 },
                 mat_anim_data,
             );
+        }
+    }
+
+    if file.id == ssb_game::spgame::boss::EFFECT_FILE {
+        let tables: Vec<u32> = ssb_game::spgame::boss::EFFECT_ASSETS
+            .iter()
+            .flatten()
+            .flatten()
+            .filter(|a| a.graph == graph_offset)
+            .filter_map(|a| a.matanim_joint)
+            .collect();
+        if !tables.is_empty() {
+            return resolve_boss_mat_anims(file, &tables, materials, mat_anim_data);
         }
     }
 
@@ -4697,6 +4830,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 drives_lod: d.drives_lod,
                 max_current: d.max_current,
                 max_lod_frac: d.max_lod_frac,
+                extra_scripts: d.extra_scripts.clone(),
             });
             if let Some(data) = data {
                 mat_anim_data.insert(green, data);

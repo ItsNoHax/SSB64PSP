@@ -171,3 +171,4 @@ tools/romtool/src/residual_fixes.rs	CASES	tooling: residual review fixtures (scr
 tools/romtool/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
+tools/romtool/src/main.rs	BOSS_COMET_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against

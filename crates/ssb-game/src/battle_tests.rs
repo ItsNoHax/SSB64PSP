@@ -379,6 +379,32 @@ fn arrows_and_magnifiers_stay_hidden_until_go() {
     assert!(!Battle::new_1p(3, two_players(), false, 100).is_magnify_display());
 }
 
+#[test]
+fn boss_magnifiers_hidden_until_go_and_through_defeat() {
+    // `sc1PGameWaitStageBossUpdate` sets `is_magnify_display` after its
+    // 600-tick sleep (sc1pgame.c:1593); `sc1PGameBossDefeatInitInterface`
+    // clears it (sc1pgame.c:2018).
+    use crate::spgame::wait::Wait;
+    let go = Wait::with_pattern(crate::spgame::Stage::Boss, 0, 1, 1, 0).go_tick;
+    let mut b = Battle::new_1p(5, two_players(), false, go);
+    let mut frames = 0;
+    while b.status == GameStatus::Wait {
+        assert!(!b.is_magnify_display(), "shown on boss wait frame {frames}");
+        b.begin_frame();
+        frames += 1;
+    }
+    assert_eq!(frames, 601);
+    assert!(b.is_magnify_display());
+    b.boss_defeat();
+    for i in 0..200 {
+        assert!(!b.is_magnify_display(), "shown in {:?}", b.status);
+        b.begin_frame();
+        // `sc1PGameBossDefeatInterfaceProcUpdate` (the stock snap) runs on
+        // the first interface update only (`ifCommonBattleEndUpdateInterface`).
+        assert_eq!(b.boss_update, i == 0, "tick {i}");
+    }
+}
+
 /// The pause menu's A+B+R+Z reset (`ifcommon.c:3021-3044`): only with all
 /// four held, and the menu hides at the reset, so nothing of it is left
 /// for the next battle (the 1P report: the menu showed again).

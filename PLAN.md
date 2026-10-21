@@ -144,7 +144,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
 | 1P ending | Ending room background matanim; N64 compare ending, staff roll, challenger; CP/heart tags; observed loss/win handoffs | RE-459 |
 | 1P bonus stages | N64 pause capture, PSP comparison | RE-456 |
-| Master Hand | `is_use_fogcolor` darkening; wallpaper effects' matanims; comet ENV tint; defeat-zoom struck joint; boss stock snap; hit-by-player capture; magnifiers hidden before "Go" | RE-457 |
+| Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; `colanim.color2` ENV; a hit-landing defeat fixture | RE-457 |
 | Special fighters | Intro Polygons darker, Metal Mario reflection duller than N64; unobserved: 30-Polygon clear, DK Defender/Perfect bonuses | RE-458 |
 | 1P shade | Yoshi same-costume shade | RE-450, RE-453 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |

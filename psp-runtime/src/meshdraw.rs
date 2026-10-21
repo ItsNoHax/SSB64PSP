@@ -197,6 +197,13 @@ pub struct DrawState {
     /// blends over what is drawn by that alpha, depth-tested without
     /// writing depth.
     fade_alpha: Option<u8>,
+    /// Master Hand's `ENV` grey while `is_use_fogcolor` is set
+    /// (`ftBossCommonUpdateFogColor`, `ftDisplayMainDrawAll`): its lit
+    /// primitives end in `COMBINED * ENV`, so their shade is scaled by it.
+    /// The pack has no free flag bit for "the combiner reads `ENV`"; every
+    /// lit primitive of the boss model reads it and its one unlit primitive
+    /// does not (RE-457), so the lit shade carries it.
+    pub fog_env: Option<u8>,
     /// The bound texture and the [`Pack::mat_anim_palette`] entry its CLUT
     /// holds ([`TextureDesc::NO_ANIM`] for the baked one): primitives
     /// sharing a texture can each cycle their own `MObj`'s palettes
@@ -1889,7 +1896,7 @@ unsafe fn draw_mesh_vertices(
             None
         } else {
             st.object_light()
-                .map(|dir| LitPrim::new(&p, dir, st.light_registers))
+                .map(|dir| LitPrim::new(&p, dir, st.light_registers, st.fog_env))
         };
 
         let effect_colors = effect_colors.filter(|c| c.prim.is_some() || c.env.is_some());
@@ -2553,10 +2560,12 @@ struct LitPrim {
     /// `FLAT_COLOR`/`TEXTURE_BLEND` read no shade: the packed colour is the
     /// combiner's constant and stays.
     keep_rgb: bool,
+    /// [`DrawState::fog_env`]'s grey, the second cycle's `COMBINED * ENV`.
+    env: Option<u8>,
 }
 
 impl LitPrim {
-    fn new(p: &PrimDesc, dir: [i8; 3], registers: [[u8; 3]; 2]) -> Self {
+    fn new(p: &PrimDesc, dir: [i8; 3], registers: [[u8; 3]; 2], env: Option<u8>) -> Self {
         let prim = (p.prim_color != 0).then(|| {
             let c = p.prim_color;
             [c as u8, (c >> 8) as u8, (c >> 16) as u8]
@@ -2565,6 +2574,7 @@ impl LitPrim {
             dir,
             shade: ssb_engine::rsp_light::LitShade::new(registers[0], registers[1], prim),
             keep_rgb: p.flags & (flags::FLAT_COLOR | flags::TEXTURE_BLEND) != 0,
+            env,
         }
     }
 
@@ -2581,7 +2591,10 @@ impl LitPrim {
         } else {
             ssb_engine::rsp_light::dot16([v.nx, v.ny, v.nz], self.dir)
         };
-        let rgb = self.shade.rgb(dot);
+        let mut rgb = self.shade.rgb(dot);
+        if let Some(g) = self.env {
+            rgb = rgb.map(|c| ((u32::from(c) * u32::from(g) + 0x80) >> 8) as u8);
+        }
         (v.color & 0xFF00_0000)
             | u32::from(rgb[2]) << 16
             | u32::from(rgb[1]) << 8

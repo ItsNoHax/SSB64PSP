@@ -291,8 +291,11 @@ pub struct HitLogEntry {
     pub hitbox: attack::Hitbox,
     pub attacker_pos: Vec3,
     pub attack_handicap: u8,
-    /// The hurtbox's `placement` column.
-    pub placement: usize,
+    /// The hurtbox's `placement` column (0 low, 1 middle, 2 high).
+    pub placement: u8,
+    /// The hurtbox's `joint_id` column; 0 for a stage or direct hit
+    /// (`ftMainProcessHitCollisionStatsMain`, ftmain.c:2869/2906/2941/2982).
+    pub damage_joint: u8,
     /// Who `ftParamUpdate1PGameDamageStats` records as `damage_player`
     /// when this hit wins the frame.
     pub attacker: DamageBy,
@@ -1224,6 +1227,7 @@ fn update_damage_stat(
                 attacker_pos: attacker.pos,
                 attack_handicap: attacker.handicap,
                 placement: hit.placement,
+                damage_joint: hit.joint,
                 attacker: DamageBy::Player(player),
                 effect: Some(LogEffect {
                     pos: impact,
@@ -1443,6 +1447,7 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
                 attacker_pos: w.pos_curr,
                 attack_handicap: w.handicap,
                 placement: hit.placement,
+                damage_joint: hit.joint,
                 attacker: DamageBy::owner(w.owner, victim.port),
                 // `is_hitlag_victim`: Link's Boomerang (and two Pokemon)
                 // make the hit's spark, at
@@ -1529,7 +1534,8 @@ pub fn direct_hit_with_stat(
             hitbox,
             attacker_pos,
             attack_handicap: handicap,
-            placement: attack::DAMAGE_INDEX_N,
+            placement: attack::DAMAGE_INDEX_N as u8,
+            damage_joint: 0,
             attacker,
             effect: None,
         },
@@ -1587,7 +1593,8 @@ pub fn process_hit_collision(this: &mut Fighter) {
     if let HitSource::Weapon { .. } = entry.source {
         bumper_damage_angle(this, entry.attacker_pos);
     }
-    this.hits.damage_index = entry.placement;
+    this.hits.damage_index = usize::from(entry.placement);
+    this.damage_joint_id = entry.damage_joint;
     this.hits.damage_knockback = best;
     crate::spgame::live::hit(this, entry.attacker, entry.stat, entry.object);
     if this.hits.damage_element == Element::Electric {

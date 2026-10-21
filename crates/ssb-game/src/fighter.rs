@@ -596,6 +596,11 @@ pub struct Fighter {
     /// last, credited with a KO. `None` for -1 and for
     /// `GMCOMMON_PLAYERS_MAX` (the stage, or the fighter's own weapon).
     pub damage_player: Option<u8>,
+    /// `FTStruct::damage_joint_id`: the struck hurtbox's `joint_id`
+    /// (`hitlog->damage_coll->joint_id`), 0 after a stage hit; set only by
+    /// the hit that wins a frame (`ftMainProcessHitCollisionStatsMain`).
+    /// The boss defeat zoom centres on it (`sc1PGameBossSetCameraZoom`).
+    pub damage_joint_id: u8,
     /// Effects queued for the match to make ([`crate::fteffect`]).
     pub effects: crate::fteffect::EffectQueue,
     /// `effect_joint_array_id`: which of `effect_joint_ids` the next
@@ -756,6 +761,7 @@ impl Fighter {
             colanim: crate::colanim::ColAnim::default(),
             screen_flash: None,
             damage_player: None,
+            damage_joint_id: 0,
             effects: crate::fteffect::EffectQueue::default(),
             effect_joint_array_id: 0,
             model_parts: crate::modelpart::ModelParts::new(kind),

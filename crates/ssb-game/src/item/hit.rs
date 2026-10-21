@@ -761,6 +761,7 @@ fn update_damage_stat(
                 attacker_pos: item.pos,
                 attack_handicap: item.handicap,
                 placement: hit.placement,
+                damage_joint: hit.joint,
                 attacker: combat::DamageBy::owner(item.player, f.port),
                 // `ip->is_hitlag_victim` (`attr->is_give_hitlag`).
                 effect: item.attr.is_give_hitlag.then_some(combat::LogEffect {

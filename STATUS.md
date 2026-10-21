@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v128 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v129 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 245 of 245 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -16,8 +16,9 @@
 
 ## Current work
 
-- Landed: CPU item tracking, 1P stage-start level/trait and Link wake, VS entry focus ids 0-2 with 2-4 fighters checked against N64 traces; 2 small decomp fixes (RE-568). No golden moved.
-- Landed (batch 32): entry effect clock, capture entry focus pinned, map-step skeleton, link-10 entry effects, pack v128 (RE-567).
+- Landed (batch 35): Master Hand struck-joint zoom, stock snap, fog darkening, comet tint, wallpaper matanims; pack v129 (RE-457). No golden moved.
+- Landed (batch 34): CPU item tracking, 1P stage-start level/trait and Link wake, VS entry focus ids 0-2 with 2-4 fighters checked against N64 traces; 2 small decomp fixes (RE-568). No golden moved.
+- Landed (batch 32): entry effect clock, capture entry focus pinned, map-step skeleton, link-10 entry effects (RE-567).
 - Open: countdown RNG seed vs a real N64 VS boot; Hyrule post-wake host replay (RE-568). Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 (RE-418). Gaps in `PLAN.md`.
 
 ## Next
@@ -31,7 +32,7 @@
 
 ## Verification
 
-Baseline: batch 34 (RE-568); deepest game stack 366992 B.
+Baseline: batch 35 (RE-457); deepest game stack 367040 B of 524288.
 
 | Check | Result |
 |---|---|

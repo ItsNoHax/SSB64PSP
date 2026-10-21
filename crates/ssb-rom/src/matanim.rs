@@ -417,6 +417,25 @@ pub fn resolve_scripts(
         .collect()
 }
 
+/// [`resolve_scripts`] for one `MObj`, without the chain lengths: the
+/// script `table` (`AObjEvent32 ***`) gives node `node`'s `MObj` made from
+/// the `MObjSub` at `sub`, found by its place in the parallel
+/// NULL-terminated `MObjSub ***` table `subs`
+/// (`lbCommonAddTreeDObjsAnimAll`, `gcAddMObjMatAnimJoint`). `file` is the
+/// whole relocated file both tables live in; `None` when `sub` is not in
+/// node `node`'s chain or its entry is NULL.
+pub fn mobj_script(file: &[u8], table: u32, subs: u32, node: usize, sub: u32) -> Option<u32> {
+    /// More `MObj`s than any chain holds.
+    const MAX_CHAIN: usize = 16;
+    let chain = u32_at(file, subs as usize + node * 4)?;
+    let m = (0..MAX_CHAIN)
+        .map(|m| u32_at(file, chain as usize + m * 4))
+        .take_while(|w| w.is_some_and(|w| w != 0))
+        .position(|w| w == Some(sub))?;
+    let per_node = u32_at(file, table as usize + node * 4).filter(|&p| p != 0)?;
+    u32_at(file, per_node as usize + m * 4).filter(|&s| s != 0)
+}
+
 /// `FTCommonPart::p_costume_matanim_joints`, resolved to one script per
 /// `(node, material)` and evaluated at `costume`.
 ///

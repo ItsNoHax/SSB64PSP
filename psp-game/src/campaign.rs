@@ -525,13 +525,13 @@ fn boss_defeat_init(
     let Some(f) = dummies.iter().flatten().find(|d| d.fighter.port == port) else {
         return;
     };
-    // `fp->joints[fp->damage_joint_id]`: the port does not record the
-    // struck hurtbox, so the zoom takes the palm's (RE-457).
-    // `gmCollisionGetFighterPartsWorldPosition` queries the joint (RE-511).
-    let world = f.fighter.joint_query(ssb_game::boss::DEFEAT_ZOOM_JOINT, ssb_engine::math::Vec3::ZERO);
+    // `sc1PGameBossSetCameraZoom`: `fp->joints[fp->damage_joint_id]`.
+    let world = ssb_game::boss::defeat_zoom_at(&f.fighter);
     boss.zoom = world;
-    pl.camera
-        .set_status_map_zoom(world, world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0));
+    pl.camera.set_status_map_zoom(
+        world,
+        world + ssb_engine::math::Vec3::new(0.0, 0.0, ssb_game::boss::DEFEAT_ZOOM_EYE_Z),
+    );
     if let Some(h) = hud.damage.get_mut(usize::from(port)) {
         h.start_break_anim();
     }

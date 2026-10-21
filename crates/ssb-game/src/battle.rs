@@ -182,6 +182,10 @@ pub struct Battle {
     /// `sc1PGameBossDefeatInterfaceProcSet` ran this tick: the host changes
     /// the wallpaper and starts the defeat camera animation.
     pub boss_set: bool,
+    /// `sc1PGameBossDefeatInterfaceProcUpdate` ran this tick (the first
+    /// interface update after the defeat): the host makes Master Hand's
+    /// stock snap (`sc1PGameBossAddBossInterface`) before the effects run.
+    pub boss_update: bool,
     /// How to Play or the auto demo (`nSCBattleGameTypeExplain`,
     /// `...Demo`): the scene makes no battle interface, so there is no
     /// countdown, timer or pause, and "Go" is set at once.
@@ -258,6 +262,7 @@ impl Battle {
             boss_defeat: None,
             boss_wait: 0,
             boss_set: false,
+            boss_update: false,
             is_demo: false,
             end_sounds: [0; END_SOUNDS_MAX],
             end_sounds_num: 0,
@@ -484,7 +489,8 @@ impl Battle {
             // `ifCommonBattleEndUpdateInterface` pauses the world and falls
             // through to `ifCommonBattleBossDefeatUpdateInterface`.
             GameStatus::End | GameStatus::BossDefeat if self.boss_defeat.is_some() => {
-                if self.status == GameStatus::End {
+                self.boss_update = self.status == GameStatus::End;
+                if self.boss_update {
                     self.boss_defeat_proc_update();
                 }
                 self.boss_frame()
