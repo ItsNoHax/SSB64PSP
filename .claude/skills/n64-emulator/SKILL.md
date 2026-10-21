@@ -74,7 +74,8 @@ tools/run-n64-headless.sh --route "60:start;30:;10:a" \
 | Flatpak required | core and plugins only in `/app/lib` of `net.sourceforge.m64py.M64Py`; never bare `python3` |
 | `DISPLAY`/Xvfb | does not hide window: `mupen64plus-video-rice.so` opens via SDL2 (prefers Wayland; socket always mounted); only `--env=SDL_VIDEODRIVER=offscreen` (script default) hides it; screenshots and RDRAM still work |
 | `ctypes` `argtypes` | mandatory: Core API calls taking a dynlib handle or pointer need explicit `c_void_p`, else the 64-bit handle truncates and `PluginStartup` segfaults (RE-216; see `n64_driver.py` `start()`) |
-| angrylion-plus | `mupen64plus-video-angrylion-plus.so` (Rosalie's Mupen GUI flatpak) segfaults in `PluginStartup`; abandoned, use Rice (RE-276) |
+| angrylion-plus | segfaults in `PluginStartup` for the same reason as ParaLLEl below (RTLD_GLOBAL symbol clash); not retried (RE-276) |
+| ParaLLEl-RDP | coverage-exact RDP; RMG flatpak `com.github.Rosalie241.RMG`: core `/app/lib/RMG/Core/libmupen64plus.so`, `mupen64plus-video-parallel.so`, `mupen64plus-rsp-parallel.so`, `RMG-Audio.so`; `dlopen` core and plugins `RTLD_LOCAL`; `CoreOverrideVidExt` with a headless Vulkan surface (`VK_EXT_headless_surface`); read RDRAM framebuffers, screenshots are VI-filtered (RE-564) |
 | Sandbox filesystem | needs read on repo, write on scratch dir |
 | Software approximation | Rice is not a physical N64; treat RDP/RSP filtering differences as PPSSPP-vs-hardware |
 | ROM identity | SHA-1 `e2929e10fccc0aa84e5776227e798abc07cedabf`, MD5 `F7C52568A31AADF26E14DC2B6416B2ED` |

@@ -4401,25 +4401,21 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // it binds (`palettes[1]`, file offset 0x08).
         if id == 297 {
             const FIREBALL_MOBJ_TABLE: u32 = 0xD8;
-            // The mesh key: the decomp's `SuperJumpPunchDL` label.
+            // The mesh key: the decomp's `SuperJumpPunchDL` label, which the
+            // runtime looks the mesh up by (`psp-runtime` `scene.rs`).
             const FIREBALL_DISPLAY_LIST: u32 = 0x1D8;
             // `WPAttributes.data` (`llMarioMainFireballWeaponAttributes`
-            // relocates here): the list starts six commands earlier than the
-            // label, setting its own TLUT (`G_TT_RGBA16`), alpha compare,
-            // render mode (`0x00553048`, alpha as coverage) and combiner, as
-            // the Charge Shot's does (file 321). The conversion still starts
-            // at the label under the weapon seed's translucent state, as
-            // before task heads were derived: starting at `FIREBALL_DATA`
-            // turns the fireball's blended edges into an alpha-test cutout,
-            // a material change of its own (follow-up).
+            // relocates here) and where the conversion starts: the list
+            // starts six commands earlier than the label, setting its own
+            // TLUT (`G_TT_RGBA16`), alpha compare (threshold), render mode
+            // (`0x00553048`, `G_RM_AA_TEX_EDGE`) and combiner, as the Charge
+            // Shot's (file 321) and Falcon Punch's (file 333) lists do. The
+            // render mode maps to the RE-424 alpha-edge material.
             const FIREBALL_DATA: u32 = 0x1A8;
             const LUIGI_FIREBALL_KEY: u32 = 0x08;
             if let (Some(materials), Ok(cmds)) = (
                 ssb_rom::mobj::read_table(file, FIREBALL_MOBJ_TABLE, 1),
-                ssb_rom::dl::decode_list_at(
-                    &file.data[FIREBALL_DISPLAY_LIST as usize..],
-                    FIREBALL_DISPLAY_LIST,
-                ),
+                ssb_rom::dl::decode_list_at(&file.data[FIREBALL_DATA as usize..], FIREBALL_DATA),
             ) {
                 let palettes = materials.nodes[0]
                     .first()
@@ -4437,12 +4433,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         mobjs: &mobjs,
                         mat_anims: &[],
                         depth_seed: None,
-                        // Head 0's TLUT state: the label's commands load
-                        // the palette without setting `G_TT_RGBA16`, which
-                        // head 1 starts cleared (`mesh.rs` stream seeds).
-                        stream: 0,
+                        // `wpDisplayDLHead1` draws the whole list on head 1.
+                        stream: weapon_stream((297, FIREBALL_DATA)),
                     };
-                    let Some(Ok(mut fireball)) = mesh::convert_sequence(
+                    let Some(Ok(fireball)) = mesh::convert_sequence(
                         &[item],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -4451,11 +4445,6 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     .next() else {
                         continue;
                     };
-                    // `wpDisplayDLHead1` draws the whole list on head 1.
-                    let head1 = weapon_stream((297, FIREBALL_DATA)) == 1;
-                    for prim in &mut fireball.primitives {
-                        prim.material.head1 = head1;
-                    }
                     if fireball.triangle_count() != 0 {
                         pack_mesh(
                             &mut writer,

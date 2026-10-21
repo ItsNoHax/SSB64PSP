@@ -6774,6 +6774,23 @@ mod tests {
     }
 
     #[test]
+    fn non_zb_tex_edge_word_is_an_alpha_edge_without_depth() {
+        // The exact word the Fireball (297 + 0x1A8), Falcon Punch (333 +
+        // 0x760) and Charge Shot (321 + 0x270) lists set: `G_RM_AA_TEX_EDGE`
+        // in both cycles, `CLR_IN * A_IN + CLR_MEM * A_MEM`, no Z bits.
+        let file = vertex_data(3);
+        let mut cmds = alloc::vec![vtx(3)];
+        cmds.extend(bind_a_texture());
+        cmds.extend([set_render_mode(0x0055_3048), Cmd::Tri1([0, 1, 2]), Cmd::End]);
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(m.alpha_test);
+        assert!(!m.translucent);
+        assert!(!m.depth_test);
+        assert!(!m.depth_write);
+        assert_eq!(m.depth_mode, ZMode::Opaque);
+    }
+
+    #[test]
     fn g_ac_threshold_sets_alpha_compare_threshold_independently_of_alpha_test() {
         // RE-195: `G_MDSFT_ALPHACOMPARE` (`G_SETOTHERMODE_L`, shift 0, len
         // 2) is a real, separate RDP gate from the render-mode-driven

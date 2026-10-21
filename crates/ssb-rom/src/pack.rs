@@ -454,7 +454,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // seed, depth off), Yoshi's entry egg and Pikachu's Thunder frames (their
 // link's `list_id`); the boss's bullets take the weapon seed. No layout
 // change.
-pub const VERSION: u32 = 126;
+// 127 converts the Fireball list (297) from `WPAttributes.data` (0x1A8), not
+// the decomp label 0x1D8 (still the mesh key): its own TLUT, alpha compare,
+// combiner and `G_RM_AA_TEX_EDGE` make it an alpha-edge material (RE-424),
+// as Falcon Punch and the Charge Shot. No layout change.
+pub const VERSION: u32 = 127;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
