@@ -12,16 +12,19 @@
 extern crate alloc;
 
 /// A global of the original game's (a seed, a counter, a setting): one
-/// static in the game, one per thread in tests, so `cargo test` can run
+/// static in the `no_std` game, one per thread in every host (`std`)
+/// build, so each test thread is its own game and `cargo test` can run
 /// tests in parallel without one test's draws or settings leaking into
-/// another's (as `public` and `sound` do by hand). Read and write it
-/// through `NAME.with(|v| ...)` in both builds.
+/// another's (as `public` and `sound` do by hand). Per thread on the host
+/// covers the other crates' tests too: they link this crate without
+/// `cfg(test)`, where a plain static was one seed for the whole binary.
+/// Read and write it through `NAME.with(|v| ...)` in both builds.
 macro_rules! game_static {
     ($(#[$attr:meta])* static $name:ident: $ty:ty = $init:expr;) => {
         $(#[$attr])*
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "std")))]
         static $name: $crate::GameStatic<$ty> = $crate::GameStatic($init);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "std"))]
         std::thread_local! {
             $(#[$attr])*
             static $name: $ty = const { $init };
@@ -30,10 +33,10 @@ macro_rules! game_static {
 }
 
 /// The game build's [`game_static!`]: `with` matches `thread_local!`'s.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "std")))]
 pub(crate) struct GameStatic<T>(pub(crate) T);
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "std")))]
 impl<T> GameStatic<T> {
     #[inline(always)]
     pub(crate) fn with<R>(&'static self, f: impl FnOnce(&T) -> R) -> R {

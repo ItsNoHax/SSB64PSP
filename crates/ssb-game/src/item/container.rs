@@ -98,6 +98,18 @@ pub(super) fn make(
     item.update_attack_positions();
     item
 }
+/// `itEggMakeItem` under `ITEM_FLAG_PARENT_ITEM` with an MLucky parent:
+/// one draw in two turns the egg back (`vel_air.x` and `lr` negated). It
+/// runs after `itManagerMakeItem`, so `lr` already follows the original
+/// `vel.x`. The 180-degree `rotate.y` it also gives child 1 is not kept:
+/// that child's matrix kind 46 (`gcAddXObjForDObjFixed(dobj->child, 0x2E,
+/// 0)`) billboards from `rotate.z` and scale alone, so the yaw never draws.
+pub(super) fn egg_from_mlucky(item: &mut Item) {
+    if crate::rng::rand_int_range(2) == 0 {
+        item.vel_air.x = -item.vel_air.x;
+        item.lr = -item.lr;
+    }
+}
 fn kind(item: &Item) -> Kind {
     let ItemKind::Container(k) = item.kind else {
         unreachable!()

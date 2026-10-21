@@ -47,7 +47,7 @@ mod ground_tables {
 
 game_static! {
     /// `gMPCollisionGroundData->alt_warning` of the loaded ground, set by
-    /// [`set_ground_kind`].
+    /// [`set_ground_kind`] from [`crate::battle::start_scene`].
     static ALT_WARNING: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(i16::MIN as i32);
 }
 

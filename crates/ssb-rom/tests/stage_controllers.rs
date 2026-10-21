@@ -202,7 +202,6 @@ fn whispy_blows_on_the_packed_animation_clocks() {
     }
     assert_eq!(start_clip, 37);
 
-    let _rng = rng_lock();
     ssb_game::rng::set_seed(1);
     let mut w = Pupupu::new();
     let mut a = Fighter::new(FighterKind::Mario, 0, 3);
@@ -403,7 +402,6 @@ fn whispy_blows_on_the_rom_animation_clocks() {
     };
     assert!(objects.objs.iter().all(|o| o.graph != 0 && o.nodes > 0));
 
-    let _rng = rng_lock();
     ssb_game::rng::set_seed(1);
     let mut w = Pupupu::new();
     let mut a = Fighter::new(FighterKind::Mario, 0, 3);
@@ -454,12 +452,6 @@ fn whispy_blows_on_the_rom_animation_clocks() {
     // The fighters are left of Whispy, so it blows left.
     assert_eq!(w.lr_players, 0);
     assert!(a.hazard.vel_push.x <= 0.0);
-}
-
-/// The global RNG's seed is shared by every test in this binary.
-fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// One frame of [`wind_replay`]: Whispy's status, then each fighter's
@@ -557,7 +549,6 @@ fn whispys_left_wind_lands_the_dummy_in_a_dust_puff_as_on_the_n64() {
         return;
     };
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
-    let _rng = rng_lock();
     let frames = wind_replay(&pack, &[1], 1276);
     let at = |frame: usize| &frames[frame - 1].fighters[0];
     let wind = |s: WindStatus| first(&frames, 0, |f| f.wind == s);
@@ -594,7 +585,6 @@ fn whispys_right_wind_pushes_the_player_without_a_dust_puff_as_on_the_n64() {
         return;
     };
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
-    let _rng = rng_lock();
     let frames = wind_replay(&pack, &[0, 1], 1400);
     let wind = |s: WindStatus| first(&frames, 0, |f| f.wind == s);
     assert_eq!(
@@ -1585,7 +1575,6 @@ fn packed_arwing_flies_the_sector_controller() {
         player: 0,
     };
     let mut groups = vec![MapGroup::default(); 4];
-    let _rng = rng_lock();
     ssb_game::rng::set_seed(0x5EC7);
     let mut stage = Stage::new(
         &init,

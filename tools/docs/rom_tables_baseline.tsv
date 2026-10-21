@@ -166,3 +166,4 @@ tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtur
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
 tools/romtool/src/main.rs	PK_THUNDER_TRAIL_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
 crates/ssb-game/src/matchtick/tests.rs	PROCESSES	fixture: decomp process priorities, links and file:line the order test checks; no ROM data
+crates/ssb-game/src/item/mmonster_tests.rs	N64	test fixture: N64 measurements or expected ROM values

@@ -18,7 +18,7 @@
 //! at the end of the frame rather than at the hit: a PSP deviation that
 //! can only change which crowd sound plays.
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "std")))]
 use core::ptr::addr_of_mut;
 
 use crate::fighter::Fighter;
@@ -97,22 +97,22 @@ const fn initial() -> State {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "std")))]
 static mut STATE: State = initial();
 
-#[cfg(test)]
+#[cfg(any(test, feature = "std"))]
 std::thread_local! {
     static STATE: core::cell::UnsafeCell<State> = const { core::cell::UnsafeCell::new(initial()) };
 }
 
 /// The crowd's statics. The game thread is the only user (per thread in
-/// tests).
+/// host builds, so each test thread has its own crowd).
 #[allow(clippy::mut_from_ref)]
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "std")))]
     // SAFETY: only the game thread touches the crowd, and no call nests.
     return f(unsafe { &mut *addr_of_mut!(STATE) });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "std"))]
     // SAFETY: per-thread state, and no call nests.
     return STATE.with(|s| f(unsafe { &mut *s.get() }));
 }

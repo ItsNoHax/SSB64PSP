@@ -947,6 +947,22 @@ pub fn vs_battle_gkind(scene_gkind: u8, error_flags: u8) -> u8 {
     }
 }
 
+/// A battle scene's start (`scVSBattleFuncStart`, `sc1PGameFuncStart`,
+/// `sc1PBonusStageFuncStart`, `sc1PTrainingModeFuncStart`,
+/// `scAutoDemoFuncStart`, `scExplainFuncStart`, the `mvOpening*FuncStart`
+/// battles, and `scVSBattleStartSuddenDeath`): the per-battle globals every
+/// host sets before the battle's first frame.
+///
+/// - `mpCollisionInitGroundData` on `gSCManagerBattleState->gkind`:
+///   [`crate::stage::alt_warning`], the altitude whistle's height.
+/// - `gSCManagerBattleState->damage_ratio`, which knockback reads.
+/// - `ftPublicMakeActor`: a quiet crowd.
+pub fn start_scene(gkind: u8, damage_ratio: u8) {
+    crate::stage::set_ground_kind(gkind);
+    crate::stale::set_damage_ratio(damage_ratio);
+    crate::public::make_actor();
+}
+
 /// `desc.damage` in `scVSBattleStartSuddenDeath`.
 pub const SUDDEN_DEATH_DAMAGE: u16 = 300;
 

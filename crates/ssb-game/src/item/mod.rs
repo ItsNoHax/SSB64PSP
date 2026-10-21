@@ -1468,6 +1468,24 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
+        self.make_setup_common_from(index, parent, None, pos, vel, surfaces)
+    }
+
+    /// [`Self::make_setup_common`] with the parent item's kind, which
+    /// `itEggMakeItem` reads under `ITEM_FLAG_PARENT_ITEM`.
+    fn make_setup_common_from<I, F>(
+        &mut self,
+        index: u8,
+        parent: Option<(Vec3, BodyColl)>,
+        parent_kind: Option<ItemKind>,
+        pos: Vec3,
+        vel: Vec3,
+        surfaces: &F,
+    ) -> Option<u8>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
         if self.free_len == 0 {
             return None;
         }
@@ -1493,6 +1511,9 @@ impl ItemPool {
         };
         if let Some((parent_pos, parent_coll)) = parent {
             map::run_default_collision(&mut item, parent_pos, parent_coll, surfaces);
+        }
+        if index == 3 && parent_kind == Some(ItemKind::MMonster(mmonster::Kind::MLucky)) {
+            container::egg_from_mlucky(&mut item);
         }
         item.update_attack_positions();
         // `itMainSetAppearSpin(item_gobj, FALSE)`: slow, unsigned.
@@ -2804,9 +2825,10 @@ where
         }
     }
     fn make_common_egg(&mut self, parent: &Item, pos: Vec3, vel: Vec3) -> Option<i8> {
-        let slot = self.pool.make_setup_common(
+        let slot = self.pool.make_setup_common_from(
             3,
             Some((parent.pos, parent.coll)),
+            Some(parent.kind),
             pos,
             vel,
             self.surfaces,

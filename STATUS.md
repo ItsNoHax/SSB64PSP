@@ -16,7 +16,7 @@
 
 ## Current work
 
-- Landed: camera rig (`camera_pass`), `CpuSight`, `explain_movement` on `matchtick::step`, stale dedup keyed `(attack_id, motion_count)`; goldens unchanged. Before: match-loop frame in decomp order, per-battle `ManagerCounts`. RE-556, [D-052](docs/decisions/D-052.md).
+- Landed: Chansey egg flip (`itegg.c:322`), Clefairy selection vs 14-row N64 sweep, Starmie artifact resolved; `game_static!`, `public`, `sound` per thread on host builds (`rng_lock` removed); `battle::start_scene` wires `set_ground_kind`, altitude whistle plays, N64-matched. Goldens unchanged. RE-557.
 - Open: stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555 deviation, no current move). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 21 (D-052); deepest game stack 366880 B.
+Baseline: batch 22 (RE-557); deepest game stack 366880 B.
 
 | Check | Result |
 |---|---|

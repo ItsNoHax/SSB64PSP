@@ -206,6 +206,91 @@ fn the_countdown_says_three_two_one_go() {
     assert_eq!(said[3].0 - said[2].0, 60);
 }
 
+/// `MPGroundData::alt_warning` by `GRKind`, as the decomp's
+/// `src/relocData/255..295_GR*Map.c` spell it: the first reading the
+/// ROM-generated table must agree with (D-034).
+const DECOMP_ALT_WARNINGS: [i16; 41] = {
+    let mut t = [-32768_i16; 41];
+    // Castle, Sector, Jungle, Zebes, Hyrule, Yoster, Pupupu, Yamabuki,
+    // Inishie, PupupuSmall, PupupuTest, Explain, YosterSmall, Metal, Zako,
+    // Bonus3, Last; Bonus1 and Bonus2 (17..=40) never whistle.
+    let head: [i16; 17] = [
+        -1900, -2300, -1900, -2900, -2600, -2500, -2900, -2900, -2200, -2900, -2900, -1900, -2500,
+        -2900, -2900, -32768, -2900,
+    ];
+    let mut i = 0;
+    while i < head.len() {
+        t[i] = head[i];
+        i += 1;
+    }
+    t
+};
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn every_battle_scene_start_loads_its_grounds_alt_warning() {
+    for (gkind, &alt) in DECOMP_ALT_WARNINGS.iter().enumerate() {
+        crate::battle::start_scene(gkind as u8, crate::stale::DAMAGE_RATIO_DEFAULT);
+        assert_eq!(crate::stage::alt_warning(), f32::from(alt), "gkind {gkind}");
+    }
+}
+
+/// Mario in Fall on ground `gkind` from TopN y `y0` at `vel_air.y` `vy`, for
+/// 40 ticks: each tick's `(y before, y after, whistled)`.
+fn fall(gkind: u8, y0: f32, vy: f32) -> Vec<(f32, f32, bool)> {
+    let r = Recorder::install();
+    crate::battle::start_scene(gkind, crate::stale::DAMAGE_RATIO_DEFAULT);
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.become_airborne();
+    crate::status::set_fall(&mut f);
+    f.pos.y = y0;
+    f.physics.vel_air.y = vy;
+    r.take();
+    (0..40)
+        .map(|_| {
+            let y_prev = f.pos.y;
+            f.tick_physics_map(&core::iter::empty);
+            let whistled = plays(&r.take()).contains(&nSYAudioFGMAltitudeWarn);
+            (y_prev, f.pos.y, whistled)
+        })
+        .collect()
+}
+
+fn whistles(ticks: &[(f32, f32, bool)]) -> Vec<usize> {
+    (0..ticks.len()).filter(|&i| ticks[i].2).collect()
+}
+
+/// `ftMainProcPhysicsMap`: `pos_prev.y >= alt_warning && TopN.y <
+/// alt_warning` plays `nSYAudioFGMAltitudeWarn` once, on the tick TopN
+/// first drops below the ground's `alt_warning`, which the battle scene's
+/// start loads (`mpCollisionInitGroundData`).
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn falling_below_the_grounds_alt_warning_whistles_once_on_the_crossing_tick() {
+    use crate::stage_select::gkind;
+    // Peach's Castle, `alt_warning` -1900.
+    let ticks = fall(gkind::CASTLE, -1700.0, 0.0);
+    let crossing = ticks.iter().position(|&(_, y, _)| y < -1900.0).unwrap();
+    assert!(crossing > 0, "starts above the line");
+    assert_eq!(whistles(&ticks), [crossing], "{ticks:?}");
+    assert!(ticks[crossing].0 >= -1900.0);
+    // Exactly on the line counts as above it (`>=`): the first tick
+    // whistles.
+    let ticks = fall(gkind::CASTLE, -1900.0, 0.0);
+    assert!(ticks[0].1 < -1900.0);
+    assert_eq!(whistles(&ticks), [0]);
+    // Already below: never.
+    assert!(fall(gkind::CASTLE, -1900.5, 0.0).iter().all(|t| !t.2));
+    // The N64 (decomp build with a probe after the whistle call, Training
+    // on Dream Land, `alt_warning` -2900, Mario run off the right edge):
+    // TopN y -2830.3999 -> -2874.3999 is silent, -2874.3999 -> -2918.3999
+    // whistles, once per fall. (-2830.4_f32 is the trace's -2830.3999.)
+    let ticks = fall(gkind::PUPUPU, -2830.4, -44.0);
+    assert_eq!(ticks[0].1, -2874.4);
+    assert_eq!(ticks[1].1, -2918.4);
+    assert_eq!(whistles(&ticks), [1]);
+}
+
 fn holding_hammer(port: u8) -> Fighter {
     let mut f = Fighter::new(FighterKind::Mario, port, 3);
     f.items.held = Some(crate::item::HeldItem {

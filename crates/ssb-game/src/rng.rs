@@ -3,7 +3,11 @@
 //! (`sSYUtilsRandomSeed`, starting at 1).
 //!
 //! The original has one seed for the whole game, so every consumer advances
-//! the same sequence. The atomic keeps it a plain global in `no_std`.
+//! the same sequence. Nothing in the decomp reseeds it (no caller of
+//! `syUtilsSetRandomSeed` or `syUtilsSetRandomSeedPtr`), so its lifetime is
+//! the program's, not a battle's. The atomic keeps it a plain global in
+//! `no_std`; on the host it is one per thread ([`game_static!`]), one
+//! program per test.
 
 use core::sync::atomic::{AtomicI32, Ordering};
 

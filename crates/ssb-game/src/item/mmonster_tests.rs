@@ -544,6 +544,55 @@ fn chansey_lays_three_eggs_and_a_hit_holds_the_next_one() {
     assert_eq!(gone, Some(times[2] + 1 + 91));
 }
 
+/// `itEggMakeItem` under an MLucky parent: one draw in two after the two
+/// velocity draws turns the egg back. N64 rows (`~/ppsspp-test/items22/
+/// mluckyegg.txt`, Training, Chansey at x 0): the seed entering each egg's
+/// frame, then the egg's `vel.x` and `lr`. Eggs two and three flip.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn chansey_eggs_turn_back_on_the_n64_draws() {
+    const N64: [(u32, f32, f32); 3] = [
+        (0xc823_f683, 7.7732, 1.0),
+        (0x2d12_8b23, -7.2281, -1.0),
+        (0xf59a_2fc3, -12.1035, -1.0),
+    ];
+    let mut w = World::new(&[(0, -2000.0), (1, 2000.0)]);
+    let slot = w.spawn(Kind::MLucky, 0.0);
+    w.until_not(slot, Status::Common, 30);
+    w.until_not(slot, Status::MLuckyAppear, 100);
+    let eggs = |w: &World| -> Vec<(f32, f32)> {
+        w.items
+            .items()
+            .filter(|i| i.kind == ItemKind::Container(container::Kind::Egg))
+            .map(|i| (i.vel_air.x, i.lr))
+            .collect()
+    };
+    let mut made = Vec::new();
+    for _ in 0..200 {
+        let item = w.item(slot);
+        if item.status == ItemStatus::MMonster(Status::MLuckyMakeEgg)
+            && item.multi > 0
+            && item.vars.mmonster.egg_spawn_wait == 0
+        {
+            crate::rng::set_seed(N64[made.len()].0 as i32);
+        }
+        let before = eggs(&w).len();
+        w.step();
+        let now = eggs(&w);
+        if now.len() > before {
+            made.push(*now.last().unwrap());
+            if made.len() == N64.len() {
+                break;
+            }
+        }
+    }
+    assert_eq!(made.len(), 3);
+    for (&(vx, lr), &(_, n64_vx, n64_lr)) in made.iter().zip(&N64) {
+        assert!((vx - n64_vx).abs() < 1e-3, "vel.x {vx} vs N64 {n64_vx}");
+        assert_eq!(lr, n64_lr);
+    }
+}
+
 #[test]
 fn starmie_flies_beside_its_target_then_fires_and_recoils() {
     let mut w = World::new(&[(0, -2000.0), (1, 1500.0)]);
@@ -625,6 +674,67 @@ fn charizard_flames_every_eight_frames_and_turns_every_26() {
         .filter(|(n, _)| *n >= start)
         .collect();
     assert!(flames.windows(2).all(|f| f[1].0 - f[0].0 == 8));
+}
+
+/// `itPippiCommonSelectMonster` on the N64 sweep (`~/ppsspp-test/items22/
+/// clef<seed>c.txt`, Training, Clefairy at x 0; the other Mario, its
+/// target, at (-1397, 904)): the seed entering the selection frame, then
+/// that frame's `proc_update` status, `lr`, position, velocity and seed.
+/// Starmie's row needs the target's real `map_coll`, not a zero one.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn clefairy_selection_matches_the_n64_sweep() {
+    use Status as S;
+    /// Seed in; status, `lr`, position, velocity and seed out.
+    type Row = (i32, Status, f32, [f32; 2], [f32; 2], u32);
+    #[rustfmt::skip]
+    const N64: [Row; 14] = [
+        (1000, S::IwarkAttack, 1.0, [0.0000, 733.0000], [0.0000, 80.0000], 0x201d_f1a2),
+        (1661, S::KabigonJump, 1.0, [0.0000, 733.0000], [0.0000, 80.0000], 0x1556_bf4c),
+        (3334, S::TosakintoAppear, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0x2aae_0fb1),
+        (5006, S::NyarsAttack, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0x4002_1c19),
+        (6678, S::LizardonFall, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0x5556_2881),
+        (8351, S::SpearFly, 1.0, [0.0000, 713.0000], [0.0000, 60.0000], 0x3eed_4c11),
+        (8352, S::SpearFly, -1.0, [0.0000, 713.0000], [0.0000, 60.0000], 0xe8e9_b41a),
+        (10023, S::KamexAppear, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0x7774_c6d9),
+        (10025, S::KamexAppear, -1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0xcb6d_96eb),
+        (11696, S::MLuckyAppear, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0x9558_d5b3),
+        (13368, S::StarmieNFollow, -1.0, [-17.2141, 663.1821], [-17.2141, 10.1821], 0xaaac_e21b),
+        (15040, S::SawamuraFall, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0xc000_ee83),
+        (16713, S::DogasAttack, 1.0, [0.0000, 653.0000], [0.0000, 0.0000], 0xd558_3ee8),
+        (18385, S::MewFly, 1.0, [8.0000, 633.0000], [8.0000, -20.0000], 0xe612_fcd3),
+    ];
+    for (seed, status, lr, pos, vel, after) in N64 {
+        let mut w = World::new(&[(0, 0.0), (1, -1397.0)]);
+        // Both Mario (`training_*_fkind`); `ftManagerMakeFighter` copies
+        // the attributes' `map_coll`, which Starmie's target reads.
+        for f in &mut w.fighters {
+            f.coll = crate::ground::BodyColl::MARIO;
+        }
+        w.fighters[1].pos.y = 904.0;
+        let slot = w.spawn(Kind::Pippi, 0.0);
+        for _ in 0..40 {
+            if w.status(slot) != Status::Common {
+                break;
+            }
+            crate::rng::set_seed(seed);
+            w.step();
+        }
+        let it = w.item(slot);
+        assert_eq!((seed, w.status(slot), it.lr), (seed, status, lr));
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        assert!(
+            near(it.pos.x, pos[0]) && near(it.pos.y, pos[1]),
+            "{seed} pos {:?}",
+            it.pos
+        );
+        assert!(
+            near(it.vel_air.x, vel[0]) && near(it.vel_air.y, vel[1]),
+            "{seed} vel {:?}",
+            it.vel_air
+        );
+        assert_eq!((seed, crate::rng::seed() as u32), (seed, after));
+    }
 }
 
 #[test]

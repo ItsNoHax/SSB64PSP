@@ -8,16 +8,17 @@
 //! tools) every play returns `None` and the rest do nothing. Sound calls
 //! never draw from [`crate::rng`] and never move a draw.
 //!
-//! Tests install a [`testing::Recorder`], which is per thread.
+//! The installed system is per thread in host (`std`) builds; tests
+//! install a [`testing::Recorder`].
 
 pub mod id;
 
 pub use ssb_engine::audio::{AudioApi, FgmHandle};
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "std")))]
 static mut SINK: Option<&'static dyn AudioApi> = None;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "std"))]
 std::thread_local! {
     static SINK: core::cell::Cell<Option<&'static dyn AudioApi>> = const { core::cell::Cell::new(None) };
 }
@@ -25,32 +26,32 @@ std::thread_local! {
 /// Installs the platform's audio system. Called once, before the first
 /// scene.
 pub fn install(api: &'static dyn AudioApi) {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "std")))]
     // SAFETY: set once at boot on the game thread, before any reader.
     unsafe {
         SINK = Some(api)
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "std"))]
     SINK.with(|s| s.set(Some(api)));
 }
 
 /// Removes the installed audio system (tests).
 pub fn uninstall() {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "std")))]
     // SAFETY: as in `install`.
     unsafe {
         SINK = None
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "std"))]
     SINK.with(|s| s.set(None));
 }
 
 #[inline]
 fn sink() -> Option<&'static dyn AudioApi> {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "std")))]
     // SAFETY: written only by `install`/`uninstall` on the game thread.
     return unsafe { *core::ptr::addr_of!(SINK) };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "std"))]
     return SINK.with(|s| s.get());
 }
 

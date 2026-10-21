@@ -3559,8 +3559,13 @@ fn enter_training(
     // weapon of the battle.
     let counts = world.items.counts.clone();
     world.weapons.counts = counts.clone();
-    // `ftPublicMakeActor`: every battle scene starts with a quiet crowd.
-    ssb_game::public::make_actor();
+    // The battle scene's start: the ground's altitude whistle
+    // (`mpCollisionInitGroundData`), `gSCManagerBattleState->damage_ratio`
+    // (knockback) and `ftPublicMakeActor`'s quiet crowd.
+    ssb_game::battle::start_scene(
+        gkind,
+        vs.map_or(ssb_game::stale::DAMAGE_RATIO_DEFAULT, |r| r.damage_ratio),
+    );
     // `gSCManagerBattleState`'s team rule, which every hit search reads;
     // Training is a free-for-all.
     let team_rules = vs.map_or(ssb_game::team::TeamRules::FREE_FOR_ALL, |r| r.team_rules);
@@ -3587,8 +3592,6 @@ fn enter_training(
         Some(rules) => world.items.normal_switches = rules.items,
         None => world.items.normal_switches.toggles = 0,
     }
-    // `gSCManagerBattleState->damage_ratio`, which knockback reads.
-    ssb_game::stale::set_damage_ratio(vs.map_or(ssb_game::stale::DAMAGE_RATIO_DEFAULT, |r| r.damage_ratio));
     world.items.normal_drops = ssb_game::item::normal::DropWeights::new(
         world.items.normal_switches,
         stage.item_weights.as_ref(),
