@@ -267,6 +267,61 @@ fn the_rebirth_runs_390_ticks_and_ends_in_fall_with_invincibility() {
 }
 
 #[test]
+fn a_reborn_fighter_is_framed_at_0_6_until_its_next_status() {
+    let rebirth = CameraZoomRange(REBIRTH_CAMERA_ZOOM_RANGE);
+    let mut f = mario();
+    assert_eq!(f.dead.camera_zoom_range, CameraZoomRange(1.0));
+    f.pos.y = -2001.0;
+    check(&mut f);
+    // `DeadDown`'s `ftMainSetStatus` keeps 1.0.
+    assert_eq!(f.dead.camera_zoom_range, CameraZoomRange(1.0));
+    rebirth_down(&mut f, 0);
+    assert_eq!(f.dead.camera_zoom_range, rebirth);
+    // The camera takes the fighter back 45 ticks in, still at 0.6.
+    for _ in 0..HALO_CAMERA_WAIT {
+        status::update(&mut f);
+    }
+    assert!(is(&f, Status::RebirthDown));
+    assert_eq!(f.dead.camera_mode, CameraMode::Default);
+    assert_eq!(f.dead.camera_zoom_range, rebirth);
+    set_rebirth_stand(&mut f);
+    assert_eq!(f.dead.camera_zoom_range, rebirth);
+    set_rebirth_wait(&mut f);
+    assert_eq!(f.dead.camera_zoom_range, rebirth);
+    // Any later `ftMainSetStatus` goes back to 1.0.
+    status::set_fall(&mut f);
+    assert_eq!(f.dead.camera_zoom_range, CameraZoomRange(1.0));
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_whole_rebirth_keeps_the_0_6_zoom_range_and_the_fall_drops_it() {
+    let mut f = mario();
+    rebirth_down(&mut f, 0);
+    let mut seen = Vec::new();
+    while !matches!(
+        f.status.status,
+        AnyStatus::Common(Status::Fall | Status::FallAerial)
+    ) {
+        assert_eq!(f.dead.camera_zoom_range.0, REBIRTH_CAMERA_ZOOM_RANGE);
+        if seen.last() != Some(&f.status.status) {
+            seen.push(f.status.status);
+        }
+        status::update(&mut f);
+    }
+    assert_eq!(
+        seen,
+        [
+            Status::RebirthDown,
+            Status::RebirthStand,
+            Status::RebirthWait
+        ]
+        .map(AnyStatus::Common)
+    );
+    assert_eq!(f.dead.camera_zoom_range.0, 1.0);
+}
+
+#[test]
 fn a_second_rebirth_takes_the_next_free_halo() {
     let others = [(AnyStatus::Common(Status::RebirthWait), 0)];
     assert_eq!(halo_number(others.iter().copied()), 1);

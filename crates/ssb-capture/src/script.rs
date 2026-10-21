@@ -74,6 +74,19 @@ const PURIN_WALK_STICK: i8 = 80;
 const PURIN_GRAB_TICK: u64 = 90;
 const PURIN_THROW_TICK: u64 = 100;
 
+/// `rebirth` and `rebirthblast`'s stick: held left from the end of
+/// Training's opening jab, so Mario dashes and runs off the main floor's
+/// left end and falls past Dream Land's bottom blast line. A stick held
+/// inside the jab (the old 20..=100) is read as a walk from the jab's
+/// end, and Mario stops at the ledge (x -1692). The same 81 ticks, 25
+/// later, as the RE-516 move scripts.
+pub const REBIRTH_RUN: core::ops::RangeInclusive<u64> = SPECIAL_TICK..=SPECIAL_TICK + 80;
+const REBIRTH_RUN_STICK: i8 = -80;
+/// The tick `rebirth`'s Mario falls past Dream Land's bottom blast line
+/// and enters `DeadDown` (`ftCommonDeadDownSetStatus`); `scene_inputs`
+/// replays the script to it.
+pub const REBIRTH_KO_TICK: u64 = 185;
+
 /// "Go" in the VS capture scenes: the countdown's end, from which the
 /// fighters read the pad.
 pub const VS_GO_TICK: u64 = 398;
@@ -209,6 +222,8 @@ macro_rules! scripted_scene {
             | $crate::GameScene::CaptainKickRoll
             | $crate::GameScene::KirbyCutter
             | $crate::GameScene::PurinThrow
+            | $crate::GameScene::Rebirth
+            | $crate::GameScene::RebirthBlast
     };
 }
 
@@ -361,6 +376,11 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         YoshiRollF | YoshiRollB => 69,
         YoshiShieldBreak => 84,
         PurinThrow => PURIN_THROW_TICK + 12,
+        // 140 ticks after the KO: Mario stands on the rebirth platform
+        // under the halo, the camera framing him at range 0.6.
+        Rebirth => REBIRTH_KO_TICK + 140,
+        // A few ticks after the KO: the blast and the screen flash are up.
+        RebirthBlast => REBIRTH_KO_TICK + 8,
         _ => return None,
     })
 }
@@ -518,6 +538,10 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
             40..=60 => button::Z,
             _ => 0,
         },
+        Rebirth | RebirthBlast => match tick {
+            4 | 8 => button::A,
+            _ => 0,
+        },
         PurinThrow => match tick {
             4 | 8 | PURIN_THROW_TICK => button::A,
             PURIN_GRAB_TICK => button::Z | button::A,
@@ -535,6 +559,13 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
 fn stick_x(scene: GameScene, tick: u64) -> i8 {
     use GameScene::*;
     match scene {
+        Rebirth | RebirthBlast => {
+            if REBIRTH_RUN.contains(&tick) {
+                REBIRTH_RUN_STICK
+            } else {
+                0
+            }
+        }
         // Up and to the left from the B on: the special-high check, then
         // the launch direction (RE-503).
         FoxFire | PikachuQuick => {

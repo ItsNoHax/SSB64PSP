@@ -138,7 +138,7 @@ pub fn interest_of(f: &Fighter, framing: Framing, stage: &CameraStage) -> Option
         target_pos: target,
         facing_left: matches!(facing, Facing::Left),
         zoom_frame: framing.zoom_frame,
-        zoom_range: 1.0,
+        zoom_range: f.dead.camera_zoom_range.0,
         idle_zoomed_out: idle_zoomed_out(f),
         dead_up,
         team_bounds,

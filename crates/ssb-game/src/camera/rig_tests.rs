@@ -301,3 +301,81 @@ fn dead_up_scales_onto_the_camera_top_unless_team_bounded() {
     assert_eq!(i.team_bounds, Some(s.team_camera));
     assert_eq!(i.target_pos, Vec3::new(1200.0, 7000.0, 0.0));
 }
+
+/// `gmCameraCalcFighterZoomRange`: a reborn fighter's
+/// `camera_zoom_range` (0.6) shrinks its box.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_reborn_fighters_interest_carries_its_zoom_range() {
+    use crate::dead::{CameraZoomRange, REBIRTH_CAMERA_ZOOM_RANGE};
+    let s = stage(BonusFollow::Other);
+    let framing = Framing {
+        cam_offset_y: 0.0,
+        zoom_frame: 1.5,
+    };
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    assert_eq!(interest_of(&f, framing, &s).unwrap().zoom_range, 1.0);
+    f.dead.camera_zoom_range = CameraZoomRange(REBIRTH_CAMERA_ZOOM_RANGE);
+    let i = interest_of(&f, framing, &s).unwrap();
+    assert_eq!(i.zoom_range, 0.6);
+    // One fighter: the distance stays at its 2500 floor, but the
+    // asymmetric box (700 behind, 1000 ahead, times the one-player zoom
+    // and 0.6) moves the interest's centre.
+    let normal = crate::camera::calculate_interest_scaled(&[interest(0.0)], &[], s.camera, 1.0);
+    let reborn = crate::camera::calculate_interest_scaled(
+        &[Interest {
+            zoom_range: 0.6,
+            ..interest(0.0)
+        }],
+        &[],
+        s.camera,
+        1.0,
+    );
+    let adjust = super::super::ONE_PLAYER_ZOOM;
+    assert_eq!(normal.1, 850.0 * adjust);
+    assert_eq!(reborn.1, 850.0 * adjust * 0.6);
+    assert!(reborn.0.x < normal.0.x);
+}
+
+/// Four fighters: one reborn fighter on the right edge narrows the box,
+/// and the camera settles closer.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_reborn_fighter_pulls_a_four_player_camera_in() {
+    let s = CameraStage {
+        stage_camera: StageCamera::Default,
+        ..stage(BonusFollow::Other)
+    };
+    let framing = Framing {
+        cam_offset_y: 0.0,
+        zoom_frame: 1.0,
+    };
+    let interests = |reborn: bool| -> Vec<Interest> {
+        [-2000.0, -600.0, 600.0, 2000.0]
+            .iter()
+            .enumerate()
+            .map(|(port, &x)| {
+                let mut f = Fighter::new(FighterKind::Mario, port as u8, 3);
+                f.pos = Vec3::new(x, 100.0, 0.0);
+                f.facing = Facing::Right;
+                if reborn && port == 3 {
+                    f.dead.camera_zoom_range =
+                        crate::dead::CameraZoomRange(crate::dead::REBIRTH_CAMERA_ZOOM_RANGE);
+                }
+                interest_of(&f, framing, &s).unwrap()
+            })
+            .collect()
+    };
+    let (all, one) = (interests(false), interests(true));
+    let (_, hz_all, _) = crate::camera::calculate_interest_scaled(&all, &[], s.camera, 1.0);
+    let (_, hz_one, _) = crate::camera::calculate_interest_scaled(&one, &[], s.camera, 1.0);
+    // 1000 ahead of the right-most fighter becomes 600.
+    assert_eq!((hz_all, hz_one), (2850.0, 2650.0));
+    let (mut a, mut b) = (Camera::default(), Camera::default());
+    for _ in 0..200 {
+        a = battle(a, &all, &s);
+        b = battle(b, &one, &s);
+    }
+    let dist = |c: &Camera| (c.eye - c.at).length();
+    assert!(dist(&b) < dist(&a) - 100.0, "{} vs {}", dist(&b), dist(&a));
+}

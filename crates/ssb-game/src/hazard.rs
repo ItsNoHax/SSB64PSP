@@ -652,4 +652,18 @@ mod tests {
             }]
         );
     }
+
+    /// The Tornado and the barrel run `ftCommonDamageInitDamageVars`, so
+    /// Smash DI is armed (`ftcommontwister.c:106`, `ftcommontarucann.c:111`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_stage_throws_set_smash_di() {
+        let t = HazardThrow::from_words([0, 10, 0, 100, 0, 50, 0]);
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        shoot_twister(&mut f, t);
+        assert!(f.is_smash_di, "twister");
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        shoot_tarucann(&mut f, t);
+        assert!(f.is_smash_di, "barrel");
+    }
 }

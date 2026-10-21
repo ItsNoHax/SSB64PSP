@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: scripted subject scenes `f1-vs-magnify` (`vsmagnify@660`) and `f1-training-purin-throw` (`purinthrow@112`) replace `f1-vs-four-magnifier` and `f1-vs-four-fly-roll`; subjects survive RNG changes. RE-561. CPU-match rows `f1-vs-four`, `f1-vs-cpu`, `f1-vs-team` still move on gameplay changes.
-- Open: Smash DI lag-update equivalence (RE-560); magnifier and FlyRoll measurement re-takes (RE-561); stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: battle camera parity (RE-562). Rebirth `camera_zoom_range` 0.6 ported (N64 trace error 0.0014); stage-clear zoom N64 trace matches (0.0002, X then Y draw); Smash DI lag-update equivalent, pinned by tests; `rebirth` scenes now KO Mario (rebaselined `f1-training-rebirth`, `rebirthblast`, `f1-vs-knock-ko`).
+- Open: magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 26 (RE-561); deepest game stack 366896 B.
+Baseline: batch 27 (RE-562); deepest game stack 366904 B.
 
 | Check | Result |
 |---|---|

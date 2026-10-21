@@ -4823,4 +4823,42 @@ mod tests {
         assert_eq!(b.grab.catch, None);
         assert_eq!(b.status.status, Status::CapturePulled);
     }
+
+    /// Every grab release that hits the fighter runs
+    /// `ftCommonDamageInitDamageVars`, so Smash DI is armed
+    /// (`ftcommonthrown2.c:165/248/285`, `ftcommoncapture.c:30/61`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn every_grab_damage_entry_sets_smash_di() {
+        let catcher = Fighter::new(FighterKind::Mario, 0, 4);
+        let staled = StaledThrow::of(&catcher, 8);
+        let hit = desc(None, 8, 45, 100, 0, 60);
+        let events = [
+            GrabEvent::Release {
+                lr: 1.0,
+                script_id: None,
+                desc: hit,
+                shield_catch: false,
+                staled,
+            },
+            GrabEvent::DamageRelease {
+                desc: hit,
+                shield_catch: false,
+                staled,
+            },
+            GrabEvent::CaptureHitRelease,
+            GrabEvent::BreakoutKnockback,
+            GrabEvent::KirbyBreakout,
+        ];
+        for event in events {
+            let mut from = Fighter::new(FighterKind::Mario, 0, 4);
+            let mut to = Fighter::new(FighterKind::Mario, 1, 4);
+            to.become_airborne();
+            to.grab.holder = Some(holder_of(&from));
+            to.grab.catch = Some(0);
+            assert!(!to.is_smash_di);
+            deliver(event, &mut from, &mut to);
+            assert!(to.is_smash_di, "{event:?}");
+        }
+    }
 }

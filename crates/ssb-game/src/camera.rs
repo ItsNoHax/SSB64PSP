@@ -103,7 +103,8 @@ pub struct Interest {
     pub facing_left: bool,
     /// `FTStruct.camera_zoom_frame`, initialized from `FTAttributes.camera_zoom`.
     pub zoom_frame: f32,
-    /// Per-status `FTStruct.camera_zoom_range` multiplier.
+    /// `FTStruct.camera_zoom_range`: 1.0, or 0.6 while reborn
+    /// ([`crate::dead::CameraZoomRange`]).
     pub zoom_range: f32,
     /// The original applies a further 0.75 multiplier after 120 Wait ticks
     /// ([`idle_zoomed_out`]).

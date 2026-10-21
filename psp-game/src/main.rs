@@ -74,10 +74,6 @@ const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
 const VS_TEAM_STEAL_RUNS: [core::ops::RangeInclusive<u64>; 2] = [398..=520, 800..=900];
 const VS_TEAM_STEAL_START_TICK: u64 = 1060;
 const VS_TEAM_STEAL_CAPTURE_TICK: u64 = 1075;
-/// The capture tick on which the `rebirth` scenes' Mario falls past Dream
-/// Land's bottom blast line (`ftCommonDeadDownSetStatus`), logged from a
-/// capture build (RE-412).
-const REBIRTH_KO_TICK: u64 = 160;
 /// `starko`'s tick: Mario, settled on Dream Land's floor, is put in
 /// `DeadUpStar` (`ftCommonDeadUpStarSetStatus`) as a top-out picks it,
 /// without the random draw between the star and the fall (RE-420).
@@ -260,10 +256,6 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Peach's Castle is confirmed at tick 115; Kirby and the dummy have
         // settled.
         GameScene::FighterSelect => 160,
-        GameScene::Rebirth => 300,
-        // The KO below Dream Land is at tick REBIRTH_KO_TICK; a few ticks
-        // on, the blast and the screen flash are up.
-        GameScene::RebirthBlast => REBIRTH_KO_TICK + 8,
         // 150 ticks into the flight: some 12,400 units behind the floor,
         // past the old 10,000-unit far plane (RE-420).
         GameScene::StarKo => STAR_KO_TICK + 150,
@@ -739,7 +731,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             _ => N64Buttons(0),
         };
     }
-    if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast | GameScene::StarKo) {
+    if scene == GameScene::StarKo {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             _ => N64Buttons(0),
@@ -880,10 +872,6 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     // `vsmagnify`: held left from "Go", off the castle roof and on.
     if scene == GameScene::VsMagnify {
         return ssb_capture::script::vs_magnify::stick_x(tick);
-    }
-    // Held left, Mario dashes off the main floor's left end.
-    if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast) {
-        return if (20..=100).contains(&tick) { -80 } else { 0 };
     }
     if matches!(
         scene,

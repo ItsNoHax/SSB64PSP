@@ -241,7 +241,8 @@ fn every_fighter_scene_has_an_intent() {
     for scene in GameScene::ALL {
         if script::is_fighter_scene(scene) {
             // `kirbyhat`, `kirbyspit`, `kirbylose` and `yoshiegg` need the
-            // dummy: out of this replay (`yoshiegg` has its own).
+            // dummy, the rebirth scenes the blast zones: out of this replay
+            // (`yoshiegg` and the rebirth scenes have their own).
             let outside = matches!(
                 scene,
                 GameScene::KirbyHat
@@ -250,6 +251,8 @@ fn every_fighter_scene_has_an_intent() {
                     | GameScene::KirbyWiggle
                     | GameScene::YoshiEgg
                     | GameScene::PurinThrow
+                    | GameScene::Rebirth
+                    | GameScene::RebirthBlast
             );
             assert_eq!(
                 covered.contains(&scene),
@@ -783,4 +786,157 @@ fn vs_magnify_shows_kirby_below_the_camera() {
             camera2.eye.y
         )
     );
+}
+
+/// Dream Land's `map_bound_top`, camera extents and rebirth point
+/// (`nMPMapObjKindRebirth`), as `FighterScene` gives each fighter them.
+fn stage_bounds(
+    pack: &ssb_rom::pack::Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+) -> ssb_game::dead::StageBounds {
+    let zone = |e: &ssb_rom::pack::Extent| ssb_game::status::BlastZone {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    let rebirth = pack
+        .stage_points(stage)
+        .find(|p| p.kind == 0x20)
+        .map(|p| ssb_engine::math::Vec2::new(f32::from(p.x), f32::from(p.y)))
+        .expect("Dream Land has a rebirth point");
+    ssb_game::dead::StageBounds {
+        map: zone(&stage.bounds),
+        camera: zone(&stage.camera),
+        rebirth,
+        fog_color: stage.fog_color,
+    }
+}
+
+/// The rebirth scenes' Mario (port 0) on their pad, with Training's
+/// dummy Mario standing on spawn 1, through the match loop with Dream
+/// Land's blast zones, to `until`. Returns Mario's `(tick, status)`
+/// timeline, Mario at `until` and his camera interest there.
+fn rebirth_replay(
+    pack: &ssb_rom::pack::Pack<'_>,
+    scene: GameScene,
+    until: u64,
+) -> (
+    Vec<(u64, String)>,
+    ssb_game::fighter::Fighter,
+    Option<ssb_game::camera::Interest>,
+) {
+    use ssb_game::camera::{BonusFollow, Bounds, CameraStage, Framing, StageCamera};
+    let (stage, segments) = stage_floors(pack, 0);
+    let map = dream_land_map(pack, &stage);
+    let bounds = stage_bounds(pack, &stage);
+    let mut fighters: Vec<Posed> = (0u8..2)
+        .map(|port| {
+            let mut f = training_fighter(pack, &stage, FighterKind::Mario, port, &segments);
+            f.dead.bounds = Some(bounds);
+            Posed::new(pack, f)
+        })
+        .collect();
+    let pad = scene_pad(scene);
+    let mut pair = Pair::default();
+    let mut timeline: Vec<(u64, String)> = Vec::new();
+    for tick in FIRST_TICK..until {
+        let _ = tick_pair(pack, &map, &mut fighters, &pad, tick, &mut pair);
+        let now = format!("{:?}", fighters[0].fighter.status.status);
+        if timeline.last().is_none_or(|(_, s)| *s != now) {
+            timeline.push((tick, now));
+        }
+    }
+    let extent = |e: &ssb_rom::pack::Extent| Bounds {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    let camera_stage = CameraStage {
+        camera: extent(&stage.camera),
+        team_camera: extent(&stage.team_camera),
+        map_top: f32::from(stage.bounds.top),
+        light_angle_z: stage.camera_light_angle_z,
+        stage_camera: StageCamera::Default,
+        follow: BonusFollow::Other,
+    };
+    let d = pack.fighter(FighterKind::Mario as u32).unwrap();
+    let framing = Framing {
+        cam_offset_y: d.cam_offset_y,
+        zoom_frame: d.camera_zoom,
+    };
+    let [mario, _] = <[Posed; 2]>::try_from(fighters).ok().unwrap();
+    let interest = ssb_game::camera::interest_of(&mario.fighter, framing, &camera_stage);
+    (timeline, mario.fighter, interest)
+}
+
+/// The tick `timeline` enters a status whose name contains `name`.
+fn entered(timeline: &[(u64, String)], name: &str) -> Option<u64> {
+    timeline
+        .iter()
+        .find(|(_, s)| s.contains(name))
+        .map(|(t, _)| *t)
+}
+
+/// `rebirth` and `rebirthblast`: Mario, stick held left from the opening
+/// jab's end ([`script::REBIRTH_RUN`]), dashes and runs off Dream Land's
+/// left end, falls past the bottom blast line on
+/// [`script::REBIRTH_KO_TICK`] (`DeadDown`) and is reborn. Each status
+/// enters 4 ticks after the N64 trace row of the same pad (Training, Mario
+/// vs Mario, stick left 81 rows: Dash 41, Run 54, Fall 92, DeadDown 181,
+/// RebirthDown 226, RebirthStand 301). `rebirthblast`
+/// is caught in `DeadDown`, its blast up; `rebirth` in `RebirthStand` or
+/// `RebirthWait` on the halo's platform, an interest of the camera again at
+/// range 0.6 (`ftCommonRebirthStandSetStatus`). The old stick, from tick
+/// 20, was read inside the jab: Mario walked to the ledge and stood there,
+/// and neither golden showed its subject.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn rebirth_scenes_are_caught_in_the_rebirth() {
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let trace = std::env::var_os("SCENE_TRACE").is_some();
+    for scene in [GameScene::Rebirth, GameScene::RebirthBlast] {
+        let capture = script::capture_tick(scene).unwrap();
+        let (timeline, mario, interest) = rebirth_replay(&pack, scene, capture + 1);
+        let line: Vec<String> = timeline.iter().map(|(t, s)| format!("{t}:{s}")).collect();
+        let line = line.join(" ");
+        if trace {
+            println!(
+                "{} capture {capture}: {line}; ends at ({:.1}, {:.1}) zoom {:?}",
+                scene.name(),
+                mario.pos.x,
+                mario.pos.y,
+                interest.as_ref().map(|i| i.zoom_range)
+            );
+        }
+        let dash = entered(&timeline, "Dash").expect(&line);
+        assert!(dash >= *script::REBIRTH_RUN.start(), "{line}");
+        assert!(entered(&timeline, "Walk").is_none(), "{line}");
+        assert_eq!(
+            entered(&timeline, "DeadDown"),
+            Some(script::REBIRTH_KO_TICK),
+            "{line}"
+        );
+        let at_capture = &timeline.last().unwrap().1;
+        match scene {
+            GameScene::RebirthBlast => {
+                assert!(at_capture.contains("DeadDown"), "{line}");
+                // `ftMainSetStatus` resets the range on the KO; the falling
+                // fighter is still framed until `RebirthDown` ghosts him.
+                assert_eq!(interest.as_ref().map(|i| i.zoom_range), Some(1.0), "{line}");
+            }
+            _ => {
+                assert!(
+                    at_capture.contains("RebirthStand") || at_capture.contains("RebirthWait"),
+                    "{line}"
+                );
+                assert_eq!(mario.dead.camera_zoom_range.0, 0.6, "{line}");
+                assert_eq!(interest.as_ref().map(|i| i.zoom_range), Some(0.6), "{line}");
+            }
+        }
+    }
 }

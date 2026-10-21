@@ -108,7 +108,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | Trig N64 traces | N64 traces for Ness jibaku, Kirby Stone slope, Falcon Kick roll, Pikachu `SpecialAirHiStart` cliff catch; Arwing `frame_rotate` ArcSin else branch unreached (needs a scene) | RE-503 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
-| Smash DI lag-update | Confirm `is_smash_di` gate equals `proc_lagupdate` whenever-set; acceptance: test | RE-560 |
 | Fox ledge freeze | Host sweep green (map_tests `every_ledge_catch_leaves_its_cliff_statuses_in_time`); needs a playtest repro | RE-553 |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
 
@@ -130,8 +129,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
-| Camera | Special camera modes beyond Inishie, Zebes, stage-clear zoom, boss intro (RE-554) | RE-406, RE-554 |
-| Stage-clear zoom trace | No N64 trace of the 46 zoom ticks → 1P warp ROM with forced win; compare eye, at, fovy, RNG X then Y | RE-554 |
 | Yoshi | Tongue and Egg Lay timeline matched (RE-552); remaining: grab vs N64, effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552 |
 | Setter first frames | No N64 trace: Barrel/Tornado captures, item throws, Final Cutter landing, Yoshi aerial release, Link aerial Boomerang return | RE-468, RE-473, RE-474 |
 | `anim_frame` | Shield pose clock; DK speed-0 cargo jump/fall; idle camera `status_total_tics` | RE-472, RE-474 |

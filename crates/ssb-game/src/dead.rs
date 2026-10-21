@@ -54,6 +54,24 @@ pub const REBIRTH_DOWN_FRAME_BEGIN: f32 = 100.0;
 /// `dFTCommonRebirthOffsetsX`, by halo number.
 pub const REBIRTH_OFFSETS_X: [f32; 4] = crate::d_arrays::FT_COMMON_REBIRTH_OFFSETS_X;
 
+/// `FTStruct::camera_zoom_range` while reborn
+/// (`ftCommonRebirth{Down,Stand,Wait}SetStatus`): the camera frames the
+/// fighter closer.
+pub const REBIRTH_CAMERA_ZOOM_RANGE: f32 = 0.6;
+
+/// `FTStruct::camera_zoom_range`, the multiplier
+/// `gmCameraCalcFighterZoomRange` applies to the fighter's camera box:
+/// 1.0 (`ftManagerInitFighter`, `ftMainSetStatus`) unless a rebirth status
+/// sets [`REBIRTH_CAMERA_ZOOM_RANGE`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CameraZoomRange(pub f32);
+
+impl Default for CameraZoomRange {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 /// `nFTCameraMode*`: how the battle camera treats the fighter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CameraMode {
@@ -190,6 +208,7 @@ pub struct DeadState {
     /// cannot open the pause or Training menu.
     pub is_menu_ignore: bool,
     pub camera_mode: CameraMode,
+    pub camera_zoom_range: CameraZoomRange,
     /// `status_vars.common.dead.pos`: where a top-out started, which the
     /// camera frames at the top (`gmCameraSetDeadUpStarPosition`).
     pub up_pos: Vec3,
@@ -244,6 +263,7 @@ pub(crate) fn on_set_status(f: &mut Fighter) {
     if f.dead.camera_mode != CameraMode::Entry {
         f.dead.camera_mode = CameraMode::Default;
     }
+    f.dead.camera_zoom_range = CameraZoomRange::default();
 }
 
 /// Statuses whose setter owns the ground/air situation.
@@ -789,6 +809,7 @@ pub fn rebirth_down(f: &mut Fighter, halo_number: u8) {
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;
     f.dead.camera_mode = CameraMode::Ghost;
+    f.dead.camera_zoom_range = CameraZoomRange(REBIRTH_CAMERA_ZOOM_RANGE);
     f.interface.tag_wait = 1;
     f.colanim
         .check_set(crate::colanim::ColAnimId::FIGHTER_REBIRTH, 0);
@@ -819,6 +840,7 @@ fn set_rebirth_stand(f: &mut Fighter) {
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;
+    f.dead.camera_zoom_range = CameraZoomRange(REBIRTH_CAMERA_ZOOM_RANGE);
 }
 
 /// `ftCommonRebirthWaitSetStatus`.
@@ -833,6 +855,7 @@ fn set_rebirth_wait(f: &mut Fighter) {
     f.dead.is_ghost = true;
     f.is_shadow_hidden = true;
     f.dead.is_rebirth = true;
+    f.dead.camera_zoom_range = CameraZoomRange(REBIRTH_CAMERA_ZOOM_RANGE);
 }
 
 /// The callbacks [`own_map`] reports.

@@ -489,3 +489,189 @@ fn a_fighter_in_a_barrel_in_hitlag_runs_the_project_map() {
     f.tick_physics_map(&|| [floor_at(0)]);
     assert_eq!(f.pos, Vec3::new(5.0, 500.0, 0.0));
 }
+
+/// `ftCommonDamageInitDamageVars` (`ftcommondamage.c:616`): an airborne
+/// Mario in a damage status, frozen by a 5-tick hitlag.
+fn damaged_in_hitlag() -> Fighter {
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.become_airborne();
+    f.pos = Vec3::new(0.0, 1000.0, 0.0);
+    crate::attack::init_damage_vars(&mut f, None, 0, 40.0, 45, 1.0, false);
+    assert!(f.is_smash_di);
+    f.hitlag = 5;
+    f
+}
+
+fn no_surfaces() -> [crate::weapon::MapSurface; 0] {
+    []
+}
+
+/// `ftCommonDamageCommonProcLagUpdate` (`ftcommondamage.c:239-258`): a
+/// fresh tilt (`tap_stick_x < 4`) of length 53 or more moves TopN by
+/// stick * 2.1 and spends both taps; the held stick then does nothing.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn smash_di_nudges_once_per_fresh_tilt_in_hitlag() {
+    let mut f = damaged_in_hitlag();
+    f.stick.x = 60;
+    f.stick.y = 0;
+    f.stick.tap_x = 0;
+    let start = f.pos;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos.x, start.x + 60.0 * SMASH_DI_RANGE_MUL);
+    assert_eq!(f.pos.y, start.y);
+    assert_eq!(
+        (f.stick.tap_x, f.stick.tap_y),
+        (
+            crate::status::STICKBUFFER_MAX,
+            crate::status::STICKBUFFER_MAX
+        )
+    );
+    let after = f.pos;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos, after);
+    // A Y-only fresh tap counts too (`tap_stick_x < 4 || tap_stick_y < 4`).
+    f.stick.x = 0;
+    f.stick.y = -60;
+    f.stick.tap_y = 3;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos.y, after.y - 60.0 * SMASH_DI_RANGE_MUL);
+    // A tap 4 ticks old is too late.
+    let held = f.pos;
+    f.stick.tap_x = SMASH_DI_BUFFER_TICS_MAX;
+    f.stick.tap_y = SMASH_DI_BUFFER_TICS_MAX;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos, held);
+}
+
+/// `SQUARE(x) + SQUARE(y) >= SQUARE(53)`: (37, 37) is 52.3 long, (38, 38)
+/// 53.7.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn smash_di_ignores_a_stick_below_53() {
+    let mut f = damaged_in_hitlag();
+    let start = f.pos;
+    f.stick.x = 37;
+    f.stick.y = 37;
+    f.stick.tap_x = 0;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos, start);
+    assert_eq!(f.stick.tap_x, 0, "no nudge spends no tap");
+    f.stick.x = 38;
+    f.stick.y = 38;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos.x, start.x + 38.0 * SMASH_DI_RANGE_MUL);
+    assert_eq!(f.pos.y, start.y + 38.0 * SMASH_DI_RANGE_MUL);
+}
+
+/// `ftMainSetStatus` (`ftmain.c:4814`) clears `proc_lagupdate`: a status
+/// change in hitlag ends the Smash DI.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn smash_di_ends_with_the_damage_status() {
+    let mut f = damaged_in_hitlag();
+    crate::status::set_fall(&mut f);
+    assert!(!f.is_smash_di);
+    f.hitlag = 5;
+    let start = f.pos;
+    f.stick.x = 80;
+    f.stick.tap_x = 0;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos, start);
+}
+
+/// Only `ftCommonDamageInitDamageVars` sets the callback: a fighter in
+/// hitlag from a blocked or landed hit has none.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn no_nudge_without_a_damage_entry() {
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.become_airborne();
+    crate::status::set_fall(&mut f);
+    f.pos = Vec3::new(0.0, 1000.0, 0.0);
+    f.hitlag = 5;
+    f.stick.x = 80;
+    f.stick.tap_x = 0;
+    let start = f.pos;
+    f.tick_physics_map(&no_surfaces);
+    assert_eq!(f.pos, start);
+}
+
+/// The damage entries that run `ftCommonDamageInitDamageVars` here: a hit
+/// (`ftCommonDamageGotoDamageStatus`), a capture's knockback and DK's
+/// `ThrowFDamage`. The throw releases and the stage throws are pinned in
+/// `grab` and `hazard`'s tests.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn every_damage_entry_sets_the_lag_update() {
+    let fresh = || {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.become_airborne();
+        assert!(!f.is_smash_di);
+        f
+    };
+    let mut f = fresh();
+    f.hits.damage_knockback = 50.0;
+    f.hits.damage_angle = 45;
+    f.hits.damage_lr = 1.0;
+    crate::combat::goto_damage_status(&mut f);
+    assert!(f.is_smash_di, "goto_damage_status");
+    let mut f = fresh();
+    crate::attack::set_damage_status(&mut f, None, 50.0, 45, 1.0, 1);
+    assert!(f.is_smash_di, "set_damage_status");
+    let mut f = fresh();
+    let catcher = Fighter::new(FighterKind::Mario, 1, 3);
+    crate::grab::apply_capture_knockback_with(
+        &mut f,
+        crate::grab::holder_of(&catcher),
+        (361, 80, 0, 20),
+    );
+    assert!(f.is_smash_di, "apply_capture_knockback_with");
+    // Donkey Kong hit while carrying.
+    let mut f = Fighter::new(FighterKind::Donkey, 0, 3);
+    f.become_airborne();
+    crate::grab::set_donkey_throwf_damage(&mut f, 50.0, 45, 1.0);
+    assert!(f.is_smash_di, "set_donkey_throwf_damage");
+}
+
+/// The statuses with their own physics have no `proc_lagupdate`: a status
+/// change cleared it, and Master Hand's statuses never set one.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn own_physics_statuses_never_nudge() {
+    for status in [
+        AnyStatus::Common(Status::Sleep),
+        AnyStatus::Common(Status::DeadDown),
+        AnyStatus::Common(Status::RebirthWait),
+    ] {
+        let mut f = damaged_in_hitlag();
+        crate::status::set_any_status_preserve(
+            &mut f,
+            status,
+            0.0,
+            StatusTiming::unknown(),
+            crate::status::Preserve::NONE,
+        );
+        f.hitlag = 5;
+        f.stick.x = 80;
+        f.stick.tap_x = 0;
+        let start = f.pos;
+        f.tick_physics_map(&no_surfaces);
+        assert!(!f.is_smash_di);
+        assert_eq!(f.pos.x, start.x, "{status:?}");
+    }
+    // Master Hand in hitlag runs his status's `proc_map`, never the lag
+    // update, even with the flag forced on.
+    let mut boss = Fighter::new(FighterKind::Boss, 1, 0);
+    boss.pos = Vec3::new(0.0, 1500.0, 0.0);
+    crate::boss::init(&mut boss, &|| [floor_at(0)], 9, false);
+    crate::boss::set_wait(&mut boss, &|| [floor_at(0)]);
+    assert!(matches!(boss.status.status, AnyStatus::Boss(_)));
+    boss.is_smash_di = true;
+    boss.hitlag = 5;
+    boss.stick.x = 80;
+    boss.stick.tap_x = 0;
+    let start = boss.pos;
+    boss.tick_physics_map(&|| [floor_at(0)]);
+    assert_eq!(boss.pos.x, start.x);
+}
