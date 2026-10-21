@@ -47,6 +47,8 @@ pub struct Pair {
     /// (`sc1PTrainingModeUpdateDummyBehavior`'s Stand) whose controller
     /// replaces its pad; `None` drives it from the pad.
     pub cpu: Option<HostCpu>,
+    /// The control lock this tick (`World::locked`): Training's menu.
+    pub locked: bool,
 }
 
 /// A CPU seat on the host, as `psp-game`'s `Dummy` runs one: the computer
@@ -136,6 +138,7 @@ impl Default for Pair {
             objects: None,
             barrel: None,
             cpu: None,
+            locked: false,
         }
     }
 }
@@ -626,7 +629,7 @@ fn tick_seats(
         bonus: None,
         battle: None,
         started: true,
-        locked: false,
+        locked: pair.locked,
         go: false,
     };
     ssb_game::matchtick::step(&mut arena, &mut seats, &mut world, &mut ());

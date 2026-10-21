@@ -16,10 +16,9 @@
 
 ## Current work
 
-- Landed: entry effect clock starts the frame after the make; capture entry focus pinned (RE-567). 8 goldens rebaselined (see RE-567, 2642-95158 native px).
-- Landed: map-step skeleton fix for motion -1/-2; Kirby air catch, Yoshi grab and throws, dummy tech, GuardSetOff checked against the N64 (RE-567).
-- Landed: link-10 entry effects (Mario pipe, Samus point, DK barrel, rebirth halo) seeded with the fighters' N64 depth state, pack v128 (RE-567).
-- Open: CPU item tracking N64 trace (RE-566); magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 (RE-418). Gaps in `PLAN.md`.
+- Landed: CPU item tracking, 1P stage-start level/trait and Link wake, VS entry focus ids 0-2 with 2-4 fighters checked against N64 traces; 2 small decomp fixes (RE-568). No golden moved.
+- Landed (batch 32): entry effect clock, capture entry focus pinned, map-step skeleton, link-10 entry effects, pack v128 (RE-567).
+- Open: countdown RNG seed vs a real N64 VS boot; Hyrule post-wake host replay (RE-568). Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -32,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 32 (RE-567); deepest game stack 366992 B.
+Baseline: batch 34 (RE-568); deepest game stack 366992 B.
 
 | Check | Result |
 |---|---|
@@ -40,7 +39,7 @@ Baseline: batch 32 (RE-567); deepest game stack 366992 B.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | full matrix verified (243 of 243) |
+| Goldens | full matrix verified (245 of 245) |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

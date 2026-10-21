@@ -184,12 +184,16 @@ fn the_link_trait_stands_until_hurt_or_the_wait_runs_out() {
     com.trait_kind = Trait::Link;
     com.process_trait(&f);
     assert_eq!(com.behavior, Behavior::Stand);
+    // `ftComputerProcessBehavior` has no base for Stand: the N64 1P Link
+    // stage reads `objective_base` 0 until the wait runs out, then Attack.
+    assert_eq!(com.objective_base, Objective::Stand);
     f.damage = 13;
     com.process_trait(&f);
     assert_eq!(com.behavior, Behavior::Stand);
     f.damage = 14;
     com.process_trait(&f);
     assert_eq!(com.behavior, Behavior::Default);
+    assert_eq!(com.objective_base, Objective::Attack);
     f.damage = 0;
     com.behavior_change_wait = 0;
     com.process_trait(&f);

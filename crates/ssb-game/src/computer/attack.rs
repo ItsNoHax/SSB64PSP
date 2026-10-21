@@ -187,13 +187,21 @@ impl Computer {
             Trait::Ally => self.behavior = Behavior::Ally,
             Trait::None => {}
         }
+        // The Training behaviours (and `Unk4`, no case) leave the base as it
+        // was: N64 1P Link stage reads `objective_base` 0 while Link stands.
         self.objective_base = match self.behavior {
+            Behavior::Default | Behavior::Unk3 | Behavior::PolyTeam => Objective::Attack,
             Behavior::Unk1 => Objective::Evade,
             Behavior::Unk2 => Objective::Unknown1,
             Behavior::Ally | Behavior::YoshiTeam => Objective::Ally,
             Behavior::Captain | Behavior::KirbyTeam => Objective::Patrol,
             Behavior::Bonus3 => Objective::Rush,
-            _ => Objective::Attack,
+            Behavior::Unk4
+            | Behavior::Stand
+            | Behavior::Walk
+            | Behavior::Evade
+            | Behavior::Jump
+            | Behavior::Unk5 => self.objective_base,
         };
     }
 

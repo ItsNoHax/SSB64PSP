@@ -133,6 +133,55 @@ fn the_entry_focus_staggers_two_fighters() {
     assert_eq!(f(2).zoom(210), None);
 }
 
+/// N64 warp-boot VS battles on Peach's Castle (batch 34, the RE-425 build
+/// with `ifCommonEntryFocusMakeInterface`'s id fixed): the first frame each
+/// player's Appear counter runs, in link order (= port order). RE-425's
+/// two-fighter id 1 run puts port tick t at N64 frame t + 91.
+/// (id, count, [frames])
+const N64_APPEAR_FRAMES: [(u8, u8, &[u32]); 7] = [
+    (0, 2, &[113, 135]),
+    (1, 2, &[196, 211]),
+    (0, 3, &[91, 113, 135]),
+    (2, 3, &[91, 151, 211]),
+    (0, 4, &[91, 113, 135, 157]),
+    (1, 4, &[181, 196, 211, 226]),
+    (2, 4, &[91, 151, 211, 271]),
+];
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn the_entry_focus_enters_two_to_four_fighters_as_on_the_n64() {
+    for (id, count, frames) in N64_APPEAR_FRAMES {
+        let f = EntryFocus { id, count };
+        let ticks: Vec<u32> = (0..frames.len()).map(|i| f.appear_tick(i) + 91).collect();
+        assert_eq!(ticks, frames, "id {id} count {count}");
+    }
+    // `gmCameraSetStatusPlayerZoom` (`gGMCameraStruct.status` 1) from N64
+    // frame 120 to 300 (three fighters) or 360 (four), frames the status
+    // changes on: one before the Appear counter's.
+    for (count, end) in [(3u8, 300u32), (4, 360)] {
+        let f = EntryFocus { id: 2, count };
+        let on: Vec<u32> = (0..400).filter(|&t| f.zoom(t).is_some()).collect();
+        assert_eq!(
+            (on[0] + 90, on[on.len() - 1] + 91),
+            (120, end),
+            "count {count}"
+        );
+        // One fighter at a time, in link order, 60 ticks each.
+        assert_eq!(f.zoom(on[0] + 60), Some(1));
+    }
+}
+
+/// The unpinned draw (`ifCommonEntryAllThread`'s `syUtilsRandIntRange(3)`):
+/// the N64 four-fighter warp boot's seed is 0x0029E2C0 before it and
+/// 0xC823F683 after, id 2 (the zoom run above).
+#[test]
+fn the_entry_focus_draw_matches_the_n64_seed() {
+    crate::rng::set_seed(0x0029_E2C0);
+    assert_eq!(crate::rng::rand_int_range(3), 2);
+    assert_eq!(crate::rng::seed() as u32, 0xC823_F683);
+}
+
 /// The clock skips the frame the effect is made on: `efManagerFuncRun`
 /// adds its process in the next frame's link pass. The N64 (ParaLLEl, Fox
 /// vs Captain Falcon on Dream Land) shows the Arwing at anim frame 0 on the

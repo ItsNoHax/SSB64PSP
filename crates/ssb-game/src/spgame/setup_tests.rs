@@ -157,3 +157,54 @@ fn stage_clear_zoom_draws_the_eye_x_index_then_the_eye_y_index() {
     crate::rng::set_seed(77);
     assert_eq!(set_camera_zoom_angles(Facing::Right).0, -x);
 }
+
+/// N64 stage-start reads (batch 34): 1P warp builds of the decomp, Mario as
+/// player 0, the default backup (Easy, 2 stocks); per CPU fighter `fp->team`,
+/// `level`, `handicap` and `computer.trait` on its first frame.
+/// (stage, port, team, level, handicap, trait)
+const N64_STAGE_START: [(Stage, usize, u8, u8, u8, T); 21] = [
+    (Stage::Link, 1, 3, 2, 9, T::Link),
+    (Stage::Yoshi, 1, 3, 2, 11, T::YoshiTeam),
+    (Stage::Yoshi, 2, 3, 2, 11, T::YoshiTeam),
+    (Stage::Yoshi, 3, 3, 2, 11, T::YoshiTeam),
+    (Stage::Fox, 1, 3, 3, 9, T::Default),
+    (Stage::Mario, 1, 0, 5, 9, T::Ally),
+    (Stage::Mario, 2, 3, 3, 9, T::MarioBros),
+    (Stage::Mario, 3, 3, 3, 9, T::MarioBros),
+    (Stage::Pikachu, 1, 3, 4, 9, T::Default),
+    (Stage::Donkey, 1, 0, 4, 7, T::Ally),
+    (Stage::Donkey, 2, 0, 4, 7, T::Ally),
+    (Stage::Donkey, 3, 3, 4, 26, T::GiantDonkey),
+    (Stage::Kirby, 1, 3, 4, 16, T::KirbyTeam),
+    (Stage::Kirby, 2, 3, 4, 16, T::KirbyTeam),
+    (Stage::Samus, 1, 3, 6, 9, T::Default),
+    (Stage::MMario, 1, 3, 3, 31, T::Default),
+    (Stage::Zako, 1, 3, 3, 21, T::PolyTeam),
+    (Stage::Zako, 2, 3, 3, 21, T::PolyTeam),
+    (Stage::Zako, 3, 3, 3, 21, T::PolyTeam),
+    (Stage::Boss, 1, 3, 2, 36, T::Default),
+    (Stage::Luigi, 1, 3, 7, 6, T::Default),
+];
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn stage_start_levels_traits_and_handicaps_match_the_n64() {
+    for (stage, port, team, level, handicap, cp_trait) in N64_STAGE_START {
+        let mut state = BattleState::default();
+        let mut scene = SceneData {
+            stage: stage as u8,
+            fkind: K::Mario,
+            ..Default::default()
+        };
+        Manager::new(&mut scene, &mut state, &Backup::default());
+        let g = Game::setup_stage_all(&mut state, &mut scene, Difficulty::Easy, 0, K::Ness);
+        let p = &state.players[port];
+        assert_eq!(
+            (p.team, p.level, p.handicap, g.setups[port].cp_trait),
+            (team, level, handicap, cp_trait),
+            "{stage:?} port {port}"
+        );
+        // The human keeps `dSCManagerDefaultBattleState`'s level 3 (N64 `fp->level`).
+        assert_eq!(state.players[0].level, 3, "{stage:?} player level");
+    }
+}

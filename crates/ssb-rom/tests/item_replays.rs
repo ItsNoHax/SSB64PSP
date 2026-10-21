@@ -16,7 +16,7 @@ use ssb_game::fighter::FighterKind;
 
 #[path = "common/posed.rs"]
 mod posed;
-use posed::{tick_pair, Pair, Posed};
+use posed::{tick_pair, HostCpu, Pair, Posed};
 
 #[path = "common/dream_land.rs"]
 mod dream_land;
@@ -59,11 +59,12 @@ const SAFFRON_GKIND: u8 = 7;
 /// camera (`eye at fovy target_dist`: the `CObj`'s eye, at and fovy,
 /// `gGMCameraStruct.target_dist`) and, on Saffron, the gate
 /// (`gate_status gate_noentry monster_wait gate_wait gate_pos.x
-/// gate_pos.y`).
+/// gate_pos.y`) and, in a CPU replay, the dummy's computer (`objective
+/// item_track_wait`).
 struct Row {
     t: u64,
     seed: Option<i32>,
-    groups: [Vec<Vec<f32>>; 6],
+    groups: [Vec<Vec<f32>>; 7],
 }
 
 fn parse(table: &str) -> Vec<Row> {
@@ -77,7 +78,7 @@ fn parse(table: &str) -> Vec<Row> {
             let seed = head
                 .next()
                 .map(|s| u32::from_str_radix(s, 16).unwrap() as i32);
-            let mut groups: [Vec<Vec<f32>>; 6] = Default::default();
+            let mut groups: [Vec<Vec<f32>>; 7] = Default::default();
             for (g, part) in groups.iter_mut().zip(parts) {
                 *g = part
                     .split(';')
@@ -107,21 +108,42 @@ fn it_kind(k: ssb_game::item::ItemKind) -> f32 {
 /// opens and closes the menu, which locks the fighters without stopping
 /// the game: while it is open, `y=-80` moves to the Item row, each `x=80`
 /// steps right one item and A makes it (`ITKind` steps + 3,
-/// `sc1PTrainingModeUpdateItemOption`).
+/// `sc1PTrainingModeUpdateItemOption`). On the first row (CP) each `x=80`
+/// steps the dummy's behaviour (`sc1PTrainingModeUpdateCPOption`); the
+/// menu locks both fighters' control from the opening START's tick to
+/// the closing one's (`ftParamLockPlayerControl`).
 struct Route {
     /// `(first tick, last tick, (buttons, stick x, stick y))`.
     steps: Vec<(u64, u64, (u16, i8, i8))>,
     /// `(tick, ITKind)`.
     menu: Vec<(u64, u8)>,
+    /// `(tick, cp_menu_option)`.
+    cp: Vec<(u64, u8)>,
+    /// `(opening tick, closing tick)`: the ticks in between are locked.
+    locks: Vec<(u64, u64)>,
 }
+
+/// `dSC1PTrainingModeDummyBehaviors`, by `cp_menu_option`.
+const DUMMY_BEHAVIORS: [ssb_game::computer::Behavior; 5] = {
+    use ssb_game::computer::Behavior;
+    [
+        Behavior::Stand,
+        Behavior::Walk,
+        Behavior::Evade,
+        Behavior::Jump,
+        Behavior::Default,
+    ]
+};
 
 impl Route {
     fn parse(route: &str) -> Self {
         let mut out = Route {
             steps: Vec::new(),
             menu: Vec::new(),
+            cp: Vec::new(),
+            locks: Vec::new(),
         };
-        let (mut open, mut option) = (false, 0u8);
+        let (mut open, mut option, mut row, mut cp) = (false, 0u8, 0u8, 0u8);
         for step in route.split(';') {
             let mut it = step.split(':');
             let start: u64 = it.next().unwrap().parse().unwrap();
@@ -142,10 +164,21 @@ impl Route {
             }
             if menu {
                 open = !open;
+                if open {
+                    out.locks.push((start, u64::MAX));
+                } else if let Some(lock) = out.locks.last_mut() {
+                    lock.1 = start;
+                }
                 continue;
             }
             if open {
-                if x > 0 {
+                if y < 0 {
+                    row += 1;
+                }
+                if x > 0 && row == 0 {
+                    cp = (cp + 1) % DUMMY_BEHAVIORS.len() as u8;
+                    out.cp.push((start, cp));
+                } else if x > 0 {
                     option += 1;
                 }
                 if buttons & button::A != 0 {
@@ -156,6 +189,11 @@ impl Route {
             out.steps.push((start, start + len - 1, (buttons, x, y)));
         }
         out
+    }
+
+    /// Whether the menu holds the fighters' control on `tick`.
+    fn locked(&self, tick: u64) -> bool {
+        self.locks.iter().any(|&(a, b)| (a..b).contains(&tick))
     }
 
     fn pad(&self, tick: u64) -> (u16, i8, i8) {
@@ -244,7 +282,16 @@ impl Replay<'_> {
         monster: u8,
         dummy_percent: Option<(u64, u16)>,
     ) -> Option<Outcome> {
-        self.run_stage(stage_id, table, monster, dummy_percent, None)
+        self.run_stage(stage_id, table, monster, dummy_percent, None, false)
+    }
+
+    /// [`Self::run`] with the dummy as Training's CPU
+    /// (`sc1PTrainingModeUpdateDummyBehavior`, level 3, menu Stand until
+    /// the route's CP row steps it) on the team of P1, as the trace's
+    /// poke of the dummy's `fp->team` did after frame 0: its target walks
+    /// (`ftComputerCheckFindTarget`) then find nobody.
+    fn run_cpu(&self, table: &str) -> Option<Outcome> {
+        self.run_stage(CASTLE, table, 0, None, None, true)
     }
 
     /// [`Self::run_forced`] on Saffron with its gate controller, and
@@ -255,12 +302,13 @@ impl Replay<'_> {
         let stage_id = pack
             .stage_of_file(ssb_rom::stage::VS_GROUND_FILES[SAFFRON_GKIND as usize])
             .unwrap();
-        self.run_stage(stage_id, table, monster, None, Some(monster_wait))
+        self.run_stage(stage_id, table, monster, None, Some(monster_wait), false)
     }
 
     /// [`Self::run_on`]; with `gate = Some((t, wait))` the stage's own
     /// controller runs (`StageInit` from the pack, as `hyrule_pair`) and
-    /// Saffron's `monster_wait` is written after frame `t`.
+    /// Saffron's `monster_wait` is written after frame `t`; with `cpu` the
+    /// dummy is [`Self::run_cpu`]'s.
     fn run_stage(
         &self,
         stage_id: u32,
@@ -268,6 +316,7 @@ impl Replay<'_> {
         monster: u8,
         dummy_percent: Option<(u64, u16)>,
         gate: Option<(u64, u16)>,
+        cpu: bool,
     ) -> Option<Outcome> {
         let bytes = open_pack()?;
         let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
@@ -292,6 +341,14 @@ impl Replay<'_> {
             )),
             ..Pair::default()
         };
+        if cpu {
+            pair.cpu = Some(HostCpu::training_dummy(
+                &fighters[1].fighter,
+                &stage,
+                stage_bounds(&pack, &stage),
+                &map,
+            ));
+        }
         pair.items.force_monster_kind = monster;
         // Training's battle state turns every item off (psp-game's
         // `world.items.normal_switches.toggles = 0`): Chansey lays no egg.
@@ -372,7 +429,18 @@ impl Replay<'_> {
                 pair.items
                     .make_setup_common(kind, None, pos, vel, &core::iter::empty);
             }
+            for &(_, option) in route.cp.iter().filter(|(t, _)| *t == tick) {
+                if let Some(cpu) = pair.cpu.as_mut() {
+                    // `sc1PTrainingModeUpdateDummyBehavior`.
+                    cpu.computer.behavior = DUMMY_BEHAVIORS[usize::from(option)];
+                    cpu.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+                }
+            }
+            pair.locked = route.locked(tick);
             let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
+            if cpu && tick == 0 {
+                fighters[1].fighter.team = fighters[0].fighter.team;
+            }
             if let Some((_, percent)) = dummy_percent.filter(|(t, _)| *t == tick) {
                 fighters[1].fighter.damage = percent;
             }
@@ -482,7 +550,18 @@ impl Replay<'_> {
                 })
                 .into_iter()
                 .collect();
-            let got: [Vec<Vec<f32>>; 6] = [vec![c0], vec![c1], items, weapons, cam, gate_row];
+            let com: Vec<Vec<f32>> = pair
+                .cpu
+                .iter()
+                .filter(|_| !row.groups[6].is_empty())
+                .map(|c| {
+                    vec![
+                        c.computer.objective as u8 as f32,
+                        f32::from(c.computer.item_track_wait),
+                    ]
+                })
+                .collect();
+            let got: [Vec<Vec<f32>>; 7] = [vec![c0], vec![c1], items, weapons, cam, gate_row, com];
             let mut ok = n64_draws.is_none_or(|n| host_draws <= n);
             // A seed-only row (`t seed`) checks the draws alone.
             if row.groups[0].is_empty() {
@@ -509,6 +588,9 @@ impl Replay<'_> {
                 }
                 for (ge, we) in g.iter().zip(w) {
                     ok &= ge.len() == we.len() && ge.iter().zip(we).all(|(a, b)| near(*a, *b));
+                    if gi == 6 {
+                        continue;
+                    }
                     // Position columns: fighters 2-3, items and weapons 1-2.
                     let at = if ge.len() == 8 { 2..4 } else { 1..3 };
                     for i in at.filter(|&i| i < ge.len().min(we.len())) {
@@ -2518,4 +2600,406 @@ fn saffrons_porygon_tackles_out_as_on_the_n64() {
         return;
     };
     out.check("Saffron's gate and a forced Porygon");
+}
+
+/// `b34cpu/cpu34a` (`warp_link`, route below): Link dashes left to x
+/// -1441, then the menu (70-180) sets the dummy's CP to the CPU (Default,
+/// trait None, level 3) and makes a Beam Sword above Link (A at 170). The
+/// trace pokes the dummy's `fp->team` to Link's after frame 0, so
+/// `ftComputerProcDefault` finds no target and falls to its item branch:
+/// the sword lands on the tower ledge (x -1391) at 224, `item_track_wait`
+/// counts from 225 and passes `225 - 25 * 3` at 375 (`TrackItem`); the CPU
+/// walks left and picks the sword up (`LightGet` 463), then attacks with
+/// it (`objective_base`). Rows every 10th tick and 220-228, 372-380,
+/// 460-466; the last group is the dummy's `objective item_track_wait`.
+const CPU_TRACKS_A_DROPPED_SWORD: &str = "
+0 00000001 | 10 1.00 -210.00 1399.25 0 0 0.000 0.000 | 10 1.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+7 18be873a
+10 18be873a | 15 4.00 -482.00 1399.68 0 0 0.000 0.000 | 10 11.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+13 3d6c1037
+20 3d6c1037 | 15 14.00 -967.60 1400.43 0 0 0.000 0.000 | 10 21.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+24 72ae7869
+25 df90722b
+30 df90722b | 17 5.00 -1312.50 1400.97 0 0 0.000 0.000 | 10 31.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+40 df90722b | 17 15.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 41.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+50 df90722b | 10 0.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 1.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+60 df90722b | 10 10.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 11.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+70 df90722b | 10 20.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 21.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+80 df90722b | 10 30.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 31.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+90 df90722b | 10 40.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 41.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+100 df90722b | 10 50.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 1.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+110 df90722b | 10 60.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 11.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+120 df90722b | 10 70.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 21.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+130 df90722b | 10 0.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 31.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+140 df90722b | 10 10.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 41.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+150 df90722b | 10 20.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 1.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+160 df90722b | 10 30.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 11.00 765.00 1413.09 0 0 0.000 0.000 |  |  |  |  | 0 0
+170 12dbce4a | 10 40.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 21.00 765.00 1413.09 0 0 0.000 0.000 | 7 -1441.45 1658.30 0.000 28.800 |  |  |  | 0 0
+171 8124f618
+172 95475fb6
+173 6443b2a4
+180 428b763e | 10 50.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 31.00 765.00 1413.09 0 0 0.000 0.000 | 7 -1441.45 1880.30 0.000 16.800 |  |  |  | 2 0
+181 701fe6a8
+182 fa5aea62
+183 45099bec
+184 bb25e9c6
+185 ee5d3670
+186 e3cbf86a
+187 7f965a34
+188 ce45da4e
+189 2213eb38
+190 eb899372 | 10 60.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 41.00 765.00 1413.09 0 0 0.000 0.000 | 7 -1441.45 1982.30 0.000 4.800 |  |  |  | 2 0
+191 b01c0d7c
+192 d6ae67d6
+193 01202500
+194 a350db7a
+195 4b40d5c4
+196 eb36b25e
+197 3e1203c8
+198 5f32f082
+199 ba9ed30c
+200 df49d9e6 | 10 70.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 1.00 765.00 1413.09 0 0 0.000 0.000 | 7 -1441.45 1964.30 0.000 -7.200 |  |  |  | 2 0
+201 4cada790
+202 5e14f28a
+203 c9442554
+204 1366fe6e
+205 b66b3058
+206 c2300192
+207 6032ec9c
+208 15a13ff6
+209 8822e463
+210 409dcdf5 | 10 0.00 -1441.45 1429.50 0 0 0.000 0.000 | 18 2.00 765.00 1413.09 0 0 0.000 0.000 | 7 -1438.10 1858.57 3.356 7.071 |  |  |  | 2 0
+211 f98b5417
+212 73dadb49
+213 26caec0b
+214 890252dd
+215 5772403f
+216 704968b1
+217 ca8024b3
+218 96c590c5
+219 3cd5ad67
+220 c0807f19 | 10 10.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 1.00 776.95 1414.14 0 0 0.000 0.000 | 7 -1404.54 1863.28 3.356 -4.929 |  |  |  | 2 0
+221 b3ea2e5b | 10 11.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 2.00 788.91 1415.20 0 0 0.000 0.000 | 7 -1401.19 1857.15 3.356 -6.129 |  |  |  | 2 0
+222 48cc27ad | 10 12.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 3.00 800.86 1416.25 0 0 0.000 0.000 | 7 -1397.83 1849.82 3.356 -7.329 |  |  |  | 2 0
+223 e0bf3b8f | 10 13.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 4.00 812.81 1417.31 0 0 0.000 0.000 | 7 -1394.48 1841.29 3.356 -8.529 |  |  |  | 2 0
+224 bcd6be81 | 10 14.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 5.00 824.77 1418.36 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 0
+225 6ad66fba | 10 15.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 0.00 830.74 1418.89 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 1
+226 c22d0c04 | 10 16.00 -1441.45 1429.50 0 0 0.000 0.000 | 18 1.00 830.74 1418.89 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 2
+227 b68e9a9e | 10 17.00 -1441.45 1429.50 0 0 0.000 0.000 | 18 2.00 830.74 1418.89 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 3
+228 f9832e08 | 10 18.00 -1441.45 1429.50 0 0 0.000 0.000 | 18 3.00 830.74 1418.89 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 4
+229 c6576cc2
+230 bc61314c | 10 20.00 -1441.45 1429.50 0 0 0.000 0.000 | 18 5.00 830.74 1418.89 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 6
+231 ec692a26
+232 ba6179d0
+233 7dd156ca
+234 5e9dab94
+235 1916b6ae
+236 eb72aa98
+237 401d4dd2
+238 83849adc
+239 494a6036
+240 4402e060 | 10 30.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 4.00 782.93 1414.67 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 16
+241 ebe871da
+242 d42c1f24
+243 ebcb46be
+244 0e123b28
+245 a833e2e2
+246 a49e586c
+247 91f48a46
+248 ead4daf0
+249 ccd4c0ea
+250 205966b4 | 10 40.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 14.00 663.39 1404.12 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 26
+251 80354ace
+252 e732dfb8
+253 9af42bf2
+254 c6cf69fc
+255 0e90a856
+256 e0486980
+257 c58f43fa
+258 37e68244
+259 d91dc2de
+260 37e59848 | 10 50.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 24.00 543.67 1398.08 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 36
+261 c9f72902
+262 5078cf8c
+263 c087ba66
+264 d90e8c10
+265 1850fb0a
+266 96d471d4
+267 ba8daeee
+268 8c7b64d8
+269 3807d88d
+270 8633736f | 10 60.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 34.00 423.67 1398.27 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 46
+271 a51fb561
+272 627056e3
+273 99dad475
+274 cd548e97
+275 bbb1e9c9
+276 d13e6e8b
+277 6a15e95d
+278 dc468abf
+279 30040731
+280 de73b733 | 10 70.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 44.00 303.67 1398.45 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 56
+281 f3d9b745
+282 182f07e7
+283 5968ad99
+284 acf7d0db
+285 0a4ade2d
+286 4e57a60f
+287 d8767d01
+288 93165b83
+289 ef11fe15
+290 ceae0537 | 10 0.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 54.00 183.67 1398.64 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 66
+291 85881569
+292 7cfef72b
+293 c8dbb6fd
+294 9643c55f
+295 ef3c16d1
+296 5f4543d3
+297 a9d8a8e5
+298 89ce8687
+299 68f52139
+300 b960e17b | 10 10.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 4.00 63.67 1398.83 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 76
+301 263d73cd
+302 c027e8af
+303 a959d4a1
+304 282d7023
+305 7ac2b7b5
+306 dccd8bd7
+307 f8d4d109
+308 086a8fcb
+309 4325149d
+310 7a610fff | 10 20.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 14.00 -56.33 1399.01 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 86
+311 f014b671
+312 293be073
+313 c0a52a85
+314 a5281527
+315 c68c24d9
+316 8ea9021b
+317 b087996d
+318 658c3b4f
+319 30f1bc41
+320 441d94c3 | 10 30.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 24.00 -176.33 1399.20 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 96
+321 b2950155
+322 5a9b2277
+323 cfc01ca9
+324 3ee9386b
+325 3f9a023d
+326 64866a9f
+327 2db5e611
+328 50bf8d13
+329 2fe73c25
+330 5f23b3c7 | 10 40.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 34.00 -296.33 1399.39 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 106
+331 4e55b879
+332 2a3832bb
+333 d1d14f0d
+334 ec6c9def
+335 cc6633e1
+336 6d4ec963
+337 9030daf5
+338 4efec917
+339 8871f849
+340 cfe2f10b | 10 50.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 9.00 -302.33 1399.40 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 116
+341 28e27fdd
+342 549bd53f
+343 e747a5b1
+344 4e3849b3
+345 7346ddc5
+346 50a96267
+347 a079dc19
+348 6d76735b
+349 b6c294ad
+350 26b1108f | 10 60.00 -1441.45 1429.50 0 0 0.000 0.000 | 10 19.00 -302.33 1399.40 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 126
+351 1cdf3b81
+352 8e290e03
+353 913e4495
+354 64e07fb7
+355 651263e9
+356 4ebfb9ab
+357 6da68d7d
+358 6e894fdf
+359 9ff1f551
+360 06e367ca | 10 70.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 1.00 -314.33 1399.41 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 136
+361 43284494
+362 0c1e17ae
+363 f21d1398
+364 12c2fed2
+365 773fd3dc
+366 06076136
+367 ab0fe960
+368 b305c2da
+369 791bf824
+370 c461e7be | 10 0.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 11.00 -434.33 1399.60 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 146
+371 58c5e428
+372 a12cd3e2 | 10 2.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 13.00 -458.33 1399.64 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 148
+373 c346d16c | 10 3.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 14.00 -470.33 1399.66 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 149
+374 3308cb46 | 10 4.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 15.00 -482.33 1399.68 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 2 150
+375 3308cb46 | 10 5.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 16.00 -494.33 1399.69 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 151
+376 3308cb46 | 10 6.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 17.00 -506.33 1399.71 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 152
+377 3308cb46 | 10 7.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 18.00 -518.33 1399.73 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 153
+378 3308cb46 | 10 8.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 19.00 -530.33 1399.75 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 154
+379 3308cb46 | 10 9.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 20.00 -542.33 1399.77 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 155
+380 3308cb46 | 10 10.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 21.00 -554.33 1399.79 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 156
+390 3308cb46 | 10 20.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 31.00 -674.33 1399.97 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 166
+400 3308cb46 | 10 30.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 41.00 -794.33 1400.16 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 176
+410 3308cb46 | 10 40.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 51.00 -914.33 1400.35 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 186
+420 3308cb46 | 10 50.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 1.00 -1034.33 1400.54 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 196
+430 3308cb46 | 10 60.00 -1441.45 1429.50 0 0 0.000 0.000 | 12 11.00 -1154.33 1400.72 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 206
+440 3308cb46 | 10 70.00 -1468.45 1436.59 0 0 0.000 0.000 | 12 21.00 -1247.33 1400.87 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 216
+450 1edcd4f1 | 10 0.00 -1522.45 1450.78 0 0 0.000 0.000 | 10 1.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 226
+460 1edcd4f1 | 10 10.00 -1522.45 1450.78 0 0 0.000 0.000 | 10 11.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 226
+461 1edcd4f1 | 10 11.00 -1522.45 1450.78 0 0 0.000 0.000 | 10 12.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 226
+462 1edcd4f1 | 10 12.00 -1522.45 1450.78 0 0 0.000 0.000 | 10 13.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 226
+463 1edcd4f1 | 10 13.00 -1522.45 1450.78 0 0 0.000 0.000 | 100 1.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 -1391.12 1838.27 0.000 0.000 |  |  |  | 5 226
+464 1edcd4f1 | 10 14.00 -1522.45 1450.78 0 0 0.000 0.000 | 100 2.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 5 226
+465 1edcd4f1 | 10 15.00 -1522.45 1450.78 0 0 0.000 0.000 | 100 3.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 5 226
+466 a0a8f2f3 | 10 16.00 -1522.45 1450.78 0 0 0.000 0.000 | 100 4.00 -1295.33 1400.94 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+467 f8fed105
+468 71f2efa7
+469 f871d359
+470 e4a0249b | 10 20.00 -1522.45 1450.78 0 0 0.000 0.000 | 12 1.00 -1307.33 1400.96 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+471 923bcfed
+472 b10625cf
+473 b57efac1
+474 5478c743
+475 884dc7d5
+476 d4be1cf7
+477 66beeb29
+478 d7c27aeb
+479 d84158bd
+480 638c751f | 10 30.00 -1583.20 1466.74 0 0 0.000 0.000 | 12 11.00 -1364.61 1409.30 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+481 6f304491
+482 da70df93
+483 c6a722a5
+484 0786ce47
+485 1295a6f9
+486 4f5b953b
+487 f613c58d
+488 58e6c86f
+489 93f5b261
+490 c2be3be3 | 10 40.00 -1643.95 1482.70 0 0 0.000 0.000 | 12 21.00 -1419.92 1423.84 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+491 0d9fe175
+492 b88a0397
+493 e41b06c9
+494 7cb8738b
+495 ef68165d
+496 3a721fbf
+497 e0144431
+498 b3cddc33
+499 7f0d0445
+500 a044bce7 | 10 50.00 -1697.95 1496.89 0 0 0.000 0.000 | 12 31.00 -1481.98 1440.14 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+501 1fb40a99
+502 cf6615db
+503 f8334b2d
+504 63cb7b0f
+505 5410fa01
+506 ba4cc083
+507 d5038b15
+508 d173fa37
+509 3605b269
+510 45317c2b | 10 60.00 -1758.70 1512.85 0 0 0.000 0.000 | 12 41.00 -1537.29 1454.68 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+511 44aa63fd
+512 32cfda5f
+513 04b0d3d1
+514 9927e8d3
+515 31d875e5
+516 0914bb87
+517 93f4fe39
+518 ba27a67b
+519 d94260cd
+520 579c3daf | 10 70.00 -1819.45 1528.82 0 0 0.000 0.000 | 12 51.00 -1592.60 1469.21 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+521 eaf8d1a1
+522 198c5523
+523 f020c4b5
+524 fe6400d7
+525 72a6ee09
+526 389594cb
+527 5ab0419d
+528 248da4ff
+529 b42df371
+530 5ae70573 | 10 0.00 -1873.45 1543.00 0 0 0.000 0.000 | 12 1.00 -1654.66 1485.52 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+531 72b17785
+532 b2deca27
+533 a78081d9
+534 4908471b
+535 dde9066d
+536 de41104f
+537 91d53941
+538 22e4f9c3
+539 f49f8e55
+540 c2421777 | 10 10.00 -1934.20 1558.97 0 0 0.000 0.000 | 12 11.00 -1709.97 1500.05 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+541 7426b9a9
+542 424cbd6b
+543 b821af3d
+544 0b937f9f
+545 09b3a311
+546 2d733213
+547 59400925
+548 b28ae8c7
+549 567e9579
+550 996ff7bb | 36 2.00 -1940.00 1560.49 0 0 0.000 0.000 | 12 21.00 -1765.28 1514.58 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+551 4ecf3c0d
+552 c5a1f2ef
+553 c5ce30e1
+554 7cbeae63
+555 fc27e7f5
+556 43f63e17
+557 d8ad1549
+558 31bef60b
+559 e7a6acdd
+560 07c96a3f | 35 2.00 -1940.00 1560.49 0 0 0.000 0.000 | 12 31.00 -1813.84 1527.34 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+561 6469e2b1
+562 a9346eb3
+563 812c2ac5
+564 c1011767
+565 61173919
+566 acc6b85b
+567 789d01ad
+568 ffa6e58f
+569 480bb881
+570 31817303 | 35 12.00 -1940.00 1560.49 0 0 0.000 0.000 | 12 41.00 -1862.40 1540.10 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+571 a461d195
+572 4e6874b7
+573 026200e9
+574 ba543eab
+575 77e73a7d
+576 5d1764df
+577 6778b251
+578 ca92bb53
+579 0a1ddc65
+580 3b295607 | 35 22.00 -1940.00 1560.49 0 0 0.000 0.000 | 10 7.00 -1823.92 1529.99 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+581 4b726cb9
+582 687488fb
+583 abfa574d
+584 a237e82f
+585 1db5d021
+586 af9547a3
+587 0ef54b35
+588 5080bb57
+589 176d7c89
+590 7374974b | 35 32.00 -1940.00 1560.49 0 0 0.000 0.000 | 10 17.00 -1756.42 1512.25 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+591 fb8b581d
+592 73656f7f
+593 fa0811f1
+594 f1f617f3
+595 97bd1e05
+596 21eba4a7
+597 5db83059
+598 95e1699b
+599 3d8f3ced
+600 e73cfacf | 35 42.00 -1940.00 1560.49 0 0 0.000 0.000 | 10 27.00 -1709.17 1499.84 0 0 0.000 0.000 | 7 0.00 0.00 0.000 0.000 |  |  |  | 2 0
+";
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn a_cpu_tracks_a_dropped_item_as_on_the_n64() {
+    let replay = Replay {
+        p1: FighterKind::Link,
+        route: "2:23:x=-80;70:1:start;80:1:x=80;90:1:x=80;100:1:x=80;110:1:x=80;\
+                120:1:y=-80;130:1:x=80;140:1:x=80;150:1:x=80;160:1:x=80;170:1:a;180:1:start",
+        weapons: &no_weapons,
+    };
+    let Some(out) = replay.run_cpu(CPU_TRACKS_A_DROPPED_SWORD) else {
+        return;
+    };
+    out.check("a CPU tracks a dropped Beam Sword");
 }

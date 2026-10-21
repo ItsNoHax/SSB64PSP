@@ -17,7 +17,7 @@
 | Rendering | Build-time display-list conversion; GE lowering with measured deviations; original display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Remaining effect draws and N64 comparisons |
 | Gameplay | 12 fighters, Master Hand, Metal Mario, Giant DK, Polygon Team; How to Play matches an N64 trace every frame (RE-472, RE-473) | Fidelity items below |
 | Items | 20 normal items, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons |
-| CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447) | N64 trait checks |
+| CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447, RE-568) | N64 trait checks |
 | Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | Rumble |
 | Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | opening differences |
 | Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
@@ -131,7 +131,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |
 | Window matanim blobs | Script packs whole source file; command 22 rejected, skippable | RE-010, RE-378, RE-381 |
 | Results wipe | N64 view | RE-464 |
-| CPU | N64 trace of CPU tracking an item (deferred: needs an item landing on the CPU's floor, CPU kept off P0, FTComputer logger fields, host CPU seat); VS entry focus, 1P traits vs N64 | RE-437, RE-447, RE-450, RE-566 |
+| CPU | PSP countdown RNG seed vs a real N64 VS boot; Hyrule post-wake host replay; MarioBros, Giant DK, team and Ally trait behaviour vs N64 | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)

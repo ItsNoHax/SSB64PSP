@@ -266,7 +266,8 @@ impl Default for BattlePlayer {
             color: 0,
             tag: Tag::P1,
             team: 0,
-            level: 1,
+            // `dSCManagerDefaultBattleState` (scmanager.c): CPU level 3 in every slot.
+            level: 3,
             handicap: crate::stale::HANDICAP_DEFAULT,
             stock_count: 0,
             is_single_stockicon: false,
