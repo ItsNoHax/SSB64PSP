@@ -1951,6 +1951,9 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
                 | KirbyStatus::SpecialHi
                 | KirbyStatus::SpecialNThrow
                 | KirbyStatus::CopyCaptainSpecialN
+                // `ftKirbyThrowFLandingProcMap` → `ftCommonCatchProcMap`
+                // while grounded (`ftkirbythrowf.c:51`).
+                | KirbyStatus::ThrowFLanding
         ),
         AnyStatus::Pikachu(s) => matches!(
             s,

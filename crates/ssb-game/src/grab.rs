@@ -2198,6 +2198,8 @@ pub enum HeldMap {
     /// `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap` on the
     /// catcher's floor line.
     Pulled(Holder),
+    /// `ftCommonCaptureWaitKirbyProcMap`: at Kirby's side.
+    KirbyWait(Holder),
     /// `ftCommonThrownProcMap`.
     Thrown,
 }
@@ -2228,11 +2230,7 @@ pub fn held_physics(f: &mut Fighter) -> Option<HeldMap> {
     }
     if crate::capture_kirby::is_captured(f.status.status) {
         crate::capture_kirby::update_held(f, holder);
-        return Some(if f.status.status == Status::CaptureKirby {
-            HeldMap::KirbyProjectFloor
-        } else {
-            HeldMap::None
-        });
+        return Some(held_map_of(f.status.status, holder));
     }
     let pulled = matches!(
         f.status.status,
@@ -2252,11 +2250,35 @@ pub fn held_physics(f: &mut Fighter) -> Option<HeldMap> {
     if f.status.status == Status::CapturePulled && f.grab.is_goto_pulled_wait {
         set_capture_wait(f);
     }
-    Some(if pulled {
-        HeldMap::Pulled(holder)
-    } else {
-        HeldMap::Thrown
-    })
+    Some(held_map_of(f.status.status, holder))
+}
+
+/// The `proc_map` of the held status `status`, which `ftMainProcPhysicsMap`
+/// runs after the dead check, in hitlag too.
+fn held_map_of(status: AnyStatus, holder: Holder) -> HeldMap {
+    match status {
+        AnyStatus::Common(Status::CapturePulled | Status::CaptureWait) => HeldMap::Pulled(holder),
+        AnyStatus::Common(Status::CaptureKirby) => HeldMap::KirbyProjectFloor,
+        AnyStatus::Common(Status::CaptureWaitKirby) => HeldMap::KirbyWait(holder),
+        // `mpCommonUpdateFighterProjectFloor` only finds the shadow's floor.
+        AnyStatus::Common(Status::CaptureYoshi | Status::CaptureCaptain) => HeldMap::None,
+        _ => HeldMap::Thrown,
+    }
+}
+
+/// `ftMainProcPhysicsMap` in hitlag (`ftmain.c:1829`) for a held fighter:
+/// no `proc_physics`, so no placement at the catcher's hand, but the
+/// status's own `proc_map`. `None` when the fighter is not held.
+pub fn held_lag_map(f: &Fighter) -> Option<HeldMap> {
+    if !is_held(f.status.status) {
+        return None;
+    }
+    // A lost link is let go by the next [`held_physics`].
+    Some(
+        f.grab
+            .holder
+            .map_or(HeldMap::None, |h| held_map_of(f.status.status, h)),
+    )
 }
 
 /// The `proc_map` half of [`tick_held`].
@@ -2270,6 +2292,10 @@ where
         // `CaptureKirby`'s `proc_map`, `mpCommonUpdateFighterProjectFloor`.
         HeldMap::KirbyProjectFloor => {
             crate::capture_kirby::project_floor(f, floors());
+            return;
+        }
+        HeldMap::KirbyWait(holder) => {
+            crate::capture_kirby::place_wait(f, holder);
             return;
         }
         HeldMap::Thrown => {
@@ -2344,6 +2370,12 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
         ) => {
             f.become_airborne();
             release_on_edge(f);
+            true
+        }
+        // `mpCommonUpdateFighterKinetics` (`ftdonkeystatus.h` status 243):
+        // only `ga` turns to air; the stagger keeps its status.
+        AnyStatus::Donkey(DonkeyStatus::ThrowFDamage) => {
+            f.become_airborne();
             true
         }
         // `ftDonkeyThrowFCommonProcMap` → `ftDonkeyThrowFFallSetStatus`.

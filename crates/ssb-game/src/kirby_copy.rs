@@ -99,9 +99,6 @@ const BLASTER_REPEAT_FRAME: f32 = 29.0;
 const BLASTER_AIR_FRAME: f32 = 15.0;
 /// `Boomerang_0x2124`: `WaitAsync(26)` then `SetFlag0(1)`.
 const BOOMERANG_FRAME: f32 = 26.0;
-/// `FalconPunchAir`: flags 1 and 2 at 40; flag 2 becomes 2 at 55.
-const FALCONPUNCH_BOOST_FRAME: f32 = 40.0;
-const FALCONPUNCH_DRIFT_FRAME: f32 = 55.0;
 /// `EggLayGround_0x21D8`: the catch box from `WaitAsync(18)` until the
 /// clear after `Wait(6)`.
 pub const EGG_LAY_CATCH_FRAMES: core::ops::Range<f32> = 18.0..24.0;
@@ -150,8 +147,6 @@ pub struct CopyState {
     pub donkey_is_cancel: bool,
     /// `status_vars.kirby.copylink_specialn.is_smash`.
     pub link_is_smash: bool,
-    /// Falcon Punch's flag 1 was consumed.
-    pub captain_boosted: bool,
     /// `passive_vars.kirby.copycaptain_falcon_punch_unk`: aerial punches
     /// thrown. Nothing reads it.
     pub captain_punch_count: i32,
@@ -376,7 +371,6 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
             };
             set(f, s, 0.0, StatusTiming::frames(FALCONPUNCH_LENGTH));
             status::play_anim_events(f);
-            f.kirby.copy.captain_boosted = false;
             // `ftKirbyCopyCaptainSpecialNInitStatusVars`, after the first
             // frame's events; `FTSTATUS_PRESERVE_NONE` stopped any flame.
             f.motion_script.flags[..3].fill(0);
@@ -901,29 +895,35 @@ fn falcon_punch_angle(stick_y: i32) -> f32 {
     (y * 30) as f32 / 40.0 * (core::f32::consts::PI / 180.0)
 }
 
-/// `ftKirbyCopyCaptainSpecialAirNProcPhysics`. Flag 2 is 0 before the
-/// boost, 1 from frame 40 and 2 from frame 55.
+/// `ftKirbyCopyCaptainSpecialAirNProcPhysics`: `FalconPunchAir` sets flags
+/// 1 and 2 to 1 at frame 40 and flag 2 to 2 at 55. Flag 1 launches once and
+/// is consumed; flag 2 picks the physics. A punch switched in from the
+/// ground keeps the ground script's flags (neither the switch nor
+/// `ftMainUpdateMotionEventsForward` touches them).
 fn falcon_punch_air_physics(f: &mut Fighter) {
     let attr = f.attributes;
-    if !f.kirby.copy.captain_boosted && f.status.clock >= FALCONPUNCH_BOOST_FRAME {
-        f.kirby.copy.captain_boosted = true;
+    if f.motion_script.flags[1] != 0 {
+        f.motion_script.flags[1] = 0;
         f.kirby.copy.captain_punch_count += 1;
         let (sin, cos) = sin_cos(falcon_punch_angle(i32::from(f.stick.y)));
         f.physics.vel_air.y = sin * FALCONPUNCH_VEL_BASE;
         f.physics.vel_air.x = cos * f.facing.sign() * FALCONPUNCH_VEL_BASE;
     }
     update_punch_effect(f);
-    if f.status.clock < FALCONPUNCH_BOOST_FRAME {
-        air_vel_friction(f);
-    } else if f.status.clock < FALCONPUNCH_DRIFT_FRAME {
+    match f.motion_script.flags[2] {
+        0 => air_vel_friction(f),
         // Kirby's version multiplies by a single, Falcon's by a double.
-        f.physics.vel_air.y *= FALCONPUNCH_VEL_MUL;
-        f.physics.vel_air.x *= FALCONPUNCH_VEL_MUL;
-    } else {
+        1 => {
+            f.physics.vel_air.y *= FALCONPUNCH_VEL_MUL;
+            f.physics.vel_air.x *= FALCONPUNCH_VEL_MUL;
+        }
         // `ftPhysicsApplyAirVelDriftFastFall`.
-        status::check_set_fast_fall(f);
-        gravity(f);
-        physics::apply_air_drift(&mut f.physics, &attr, f.input.stick_x);
+        2 => {
+            status::check_set_fast_fall(f);
+            gravity(f);
+            physics::apply_air_drift(&mut f.physics, &attr, f.input.stick_x);
+        }
+        _ => {}
     }
 }
 
@@ -1889,19 +1889,47 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn aerial_falcon_punch_launches_at_40_then_damps() {
         let mut f = kirby(FighterKind::Captain, false);
         set_special_n(&mut f);
-        while f.status.anim_frame < FALCONPUNCH_BOOST_FRAME {
-            step(&mut f);
+        while f.status.anim_frame < 40.0 {
+            status::update(&mut f);
             apply_air_physics(&mut f);
         }
         assert_eq!(f.kirby.copy.captain_punch_count, 1);
         let launched = FALCONPUNCH_VEL_BASE * FALCONPUNCH_VEL_MUL;
         assert!((f.physics.vel_air.x - launched).abs() < 1e-3);
-        step(&mut f);
+        status::update(&mut f);
         apply_air_physics(&mut f);
         assert!((f.physics.vel_air.x - launched * FALCONPUNCH_VEL_MUL).abs() < 1e-3);
+    }
+
+    /// `ftKirbyCopyCaptainSpecialNSwitchStatusAir` after frame 40: the
+    /// ground script never set flags 1 or 2, so the copied punch never
+    /// launches.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn copied_falcon_punch_off_an_edge_after_40_never_launches() {
+        let mut f = kirby(FighterKind::Captain, true);
+        set_special_n(&mut f);
+        while f.status.anim_frame < 45.0 {
+            status::update(&mut f);
+        }
+        f.floor = None;
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(status(&f), K::CopyCaptainSpecialAirN);
+        f.physics.vel_air.x = 10.0;
+        while f.status.anim_frame < 54.0 {
+            let x = f.physics.vel_air.x;
+            status::update(&mut f);
+            apply_air_physics(&mut f);
+            assert!(f.physics.vel_air.x < x && f.physics.vel_air.x > 0.0);
+        }
+        assert_eq!(f.kirby.copy.captain_punch_count, 0);
+        status::update(&mut f);
+        apply_air_physics(&mut f);
+        assert_eq!(f.motion_script.flags[2], 2);
     }
 
     #[test]

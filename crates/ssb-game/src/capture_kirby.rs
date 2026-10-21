@@ -158,11 +158,12 @@ pub fn decay_dist(dist: Vec2) -> Vec2 {
     Vec2::new(dist.x - step_x, dist.y - step_y)
 }
 
-/// Held physics for the two capture statuses (`ftCommonCaptureKirbyProcPhysics`
-/// then `ftCommonCaptureWaitKirbyProcMap`). Both stay airborne. The eat
-/// frame's `ProcPhysics` sets `CaptureWaitKirby`, whose own `proc_map`
-/// then runs in that frame's map phase, so the victim already stands at
-/// Kirby's side on it (N64 Castle trace: x 508 on the eat row).
+/// Held physics for the two capture statuses: `CaptureKirby`'s
+/// `ftCommonCaptureKirbyProcPhysics` (`CaptureWaitKirby` has none). Both
+/// stay airborne. The eat frame's `ProcPhysics` sets `CaptureWaitKirby`,
+/// whose own `proc_map` ([`place_wait`]) then runs in that frame's map
+/// phase, so the victim already stands at Kirby's side on it (N64 Castle
+/// trace: x 508 on the eat row).
 pub fn update_held(f: &mut Fighter, holder: Holder) {
     f.situation = crate::fighter::Situation::Air;
     f.floor = None;
@@ -172,10 +173,13 @@ pub fn update_held(f: &mut Fighter, holder: Holder) {
             set_capture_wait(f);
         }
     }
-    if f.status.status == Status::CaptureWaitKirby {
-        f.pos = holder.pos;
-        f.pos.x += WAIT_OFF_X * holder.facing.sign();
-    }
+}
+
+/// `ftCommonCaptureWaitKirbyProcMap`: TopN at Kirby's, 10 units ahead.
+/// A `proc_map`, so it runs after the dead check, and in hitlag too.
+pub fn place_wait(f: &mut Fighter, holder: Holder) {
+    f.pos = holder.pos;
+    f.pos.x += WAIT_OFF_X * holder.facing.sign();
 }
 
 /// `ftCommonCaptureWaitKirbySetStatus`.

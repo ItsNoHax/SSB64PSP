@@ -529,9 +529,9 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                 physics::apply_air_friction(&mut f.physics, &f.attributes);
             }
         }
-        AnyStatus::Pikachu(P::SpecialAirHi) => {
-            f.pikachu.pass_timer = f.pikachu.pass_timer.saturating_add(1);
-        }
+        // No `proc_physics` of its own: `ftPikachuSpecialAirHiProcMap`
+        // counts `pass_timer` (in hitlag too), in `Fighter::air_map_step`.
+        AnyStatus::Pikachu(P::SpecialAirHi) => {}
         AnyStatus::Pikachu(P::SpecialAirHiStart | P::SpecialAirLwHit) => {
             let g = if f.status.status == AnyStatus::Pikachu(P::SpecialAirHiStart) {
                 0.8

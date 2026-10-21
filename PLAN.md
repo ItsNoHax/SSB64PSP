@@ -108,6 +108,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | Trig N64 traces | N64 traces for Ness jibaku, Kirby Stone slope, Falcon Kick roll, Pikachu `SpecialAirHiStart` cliff catch; Arwing `frame_rotate` ArcSin else branch unreached (needs a scene) | RE-503 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
+| Stable golden subjects | `vs4` CPU-match rows (`f1-vs-four-magnifier`, `f1-vs-four-fly-roll`) drift with every gameplay change; replace with a scripted scene; acceptance: both subjects survive an unrelated fighter change | RE-560 |
+| Smash DI lag-update | Confirm `is_smash_di` gate equals `proc_lagupdate` whenever-set; acceptance: test | RE-560 |
 | Fox ledge freeze | Host sweep green (map_tests `every_ledge_catch_leaves_its_cliff_statuses_in_time`); needs a playtest repro | RE-553 |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
 
@@ -136,7 +138,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | `anim_frame` | Shield pose clock; DK speed-0 cargo jump/fall; idle camera `status_total_tics` | RE-472, RE-474 |
 | Fighter entry | vs N64: Fox cockpit, Poké Ball near-camera edge at tick 224, Luigi pipe, Kirby star | RE-402, RE-403, RE-425 |
 | Items | Event-aligned N64 damage, hit order, trajectories; unobserved: Saffron/Hyrule monsters, weapon damage/hit order/throws, CPU item tracking; Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444 |
-| Fighter main-loop open items | Donkey HeavyThrow*/ThrowFDamage airborne, Boss statuses, Kirby landing twins, Common Appear, Captain flag0 clock, D5 hitlag proc_map; acceptance: decomp reading plus test per item | RE-559 |
 | Stages | N64 captures: pipes, plant notification, cloud vapor, scale sparkles, plant KO, Sector Z Arwing, Board the Platforms blocks | RE-428, RE-429, RE-442, RE-446, RE-455 |
 | Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |
 | Window matanim blobs | Script packs whole source file; command 22 rejected, skippable | RE-010, RE-378, RE-381 |

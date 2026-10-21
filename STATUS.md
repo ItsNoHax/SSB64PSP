@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: main-loop parity (`velocity_step`, Dokan, Master Hand hitlag, GroundBreak, Tornado lift-off, LandingAir teeter, `cliffcatch_wait` phase, `jumps_used`, character `proc_physics` harness). `f1-vs-four-magnifier` (`vs4@3700`, ~99265 native px) and `f1-vs-four-fly-roll` (`vs4@4420`, ~99960) retargeted and rebaselined. RE-559.
-- Open: fighter main-loop items (RE-559); stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: main-loop parity 2 (per-status hitlag `proc_map`, held/pipe/barrel hitlag, Falcon Punch script flags, Donkey throws, Kirby `ThrowFLanding`). `f1-vs-four-magnifier` (`vs4@3120`, ~97671 native px) and `f1-vs-four-fly-roll` (`vs4@5372`, ~99808) retargeted and rebaselined. RE-560.
+- Open: Smash DI lag-update equivalence, stable golden subject (RE-560); stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 24 (RE-559); deepest game stack 366880 B.
+Baseline: batch 25 (RE-560); deepest game stack 366880 B.
 
 | Check | Result |
 |---|---|

@@ -7331,7 +7331,16 @@ pub fn generic_air_vel(s: AnyStatus) -> Option<AirVel> {
             | DonkeyStatus::SpecialAirNEnd
             | DonkeyStatus::SpecialAirNFull,
         ) => Some(AirVel::Friction),
+        // `ftCommonItemThrowProcPhysics` (`ftcommonitemthrow.c:121`) in
+        // the air: drift without the fast-fall input. Donkey's heavy throws
+        // keep their status off an edge (`mpCommonUpdateFighterKinetics`).
         AnyStatus::Donkey(DonkeyStatus::ThrowAirFF)
+        | AnyStatus::Donkey(
+            DonkeyStatus::HeavyThrowF
+            | DonkeyStatus::HeavyThrowB
+            | DonkeyStatus::HeavyThrowF4
+            | DonkeyStatus::HeavyThrowB4,
+        )
         | AnyStatus::Mario(MarioStatus::SpecialAirN)
         | AnyStatus::Fox(FoxStatus::SpecialAirN) => Some(AirVel::Drift),
         _ => None,

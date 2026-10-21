@@ -11,7 +11,7 @@ use crate::physics;
 use crate::status::{self, AnyStatus, CaptainStatus, StatusTiming};
 
 const PUNCH_VEL_BASE: f32 = 65.0;
-const PUNCH_VEL_MUL: f32 = 0.92;
+const PUNCH_VEL_MUL: f64 = 0.92;
 const DIVE_DRIFT: f32 = 0.72;
 const DIVE_LANDING_LAG: f32 = 0.65;
 const DIVE_AIR_ACCEL_MUL: f32 = 1.1;
@@ -26,7 +26,6 @@ pub const DIVE_THROW: [ThrowHitDesc; 2] = crate::grab::throw_descs::CAPTAIN_DIVE
 pub struct CaptainState {
     pub rapid_is_anim_end: bool,
     pub rapid_is_goto_loop: bool,
-    pub punch_launched: bool,
     pub kick_scale: f32,
     pub kick_hit_count: u8,
     pub dive_vel: Vec3,
@@ -52,7 +51,6 @@ impl Default for CaptainState {
         Self {
             rapid_is_anim_end: false,
             rapid_is_goto_loop: false,
-            punch_launched: false,
             kick_scale: 1.0,
             kick_hit_count: 0,
             dive_vel: Vec3::ZERO,
@@ -131,7 +129,6 @@ pub fn set_special_air_n(f: &mut Fighter) {
 /// `ftCaptainSpecialNInitStatusVars`. `ftMainSetStatus` with
 /// `FTSTATUS_PRESERVE_NONE` has already stopped any flame.
 fn init_special_n(f: &mut Fighter) {
-    f.captain.punch_launched = false;
     f.captain.punch_effect = None;
     f.motion_script.flags[..3].fill(0);
 }
@@ -586,22 +583,33 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
         return false;
     };
     match current {
+        // `ftCaptainSpecialAirNProcPhysics`: `FalconPunchAir` sets flags 1
+        // and 2 to 1 at frame 40 and flag 2 to 2 at 55. Flag 1 launches once
+        // and is consumed; flag 2 picks the physics. A punch switched in
+        // from the ground keeps the ground script's flags (neither the
+        // switch nor `ftMainUpdateMotionEventsForward` touches them), so
+        // one that left the ground after frame 40 never launches.
         CaptainStatus::SpecialAirN => {
-            if !f.captain.punch_launched && f.status.clock >= 40.0 {
-                f.captain.punch_launched = true;
+            if f.motion_script.flags[1] != 0 {
+                f.motion_script.flags[1] = 0;
                 let y = i32::from(f.input.stick_y);
                 let magnitude = (y.abs().min(50) - 10).max(0) as f32;
                 let angle = magnitude * 30.0 / 40.0
                     * (core::f32::consts::PI / 180.0)
                     * if y < 0 { -1.0 } else { 1.0 };
                 let (sin, cos) = sin_cos(angle);
-                f.physics.vel_air.x = cos * f.facing.sign() * PUNCH_VEL_BASE;
                 f.physics.vel_air.y = sin * PUNCH_VEL_BASE;
+                f.physics.vel_air.x = cos * f.facing.sign() * PUNCH_VEL_BASE;
             }
             update_punch_effect(f);
-            match f.status.clock {
-                frame if frame < 40.0 => {
-                    physics::apply_gravity_default(&mut f.physics, &f.attributes);
+            match f.motion_script.flags[2] {
+                // `ftPhysicsApplyAirVelFriction`.
+                0 => {
+                    if f.physics.is_fastfall {
+                        physics::apply_fast_fall(&mut f.physics, &f.attributes);
+                    } else {
+                        physics::apply_gravity_default(&mut f.physics, &f.attributes);
+                    }
                     if !physics::check_clamp_air_vel_x_dec(
                         &mut f.physics,
                         f.attributes.air_speed_max_x,
@@ -609,7 +617,14 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                         physics::apply_air_friction(&mut f.physics, &f.attributes);
                     }
                 }
-                frame if frame >= 55.0 => {
+                // `FTCAPTAIN_FALCONPUNCH_VEL_MUL` is a double literal: the
+                // product rounds once, from f64 (Kirby's copy uses a single).
+                1 => {
+                    f.physics.vel_air.y = (f64::from(f.physics.vel_air.y) * PUNCH_VEL_MUL) as f32;
+                    f.physics.vel_air.x = (f64::from(f.physics.vel_air.x) * PUNCH_VEL_MUL) as f32;
+                }
+                // `ftPhysicsApplyAirVelDriftFastFall`.
+                2 => {
                     status::check_set_fast_fall(f);
                     if f.physics.is_fastfall {
                         physics::apply_fast_fall(&mut f.physics, &f.attributes);
@@ -618,10 +633,7 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                     }
                     physics::apply_air_drift(&mut f.physics, &f.attributes, f.input.stick_x);
                 }
-                _ => {
-                    f.physics.vel_air.x *= PUNCH_VEL_MUL;
-                    f.physics.vel_air.y *= PUNCH_VEL_MUL;
-                }
+                _ => {}
             }
         }
         CaptainStatus::SpecialLw
@@ -784,24 +796,88 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fighter::FighterKind;
+    use crate::fighter::{FighterKind, Situation};
 
     fn captain() -> Fighter {
         Fighter::new(FighterKind::Captain, 0, 4)
     }
 
+    /// `ftCaptainSpecialAirNProcPhysics` reads the script's flags:
+    /// `FalconPunchAir` launches at frame 40 and damps by the double
+    /// `FTCAPTAIN_FALCONPUNCH_VEL_MUL` until flag 2 turns 2 at 55.
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn punch_launches_at_script_flag_and_then_damps() {
         let mut f = captain();
         f.become_airborne();
         set_special_air_n(&mut f);
-        f.status.set_time(39.0);
+        while f.status.anim_frame < 39.0 {
+            status::update(&mut f);
+            apply_air_physics(&mut f);
+            assert_eq!(f.motion_script.flags[2], 0);
+        }
+        assert!(f.physics.vel_air.x.abs() < 1.0);
+        status::update(&mut f);
         apply_air_physics(&mut f);
-        assert!(!f.captain.punch_launched);
-        f.status.set_time(40.0);
+        assert_eq!(f.status.anim_frame, 40.0);
+        let launched = (65.0f64 * 0.92) as f32;
+        assert_eq!(f.physics.vel_air.x, launched);
+        assert_eq!(f.motion_script.flags[1], 0);
+        while f.status.anim_frame < 55.0 {
+            status::update(&mut f);
+            apply_air_physics(&mut f);
+        }
+        assert_eq!(f.motion_script.flags[2], 2);
+    }
+
+    /// The double multiplier rounds once from f64, not as an f32 product.
+    #[test]
+    fn punch_damping_multiplies_in_double() {
+        let mut f = captain();
+        f.become_airborne();
+        f.status.status = AnyStatus::Captain(CaptainStatus::SpecialAirN);
+        f.motion_script.flags[..3].copy_from_slice(&[0, 0, 1]);
+        f.physics.vel_air = Vec3::new(1.1, 7.77, 0.0);
         apply_air_physics(&mut f);
-        assert!(f.captain.punch_launched);
-        assert!((f.physics.vel_air.x - 65.0 * 0.92).abs() < 0.001);
+        let want = |v: f32| (f64::from(v) * 0.92) as f32;
+        assert_ne!(want(1.1), 1.1f32 * 0.92f32);
+        assert_eq!(f.physics.vel_air.x, want(1.1));
+        assert_eq!(f.physics.vel_air.y, want(7.77));
+    }
+
+    /// `ftCaptainSpecialNSwitchStatusAir` at frame 45: the ground script
+    /// never set flags 1 or 2 and the air script's fast-forward skips its
+    /// own, so the punch does not launch and takes air friction until
+    /// flag 2 turns 2 at 55.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn punch_off_an_edge_after_frame_40_never_launches() {
+        let mut f = captain();
+        f.situation = Situation::Ground;
+        set_special_n(&mut f);
+        while f.status.anim_frame < 45.0 {
+            status::update(&mut f);
+            apply_ground_physics(&mut f);
+        }
+        f.physics.vel_air = Vec3::new(10.0, 0.0, 0.0);
+        f.floor = None;
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Captain(CaptainStatus::SpecialAirN)
+        );
+        assert_eq!(f.motion_script.flags[1..3], [0, 0]);
+        while f.status.anim_frame < 54.0 {
+            let x = f.physics.vel_air.x;
+            status::update(&mut f);
+            apply_air_physics(&mut f);
+            assert!(f.physics.vel_air.x < x, "frame {}", f.status.anim_frame);
+            assert!(f.physics.vel_air.x > 0.0);
+        }
+        status::update(&mut f);
+        apply_air_physics(&mut f);
+        assert_eq!(f.status.anim_frame, 55.0);
+        assert_eq!(f.motion_script.flags[2], 2);
     }
 
     #[test]

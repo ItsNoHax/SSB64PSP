@@ -288,6 +288,20 @@ fn edge_stops_are_selected_by_status_and_do_not_affect_walk_offs() {
     assert!(!stops_at_edge(AnyStatus::Common(Status::WalkFast)));
 }
 
+/// `ftKirbyThrowFLandingProcMap` runs `ftCommonCatchProcMap`
+/// (`mpCommonCheckFighterOnEdge`, STOPEDGE) while grounded: like the common
+/// catch statuses it stops at the floor's end. `SpecialAirLwLanding` uses
+/// `ftKirbySpecialLwHoldProcMap` (`mpCommonCheckFighterOnFloor`): it walks off.
+#[test]
+fn kirby_throwf_landing_stops_at_edge() {
+    use crate::status::KirbyStatus;
+    assert!(stops_at_edge(AnyStatus::Common(Status::CatchWait)));
+    assert!(stops_at_edge(AnyStatus::Kirby(KirbyStatus::ThrowFLanding)));
+    assert!(!stops_at_edge(AnyStatus::Kirby(
+        KirbyStatus::SpecialAirLwLanding
+    )));
+}
+
 /// A `None` `Option<CliffEdge>` leaves its payload unwritten, and LLVM
 /// hoisted the old `facing: f32` compares above the tag test: on a PSP a
 /// signalling NaN in that stack garbage raised an FPU Invalid trap in

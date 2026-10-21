@@ -214,7 +214,20 @@ fn probe_with(
     delta: Vec3,
     fastfall: bool,
 ) -> Fighter {
+    probe_pre(kind, status, grounded, stick_x, delta, fastfall, &|_| {})
+}
+
+fn probe_pre(
+    kind: FighterKind,
+    status: AnyStatus,
+    grounded: bool,
+    stick_x: i8,
+    delta: Vec3,
+    fastfall: bool,
+    pre: &dyn Fn(&mut Fighter),
+) -> Fighter {
     let mut f = Fighter::new(kind, 0, 3);
+    pre(&mut f);
     f.physics.is_fastfall = fastfall;
     f.status.status = status;
     if grounded {
@@ -248,9 +261,19 @@ fn probe_with(
 }
 
 fn classify(kind: FighterKind, status: AnyStatus, grounded: bool) -> C {
-    let a = probe(kind, status, grounded, 80, Vec3::new(3.0, 4.0, 5.0));
-    let b = probe(kind, status, grounded, -80, Vec3::new(3.0, 4.0, 5.0));
-    let c = probe(kind, status, grounded, 80, Vec3::new(7.0, 9.0, 11.0));
+    classify_pre(kind, status, grounded, &|_| {})
+}
+
+fn classify_pre(
+    kind: FighterKind,
+    status: AnyStatus,
+    grounded: bool,
+    pre: &dyn Fn(&mut Fighter),
+) -> C {
+    let probe = |stick_x, delta| probe_pre(kind, status, grounded, stick_x, delta, false, pre);
+    let a = probe(80, Vec3::new(3.0, 4.0, 5.0));
+    let b = probe(-80, Vec3::new(3.0, 4.0, 5.0));
+    let c = probe(80, Vec3::new(7.0, 9.0, 11.0));
     if grounded {
         let x = a.physics.vel_ground.x;
         if x != c.physics.vel_ground.x {
@@ -271,7 +294,7 @@ fn classify(kind: FighterKind, status: AnyStatus, grounded: bool) -> C {
         } else {
             // A fast fall already under way keeps falling fast
             // (`fp->is_fastfall ? ftPhysicsApplyFastFall : ...`).
-            let fast = probe_with(kind, status, false, 0, Vec3::new(3.0, 4.0, 5.0), true);
+            let fast = probe_pre(kind, status, false, 0, Vec3::new(3.0, 4.0, 5.0), true, pre);
             let mut want = crate::physics::PhysicsState {
                 vel_air: Vec3::new(20.0, -5.0, 0.0),
                 ..crate::physics::PhysicsState::default()
@@ -752,4 +775,51 @@ fn the_landed_bomb_ball_rolls_with_the_stick() {
             "flag3 {flag3} facing {facing}"
         );
     }
+}
+
+/// Grounded-kinetics statuses whose `proc_physics` branches on `ga`: run
+/// in the air (`mpCommonUpdateFighterKinetics` keeps the status off an
+/// edge), each takes its aerial branch.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn ground_kinetics_statuses_take_their_aerial_branch() {
+    // `ftCommonItemThrowProcPhysics` (`ftcommonitemthrow.c:121`):
+    // `ftPhysicsApplyAirVelDrift`.
+    for s in [
+        DonkeyStatus::HeavyThrowF,
+        DonkeyStatus::HeavyThrowB,
+        DonkeyStatus::HeavyThrowF4,
+        DonkeyStatus::HeavyThrowB4,
+    ] {
+        let got = classify(FighterKind::Donkey, AnyStatus::Donkey(s), false);
+        assert_eq!(got, C::AirDrift, "{s:?}");
+    }
+    // `ftCommonDamageCommonProcPhysics` (`ftcommondamage.c:214`): air
+    // friction while the stagger's hitstun runs, drift with the fast-fall
+    // input once it is 0.
+    let status = AnyStatus::Donkey(DonkeyStatus::ThrowFDamage);
+    let got = classify_pre(FighterKind::Donkey, status, false, &|f| f.hitstun = 5);
+    assert_eq!(got, C::AirFriction);
+    let got = classify_pre(FighterKind::Donkey, status, false, &|f| f.hitstun = 0);
+    assert_eq!(got, C::AirDriftFastFall);
+}
+
+/// `ftDonkeyThrowFDamage`'s `proc_map` is `mpCommonUpdateFighterKinetics`
+/// (`ftdonkeystatus.h` status 243): off an edge only `ga` turns to air
+/// (`mpCommonSetFighterAir`); the stagger keeps its status and hitstun.
+#[test]
+fn donkey_throwf_damage_keeps_its_status_off_an_edge() {
+    let mut f = grounded(FighterKind::Donkey);
+    f.status.status = AnyStatus::Donkey(DonkeyStatus::ThrowFDamage);
+    f.hitstun = 7;
+    f.physics.jumps_used = 0;
+    f.floor = None;
+    f.on_ground_break();
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Donkey(DonkeyStatus::ThrowFDamage)
+    );
+    assert_eq!(f.situation, Situation::Air);
+    assert_eq!(f.physics.jumps_used, 1);
+    assert_eq!(f.hitstun, 7);
 }

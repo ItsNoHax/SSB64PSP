@@ -1630,8 +1630,10 @@ impl Fighter {
             step
         } else if in_hitlag {
             // `ftmain.c:1800` `proc_lagupdate`: Smash DI nudges a fighter
-            // frozen by a hit; `proc_map` still runs (after the dead check).
-            (MapStep::Lag, self.smash_di_nudge())
+            // frozen by a hit; the status's own `proc_map` still runs
+            // (after the dead check).
+            let want = self.smash_di_nudge();
+            (self.lag_step(), want)
         } else {
             self.physics_step(surfaces, &mut pos_prev)
         };
@@ -1791,7 +1793,7 @@ impl Fighter {
         let speed = match step {
             MapStep::Ground(standing) => crate::map::line_speed(surfaces, standing.line),
             MapStep::CliffGround { line, .. } => crate::map::line_speed(surfaces, line),
-            MapStep::Lag | MapStep::Held(_) => match (self.situation, self.floor) {
+            MapStep::Held(_) => match (self.situation, self.floor) {
                 (Situation::Ground, Some(standing)) => {
                     crate::map::line_speed(surfaces, standing.line)
                 }
@@ -1829,7 +1831,6 @@ impl Fighter {
             };
             self.pos = from;
             match step {
-                MapStep::Lag => self.lag_map(want, surfaces),
                 MapStep::EggLay => self.air_map_step(pos_prev, want, surfaces),
                 MapStep::Project => crate::hazard::project_map(self, want, surfaces),
                 MapStep::Ground(standing) => self.ground_map(standing, want, surfaces),
@@ -2025,10 +2026,52 @@ impl Fighter {
         }
     }
 
+    /// `ftMainProcPhysicsMap` in hitlag (`ftmain.c:1829`): no
+    /// `proc_physics`, but the status's own `proc_map`, the one
+    /// [`Self::physics_step`] would pick.
+    fn lag_step(&self) -> MapStep {
+        use crate::map;
+        let status = self.status.status;
+        if let Some(held) = crate::grab::held_lag_map(self) {
+            return MapStep::Held(held);
+        }
+        if crate::dokan::places_itself(self) {
+            return MapStep::Dokan;
+        }
+        if crate::hazard::is_captured(status) {
+            return MapStep::Project;
+        }
+        // `ftCommonCliffCommonProcMap` has no map step.
+        if map::is_cliff_hold(status) {
+            return MapStep::None;
+        }
+        if map::is_cliff_phase2(status) {
+            return if self.is_grounded() {
+                MapStep::CliffGround {
+                    line: self.cliff.line,
+                    stop: !matches!(
+                        status,
+                        crate::status::AnyStatus::Common(
+                            crate::status::Status::CliffClimbQuick2
+                                | crate::status::Status::CliffClimbSlow2
+                        )
+                    ),
+                }
+            } else {
+                MapStep::CliffAir
+            };
+        }
+        match (self.situation, self.floor) {
+            (Situation::Ground, Some(standing)) => MapStep::Ground(standing),
+            (Situation::Ground, None) => MapStep::GroundBreak,
+            (Situation::Air, _) => MapStep::Air,
+        }
+    }
+
     /// `ftCommonDamageCommonProcLagUpdate`: during a hit's hitlag, a fresh
     /// hard stick tilt moves the fighter `2.1` units per stick unit (US),
     /// once per tilt. Returns TopN after the nudge; the move then goes
-    /// through the map like any other ([`Self::lag_map`]).
+    /// through the status's own `proc_map` ([`Self::lag_step`]).
     fn smash_di_nudge(&mut self) -> Vec3 {
         let (x, y) = (self.stick.x as i32, self.stick.y as i32);
         let nudge = self.is_smash_di
@@ -2046,76 +2089,6 @@ impl Fighter {
             )
         } else {
             self.pos
-        }
-    }
-
-    /// `proc_map` in hitlag, from TopN to `want`: an airborne fighter that
-    /// reaches a floor stops on it and lands when hitlag ends.
-    fn lag_map<I, F>(&mut self, want: Vec3, surfaces: &F)
-    where
-        F: Fn() -> I,
-        I: IntoIterator<Item = crate::weapon::MapSurface>,
-    {
-        let damage_air = matches!(
-            self.status.status,
-            crate::status::AnyStatus::Common(s) if crate::reaction::is_damage_air(s)
-        );
-        if damage_air {
-            // `proc_map` runs in hitlag too: without a nudge the sweep has
-            // no movement, so all it does is roll the damage masks.
-            self.reaction.coll_mask_prev = self.reaction.coll_mask_curr;
-            self.reaction.coll_mask_curr = 0;
-        }
-        match (self.situation, self.floor) {
-            (Situation::Ground, Some(standing)) => {
-                let (moved, contacts) = crate::map::move_ground(
-                    &self.coll,
-                    self.pos,
-                    want,
-                    standing.line,
-                    false,
-                    surfaces,
-                );
-                self.pos = moved.pos;
-                self.map_contacts = contacts;
-                if let Some(f) = moved.floor {
-                    self.floor = Some(f);
-                }
-            }
-            _ if damage_air => {
-                self.reaction.coll_mask_curr = self.reaction.coll_mask_prev;
-                self.tick_damage_map(self.pos, want, surfaces);
-            }
-            _ => {
-                let result = crate::map::move_air(
-                    &self.coll,
-                    self.pos,
-                    want,
-                    crate::map::AirOptions {
-                        ignore_line: self.ignore_line,
-                        skip_pass: false,
-                        cliff: crate::map::CliffQuery::default(),
-                        ceil_heavy: false,
-                    },
-                    surfaces,
-                );
-                self.pos = result.moved.pos;
-                self.map_contacts = result.contacts;
-                // `mpCommonUpdateFighterKinetics`, `proc_map` in hitlag too:
-                // a hit reaction launched from where it stood and nudged into
-                // the floor lands there, and slides once the hitlag is over
-                // (RE-466).
-                if let Some(floor) = result.moved.floor.filter(|_| {
-                    matches!(
-                        self.status.status,
-                        crate::status::AnyStatus::Common(s) if s.keeps_situation()
-                    )
-                }) {
-                    self.floor = Some(floor);
-                    self.ignore_line = None;
-                    self.land(result.moved.pos.y);
-                }
-            }
         }
     }
 
@@ -2547,9 +2520,10 @@ impl Fighter {
         let stop_ceil = self.status.status == crate::status::Status::StopCeil;
         // `ftCommonDamageCommonProcPhysics`: until hitstun runs out a hit
         // reaction takes gravity and air friction but no drift and no
-        // fast-fall input (`ftPhysicsApplyAirVelFriction`).
+        // fast-fall input (`ftPhysicsApplyAirVelFriction`). Donkey's
+        // `ThrowFDamage` shares it (`ftdonkeystatus.h` status 243).
         let damage_hitstun = self.hitstun > 0
-            && matches!(
+            && (matches!(
                 self.status.status,
                 crate::status::AnyStatus::Common(s) if s.keeps_situation()
                     || matches!(
@@ -2563,7 +2537,8 @@ impl Fighter {
                             | crate::status::Status::DamageFlyRoll
                             | crate::status::Status::WallDamage
                     )
-            );
+            ) || crate::status::AnyStatus::Donkey(crate::status::DonkeyStatus::ThrowFDamage)
+                == self.status.status);
         if !special_air_hi
             && !special_hi_lifted
             && !special_air_lw
@@ -2698,9 +2673,13 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
-        let skip_pass = self.status.status
-            == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi)
-            && self.pikachu.pass_timer < 2
+        // `ftPikachuSpecialAirHiProcMap` (`ftpikachuspecialhi.c:216`).
+        let pikachu_zip = self.status.status
+            == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi);
+        if pikachu_zip {
+            self.pikachu.pass_timer = self.pikachu.pass_timer.saturating_add(1);
+        }
+        let skip_pass = pikachu_zip && self.pikachu.pass_timer < 2
             || crate::ness::skip_pass(self)
             || self.status.status == crate::status::Status::FallSpecial
                 && self.fall_special.is_allow_pass
@@ -2874,8 +2853,6 @@ enum MapStep {
     Rebirth,
     /// Master Hand's own `proc_map`, from `pos_prev`.
     Boss,
-    /// The status's `proc_map` in hitlag.
-    Lag,
     /// A held fighter's `proc_map` against its catcher's line.
     Held(crate::grab::HeldMap),
     /// The laid egg's airborne `proc_map` from Yoshi (`pos_prev`).
@@ -2902,8 +2879,7 @@ impl MapStep {
     fn sweeps(self) -> bool {
         matches!(
             self,
-            MapStep::Lag
-                | MapStep::EggLay
+            MapStep::EggLay
                 | MapStep::Project
                 | MapStep::Ground(_)
                 | MapStep::Air
