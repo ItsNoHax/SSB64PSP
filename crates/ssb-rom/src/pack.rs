@@ -458,7 +458,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // the decomp label 0x1D8 (still the mesh key): its own TLUT, alpha compare,
 // combiner and `G_RM_AA_TEX_EDGE` make it an alpha-edge material (RE-424),
 // as Falcon Punch and the Charge Shot. No layout change.
-pub const VERSION: u32 = 127;
+// 128 seeds Mario's entry pipe (356 + 0x608), Samus's entry point
+// (349 + 0xB90), Donkey Kong's barrel (355 + 0x7C8) and the rebirth halo
+// (85 + 0x2AC0) with the fighters' head-0 depth state, as the Arwing and
+// the car: N64 RDRAM walks find their lists under `G_RM_AA_ZB_OPA_SURF`
+// with `G_ZBUFFER` (RE-567). No layout change.
+pub const VERSION: u32 = 128;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

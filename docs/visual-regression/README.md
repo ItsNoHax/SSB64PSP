@@ -102,6 +102,8 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 - Look up a scene by name or `evidence` column.
 - CPU-match rows `f1-vs-four`, `f1-vs-cpu`, `f1-vs-team`: expected to move on gameplay changes; rebaseline with a traced cause.
 - Subject scenes `f1-vs-magnify` (`vsmagnify`), `f1-training-purin-throw` (`purinthrow`): scripted, no CPU AI; subjects asserted by host replay ([RE-561](../evidence/re/RE-561.md)).
+- `f1-training-kirby-star-bounce` (`kirbystarbounce`): N64 trace route; star tick, quake and wave positions asserted by host replay ([RE-503](../evidence/re/RE-503.md)).
+- `f1-training-catch-slope` (`catchslope`): motion_id -2 hold on a slope (CatchWait legs); host replay `catch_wait_holds_the_slope_legs`; no N64 trace ([RE-510](../evidence/re/RE-510.md)).
 
 ## Scene specs
 
@@ -151,8 +153,6 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 ## Determinism traps
 
 - Every animator advances per simulation tick at a frozen capture tick → no dependence on load timing or pack size (RE-315).
-- `r2-mario-entry-pipe`: hashes vary with zero differing RGB pixels after a pack change (RE-506; open item in `PLAN.md`).
-  - When it flips: `verify --twice`, compare pixels, not only hashes.
 - Goldens need the real ROM-generated tables, not `SSB64_STUB_TABLES`.
 
 ### Single captures

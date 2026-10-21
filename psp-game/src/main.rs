@@ -1695,7 +1695,8 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             | GameScene::KirbyWiggle
             | GameScene::KirbyJab
             | GameScene::KirbyStoneSlope
-            | GameScene::KirbyCutter,
+            | GameScene::KirbyCutter
+            | GameScene::KirbyStarBounce,
         ) => {
             ssb_game::fighter::FighterKind::Kirby
         }
@@ -2010,7 +2011,7 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
     match scene {
         Some(GameScene::VsSector) => ssb_game::stage_select::gkind::SECTOR,
         Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
-        Some(GameScene::TrainingJungle | GameScene::KirbyStoneSlope) => {
+        Some(GameScene::TrainingJungle | GameScene::KirbyStoneSlope | GameScene::CatchSlope) => {
             ssb_game::stage_select::gkind::JUNGLE
         }
         Some(GameScene::TrainingZebes) => ssb_game::stage_select::gkind::ZEBES,
@@ -2033,6 +2034,7 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
             | GameScene::TrainingBumper
             | GameScene::CaptainKickRoll
             | GameScene::KirbyCutter
+            | GameScene::KirbyStarBounce
             | GameScene::VsMagnify,
         ) => {
             ssb_game::stage_select::gkind::CASTLE
@@ -2349,6 +2351,15 @@ fn capture_training_scene(scene: GameScene) -> ssb_game::fighter_select::SceneDa
                 man_costume: 3,
                 com_kind: Some(FighterKind::Pikachu),
                 com_costume: 3,
+            }
+        }
+        // The N64 trace's dummy (`warp_kirbyvssamus`).
+        GameScene::KirbyStarBounce => {
+            return ssb_game::fighter_select::SceneData {
+                man_kind: Some(FighterKind::Kirby),
+                man_costume: 0,
+                com_kind: Some(FighterKind::Samus),
+                com_costume: 0,
             }
         }
         _ => {}

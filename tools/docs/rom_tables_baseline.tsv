@@ -154,6 +154,7 @@ tools/romtool/src/filter_coverage.rs	TRAIN_BASES	tooling: texture-filter coverag
 tools/romtool/src/main.rs	DIRECT_WEAPON_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	EFFECT_CLD_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of effect trees drawn XLU; the dEFManager*EffectDesc is named, not copied
+tools/romtool/src/main.rs	FIGHTER_STATE_EFFECT_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of DL link 10 effect trees drawn under the fighters' head-0 depth state (RE-425, RE-567)
 tools/romtool/src/main.rs	IMPACT_WAVE_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	ITEM_MAT_ANIMS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	KIRBY_COPY_TABLE	link-time labels: (file ID, ll* offset) keys romtool checks the pack against

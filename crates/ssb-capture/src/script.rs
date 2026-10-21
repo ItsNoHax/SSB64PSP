@@ -63,6 +63,22 @@ const KICK_ROLL_B_TICK: u64 = 60;
 const CUTTER_RUN: core::ops::Range<u64> = 30..70;
 const CUTTER_B_TICK: u64 = 95;
 
+/// `kirbystarbounce`'s route: the N64 trace's (`scene_inputs.rs`
+/// `kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame`:
+/// dash right 9-16, inhale 49-88, spit 129-131, the star lands at 135)
+/// shifted by [`ROUTE_DELAY`], Kirby's opening jab.
+const STAR_DASH: core::ops::RangeInclusive<u64> = 9 + ROUTE_DELAY..=16 + ROUTE_DELAY;
+const STAR_INHALE: core::ops::RangeInclusive<u64> = 49 + ROUTE_DELAY..=88 + ROUTE_DELAY;
+const STAR_SPIT: core::ops::RangeInclusive<u64> = 129 + ROUTE_DELAY..=131 + ROUTE_DELAY;
+/// The star's first frame: it lands on the Castle's rise, quake then wave.
+pub const STAR_LAND_TICK: u64 = 135 + ROUTE_DELAY;
+
+/// `catchslope`'s route: Mario runs right from the jab's end onto Kongo
+/// Jungle's left slope (x -943, standing from tick 52), and Z+A at
+/// [`CATCH_SLOPE_GRAB_TICK`] grabs the dummy: `CatchWait` from tick 97.
+const CATCH_SLOPE_RUN: core::ops::Range<u64> = 30..42;
+pub const CATCH_SLOPE_GRAB_TICK: u64 = 90;
+
 /// `purinthrow`'s script: Jigglypuff, spawned on the left platform, dashes
 /// right for [`PURIN_WALK`]'s ten ticks, carries off the platform's right
 /// end and lands on the main floor (x -333, tick 72) facing the dummy
@@ -222,6 +238,8 @@ macro_rules! scripted_scene {
             | $crate::GameScene::CaptainKickRoll
             | $crate::GameScene::KirbyCutter
             | $crate::GameScene::PurinThrow
+            | $crate::GameScene::KirbyStarBounce
+            | $crate::GameScene::CatchSlope
             | $crate::GameScene::Rebirth
             | $crate::GameScene::RebirthBlast
     };
@@ -292,6 +310,10 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // and leaves its end near tick 89: `SpecialLwAir` with the slope's
         // 14.7-degree roll until near 120.
         CaptainKickRoll => KICK_ROLL_B_TICK + 40,
+        // The impact wave three frames into its life.
+        KirbyStarBounce => STAR_LAND_TICK + 3,
+        // 13 frames into `CatchWait`'s hold.
+        CatchSlope => CATCH_SLOPE_GRAB_TICK + 20,
         // Up+B at tick 45; Egg Throw makes the egg on frame 4 and throws it
         // on frame 23, and it has flown some 16 frames here.
         Yoshi => 85,
@@ -542,6 +564,17 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
             4 | 8 => button::A,
             _ => 0,
         },
+        CatchSlope => match tick {
+            4 | 8 => button::A,
+            CATCH_SLOPE_GRAB_TICK => button::Z | button::A,
+            _ => 0,
+        },
+        KirbyStarBounce => match tick {
+            4 | 8 => button::A,
+            t if STAR_INHALE.contains(&t) => button::B,
+            t if STAR_SPIT.contains(&t) => button::A,
+            _ => 0,
+        },
         PurinThrow => match tick {
             4 | 8 | PURIN_THROW_TICK => button::A,
             PURIN_GRAB_TICK => button::Z | button::A,
@@ -611,6 +644,20 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
         KirbyCutter => {
             if CUTTER_RUN.contains(&tick) {
                 -127
+            } else {
+                0
+            }
+        }
+        CatchSlope => {
+            if CATCH_SLOPE_RUN.contains(&tick) {
+                80
+            } else {
+                0
+            }
+        }
+        KirbyStarBounce => {
+            if STAR_DASH.contains(&tick) {
+                127
             } else {
                 0
             }

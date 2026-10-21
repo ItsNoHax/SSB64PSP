@@ -2492,13 +2492,23 @@ fn part_materials(
     own
 }
 
-/// The entry vehicles' trees (RE-425): the Arwing's and the car's bodies
-/// set no render mode, and an RDRAM walk of an N64 frame (Fox and Captain
-/// Falcon entering) finds them under the fighters' `G_RM_AA_ZB_OPA_SURF`
-/// with `G_ZBUFFER`, which `ftDisplayMainProcDisplay` leaves on the head
-/// before DL link 10's effects; their head-1 lists set
-/// `G_RM_AA_ZB_XLU_SURF` themselves. The fighter seed is that state.
-const ENTRY_VEHICLE_GRAPHS: &[(u32, u32)] = &[(161, 0x2C30), (350, 0x5FC0)];
+/// DL link 10 effect trees drawn under the fighters' head-0 state: lists
+/// that set no render mode of their own run under the
+/// `G_RM_AA_ZB_OPA_SURF` with `G_ZBUFFER` that `ftDisplayMainProcDisplay`
+/// leaves on head 0 before DL link 10's effects. The fighter seed is that
+/// state. Each key is backed by an RDRAM display-list walk of an N64 frame
+/// drawing it: the Arwing and the car (RE-425), Mario's entry pipe (shared
+/// by Luigi), Samus's entry point, Donkey Kong's barrel and the rebirth
+/// halo (RE-567). Their head-1 lists set `G_RM_AA_ZB_XLU_SURF` themselves.
+/// The other DL link 10 effects' lists set their own render mode.
+const FIGHTER_STATE_EFFECT_GRAPHS: &[(u32, u32)] = &[
+    (161, 0x2C30),
+    (350, 0x5FC0),
+    (356, 0x0608),
+    (349, 0x0B90),
+    (355, 0x07C8),
+    (85, 0x2AC0),
+];
 
 /// Weapon `DObjDesc` trees whose lists set no render mode, so they draw
 /// under `wpDisplayDrawNormal`'s state (`G_ZBUFFER` cleared,
@@ -2804,7 +2814,7 @@ fn initial_material_for(
             ..ssb_rom::mesh::InitialMaterial::SCENE
         }
     } else if skeleton_graphs.contains(&(file, graph_offset))
-        || ENTRY_VEHICLE_GRAPHS.contains(&(file, graph_offset))
+        || FIGHTER_STATE_EFFECT_GRAPHS.contains(&(file, graph_offset))
     {
         ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL
     } else if ground_layer1_graphs.get(&(file, graph_offset)) == Some(&1) {

@@ -37,9 +37,9 @@ use dream_land::{dream_land, dream_land_map, stage_bounds, stage_floors, trainin
 fn scene_stage(scene: GameScene) -> u32 {
     match scene {
         // Kongo Jungle (`gkind::JUNGLE`).
-        GameScene::KirbyStoneSlope => 6,
+        GameScene::KirbyStoneSlope | GameScene::CatchSlope => 6,
         // Peach's Castle (`gkind::CASTLE`).
-        GameScene::CaptainKickRoll | GameScene::KirbyCutter => 4,
+        GameScene::CaptainKickRoll | GameScene::KirbyCutter | GameScene::KirbyStarBounce => 4,
         _ => 0,
     }
 }
@@ -145,6 +145,15 @@ fn intents() -> Vec<Intent> {
         // Final Cutter rises on its TransN, not applied here: the golden's
         // capture log has `SpecialHi` at the capture.
         intent(S::KirbyCutter, K::Kirby, &["SpecialHi"], 95, &[]),
+        // Without the dummy the grab whiffs back to `Wait`; the two-fighter
+        // replay in `catch_slope.rs` checks `CatchWait` at the capture.
+        intent(
+            S::CatchSlope,
+            K::Mario,
+            &["Catch"],
+            script::CATCH_SLOPE_GRAB_TICK,
+            &[],
+        ),
         intent(S::NessMagnet, K::Ness, &["SpecialLw"], 45, &["SpecialLw"]),
         intent(S::LinkBomb, K::Link, &["SpecialLw"], 45, &[]),
         intent(S::Grab, K::Mario, &["Catch"], 125, &["Catch"]),
@@ -251,6 +260,7 @@ fn every_fighter_scene_has_an_intent() {
                     | GameScene::KirbyWiggle
                     | GameScene::YoshiEgg
                     | GameScene::PurinThrow
+                    | GameScene::KirbyStarBounce
                     | GameScene::Rebirth
                     | GameScene::RebirthBlast
             );
@@ -443,29 +453,53 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
-    use ssb_game::fteffect::FighterEffect as E;
     let Some(bytes) = open_pack() else {
         return;
     };
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
-    const CASTLE: u32 = 4;
-    let (stage, segments) = stage_floors(&pack, CASTLE);
-    let map = dream_land_map(&pack, &stage);
-    let mut fighters: Vec<Posed> = [(FighterKind::Kirby, 0), (FighterKind::Samus, 1)]
-        .into_iter()
-        .map(|(kind, port)| {
-            Posed::new(
-                &pack,
-                training_fighter(&pack, &stage, kind, port, &segments),
-            )
-        })
-        .collect();
     let pad = |t: u64| match t {
         9..=16 => (0, 127, 0),
         49..=88 => (button::B, 0, 0),
         129..=131 => (button::A, 0, 0),
         _ => (0, 0, 0),
     };
+    castle_star_lands_as_on_the_n64(&pack, 1, pad, 135);
+}
+
+/// `kirbystarbounce`: the N64 route above past Training's opening jab. The
+/// jab leaves Kirby where he stood, so the star lands where the N64's did,
+/// [`script::STAR_LAND_TICK`] - 135 ticks later, and the capture shows its
+/// wave.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn kirby_star_bounce_lands_the_n64_star() {
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let scene = GameScene::KirbyStarBounce;
+    let capture = script::capture_tick(scene).unwrap();
+    assert!(capture > script::STAR_LAND_TICK);
+    castle_star_lands_as_on_the_n64(&pack, FIRST_TICK, scene_pad(scene), script::STAR_LAND_TICK);
+}
+
+/// Kirby and the standing Samus on the Training Castle, `pad` from tick
+/// `first`: Samus becomes the star at `tick`, at the N64's (624, 1400.65),
+/// and that first frame pushes the quake, then the wave at (624, 1398.15).
+fn castle_star_lands_as_on_the_n64(
+    pack: &ssb_rom::pack::Pack<'_>,
+    first: u64,
+    pad: impl Fn(u64) -> (u16, i8, i8),
+    tick: u64,
+) {
+    use ssb_game::fteffect::FighterEffect as E;
+    const CASTLE: u32 = 4;
+    let (stage, segments) = stage_floors(pack, CASTLE);
+    let map = dream_land_map(pack, &stage);
+    let mut fighters: Vec<Posed> = [(FighterKind::Kirby, 0), (FighterKind::Samus, 1)]
+        .into_iter()
+        .map(|(kind, port)| Posed::new(pack, training_fighter(pack, &stage, kind, port, &segments)))
+        .collect();
     let mut pair = Pair::default();
     let mut star: Option<(u64, Vec<E>, [f32; 2])> = None;
     let mut log = vec![format!(
@@ -475,8 +509,8 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
         fighters[1].fighter.pos.x,
         fighters[1].fighter.pos.y
     )];
-    for tick in 1..=150 {
-        let [_, queued] = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
+    for t in first..=tick + 15 {
+        let [_, queued] = tick_pair(pack, &map, &mut fighters, &pad, t, &mut pair);
         let (k, dummy) = (&fighters[0].fighter, &fighters[1].fighter);
         let impacts: Vec<E> = queued
             .into_iter()
@@ -484,7 +518,7 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
             .collect();
         let status = format!("{:?}", dummy.status.status);
         log.push(format!(
-            "{tick}: K {:?} ({:.2},{:.2}) S {status} ({:.2},{:.2}) vel ({:.2},{:.2}) {impacts:?}",
+            "{t}: K {:?} ({:.2},{:.2}) S {status} ({:.2},{:.2}) vel ({:.2},{:.2}) {impacts:?}",
             k.status.status,
             k.pos.x,
             k.pos.y,
@@ -494,7 +528,7 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
             dummy.physics.vel_air.y
         ));
         if star.is_none() && status.contains("ThrownKirbyStar") {
-            star = Some((tick, impacts, [dummy.pos.x, dummy.pos.y]));
+            star = Some((t, impacts, [dummy.pos.x, dummy.pos.y]));
         }
         assert_eq!(dummy.effects.dropped, 0);
     }
@@ -502,14 +536,14 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
     if std::env::var_os("SCENE_TRACE").is_some() {
         println!("kirby spit on the Castle:\n{log}");
     }
-    let (tick, impacts, pos) = star.unwrap_or_else(|| panic!("never spat: {log}"));
-    assert_eq!(tick, 135, "{log}");
+    let (at, impacts, pos) = star.unwrap_or_else(|| panic!("never spat: {log}"));
+    assert_eq!(at, tick, "{log}");
     // The trace prints two decimals.
     let near =
         |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 0.005 && (a[1] - b[1]).abs() < 0.005;
     assert!(near(pos, [624.0, 1400.65]), "{pos:?}\n{log}");
     let [E::Quake(2), E::ImpactWave { pos: wave, .. }] = impacts.as_slice() else {
-        panic!("star tick {tick}: {impacts:?}\n{log}");
+        panic!("star tick {at}: {impacts:?}\n{log}");
     };
     assert!(near([wave.x, wave.y], [624.0, 1398.15]), "{wave:?}\n{log}");
 }

@@ -805,10 +805,23 @@ pub enum GameScene {
     /// throw's own `DamageFlyRoll`, no coin flip
     /// (`ftCommonThrownReleaseThrownUpdateStats`, RE-503).
     PurinThrow,
+    /// `kirbystarbounce`: Kirby in Training on Peach's Castle with Samus as
+    /// the dummy; he inhales her and spits her right, and the star lands on
+    /// the rise in its first frame: a magnitude-2 quake, then the impact
+    /// wave (`ftCommonThrownCommonStarProcMap`, RE-503). Its route is the
+    /// N64 trace's, past Training's opening jab.
+    KirbyStarBounce,
+    /// `catchslope`: Mario in Training on Kongo Jungle, run onto the bowl's
+    /// left slope, grabbing the dummy: `CatchWait`'s motion -2 hold
+    /// re-applies the clip's keys each frame before the slope contour's leg
+    /// IK, which `CatchWait` keeps (`FTSTATUS_PRESERVE_SLOPECONTOUR`,
+    /// `ftParamUpdateAnimKeys`, RE-510). `Guard` would not show it: its
+    /// setter preserves nothing and its motion sets no contour.
+    CatchSlope,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 200] = [
+    pub const ALL: [GameScene; 202] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -1009,6 +1022,8 @@ impl GameScene {
         GameScene::KirbyCutter,
         GameScene::VsMagnify,
         GameScene::PurinThrow,
+        GameScene::KirbyStarBounce,
+        GameScene::CatchSlope,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1214,6 +1229,8 @@ impl GameScene {
             GameScene::KirbyCutter => "kirbycutter",
             GameScene::VsMagnify => "vsmagnify",
             GameScene::PurinThrow => "purinthrow",
+            GameScene::KirbyStarBounce => "kirbystarbounce",
+            GameScene::CatchSlope => "catchslope",
         }
     }
 

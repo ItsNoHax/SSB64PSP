@@ -102,8 +102,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| `r2-mario-entry-pipe` | Golden hash not a function of code alone → find differing input (pack bytes, staging, build path) | RE-506 |
-| Slope contour | `explain_movement` parity; golden for motion_id -2 hold (Guard or Down-wait on slope) | RE-510 |
+| Slope contour | `explain_movement` parity; N64 joint trace of `catchslope` CatchWait legs | RE-510 |
 | Thunder Shock spark | Ejection on status change unobserved on N64 → longer Pikachu trace | RE-512 |
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | Trig N64 traces | N64 traces for Ness jibaku, Kirby Stone slope, Falcon Kick roll, Pikachu `SpecialAirHiStart` cliff catch; Arwing `frame_rotate` ArcSin else branch unreached (needs a scene) | RE-503 |
@@ -122,13 +121,11 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Chunk 5 golden | Golden scene reaching wall-damage impact wave / PK Thunder bound / Kirby star bounce; unit tests only today | RE-503 |
 | Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
 | cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
-| Mario entry pipe disk (id-2 zoom) | Dark interior disk drawn over the front wall at low eye (vslinkentry t250/t258); N64 never shows it. Cull/winding or depth, `meshdraw.rs:1623`; D-051 hardware proof | RE-567 |
 | Items | Unobserved: Hyrule monsters, Saffron unforced pick and Poké Ball bonus, PK weapons and reflector hit order, two-fighter weapon clank; Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
 | Stages | N64 captures: pipes, plant notification, cloud vapor, scale sparkles, plant KO, Sector Z Arwing, Board the Platforms blocks | RE-428, RE-429, RE-442, RE-446, RE-455 |
 | Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |

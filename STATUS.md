@@ -6,8 +6,8 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v127 | `crates/ssb-rom/src/pack.rs` |
-| Goldens | 243 of 243 goldens match by pixel hash | `tests/golden/hashes.tsv` |
+| Pack | v128 | `crates/ssb-rom/src/pack.rs` |
+| Goldens | 245 of 245 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy) | Room 13.39 ms, Run 14.98, Yoster 15.58, Clash 13.17 | RE-530, RE-532, RE-539 |
@@ -18,7 +18,8 @@
 
 - Landed: entry effect clock starts the frame after the make; capture entry focus pinned (RE-567). 8 goldens rebaselined (see RE-567, 2642-95158 native px).
 - Landed: map-step skeleton fix for motion -1/-2; Kirby air catch, Yoshi grab and throws, dummy tech, GuardSetOff checked against the N64 (RE-567).
-- Open: Mario entry pipe disk over the front wall in the id-2 zoom (RE-567, D-051 proof). CPU item tracking N64 trace (RE-566); magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 (RE-418). Gaps in `PLAN.md`.
+- Landed: link-10 entry effects (Mario pipe, Samus point, DK barrel, rebirth halo) seeded with the fighters' N64 depth state, pack v128 (RE-567).
+- Open: CPU item tracking N64 trace (RE-566); magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
