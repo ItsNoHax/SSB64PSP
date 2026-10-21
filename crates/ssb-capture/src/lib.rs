@@ -793,10 +793,22 @@ pub enum GameScene {
     /// left bridge's end, Final Cutter's falling Trail effect mid-life
     /// (`ftKirbySpecialHiUpdateEffect`, matched to an N64 trace).
     KirbyCutter,
+    /// `vsmagnify`: a two-fighter VS on Peach's Castle, items off, the CPU
+    /// standing (`Behavior::Stand`); the player's Kirby runs off the
+    /// roof's left end from "Go" and drifts left through his air jumps out
+    /// of the camera's view: his magnifier (RE-440). Its script is in
+    /// [`script::vs_magnify`].
+    VsMagnify,
+    /// `purinthrow`: Jigglypuff in Training, spawned on the left platform
+    /// with the dummy on the main floor's spawn; she dashes off the
+    /// platform beside the dummy, grabs it and throws it forward: the
+    /// throw's own `DamageFlyRoll`, no coin flip
+    /// (`ftCommonThrownReleaseThrownUpdateStats`, RE-503).
+    PurinThrow,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 198] = [
+    pub const ALL: [GameScene; 200] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -995,6 +1007,8 @@ impl GameScene {
         GameScene::KirbyStoneSlope,
         GameScene::CaptainKickRoll,
         GameScene::KirbyCutter,
+        GameScene::VsMagnify,
+        GameScene::PurinThrow,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1198,6 +1212,8 @@ impl GameScene {
             GameScene::KirbyStoneSlope => "kirbystoneslope",
             GameScene::CaptainKickRoll => "captainkickroll",
             GameScene::KirbyCutter => "kirbycutter",
+            GameScene::VsMagnify => "vsmagnify",
+            GameScene::PurinThrow => "purinthrow",
         }
     }
 

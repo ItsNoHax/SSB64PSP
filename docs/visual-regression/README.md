@@ -100,6 +100,8 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
   - `r2-stage-N`: stage index N
   - `f1-training-*`, `f1-vs-*`, `f1-opening-*`, `f1-cpufx-*`: `psp-game` Training, VS, opening, CPU-effect scenes
 - Look up a scene by name or `evidence` column.
+- CPU-match rows `f1-vs-four`, `f1-vs-cpu`, `f1-vs-team`: expected to move on gameplay changes; rebaseline with a traced cause.
+- Subject scenes `f1-vs-magnify` (`vsmagnify`), `f1-training-purin-throw` (`purinthrow`): scripted, no CPU AI; subjects asserted by host replay ([RE-561](../evidence/re/RE-561.md)).
 
 ## Scene specs
 

@@ -108,7 +108,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | Trig N64 traces | N64 traces for Ness jibaku, Kirby Stone slope, Falcon Kick roll, Pikachu `SpecialAirHiStart` cliff catch; Arwing `frame_rotate` ArcSin else branch unreached (needs a scene) | RE-503 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
-| Stable golden subjects | `vs4` CPU-match rows (`f1-vs-four-magnifier`, `f1-vs-four-fly-roll`) drift with every gameplay change; replace with a scripted scene; acceptance: both subjects survive an unrelated fighter change | RE-560 |
 | Smash DI lag-update | Confirm `is_smash_di` gate equals `proc_lagupdate` whenever-set; acceptance: test | RE-560 |
 | Fox ledge freeze | Host sweep green (map_tests `every_ledge_catch_leaves_its_cliff_statuses_in_time`); needs a playtest repro | RE-553 |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |

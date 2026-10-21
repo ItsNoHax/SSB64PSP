@@ -101,7 +101,7 @@ const VS_SHIELD_SET_OFF_TICK: u64 = 610;
 const SAVE_UNLOCK_TICK: u64 = 240;
 
 /// "Go" in the VS capture scenes.
-const VS_GO_TICK: u64 = 398;
+const VS_GO_TICK: u64 = ssb_capture::script::VS_GO_TICK;
 /// `vspush`'s and `vsknock`'s stick toward the CPU, which spawns at the
 /// centre of Dream Land's main floor, to the right of the player's left
 /// platform (RE-469).
@@ -307,6 +307,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Past the KO and the CPU's rebirth (RE-469).
         GameScene::VsPush => VS_PUSH_CAPTURE_TICK,
         GameScene::VsKnock => VS_KNOCK_CAPTURE_TICK,
+        // Kirby left of the camera's view, short of the left blast zone.
+        GameScene::VsMagnify => ssb_capture::script::vs_magnify::CAPTURE_TICK,
         // The N64 reference's frame with every effect of `cpufx-k` and
         // `cpufx-n` on screen (`el` 74).
         GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS => cpufx_tick(74),
@@ -675,6 +677,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::VsTeamSteal
             | GameScene::VsPush
             | GameScene::VsKnock
+            | GameScene::VsMagnify
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsResultsLink
@@ -695,6 +698,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             t if cpufx_held(scene, t) || cpufx_s_tap(scene, t) => N64Buttons(N64Buttons::B),
             // `vsshield`: the shield is held from "Go".
             t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
+            // `vsmagnify`: Kirby's air jumps.
+            t if scene == GameScene::VsMagnify => N64Buttons(ssb_capture::script::vs_magnify::buttons(t)),
             // `vsknock`: a forward smash with each stick flick.
             t if scene == GameScene::VsKnock && vs_knock_smash(t) => N64Buttons(N64Buttons::A),
             // `vsplayers`: A on the VS mode menu's Start at 19; the
@@ -872,6 +877,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             _ => 0,
         };
     }
+    // `vsmagnify`: held left from "Go", off the castle roof and on.
+    if scene == GameScene::VsMagnify {
+        return ssb_capture::script::vs_magnify::stick_x(tick);
+    }
     // Held left, Mario dashes off the main floor's left end.
     if matches!(scene, GameScene::Rebirth | GameScene::RebirthBlast) {
         return if (20..=100).contains(&tick) { -80 } else { 0 };
@@ -1004,6 +1013,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::VsTeamSteal
             | GameScene::VsPush
             | GameScene::VsKnock
+            | GameScene::VsMagnify
             | GameScene::VsResults
             | GameScene::VsResultsEmblem
             | GameScene::VsResultsLink
@@ -1703,7 +1713,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
             | GameScene::PikachuThunder
             | GameScene::PikachuQuick,
         ) => ssb_game::fighter::FighterKind::Pikachu,
-        Some(GameScene::Purin | GameScene::PurinBow) => ssb_game::fighter::FighterKind::Purin,
+        Some(GameScene::Purin | GameScene::PurinBow | GameScene::PurinThrow) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::PikachuHat) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
         Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet | GameScene::NessJibaku) => {
@@ -1829,7 +1839,8 @@ fn exit_audio() {
     ssb_psp_runtime::audio::stop();
 }
 
-/// `vspush`'s and `vsknock`'s progress line (RE-469): both fighters'
+/// `vspush`'s, `vsknock`'s, `vsmagnify`'s and `purinthrow`'s progress line
+/// (RE-469): both fighters'
 /// positions, statuses and damage, the CPU's stocks and the player's score,
 /// and the stack's deepest use so far.
 #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
@@ -2028,7 +2039,8 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
             GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::CaptainKickRoll
-            | GameScene::KirbyCutter,
+            | GameScene::KirbyCutter
+            | GameScene::VsMagnify,
         ) => {
             ssb_game::stage_select::gkind::CASTLE
         }
@@ -2380,7 +2392,8 @@ fn capture_cpu_behavior(scene: GameScene) -> Option<ssb_game::computer::Behavior
         | GameScene::VsResultsEmblem
         | GameScene::VsResultsLink
         | GameScene::VsPush
-        | GameScene::VsKnock => {
+        | GameScene::VsKnock
+        | GameScene::VsMagnify => {
             Some(ssb_game::computer::Behavior::Stand)
         }
         _ => None,
@@ -2476,6 +2489,16 @@ fn vs_rules(scene: GameScene) -> VsRules {
         GameScene::VsPush | GameScene::VsKnock => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 1,
+            ..VsRules::DEFAULT
+        },
+        // Items off: no item lands in `vsmagnify`'s frame.
+        GameScene::VsMagnify => VsRules {
+            rule: ssb_game::battle::Rule::Stock,
+            stocks: 1,
+            items: ssb_game::item::normal::Switches {
+                appearance: ssb_game::item::normal::Appearance::None,
+                toggles: 0,
+            },
             ..VsRules::DEFAULT
         },
         // The N64 reference: stock 3, items off.
@@ -3456,8 +3479,9 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
         GameScene::CpuFxK => ([FighterKind::Kirby, FighterKind::Kirby, FighterKind::Samus, FighterKind::Captain], None),
         GameScene::CpuFxS => ([FighterKind::Kirby, FighterKind::Pikachu, FighterKind::Ness, FighterKind::Mario], None),
         // The CPU on the main floor's spawn, where it can be pushed off,
-        // and the player on the left platform's.
-        GameScene::VsPush | GameScene::VsKnock => {
+        // and the player on the left platform's; `purinthrow`'s dummy on
+        // the main floor's spawn, where Jigglypuff lands beside it.
+        GameScene::VsPush | GameScene::VsKnock | GameScene::PurinThrow => {
             let mut roster = training_roster(training);
             if let [Some(player), Some(cpu), ..] = &mut roster {
                 core::mem::swap(&mut player.spawn, &mut cpu.spawn);
@@ -3466,6 +3490,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
         }
         GameScene::VsArwing | GameScene::VsCar => return vs_pair_roster([FighterKind::Fox, FighterKind::Captain]),
         GameScene::VsLinkEntry => return vs_pair_roster([FighterKind::Link, FighterKind::Mario]),
+        GameScene::VsMagnify => return vs_pair_roster([FighterKind::Kirby, FighterKind::Mario]),
         GameScene::VsBall | GameScene::VsRays => return vs_pair_roster([FighterKind::Pikachu, FighterKind::Purin]),
         _ => return training_roster(training),
     };
@@ -4997,6 +5022,14 @@ unsafe fn run() -> ! {
         }
         #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
         if matches!(capture_spec, Some(GameScene::VsPush | GameScene::VsKnock)) && sim_frame_index % 30 == 0 {
+            log_push_state(&s, sim_frame_index);
+        }
+        // `vsmagnify`'s Kirby and `purinthrow`'s dummy, against
+        // `scene_inputs`' replays.
+        #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+        if (capture_spec == Some(GameScene::VsMagnify) && sim_frame_index >= VS_GO_TICK && sim_frame_index % 10 == 0)
+            || (capture_spec == Some(GameScene::PurinThrow) && sim_frame_index >= 88)
+        {
             log_push_state(&s, sim_frame_index);
         }
 

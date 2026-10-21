@@ -63,6 +63,60 @@ const KICK_ROLL_B_TICK: u64 = 60;
 const CUTTER_RUN: core::ops::Range<u64> = 30..70;
 const CUTTER_B_TICK: u64 = 95;
 
+/// `purinthrow`'s script: Jigglypuff, spawned on the left platform, dashes
+/// right for [`PURIN_WALK`]'s ten ticks, carries off the platform's right
+/// end and lands on the main floor (x -333, tick 72) facing the dummy
+/// standing on its spawn; Z+A at
+/// [`PURIN_GRAB_TICK`] grabs it and A at [`PURIN_THROW_TICK`], in
+/// `CatchWait`, throws it forward.
+const PURIN_WALK: core::ops::Range<u64> = 30..40;
+const PURIN_WALK_STICK: i8 = 80;
+const PURIN_GRAB_TICK: u64 = 90;
+const PURIN_THROW_TICK: u64 = 100;
+
+/// "Go" in the VS capture scenes: the countdown's end, from which the
+/// fighters read the pad.
+pub const VS_GO_TICK: u64 = 398;
+
+/// `vsmagnify`'s script, a VS scene's and so outside [`fighter_pad`]:
+/// `psp-game` presses these, and `scene_inputs` replays them. The
+/// player's Kirby, on Peach's Castle's spawn 0, runs left from "Go" off
+/// the roof's left end and, stick held, drifts left through his five air
+/// jumps past the camera's left bound (x -4000); at
+/// [`vs_magnify::CAPTURE_TICK`] he is falling left of the camera's view,
+/// at its mid-height, so his magnifier sits on the screen's left edge,
+/// clear of the damage display, and the left blast zone (x -9000) is
+/// still ahead of him.
+pub mod vs_magnify {
+    use super::{button, VS_GO_TICK};
+
+    /// The stick, held left from "Go": a smash from neutral dashes, the
+    /// dash runs, and in the air it drifts.
+    pub const RUN: core::ops::Range<u64> = VS_GO_TICK..VS_GO_TICK + 400;
+    pub const RUN_STICK: i8 = -80;
+    /// C-Up taps: Kirby's five air jumps, the first as he leaves the roof.
+    pub const JUMPS: [u64; 5] = [446, 476, 506, 536, 566];
+    pub const CAPTURE_TICK: u64 = VS_GO_TICK + 262;
+
+    /// The stick's x at `tick`.
+    pub fn stick_x(tick: u64) -> i8 {
+        if RUN.contains(&tick) {
+            RUN_STICK
+        } else {
+            0
+        }
+    }
+
+    /// The buttons at `tick`.
+    pub fn buttons(tick: u64) -> u16 {
+        if JUMPS.contains(&tick) {
+            button::C_UP
+        } else {
+            0
+        }
+    }
+}
+
 /// The delay of the jump route the dummy scenes follow. The route was
 /// found for a fighter standing free from tick 13; the jab runs to tick 25
 /// (Mario, Kirby) or 31 (Yoshi) and swallowed its first jump (RE-516).
@@ -154,6 +208,7 @@ macro_rules! scripted_scene {
             | $crate::GameScene::KirbyStoneSlope
             | $crate::GameScene::CaptainKickRoll
             | $crate::GameScene::KirbyCutter
+            | $crate::GameScene::PurinThrow
     };
 }
 
@@ -305,6 +360,7 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         YoshiShield => 600,
         YoshiRollF | YoshiRollB => 69,
         YoshiShieldBreak => 84,
+        PurinThrow => PURIN_THROW_TICK + 12,
         _ => return None,
     })
 }
@@ -462,6 +518,11 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
             40..=60 => button::Z,
             _ => 0,
         },
+        PurinThrow => match tick {
+            4 | 8 | PURIN_THROW_TICK => button::A,
+            PURIN_GRAB_TICK => button::Z | button::A,
+            _ => 0,
+        },
         YoshiShield | YoshiRollF | YoshiRollB | YoshiShieldBreak => match tick {
             4 | 8 => button::A,
             t if t >= 40 && (scene != YoshiShieldBreak || t < 80) => button::Z,
@@ -519,6 +580,13 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
         KirbyCutter => {
             if CUTTER_RUN.contains(&tick) {
                 -127
+            } else {
+                0
+            }
+        }
+        PurinThrow => {
+            if PURIN_WALK.contains(&tick) {
+                PURIN_WALK_STICK
             } else {
                 0
             }

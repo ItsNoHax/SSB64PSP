@@ -249,6 +249,7 @@ fn every_fighter_scene_has_an_intent() {
                     | GameScene::KirbyLose
                     | GameScene::KirbyWiggle
                     | GameScene::YoshiEgg
+                    | GameScene::PurinThrow
             );
             assert_eq!(
                 covered.contains(&scene),
@@ -508,4 +509,278 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
         panic!("star tick {tick}: {impacts:?}\n{log}");
     };
     assert!(near([wave.x, wave.y], [624.0, 1398.15]), "{wave:?}\n{log}");
+}
+
+/// `purinthrow`'s replay from `seed`: Jigglypuff on the left platform's
+/// spawn (1), the dummy Mario on the main floor's (0), as `psp-game`'s
+/// roster swaps them. Returns the status timeline (`tick:Purin/dummy`),
+/// the dummy at the capture tick, and whether the replay drew from the
+/// RNG.
+fn purin_throw_replay(
+    pack: &ssb_rom::pack::Pack<'_>,
+    seed: i32,
+) -> (String, ssb_game::fighter::Fighter, bool) {
+    ssb_game::rng::set_seed(seed);
+    let (stage, segments) = dream_land(pack);
+    let map = dream_land_map(pack, &stage);
+    let mut fighters: Vec<Posed> = [(FighterKind::Purin, 0, 1), (FighterKind::Mario, 1, 0)]
+        .into_iter()
+        .map(|(kind, port, spawn)| {
+            Posed::new(
+                pack,
+                dream_land::training_fighter_at(pack, &stage, kind, port, spawn, &segments),
+            )
+        })
+        .collect();
+    let scene = GameScene::PurinThrow;
+    let capture = script::capture_tick(scene).unwrap();
+    let mut timeline: Vec<(u64, String, String)> = Vec::new();
+    let mut pair = Pair::default();
+    let trace = std::env::var_os("SCENE_TRACE").is_some();
+    for tick in FIRST_TICK..capture {
+        let _ = tick_pair(
+            pack,
+            &map,
+            &mut fighters,
+            &scene_pad(scene),
+            tick,
+            &mut pair,
+        );
+        let (p, d) = (&fighters[0].fighter, &fighters[1].fighter);
+        if trace && tick % 5 == 0 {
+            println!(
+                "purinthrow {tick}: Purin {:?} ({:.1}, {:.1}) dummy {:?} ({:.1}, {:.1})",
+                p.status.status, p.pos.x, p.pos.y, d.status.status, d.pos.x, d.pos.y
+            );
+        }
+        let now = (
+            format!("{:?}", p.status.status),
+            format!("{:?}", d.status.status),
+        );
+        if timeline
+            .last()
+            .is_none_or(|(_, y, d)| (y, d) != (&now.0, &now.1))
+        {
+            timeline.push((tick, now.0, now.1));
+        }
+    }
+    let line: Vec<String> = timeline
+        .iter()
+        .map(|(t, y, d)| format!("{t}:{y}/{d}"))
+        .collect();
+    let [_, dummy] = <[Posed; 2]>::try_from(fighters).ok().unwrap();
+    let drew = ssb_game::rng::seed() != seed;
+    (line.join(" "), dummy.fighter, drew)
+}
+
+/// `purinthrow`: Jigglypuff's forward throw releases the dummy into the
+/// `DamageFlyRoll` its throw description names
+/// (`dPurinMainMotion_ThrowF`'s `FTThrowHitDesc`), not the random roll of
+/// `ftCommonDamageUpdateMain`, and the dummy is still in it, airborne, at
+/// the capture tick. A second replay from another RNG seed ends in the
+/// very same dummy: nothing the golden shows of it hangs on the shared
+/// RNG, and the dummy's Training CPU stands until it is caught.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn purin_throw_puts_the_dummy_in_damage_fly_roll() {
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let (line, dummy, drew) = purin_throw_replay(&pack, 1);
+    if std::env::var_os("SCENE_TRACE").is_some() {
+        println!("purinthrow: {line}");
+    }
+    assert!(line.contains("(ThrowF)/"), "never throws forward: {line}");
+    assert_eq!(
+        dummy.status.status,
+        ssb_game::status::AnyStatus::from(Status::DamageFlyRoll),
+        "{line}"
+    );
+    assert!(!dummy.is_grounded(), "{line}");
+    // The fighters draw from the RNG on the way, so the reseeded run
+    // below checks that the throw's outcome does not depend on them.
+    assert!(drew, "{line}");
+    let (other, reseeded, _) = purin_throw_replay(&pack, 0x1234_5678);
+    assert_eq!(line, other);
+    assert_eq!(
+        (
+            dummy.pos.x,
+            dummy.pos.y,
+            dummy.damage,
+            dummy.status.anim_frame
+        ),
+        (
+            reseeded.pos.x,
+            reseeded.pos.y,
+            reseeded.damage,
+            reseeded.status.anim_frame
+        )
+    );
+}
+
+/// Pack stage index of Peach's Castle (`gkind::CASTLE`).
+const CASTLE: u32 = 4;
+
+/// `vsmagnify`'s fighters at its capture tick, replayed from `seed` on
+/// Peach's Castle from Training's start (tick 8): the player's Kirby
+/// (port 0, spawn 0) on [`script::vs_magnify`]'s pad, the CPU Mario
+/// (port 1, spawn 1) standing with a neutral pad, as `Behavior::Stand`'s
+/// `STICK_N` holds it on the stage; and the battle camera framing both
+/// (`gmCameraUpdateInterests`, Kirby's camera). Returns Kirby's timeline,
+/// Kirby and the camera at the capture tick, and whether the replay drew
+/// from the RNG.
+fn vs_magnify_replay(
+    pack: &ssb_rom::pack::Pack<'_>,
+    seed: i32,
+) -> (
+    String,
+    ssb_game::fighter::Fighter,
+    ssb_game::camera::Camera,
+    bool,
+) {
+    use ssb_game::camera::{BonusFollow, Bounds, CameraRig, CameraStage, Framing, StageCamera};
+    ssb_game::rng::set_seed(seed);
+    let (stage, segments) = stage_floors(pack, CASTLE);
+    let map = dream_land_map(pack, &stage);
+    let kinds = [FighterKind::Kirby, FighterKind::Mario];
+    let mut fighters: Vec<Posed> = kinds
+        .into_iter()
+        .zip(0u8..)
+        .map(|(kind, port)| Posed::new(pack, training_fighter(pack, &stage, kind, port, &segments)))
+        .collect();
+    let framing = kinds.map(|kind| {
+        let d = pack.fighter(kind as u32).unwrap();
+        Framing {
+            cam_offset_y: d.cam_offset_y,
+            zoom_frame: d.camera_zoom,
+        }
+    });
+    let bounds = |e: &ssb_rom::pack::Extent| Bounds {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    let camera_stage = CameraStage {
+        camera: bounds(&stage.camera),
+        team_camera: bounds(&stage.team_camera),
+        map_top: f32::from(stage.bounds.top),
+        light_angle_z: stage.camera_light_angle_z,
+        stage_camera: StageCamera::Default,
+        follow: BonusFollow::Other,
+    };
+    let mut rig = CameraRig::default();
+    let pad = |tick: u64| {
+        (
+            script::vs_magnify::buttons(tick),
+            script::vs_magnify::stick_x(tick),
+            0,
+        )
+    };
+    let mut pair = Pair::default();
+    let mut timeline: Vec<(u64, String)> = Vec::new();
+    let trace = std::env::var_os("SCENE_TRACE").is_some();
+    for tick in FIRST_TICK..script::vs_magnify::CAPTURE_TICK {
+        let _ = tick_pair(pack, &map, &mut fighters, &pad, tick, &mut pair);
+        let interests: Vec<_> = fighters
+            .iter()
+            .zip(framing)
+            .filter_map(|(p, fr)| ssb_game::camera::interest_of(&p.fighter, fr, &camera_stage))
+            .collect();
+        let k = &fighters[0].fighter;
+        rig.tick(
+            k.pos,
+            framing[0].cam_offset_y,
+            &interests,
+            None,
+            &camera_stage,
+        );
+        let view = ssb_game::player_interface::view(k, &rig.camera, framing[0].cam_offset_y);
+        if trace && tick % 10 == 0 {
+            println!(
+                "vsmagnify {tick}: Kirby {:?} ({:.1}, {:.1}) offscreen {} eligible {} dir {:?} raw scale {:.3}; Mario ({:.1}, {:.1})",
+                k.status.status,
+                k.pos.x,
+                k.pos.y,
+                view.offscreen,
+                view.eligible,
+                view.direction,
+                raw_magnify_scale(&rig.camera),
+                fighters[1].fighter.pos.x,
+                fighters[1].fighter.pos.y
+            );
+        }
+        let now = format!("{:?}", k.status.status);
+        if timeline.last().is_none_or(|(_, s)| *s != now) {
+            timeline.push((tick, now));
+        }
+    }
+    let line: Vec<String> = timeline.iter().map(|(t, s)| format!("{t}:{s}")).collect();
+    let drew = ssb_game::rng::seed() != seed;
+    let [kirby, _] = <[Posed; 2]>::try_from(fighters).ok().unwrap();
+    (line.join(" "), kirby.fighter, rig.camera, drew)
+}
+
+/// [`ssb_game::player_interface::magnify_scale`] before its cap of 3.
+fn raw_magnify_scale(camera: &ssb_game::camera::Camera) -> f32 {
+    use ssb_engine::math::Vec3;
+    let dist = (camera.eye - camera.at).length();
+    let mut mini = *camera;
+    mini.eye = Vec3::new(0.0, 300.0, dist);
+    mini.at = Vec3::new(0.0, 300.0, 0.0);
+    mini.project(Vec3::new(0.0, 900.0, 0.0)).1 / 18.0
+}
+
+/// `vsmagnify`: at the capture tick Kirby, the player, is out of the
+/// battle camera's view and eligible for his magnifier
+/// (`ifCommonPlayerMagnifyUpdateRender`'s test, [`player_interface::view`]),
+/// falling left of it, magnifier on the screen's left edge, short of the
+/// left blast zone. The camera frames the standing
+/// CPU too, so the magnifier's scale is the projected one, under its cap
+/// of 3, as at the `vs4` frame this scene replaces (RE-508's raw 2.397).
+/// Kirby is on the pad alone: the CPU stands, his run, jumps and fall
+/// never read the RNG, so no other fighter's or the stage's draws reach him,
+/// and a second replay from another RNG seed ends in the same Kirby and
+/// camera.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn vs_magnify_shows_kirby_below_the_camera() {
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let (line, kirby, camera, drew) = vs_magnify_replay(&pack, 1);
+    if std::env::var_os("SCENE_TRACE").is_some() {
+        println!("vsmagnify: {line}");
+    }
+    let cam_offset_y = pack
+        .fighter(FighterKind::Kirby as u32)
+        .unwrap()
+        .cam_offset_y;
+    let view = ssb_game::player_interface::view(&kirby, &camera, cam_offset_y);
+    assert!(view.offscreen && view.eligible, "{view:?}: {line}");
+    let stage = pack.stage(CASTLE).unwrap();
+    assert!(view.direction.0 < 0.0, "{view:?}: {line}");
+    assert!(kirby.pos.x > f32::from(stage.bounds.left), "{line}");
+    assert!(raw_magnify_scale(&camera) < 3.0, "{line}");
+    assert!(!drew, "{line}");
+    let (other, reseeded, camera2, _) = vs_magnify_replay(&pack, 0x1234_5678);
+    assert_eq!(line, other);
+    assert_eq!(
+        (
+            kirby.pos.x,
+            kirby.pos.y,
+            kirby.status.anim_frame,
+            camera.eye.x,
+            camera.eye.y
+        ),
+        (
+            reseeded.pos.x,
+            reseeded.pos.y,
+            reseeded.status.anim_frame,
+            camera2.eye.x,
+            camera2.eye.y
+        )
+    );
 }
