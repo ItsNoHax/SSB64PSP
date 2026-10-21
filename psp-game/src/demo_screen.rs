@@ -360,7 +360,7 @@ impl auto_demo::World for World<'_> {
             .fighter(kind as u32)
             .map_or(1000.0, |d| d.closeup_camera_zoom);
         if let Some(pl) = self.s.play_state.as_mut() {
-            pl.demo_zoom = Some(ssb_psp_runtime::scene::DemoZoom {
+            pl.camera.demo_zoom = Some(ssb_game::camera::DemoZoom {
                 port: player as u8,
                 eye,
                 dist,
@@ -374,7 +374,7 @@ impl auto_demo::World for World<'_> {
 
     fn reset_camera(&mut self) {
         if let Some(pl) = self.s.play_state.as_mut() {
-            pl.demo_zoom = None;
+            pl.camera.demo_zoom = None;
         }
     }
 

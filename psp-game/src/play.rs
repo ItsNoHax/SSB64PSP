@@ -10,7 +10,7 @@
 
 use core::ops::{Deref, DerefMut};
 
-use ssb_engine::array_vec::ArrayVec;
+use ssb_game::computer::CpuSight;
 use ssb_game::fighter::FighterKind;
 use ssb_rom::pack::{Pack, StageDesc};
 
@@ -222,59 +222,6 @@ pub fn lead_computer(
 /// `gSCManagerBattleState->players[dummy].level` in Training.
 pub const TRAINING_CPU_LEVEL: u8 = 3;
 
-/// What a CPU reads of the match besides the fighters, as it stands when
-/// its interrupt runs: the items and weapons in link order, the Twister,
-/// the Zebes acid and its own PK Thunder trail.
-pub struct CpuSight {
-    pub items: ArrayVec<ssb_game::computer::behave::ItemSight, { ssb_game::item::ITEM_ALLOC_MAX }>,
-    /// Up to two threats a weapon (`WeaponPool::cpu_threats`).
-    pub weapons: ArrayVec<ssb_game::computer::behave::WeaponThreat, { 2 * ssb_game::weapon::MAX_WEAPONS }>,
-    pub team_rules: ssb_game::team::TeamRules,
-    pub twister: Option<ssb_engine::math::Vec2>,
-    pub acid: Option<(f32, f32)>,
-    pub pk_thunder_trail: Option<ssb_engine::math::Vec2>,
-}
-
-impl Default for CpuSight {
-    fn default() -> Self {
-        CpuSight {
-            items: ArrayVec::new(),
-            weapons: ArrayVec::new(),
-            team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
-            twister: None,
-            acid: None,
-            pk_thunder_trail: None,
-        }
-    }
-}
-
-impl CpuSight {
-    /// The view of the CPU on `port`.
-    pub fn observe(
-        port: u8,
-        items: &ssb_game::item::ItemPool,
-        weapons: &ssb_game::weapon::WeaponPool,
-        stage: &ssb_game::stage::Stage,
-    ) -> Self {
-        use ssb_game::stage::Controller;
-        let flat = |v: ssb_engine::math::Vec3| ssb_engine::math::Vec2::new(v.x, v.y);
-        CpuSight {
-            items: items.cpu_sights().collect(),
-            weapons: weapons.cpu_threats().collect(),
-            team_rules: items.team_rules,
-            twister: match &stage.controller {
-                Controller::Hyrule(h) => h.visible_position().map(flat),
-                _ => None,
-            },
-            acid: match &stage.controller {
-                Controller::Zebes(z) => Some(z.level_info()),
-                _ => None,
-            },
-            pk_thunder_trail: weapons.own_pk_trail(port).map(flat),
-        }
-    }
-}
-
 /// The map, bounds, opponents and the rest of the match a CPU reads this
 /// frame.
 fn cpu_world<'a, F, I>(
@@ -356,17 +303,20 @@ impl ssb_game::matchtick::HasFighter for Player<'_> {
         &mut self.scene_mut().fighter
     }
     /// Only the lead carries the battle camera.
-    fn camera(&self) -> Option<&ssb_game::camera::Camera> {
+    fn rig(&self) -> Option<&ssb_game::camera::CameraRig> {
         match self {
             Player::Lead { scene, .. } => Some(&scene.camera),
             Player::Dummy { .. } => None,
         }
     }
-    fn camera_mut(&mut self) -> Option<&mut ssb_game::camera::Camera> {
+    fn rig_mut(&mut self) -> Option<&mut ssb_game::camera::CameraRig> {
         match self {
             Player::Lead { scene, .. } => Some(&mut scene.camera),
             Player::Dummy { .. } => None,
         }
+    }
+    fn framing(&self) -> ssb_game::camera::Framing {
+        self.scene().framing()
     }
 }
 
@@ -377,7 +327,6 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
         view: &ssb_game::matchtick::InputView<'_>,
     ) {
         let (pack, stage, groups) = (ground.pack, ground.stage, ground.groups());
-        let sight = |port| CpuSight::observe(port, view.items, view.weapons, view.stage);
         match self {
             Player::Lead {
                 scene,
@@ -396,7 +345,7 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
                     _ if view.locked => (ssb_engine::input::ControllerState::default(), false),
                     Lead::Key(key) => key_input(key),
                     Lead::Computer(computer) => {
-                        let sight = sight(scene.fighter.port);
+                        let sight = view.sight(scene.fighter.port);
                         let input =
                             computer_input(computer, scene, pack, stage, groups, view.opponents, &sight, false);
                         (input, false)
@@ -411,7 +360,7 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
                 } else {
                     // The items as the fighters before it left them this
                     // pass.
-                    let sight = sight(dummy.fighter.port);
+                    let sight = view.sight(dummy.fighter.port);
                     dummy.tick_interrupt(pack, stage, groups, view.opponents, &sight, view.locked);
                 }
             }

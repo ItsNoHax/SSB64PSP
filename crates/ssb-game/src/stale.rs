@@ -11,9 +11,8 @@
 //! on the attacking [`Fighter`] ([`Fighter::stale`]); the counts come from
 //! the battle's [`crate::manager_counts::ManagerCounts`], shared by every
 //! fighter, item and weapon of the battle. Thrown-body hits enter the
-//! thrower's queue with the body's motion ID/count. Those entries also carry
-//! their origin port. Body attacks have attack ID `None`, which the stale
-//! lookup bypasses.
+//! thrower's queue with the body's motion ID/count. Body attacks have
+//! attack ID `None`, which the stale lookup bypasses.
 //!
 //! ## Documented deviations
 //!
@@ -145,7 +144,6 @@ pub struct StaleQueue {
     pub next: usize,
     /// `stale_info[i] = { attack_id, motion_count }`.
     pub entries: [(MotionAttackId, u16); STALE_QUEUE_LEN],
-    origins: [Option<u8>; STALE_QUEUE_LEN],
 }
 
 impl StaleQueue {
@@ -188,26 +186,10 @@ impl StaleQueue {
     /// `ftParamUpdateStaleQueue` @ 0x800EA614, for an attacker that is not
     /// the defender (the caller checks `attack_player != defend_player`).
     pub fn push(&mut self, attack_id: MotionAttackId, motion_count: u16) {
-        self.push_origin(attack_id, motion_count, None);
-    }
-
-    pub(crate) fn push_thrown(&mut self, attack_id: MotionAttackId, motion_count: u16, origin: u8) {
-        self.push_origin(attack_id, motion_count, Some(origin));
-    }
-
-    fn push_origin(&mut self, attack_id: MotionAttackId, motion_count: u16, origin: Option<u8>) {
-        if self
-            .entries
-            .iter()
-            .zip(self.origins)
-            .any(|(&(id, count), source)| {
-                id == attack_id && count == motion_count && source == origin
-            })
-        {
+        if self.entries.contains(&(attack_id, motion_count)) {
             return;
         }
         self.entries[self.next] = (attack_id, motion_count);
-        self.origins[self.next] = origin;
         self.next = if self.next == STALE_QUEUE_LEN - 1 {
             0
         } else {

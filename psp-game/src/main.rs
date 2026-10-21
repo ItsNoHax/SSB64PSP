@@ -1612,13 +1612,8 @@ impl<'s> ssb_game::matchtick::MatchHooks<play::Player<'s>> for MatchHooks<'_, '_
         profile::stop(span, self.started_at[i]);
     }
 
-    fn boss_camera(&mut self, seat: &mut play::Player<'s>, request: ssb_game::boss::CameraRequest) {
-        campaign::apply_boss_camera(seat.scene_mut(), request);
-    }
-
-    fn tick_camera(&mut self, seats: &mut ssb_game::matchtick::Seats<'_, play::Player<'s>>) {
-        let mut scenes = seats.each_mut().map(|s| s.as_deref_mut().map(play::Player::scene_mut));
-        tick_battle_camera(self.stage, &mut scenes);
+    fn camera_stage(&self) -> Option<ssb_game::camera::CameraStage> {
+        Some(ssb_psp_runtime::scene::camera_stage(self.stage))
     }
 
     fn interface(
@@ -1643,7 +1638,7 @@ fn set_camera_zoom(p: &Pack<'_>, pl: &mut play::FighterScene) {
     use ssb_game::spgame::setup::{set_camera_zoom_angles, CAMERA_ZOOM_EASE, CAMERA_ZOOM_FOV};
     let eye = set_camera_zoom_angles(pl.fighter.facing);
     let dist = p.fighter(pl.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
-    pl.demo_zoom = Some(ssb_psp_runtime::scene::DemoZoom {
+    pl.camera.demo_zoom = Some(ssb_game::camera::DemoZoom {
         port: pl.fighter.port,
         eye,
         dist,
@@ -1653,38 +1648,6 @@ fn set_camera_zoom(p: &Pack<'_>, pl: &mut play::FighterScene) {
         cam_offset_y: pl.cam_offset_y,
     });
     pl.fighter.model_parts.set_detail_all(ssb_game::modelpart::Detail::High);
-}
-
-/// The battle camera's process (priority 3, link 9: after every fighter's
-/// physics and the item, weapon and effect processes): `gmCameraUpdateInterests` over the fighters in link order,
-/// through the player's camera.
-fn tick_battle_camera(stage: &ssb_rom::pack::StageDesc, s: &mut [Option<&mut play::FighterScene>; 4]) {
-    let mut others = [ssb_game::camera::Interest::default(); 3];
-    let mut count = 0;
-    for f in s[1..].iter().flatten() {
-        if let Some(interest) = f.camera_interest(stage) {
-            others[count] = interest;
-            count += 1;
-        }
-    }
-    // The auto demo's focus follows its fighter as this tick left it.
-    let focus = s[0].as_deref().and_then(|pl| pl.demo_zoom).and_then(|z| {
-        let f = s.iter().flatten().find(|f| f.fighter.port == z.port)?;
-        Some((f.fighter.pos, f.cam_offset_y))
-    });
-    // So does the entry focus's zoom (`gmCameraUpdatePlayerZoom` reads the
-    // fighter's `TopN` live, RE-543).
-    let entry = s[0].as_deref().and_then(|pl| pl.entry_zoom).and_then(|z| {
-        let f = s.get(usize::from(z.slot))?.as_deref()?;
-        Some(ssb_psp_runtime::scene::EntryFocusTarget { pos: f.fighter.pos, cam_offset_y: f.cam_offset_y, dist: z.dist })
-    });
-    if let Some(pl) = s[0].as_deref_mut() {
-        if let (Some(z), Some((pos, cam_offset_y))) = (pl.demo_zoom.as_mut(), focus) {
-            z.pos = pos;
-            z.cam_offset_y = cam_offset_y;
-        }
-        pl.tick_camera(stage, &others[..count], entry);
-    }
 }
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
@@ -2597,7 +2560,10 @@ unsafe fn training_frame(
         if status == GameStatus::Unpause && f == Frame::Frozen {
             ssb_game::pause::ease_back(&mut pl.camera.pause_eye, pause.origin);
             if let Some(stage) = p.stage(stage_index) {
-                tick_battle_camera(&stage, &mut scenes(pl, dummies));
+                ssb_game::matchtick::camera_pass(
+                    &mut scenes(pl, dummies),
+                    &ssb_psp_runtime::scene::camera_stage(&stage),
+                );
             }
         } else if status == GameStatus::Go {
             pl.camera.pause_eye = pause.origin;
@@ -2631,7 +2597,10 @@ unsafe fn training_frame(
                     set_camera_zoom(p, pl);
                 }
                 if let Some(stage) = p.stage(stage_index) {
-                    tick_battle_camera(&stage, &mut scenes(pl, dummies));
+                    ssb_game::matchtick::camera_pass(
+                        &mut scenes(pl, dummies),
+                        &ssb_psp_runtime::scene::camera_stage(&stage),
+                    );
                 }
             }
             // `ifCommonBattleInterfaceProcUpdate`: at the battle's end the
@@ -2830,7 +2799,7 @@ fn entry_zoom_frame(
     hud: &Hud,
     b: &ssb_game::battle::Battle,
 ) {
-    pl.entry_zoom = None;
+    pl.camera.entry_zoom = None;
     let Some(focus) = hud.entry_focus else { return };
     let Some(t) = b.clock().checked_sub(1 + ssb_game::battle::ENTRY_WAIT) else {
         return;
@@ -2844,9 +2813,9 @@ fn entry_zoom_frame(
             .filter_map(|(slot, scene)| Some((slot, scene?)))
             .nth(i)?;
         let dist = p.fighter(scene.fighter.kind as u32).map_or(1000.0, |d| d.closeup_camera_zoom);
-        Some(ssb_psp_runtime::scene::EntryZoom { slot: slot as u8, dist })
+        Some(ssb_game::camera::EntryZoom { slot: slot as u8, dist })
     });
-    pl.entry_zoom = zoom;
+    pl.camera.entry_zoom = zoom;
 }
 
 /// The battle HUD's state beside the world: the damage displays and the
@@ -2985,7 +2954,10 @@ fn pause_frame(
                 // `gmCameraPlayerZoomFuncCamera`: the battle camera while
                 // the player is out of bounds.
                 if pause::kind_for(pl.fighter.pos, bounds) == PauseKind::PlayerNA {
-                    tick_battle_camera(&stage, &mut scenes(pl, dummies));
+                    ssb_game::matchtick::camera_pass(
+                        &mut scenes(pl, dummies),
+                        &ssb_psp_runtime::scene::camera_stage(&stage),
+                    );
                 } else {
                     let mut pos = pl.fighter.pos;
                     pos.y += pl.cam_offset_y;
@@ -4247,7 +4219,10 @@ unsafe fn session_frame(
             // camera.
             if let (Some(p), Some(pl)) = (&pack, s.play_state.as_mut()) {
                 if let Some(stage) = p.stage(s.training_stage) {
-                    tick_battle_camera(&stage, &mut scenes(pl, &mut s.dummies));
+                    ssb_game::matchtick::camera_pass(
+                        &mut scenes(pl, &mut s.dummies),
+                        &ssb_psp_runtime::scene::camera_stage(&stage),
+                    );
                 }
             }
         }
@@ -4451,9 +4426,9 @@ fn training_menu_frame(
         s.items.make_setup_common(kind, None, pos, vel, &core::iter::empty);
     }
     match frame.view_changed {
-        Some(training::VIEW_NORMAL) => pl.player_zoom = None,
+        Some(training::VIEW_NORMAL) => pl.camera.player_zoom = None,
         Some(_) => {
-            pl.player_zoom =
+            pl.camera.player_zoom =
                 Some(pack.and_then(|p| p.fighter(pl.fighter.kind as u32)).map_or(1000.0, |d| d.closeup_camera_zoom));
         }
         None => {}

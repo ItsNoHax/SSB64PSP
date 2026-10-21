@@ -75,7 +75,9 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 
 - One frame: `ssb_game::matchtick::step`, run by `psp-game` (`training_step`) and the host replays (`tick_pair_pads`) ([D-052](decisions/D-052.md)).
 - Passes, in order: `interrupt_pass`, `board_and_stage`, `physics_pass` → `fighter_physics`, `effects_and_camera`, `hit_pass`; then the settle after the hit phase.
-- Platform seams: `Seat<G>` (fighter and its ground), `Ground`, `Arena`, `MatchHooks` (poison, profiler spans, camera, boss camera).
+- Platform seams: `Seat<G>` (fighter and its ground), `Ground`, `Arena`, `MatchHooks` (poison, profiler spans, `camera_stage`); `HasFighter::rig` gives the camera seat's `CameraRig`.
+- Camera: `ssb_game::matchtick::camera_pass` ticks the `CameraRig` (`ssb-game` `camera/rig.rs`); the rig is stored on `FighterScene`. CPU sight: `ssb_game::computer::sight::CpuSight`.
+- `explain_movement` replays run on `step`.
 - Pack-bound halves: `psp-runtime` `arena.rs` (`PackGround`, `MatchArena`); `FighterScene` implements `HasFighter`.
 - Order is pinned by `matchtick/tests.rs`: decomp `PROCESSES` table vs port order, with named departures (RE-556).
 

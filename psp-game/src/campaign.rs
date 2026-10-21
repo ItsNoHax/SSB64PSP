@@ -297,7 +297,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     let Some(pl) = s.play_state.as_mut() else {
         return Err(Blocked::Assets(stage));
     };
-    pl.bonus_follow = stage == Stage::Bonus3;
+    pl.camera.bonus_follow = stage == Stage::Bonus3;
     for f in scenes(pl, &mut s.dummies).into_iter().flatten() {
         let port = usize::from(f.fighter.port);
         configure(sp, f, setups[port], team_bounds);
@@ -430,22 +430,6 @@ impl BossScene {
     }
 }
 
-/// Master Hand's camera request ([`ssb_game::matchtick::take_boss_camera`])
-/// on the battle camera: `gmCameraSetStatusMapZoom` or
-/// `gmCameraSetStatusDefault`.
-pub(crate) fn apply_boss_camera(pl: &mut play::FighterScene, request: ssb_game::boss::CameraRequest) {
-    match request {
-        ssb_game::boss::CameraRequest::MapZoom { at, eye } => {
-            pl.camera.begin_map_zoom(at, eye);
-            pl.camera_status = Some(ssb_psp_runtime::scene::CameraStatus::MapZoom {
-                origin: at,
-                target: eye,
-            });
-        }
-        ssb_game::boss::CameraRequest::Default => pl.camera_status = None,
-    }
-}
-
 /// The boss stage's half of the battle frame before the world runs:
 /// `sc1PGameBossDefeatInterfaceProcSet` when the battle ran it. Returns
 /// nothing; the defeat's paused ticks run [`boss_frozen_frame`].
@@ -494,7 +478,10 @@ fn boss_camera(
 ) {
     if !ssb_psp_runtime::scene::play_camera_anim(pl, boss.camera_anim()) {
         if let Some(stage) = p.stage(stage_index) {
-            tick_battle_camera(&stage, &mut scenes(pl, dummies));
+            ssb_game::matchtick::camera_pass(
+                &mut scenes(pl, dummies),
+                &ssb_psp_runtime::scene::camera_stage(&stage),
+            );
         }
     }
 }
@@ -543,11 +530,8 @@ fn boss_defeat_init(
     // `gmCollisionGetFighterPartsWorldPosition` queries the joint (RE-511).
     let world = f.fighter.joint_query(ssb_game::boss::DEFEAT_ZOOM_JOINT, ssb_engine::math::Vec3::ZERO);
     boss.zoom = world;
-    pl.camera.begin_map_zoom(world, world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0));
-    pl.camera_status = Some(ssb_psp_runtime::scene::CameraStatus::MapZoom {
-        origin: world,
-        target: world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0),
-    });
+    pl.camera
+        .set_status_map_zoom(world, world + ssb_engine::math::Vec3::new(0.0, 0.0, 3000.0));
     if let Some(h) = hud.damage.get_mut(usize::from(port)) {
         h.start_break_anim();
     }
@@ -639,7 +623,7 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     pl.fighter.dead.stock_rule = false;
     pl.fighter.dead.spgame_rule = false;
     pl.fighter.dead.bonus_rule = true;
-    pl.bonus_follow = true;
+    pl.camera.bonus_follow = true;
     s.damage_hud.damage[0] = ssb_game::hud::DamageDisplay::at(0, 0, 55);
     s.damage_hud.bonus_tasks = Some(10);
     let c = s.campaign.as_mut().expect("campaign");
@@ -810,7 +794,7 @@ pub(crate) fn entry_frame(
             }
             Action::Bonus3Follow => {
                 if let Some(pl) = scenes[0].as_deref_mut() {
-                    pl.bonus_follow = true;
+                    pl.camera.bonus_follow = true;
                 }
             }
             Action::Go if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE => {
@@ -885,12 +869,12 @@ pub(crate) fn entry_zoom_frame(
         .flatten();
     // The fighter and distance only: the camera pass reads its position
     // on the tick it runs (RE-543).
-    pl.entry_zoom = zoom_port.and_then(|port| {
+    pl.camera.entry_zoom = zoom_port.and_then(|port| {
         let f = scenes_ref(pl, dummies)[usize::from(port)]?;
         let dist = p
             .fighter(f.fighter.kind as u32)
             .map_or(1000.0, |d| d.closeup_camera_zoom);
-        Some(ssb_psp_runtime::scene::EntryZoom { slot: port, dist })
+        Some(ssb_game::camera::EntryZoom { slot: port, dist })
     });
 }
 

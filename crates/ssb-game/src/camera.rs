@@ -20,6 +20,12 @@
 
 use ssb_engine::math::{f_clc_dtor32, sy_persp_cot, Vec3};
 
+mod rig;
+pub use rig::{
+    interest_of, BonusFollow, CameraRig, CameraStage, CameraStatus, DemoZoom, EntryFocusTarget,
+    EntryZoom, Framing,
+};
+
 /// The rectangle the camera's look-at target may not leave --
 /// `MPGroundData.camera_bounds` (`crates/ssb-rom/src/stage.rs`'s
 /// `GroundData::camera_bounds`, packed as `pack::StageDesc::camera`).

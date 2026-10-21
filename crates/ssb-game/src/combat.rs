@@ -2221,9 +2221,8 @@ fn flush_thrown_stale(fighters: &mut [&mut Fighter]) {
     for i in 0..fighters.len() {
         for slot in 0..4 {
             if let Some((owner, id, count)) = fighters[i].hits.thrown_stale[slot].take() {
-                let origin = fighters[i].port;
                 if let Some(f) = fighters.iter_mut().find(|f| f.port == owner) {
-                    f.stale.push_thrown(id, count, origin);
+                    f.stale.push(id, count);
                 }
             }
         }

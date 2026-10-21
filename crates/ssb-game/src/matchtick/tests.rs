@@ -391,3 +391,163 @@ fn go_unlocks_after_the_interrupt_and_before_physics() {
     assert_eq!(probe.at_interrupt, Some(true));
     assert_eq!(probe.at_physics, Some(false));
 }
+
+/// One battle, one pair of counts (`ftmanager.c:163-164`): seats and pools
+/// made with handles of their own all share the items' after one frame,
+/// whose next motion count is past every count any of them drew.
+#[test]
+fn step_joins_every_handle_to_the_battles_counts() {
+    let mut fighters: Vec<Fighter> = (0..2)
+        .map(|i| {
+            let mut f = Fighter::new(FighterKind::Mario, i, 3);
+            f.pos.x = f32::from(i) * 1000.0;
+            f
+        })
+        .collect();
+    let mut weapons: Box<WeaponPool> = Box::default();
+    let mut items: Box<ItemPool> = Box::default();
+    // Private draws: seat 0 to 3, seat 1 to 5, the weapons to 2.
+    let mut drawn = 0;
+    for (handle, n) in [
+        (&fighters[0].stats.counts, 3),
+        (&fighters[1].stats.counts, 5),
+        (&weapons.counts, 2),
+    ] {
+        assert!(!handle.same(&items.counts));
+        for _ in 0..n {
+            drawn = drawn.max(handle.motion());
+        }
+    }
+    let mut stage = Stage::none();
+    let mut effects = crate::effect::NoEffects;
+    let mut world = World {
+        weapons: &mut weapons,
+        items: &mut items,
+        stage: &mut stage,
+        effects: &mut effects,
+        bonus: None,
+        battle: None,
+        started: true,
+        locked: false,
+        go: false,
+    };
+    let mut it = fighters.iter_mut();
+    let mut seats: Seats<'_, Fighter> = [it.next(), it.next(), None, None];
+    step(
+        &mut Bare(NoGround, NoProps),
+        &mut seats,
+        &mut world,
+        &mut (),
+    );
+    let battle = world.items.counts.clone();
+    assert!(world.weapons.counts.same(&battle));
+    for f in &fighters {
+        assert!(f.stats.counts.same(&battle));
+    }
+    assert!(battle.motion() > drawn);
+}
+
+struct CameraSeat {
+    fighter: Fighter,
+    rig: Option<CameraRig>,
+    framing: Framing,
+}
+
+impl HasFighter for CameraSeat {
+    fn fighter(&self) -> &Fighter {
+        &self.fighter
+    }
+    fn fighter_mut(&mut self) -> &mut Fighter {
+        &mut self.fighter
+    }
+    fn rig(&self) -> Option<&CameraRig> {
+        self.rig.as_ref()
+    }
+    fn rig_mut(&mut self) -> Option<&mut CameraRig> {
+        self.rig.as_mut()
+    }
+    fn framing(&self) -> Framing {
+        self.framing
+    }
+}
+
+/// The camera pass frames the lead first, then the others in link order,
+/// and resolves the demo and entry focuses on their fighters as this tick
+/// left them, all through the lead's rig.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_camera_pass_frames_every_seat_through_the_leads_rig() {
+    use crate::camera::{interest_of, BonusFollow, Bounds, DemoZoom, EntryZoom, StageCamera};
+    use ssb_engine::math::Vec3;
+    let half = |h: f32| Bounds {
+        top: h,
+        bottom: -h,
+        left: -h,
+        right: h,
+    };
+    let stage = CameraStage {
+        camera: half(4000.0),
+        team_camera: half(2000.0),
+        map_top: 6000.0,
+        light_angle_z: 0.1,
+        stage_camera: StageCamera::Zebes,
+        follow: BonusFollow::Other,
+    };
+    let seat = |port: u8, x: f32, off: f32| {
+        let mut fighter = Fighter::new(FighterKind::Mario, port, 3);
+        fighter.pos = Vec3::new(x, 100.0, 0.0);
+        CameraSeat {
+            fighter,
+            rig: None,
+            framing: Framing {
+                cam_offset_y: off,
+                zoom_frame: 1.0,
+            },
+        }
+    };
+    let demo = DemoZoom {
+        port: 2,
+        eye: (0.1, -0.1),
+        dist: 1500.0,
+        pan_scale: 0.3,
+        fov: 30.0,
+        pos: Vec3::ZERO,
+        cam_offset_y: 0.0,
+    };
+    for rig in [
+        CameraRig::default(),
+        CameraRig {
+            demo_zoom: Some(demo),
+            ..CameraRig::default()
+        },
+        CameraRig {
+            entry_zoom: Some(EntryZoom {
+                slot: 1,
+                dist: 1200.0,
+            }),
+            ..CameraRig::default()
+        },
+    ] {
+        let mut lead = seat(0, -600.0, 40.0);
+        lead.rig = Some(rig);
+        let (mut a, mut b) = (seat(2, 300.0, 70.0), seat(1, 900.0, 55.0));
+        let mut expect = rig;
+        if let Some(z) = expect.demo_zoom.as_mut() {
+            (z.pos, z.cam_offset_y) = (a.fighter.pos, 70.0);
+        }
+        let entry = rig.entry_zoom.map(|z| EntryFocusTarget {
+            pos: a.fighter.pos,
+            cam_offset_y: 70.0,
+            dist: z.dist,
+        });
+        let list: Vec<Interest> = [&lead, &a, &b]
+            .iter()
+            .filter_map(|s| interest_of(&s.fighter, s.framing, &stage))
+            .collect();
+        expect.tick(lead.fighter.pos, 40.0, &list, entry, &stage);
+        let mut seats: Seats<'_, CameraSeat> = [Some(&mut lead), Some(&mut a), None, Some(&mut b)];
+        camera_pass(&mut seats, &stage);
+        assert_eq!(lead.rig, Some(expect));
+        assert_ne!(expect.camera, rig.camera);
+    }
+}

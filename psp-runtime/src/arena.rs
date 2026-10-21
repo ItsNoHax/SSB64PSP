@@ -151,10 +151,13 @@ impl HasFighter for FighterScene {
     fn fighter_mut(&mut self) -> &mut Fighter {
         &mut self.pose.fighter
     }
-    fn camera(&self) -> Option<&ssb_game::camera::Camera> {
+    fn rig(&self) -> Option<&ssb_game::camera::CameraRig> {
         Some(&self.camera)
     }
-    fn camera_mut(&mut self) -> Option<&mut ssb_game::camera::Camera> {
+    fn rig_mut(&mut self) -> Option<&mut ssb_game::camera::CameraRig> {
         Some(&mut self.camera)
+    }
+    fn framing(&self) -> ssb_game::camera::Framing {
+        FighterScene::framing(self)
     }
 }

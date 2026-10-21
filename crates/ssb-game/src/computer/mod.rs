@@ -11,6 +11,7 @@
 
 pub mod attack;
 pub mod behave;
+mod sight;
 /// The CPU's input scripts and attack tables, generated at build time from
 /// the user's ROM by `crates/ssb-tablegen` (never committed).
 mod scripts {
@@ -24,6 +25,7 @@ use crate::fighter::{Fighter, FighterKind, Situation};
 use crate::status::{AnyStatus, FoxStatus, Status};
 
 pub use scripts::{input, INPUT_SCRIPTS};
+pub use sight::CpuSight;
 
 /// `FTCOMPUTER_LEVEL_MAX`.
 pub const LEVEL_MAX: u8 = 9;

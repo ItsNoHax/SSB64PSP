@@ -30,7 +30,7 @@ use ssb_rom::collision::LineKind;
 
 #[path = "common/posed.rs"]
 mod posed;
-use posed::{exchange, map_bound_top, Posed};
+use posed::{tick_scripted, Pair, Posed};
 
 /// One fighter on one frame: status id, x, y.
 type Sample = (u16, f32, f32);
@@ -724,7 +724,6 @@ fn how_to_play_hits_as_the_n64_does() {
     let keys =
         ssb_rom::explain::key_scripts(&archive.load(ssb_rom::explain::FILE_MAIN).unwrap()).unwrap();
     let (map, spawns) = surfaces(&archive);
-    let map_fn = || map.iter().copied();
     ssb_game::rng::set_seed(ssb_game::explain::RANDOM_SEED);
     let mut fighters: Vec<Posed> = ssb_game::explain::FIGHTERS
         .iter()
@@ -753,8 +752,7 @@ fn how_to_play_hits_as_the_n64_does() {
             )
         })
         .collect();
-    let mut jump_held = [false; 2];
-    let mut weapons = Box::<ssb_game::weapon::WeaponPool>::default();
+    let mut pair = Pair::default();
     let last = N64_GRABS.last().unwrap().0;
     let mut rows = N64_HITS.iter().chain(N64_GRABS).peekable();
     let mut seeds = N64_SEEDS.iter().peekable();
@@ -767,114 +765,13 @@ fn how_to_play_hits_as_the_n64_does() {
             seeds.next();
             ssb_game::rng::set_seed(seed);
         }
-        // Priority 5: input, TransN's sample, the interrupt, the rebirth's
-        // halo, jostle and the grab exchange.
-        for i in 0..2 {
+        // The scripts' `ftKeyProcessKeyEvents`, then the battle frame in
+        // the decomp's process order (`matchtick::step`, D-052).
+        let cp = [0, 1].map(|i| {
             scripts[i].process();
-            let c = scripts[i].controller();
-            let held = c.buttons.0
-                & (ssb_engine::input::N64Buttons::C_UP
-                    | ssb_engine::input::N64Buttons::C_DOWN
-                    | ssb_engine::input::N64Buttons::C_LEFT
-                    | ssb_engine::input::N64Buttons::C_RIGHT)
-                != 0;
-            let p = &mut fighters[i];
-            let (tapped, released) = (held && !jump_held[i], !held && jump_held[i]);
-            jump_held[i] = held;
-            p.tick_interrupt(&pack, map_bound_top(p), c, tapped, released, &map_fn);
-            if fighters[i].fighter.dead.rebirth_pending {
-                let other = &fighters[1 - i].fighter;
-                let halo = ssb_game::dead::halo_number(core::iter::once((
-                    other.status.status,
-                    other.dead.rebirth.halo_number,
-                )));
-                ssb_game::dead::rebirth_down(&mut fighters[i].fighter, halo);
-            }
-            if !fighters[i].fighter.is_in_hitlag() {
-                let other = JostleBody::of(&fighters[1 - i].fighter);
-                ssb_game::fighter::jostle(&mut fighters[i].fighter, &[(other, i == 0)]);
-            }
-            exchange(&mut fighters, i);
-        }
-        // Priority 4: the clip, the physics and map, the joint samples, a
-        // weapon the fighter made; then the weapon link.
-        for i in 0..2 {
-            fighters[i].tick_physics(&pack, &map_fn);
-            let spawn = fighters[i].fighter.take_weapon_spawn_with_parent();
-            exchange(&mut fighters, i);
-            if let Some((spawn, parent)) = spawn {
-                // `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass,
-                // as the game's (psp-game/src/main.rs).
-                weapons.spawn_projected(spawn, Some(parent), &map_fn);
-                weapons.flush_effects(&mut ssb_game::effect::NoEffects);
-            }
-        }
-        for p in &fighters {
-            weapons.observe_owner(&p.fighter);
-        }
-        weapons.tick(map_fn, Some(bounds.map));
-        for p in &mut fighters {
-            weapons.sync_owner(&mut p.fighter);
-        }
-        weapons.flush_effects(&mut ssb_game::effect::NoEffects);
-        // Priorities 1 and 0: the catch search, the hit search, then
-        // `ftMainProcParams`.
-        for i in 0..2 {
-            let [a, b] = &mut fighters[..] else {
-                unreachable!()
-            };
-            let (catcher, other) = if i == 0 { (a, b) } else { (b, a) };
-            if ssb_game::grab::nearest_catch(
-                &catcher.fighter,
-                core::iter::once(&other.fighter),
-                ssb_game::team::TeamRules::FREE_FOR_ALL,
-            )
-            .is_some()
-            {
-                ssb_game::grab::search_catch(
-                    &mut catcher.fighter,
-                    &mut other.fighter,
-                    ssb_game::team::TeamRules::FREE_FOR_ALL,
-                );
-            }
-        }
-        for p in &mut fighters {
-            p.settle_catch(&pack, &map_fn);
-        }
-        for i in 0..2 {
-            exchange(&mut fighters, i);
-        }
-        for p in &mut fighters {
-            p.settle_capture(&pack, &map_fn);
-        }
-        {
-            let [a, b] = &mut fighters[..] else {
-                unreachable!()
-            };
-            let mut both = [&mut a.fighter, &mut b.fighter];
-            ssb_game::combat::search_all(&mut both, ssb_game::team::TeamRules::FREE_FOR_ALL);
-            // `wpProcessProcSearchHitWeapon` against the weapons as they
-            // stand, then each fighter's weapon hits.
-            weapons.search_weapons();
-            for f in both.iter_mut() {
-                weapons.apply_hits(f);
-            }
-            weapons.finish_clashes();
-            ssb_game::combat::finish_frame(&mut both);
-            weapons.flush_effects(&mut ssb_game::effect::NoEffects);
-        }
-        for p in &mut fighters {
-            p.fighter.resolve_cliff_release(&map_fn);
-        }
-        for p in &mut fighters {
-            weapons.record_landed(&mut p.fighter);
-        }
-        for i in 0..2 {
-            exchange(&mut fighters, i);
-        }
-        for p in &mut fighters {
-            p.settle_status(&pack);
-        }
+            scripts[i].controller()
+        });
+        tick_scripted(&pack, &map, &mut fighters, cp, &mut pair);
         if frame == 736 {
             let close = |a: Vec3, b: Vec3| (a - b).length() < 0.02;
             let kick = &fighters[0].fighter.attack_colls;

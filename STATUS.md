@@ -16,7 +16,7 @@
 
 ## Current work
 
-- Landed: match-loop frame in decomp order (N64 oracle: items, interface threads, Go unlock, per-fighter hits, weapon clash at link 5) and per-battle `ManagerCounts`; 19 goldens rebaselined. RE-556, [D-052](docs/decisions/D-052.md).
+- Landed: camera rig (`camera_pass`), `CpuSight`, `explain_movement` on `matchtick::step`, stale dedup keyed `(attack_id, motion_count)`; goldens unchanged. Before: match-loop frame in decomp order, per-battle `ManagerCounts`. RE-556, [D-052](docs/decisions/D-052.md).
 - Open: stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555 deviation, no current move). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: match-order fix (RE-556); deepest game stack 366928 B.
+Baseline: batch 21 (D-052); deepest game stack 366880 B.
 
 | Check | Result |
 |---|---|

@@ -33,7 +33,7 @@
 //! [`Seat`], the profiler, stack poisoning and camera behind [`MatchHooks`].
 
 use crate::boss::CameraRequest;
-use crate::camera::Camera;
+use crate::camera::{Camera, CameraRig, CameraStage, EntryFocusTarget, Framing, Interest};
 use crate::computer::behave::Opponent;
 use crate::effect::HitEffectSink;
 use crate::fighter::Fighter;
@@ -56,13 +56,24 @@ pub const SEATS: usize = 4;
 pub trait HasFighter {
     fn fighter(&self) -> &Fighter;
     fn fighter_mut(&mut self) -> &mut Fighter;
-    /// The battle camera this seat carries (`gGMCameraGObj`): the lead's on
-    /// the PSP, none on the host.
-    fn camera(&self) -> Option<&Camera> {
+    /// The battle camera and its statuses this seat carries
+    /// (`gGMCameraGObj`): the lead's on the PSP, none on the host.
+    fn rig(&self) -> Option<&CameraRig> {
         None
     }
-    fn camera_mut(&mut self) -> Option<&mut Camera> {
+    fn rig_mut(&mut self) -> Option<&mut CameraRig> {
         None
+    }
+    /// The battle camera itself ([`HasFighter::rig`]'s).
+    fn camera(&self) -> Option<&Camera> {
+        self.rig().map(|r| &r.camera)
+    }
+    fn camera_mut(&mut self) -> Option<&mut Camera> {
+        self.rig_mut().map(|r| &mut r.camera)
+    }
+    /// What the camera reads of this fighter besides the [`Fighter`].
+    fn framing(&self) -> Framing {
+        Framing::default()
     }
 }
 
@@ -90,6 +101,15 @@ pub struct InputView<'a> {
     pub stage: &'a Stage,
     /// The VS countdown locks every fighter's control, the CPUs' too.
     pub locked: bool,
+}
+
+impl InputView<'_> {
+    /// What the CPU on `port` sees of the pools and the stage as the seats
+    /// before it left them ([`CpuSight::observe`]).
+    #[inline]
+    pub fn sight(&self, port: u8) -> crate::computer::CpuSight {
+        crate::computer::CpuSight::observe(port, self.items, self.weapons, self.stage)
+    }
 }
 
 /// The stage's map as fighters and pools read it.
@@ -227,10 +247,11 @@ pub trait MatchHooks<S: ?Sized> {
     fn poison(&mut self) {}
     fn begin(&mut self, _span: Span) {}
     fn end(&mut self, _span: Span) {}
-    /// Master Hand's camera request, on the camera seat.
-    fn boss_camera(&mut self, _seat: &mut S, _request: CameraRequest) {}
-    /// The camera's process (priority 3, link 9).
-    fn tick_camera(&mut self, _seats: &mut Seats<'_, S>) {}
+    /// What the camera's process (priority 3, link 9) reads of the stage;
+    /// `None` runs no camera.
+    fn camera_stage(&self) -> Option<CameraStage> {
+        None
+    }
     /// The interface threads (priority 5, links 10 and 11, after every
     /// fighter's interrupt): the entry focus's or the 1P wait thread's
     /// `ftCommonAppearSetStatus`, the countdown.
@@ -608,8 +629,11 @@ fn effects_and_camera<G, S, H>(
             hooks.phase(Phase::Camera);
             // Master Hand's camera requests reach the camera before its
             // process.
-            if let (Some(r), Some(lead)) = (take_boss_camera(s), s[0].as_deref_mut()) {
-                hooks.boss_camera(lead, r);
+            if let (Some(r), Some(rig)) = (
+                take_boss_camera(s),
+                s[0].as_deref_mut().and_then(|f| f.rig_mut()),
+            ) {
+                rig.apply_boss(r);
             }
             hooks.begin(Span::Camera);
             // `gmCameraUpdateInterests`' weapon loop: the
@@ -625,7 +649,9 @@ fn effects_and_camera<G, S, H>(
                 camera.weapon_interests = follow;
                 camera.acid_level = acid;
             }
-            hooks.tick_camera(s);
+            if let Some(stage) = hooks.camera_stage() {
+                camera_pass(s, &stage);
+            }
             hooks.end(Span::Camera);
         },
     );
@@ -949,6 +975,60 @@ pub fn refresh_boss_targets<S: HasFighter + ?Sized>(seats: &mut Seats<'_, S>) {
             f.fighter_mut().boss.target = target;
         }
     }
+}
+
+/// The battle camera's process (priority 3, link 9, after every fighter's
+/// physics and the item, weapon and effect processes):
+/// `gmCameraUpdateInterests` over the fighters in link order, through the
+/// lead's (`seats[0]`) camera. The auto demo's focus and the entry focus
+/// follow their fighters as this tick left them (`gmCameraUpdatePlayerZoom`
+/// reads the fighter's `TopN` live, RE-543).
+#[inline(never)]
+pub fn camera_pass<S: HasFighter + ?Sized>(seats: &mut Seats<'_, S>, stage: &CameraStage) {
+    let Some(lead) = seats[0].as_deref() else {
+        return;
+    };
+    let Some(rig) = lead.rig() else {
+        return;
+    };
+    let (demo_zoom, entry_zoom) = (rig.demo_zoom, rig.entry_zoom);
+    let f = lead.fighter();
+    let framing = lead.framing();
+    let (pos, cam_offset_y) = (f.pos, framing.cam_offset_y);
+    let mut list = [Interest::default(); 4];
+    let mut count = 0;
+    let own = crate::camera::interest_of(f, framing, stage);
+    let others = seats[1..]
+        .iter()
+        .flatten()
+        .filter_map(|s| crate::camera::interest_of(s.fighter(), s.framing(), stage));
+    for interest in own.into_iter().chain(others).take(list.len()) {
+        list[count] = interest;
+        count += 1;
+    }
+    let focus = demo_zoom.and_then(|z| {
+        let s = seats
+            .iter()
+            .flatten()
+            .find(|s| s.fighter().port == z.port)?;
+        Some((s.fighter().pos, s.framing().cam_offset_y))
+    });
+    let entry = entry_zoom.and_then(|z| {
+        let s = seats.get(usize::from(z.slot))?.as_deref()?;
+        Some(EntryFocusTarget {
+            pos: s.fighter().pos,
+            cam_offset_y: s.framing().cam_offset_y,
+            dist: z.dist,
+        })
+    });
+    let Some(rig) = seats[0].as_deref_mut().and_then(|s| s.rig_mut()) else {
+        return;
+    };
+    if let (Some(z), Some((pos, cam_offset_y))) = (rig.demo_zoom.as_mut(), focus) {
+        z.pos = pos;
+        z.cam_offset_y = cam_offset_y;
+    }
+    rig.tick(pos, cam_offset_y, &list[..count], entry, stage);
 }
 
 /// Master Hand's last camera request this frame

@@ -25,11 +25,11 @@ pub fn exchange(fighters: &mut [Posed], from: usize) {
     }
 }
 
-/// The match state a two-fighter replay keeps between ticks: the jump
-/// button's last state (fighter 0's C buttons), the weapon and item pools
-/// and the stage controller (none: the replays run on a bare map).
+/// The match state a two-fighter replay keeps between ticks: each
+/// fighter's jump button's last state (its C buttons), the weapon and item
+/// pools and the stage controller (none: the replays run on a bare map).
 pub struct Pair {
-    pub jump_was_held: bool,
+    pub jump_was_held: [bool; 2],
     pub weapons: Box<ssb_game::weapon::WeaponPool>,
     pub items: Box<ssb_game::item::ItemPool>,
     pub stage: ssb_game::stage::Stage,
@@ -38,7 +38,7 @@ pub struct Pair {
 impl Default for Pair {
     fn default() -> Self {
         Pair {
-            jump_was_held: false,
+            jump_was_held: [false; 2],
             weapons: Box::default(),
             items: Box::default(),
             stage: ssb_game::stage::Stage::none(),
@@ -179,6 +179,28 @@ impl ssb_game::effect::HitEffectSink for Collect {
     }
 }
 
+/// A pad's `(buttons, stick x, stick y)` as a connected controller.
+fn pad((buttons, stick_x, stick_y): (u16, i8, i8)) -> ssb_engine::input::ControllerState {
+    ssb_engine::input::ControllerState {
+        buttons: ssb_engine::input::N64Buttons(buttons),
+        stick_x,
+        stick_y,
+        connected: true,
+    }
+}
+
+/// The jump button's `(tapped, released)` edges on `c` against its last
+/// state, which this updates.
+fn jump_edges(c: ssb_engine::input::ControllerState, was_held: &mut bool) -> (bool, bool) {
+    use ssb_engine::input::N64Buttons;
+    let held = c.buttons.0
+        & (N64Buttons::C_UP | N64Buttons::C_DOWN | N64Buttons::C_LEFT | N64Buttons::C_RIGHT)
+        != 0;
+    let edges = (held && !*was_held, !held && *was_held);
+    *was_held = held;
+    edges
+}
+
 /// [`tick_pair`] with fighter 1 on its own pad, `pad1(tick)` (buttons,
 /// stick x, stick y; no jump edges), as a human player 2.
 pub fn tick_pair_pads(
@@ -190,20 +212,45 @@ pub fn tick_pair_pads(
     tick: u64,
     pair: &mut Pair,
 ) -> [Vec<ssb_game::fteffect::FighterEffect>; 2] {
-    use ssb_engine::input::{ControllerState, N64Buttons};
-    let pad = |(buttons, stick_x, stick_y): (u16, i8, i8)| ControllerState {
-        buttons: N64Buttons(buttons),
-        stick_x,
-        stick_y,
-        connected: true,
-    };
     let c0 = pad(pad0(tick));
-    let held = c0.buttons.0
-        & (N64Buttons::C_UP | N64Buttons::C_DOWN | N64Buttons::C_LEFT | N64Buttons::C_RIGHT)
-        != 0;
-    let edges = (held && !pair.jump_was_held, !held && pair.jump_was_held);
-    pair.jump_was_held = held;
+    let edges0 = jump_edges(c0, &mut pair.jump_was_held[0]);
     let c1 = pad(pad1(tick));
+    tick_seats(
+        pack,
+        map,
+        fighters,
+        [c0, c1],
+        [edges0, (false, false)],
+        pair,
+    )
+}
+
+/// One match-loop tick of a two-fighter scripted replay (How to Play's
+/// `ftKeyProcessKeyEvents`): each fighter reads its own controller `cp`,
+/// its C buttons jumping as a pad's do. Returns each fighter's effects
+/// queued this tick.
+pub fn tick_scripted(
+    pack: &ssb_rom::pack::Pack<'_>,
+    map: &[ssb_game::weapon::MapSurface],
+    fighters: &mut [Posed],
+    cp: [ssb_engine::input::ControllerState; 2],
+    pair: &mut Pair,
+) -> [Vec<ssb_game::fteffect::FighterEffect>; 2] {
+    let [held0, held1] = &mut pair.jump_was_held;
+    let edges = [jump_edges(cp[0], held0), jump_edges(cp[1], held1)];
+    tick_seats(pack, map, fighters, cp, edges, pair)
+}
+
+/// [`ssb_game::matchtick::step`] over two seats on controllers `c` with
+/// jump `(tapped, released)` edges `edges`.
+fn tick_seats(
+    pack: &ssb_rom::pack::Pack<'_>,
+    map: &[ssb_game::weapon::MapSurface],
+    fighters: &mut [Posed],
+    c: [ssb_engine::input::ControllerState; 2],
+    edges: [(bool, bool); 2],
+    pair: &mut Pair,
+) -> [Vec<ssb_game::fteffect::FighterEffect>; 2] {
     let blast_zone = fighters[0].fighter.dead.bounds.map_or(
         ssb_game::status::BlastZone {
             top: 1e9,
@@ -229,16 +276,16 @@ pub fn tick_pair_pads(
     let mut s0 = HostSeat {
         posed: a,
         pack,
-        input: c0,
-        tapped: edges.0,
-        released: edges.1,
+        input: c[0],
+        tapped: edges[0].0,
+        released: edges[0].1,
     };
     let mut s1 = HostSeat {
         posed: b,
         pack,
-        input: c1,
-        tapped: false,
-        released: false,
+        input: c[1],
+        tapped: edges[1].0,
+        released: edges[1].1,
     };
     let mut seats: ssb_game::matchtick::Seats<'_, HostSeat<'_, '_>> =
         [Some(&mut s0), Some(&mut s1), None, None];

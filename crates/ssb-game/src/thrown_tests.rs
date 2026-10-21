@@ -162,15 +162,30 @@ fn thrown_body_hits_credit_thrower_team_player_and_stale_queue() {
     }
 }
 
+/// Two thrown bodies of one battle draw their motion counts from its one
+/// `gFTManagerMotionCount`, so their hits never share `(attack_id,
+/// motion_count)`: both enter the thrower's queue, which dedups on that
+/// pair alone (`ftParamUpdateStaleQueue`, `ftparam.c:1639`).
 #[test]
-fn two_thrown_bodies_do_not_alias_their_local_motion_counts() {
+fn two_thrown_bodies_of_one_battle_do_not_alias_in_the_queue() {
+    use crate::stale::MotionAttackId;
+    let battle = crate::manager_counts::ManagerCounts::new();
+    let [a, b] = [1, 2].map(|port| {
+        let mut f = Fighter::new(FighterKind::Mario, port, 3);
+        f.stats.counts.adopt(&battle);
+        f.set_motion_id(MotionAttackId::None);
+        (f.motion.attack_id, f.motion.count)
+    });
+    assert_eq!(a.0, b.0);
+    assert_ne!(a.1, b.1);
     let mut queue = crate::stale::StaleQueue::default();
-    let id = crate::stale::MotionAttackId::None;
-    queue.push_thrown(id, 5, 1);
-    queue.push_thrown(id, 5, 2);
+    queue.push(a.0, a.1);
+    queue.push(b.0, b.1);
     assert_eq!(queue.next, 2);
-    queue.push_thrown(id, 5, 1);
+    // The same hit again, whichever body lands it, is no new entry.
+    queue.push(a.0, a.1);
     assert_eq!(queue.next, 2);
+    assert_eq!(&queue.entries[..2], &[a, b]);
 }
 
 #[test]
