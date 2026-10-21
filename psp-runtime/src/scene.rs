@@ -1260,22 +1260,25 @@ impl FighterScene {
         stage: &StageDesc,
         kind: FighterKind,
         spawn_index: u16,
+        counts: &ssb_game::manager_counts::ManagerCounts,
     ) -> FighterScene {
         let pos = pack
             .spawn(stage, spawn_index)
             .map(|spawn| ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0));
-        Self::at_position(pack, stage, kind, spawn_index as u8, pos)
+        Self::at_position(pack, stage, kind, spawn_index as u8, pos, counts)
     }
 
     /// [`FighterScene::at_spawn`] at an explicit position, such as the drop
     /// point `sc1PGameSpawnEnemyTeamNext` picks; `None` leaves the fighter
-    /// unplaced.
+    /// unplaced. `counts` is the battle's motion and stat counts
+    /// ([`ssb_game::manager_counts`]), which the first status draws from.
     pub fn at_position(
         pack: &Pack<'_>,
         stage: &StageDesc,
         kind: FighterKind,
         port: u8,
         pos: Option<ssb_engine::math::Vec3>,
+        counts: &ssb_game::manager_counts::ManagerCounts,
     ) -> FighterScene {
         let spawn_index = port;
         // `Fighter::new`'s `port` and `pack.spawn`'s `player` are different
@@ -1284,6 +1287,7 @@ impl FighterScene {
         // pre-generalization `Play`/`Dummy` split already baked in (ports 0
         // and 1 for spawns 0 and 1).
         let mut fighter = Fighter::new(kind, spawn_index, 3);
+        fighter.stats.counts = counts.clone();
 
         // Real constants if the pack has them: gravity 2.4 and terminal
         // velocity 44 rather than the 0.09 and 1.7 the first port guessed.

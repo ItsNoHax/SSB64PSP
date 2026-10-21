@@ -137,7 +137,7 @@ fn every_draw_makes_its_pokemon_rising_for_22_frames() {
         assert_eq!(Kind::from_item_kind(32 + i as u8), Some(kind));
         assert_eq!(kind.item_kind(), 32 + i as u8);
         let slot = w.spawn(kind, 0.0);
-        let item = *w.item(slot);
+        let item = w.item(slot).clone();
         assert_eq!(item.kind, ItemKind::MMonster(kind));
         assert_eq!(item.status, ItemStatus::MMonster(Status::Common));
         assert_eq!((item.multi, item.vel_air), (22, Vec3::new(0.0, 16.0, 0.0)));
@@ -464,7 +464,7 @@ fn mew_leaves_on_its_ripple_and_floats_off() {
     let mut w = World::new(&[(0, -2000.0), (1, 2000.0)]);
     let slot = w.spawn(Kind::Mew, 0.0);
     w.until_not(slot, Status::Common, 30);
-    let item = *w.item(slot);
+    let item = w.item(slot).clone();
     assert_eq!(item.status, ItemStatus::MMonster(Status::MewFly));
     assert_eq!(item.vel_air.x.abs(), 8.0);
     assert_eq!(item.vel_air.y, -20.0);
@@ -478,7 +478,7 @@ fn goldeen_bounces_where_it_crosses_the_floor() {
     let slot = w.spawn(Kind::Tosakinto, 0.0);
     w.until_not(slot, Status::Common, 30);
     w.until_not(slot, Status::TosakintoAppear, 100);
-    let item = *w.item(slot);
+    let item = w.item(slot).clone();
     assert_eq!(item.vel_air, Vec3::new(10.0, 60.0, 0.0));
     // The floor test notes the crossing without stopping it.
     assert!(item.pos.y + item.attr.map_coll.bottom < 0.0);
@@ -549,7 +549,7 @@ fn starmie_flies_beside_its_target_then_fires_and_recoils() {
     let mut w = World::new(&[(0, -2000.0), (1, 1500.0)]);
     let slot = w.spawn(Kind::Starmie, 0.0);
     w.until_not(slot, Status::Common, 30);
-    let item = *w.item(slot);
+    let item = w.item(slot).clone();
     let target = item.vars.mmonster.target_pos;
     let f = w.fighters[1].coll;
     assert_eq!(target.x, 1500.0 - (f.width + 400.0));
@@ -573,7 +573,7 @@ fn hitmonlee_kicks_at_its_target_with_a_300_attack() {
     w.until_not(slot, Status::Common, 30);
     w.until_not(slot, Status::SawamuraFall, 100);
     assert_eq!(w.until_not(slot, Status::SawamuraWait, 100), 40);
-    let item = *w.item(slot);
+    let item = w.item(slot).clone();
     assert_eq!(item.status, ItemStatus::MMonster(Status::SawamuraAttack));
     assert_eq!(item.attack.size, 300.0);
     assert_eq!(item.lr, 1.0);
@@ -590,7 +590,7 @@ fn snorlax_jumps_to_the_top_and_falls_four_times_its_size() {
     w.until_not(slot, Status::Common, 30);
     let radius = w.item(slot).attack.size;
     w.until_not(slot, Status::KabigonJump, 400);
-    let item = *w.item(slot);
+    let item = w.item(slot).clone();
     assert_eq!(item.vel_air.y, -220.0);
     assert_eq!((item.scale.x, item.scale.y), (4.0, 4.0));
     assert_eq!(item.attack.size, radius * 4.0);

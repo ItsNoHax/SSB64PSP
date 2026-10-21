@@ -147,6 +147,9 @@ pub struct Battle {
     clock: u32,
     /// The frame "Go" lands on.
     go_tick: u32,
+    /// "Go" lands in this frame's interface threads
+    /// ([`Self::go_lands`]).
+    go_lands: bool,
     /// `gSCManagerSceneData.is_suddendeath`.
     pub is_sudden_death: bool,
     /// `gSCManagerSceneData.is_reset`: A+B+R+Z in the pause menu.
@@ -242,6 +245,7 @@ impl Battle {
             restore_wait: 0,
             clock: 0,
             go_tick: Self::GO_TICK,
+            go_lands: false,
             is_sudden_death: false,
             is_reset: false,
             is_1p_game: false,
@@ -416,6 +420,18 @@ impl Battle {
     /// thread it then makes reads 300 another 300 frames on.
     pub const GO_TICK: u32 = 1 + ENTRY_WAIT + COUNTDOWN_GO;
 
+    /// Whether this frame's "Go" comes from its thread
+    /// (`ifCommonCountdownThread`, `ifCommonSuddenDeathThread`, the 1P
+    /// Game's wait thread: priority 5 on the interface links), which runs
+    /// after every fighter's `ftMainProcUpdateInterrupt`: those still run
+    /// locked, and the fighters are unlocked for the rest of the frame
+    /// (RE-556 G2b). A battle that starts at "Go" (the demos' `go_tick`
+    /// 0, `scAutoDemoStartBattle` unlocking before the first frame) has no
+    /// thread and never lands one.
+    pub fn go_lands(&self) -> bool {
+        self.go_lands
+    }
+
     /// Frames since the scene started, counting the current one: the
     /// clock the entry and countdown threads read.
     pub fn clock(&self) -> u32 {
@@ -426,6 +442,7 @@ impl Battle {
     /// frame's `gcRunAll` runs: the countdown and the timer.
     pub fn begin_frame(&mut self) -> Frame {
         self.set_zoom_began = false;
+        self.go_lands = false;
         if self.status != GameStatus::Go {
             self.timer_started = false;
         } else if !self.timer_started {
@@ -440,6 +457,7 @@ impl Battle {
                 // `ifCommonAnnounceGoSetStatus` unlocks every fighter.
                 if self.clock >= self.go_tick {
                     self.status = GameStatus::Go;
+                    self.go_lands = true;
                 }
                 Frame::Run
             }

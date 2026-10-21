@@ -2,41 +2,13 @@
 //! and status changes discard it. Campaign fighters queue events; VS and
 //! Training retain hit provenance without allocating a campaign ledger.
 use super::bonus::{DamageObject, DeadStatus, DefeatRecord, HitAttackId};
+use crate::manager_counts::ManagerCounts;
 use crate::{
     combat::DamageBy,
     fighter::{Fighter, FighterKind},
     status::{AnyStatus, Status},
 };
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU16, Ordering};
-
-game_static! {
-    static NEXT_COUNT: AtomicU16 = AtomicU16::new(1);
-}
-
-/// `ftManagerAllocFighter`: a new overlay starts the shared sequence at 1.
-pub fn reset_count() {
-    NEXT_COUNT.with(|v| v.store(1, Ordering::Relaxed));
-}
-
-/// `ftParamGetStatUpdateCount`: one shared nonzero u16 sequence.
-pub fn next_count() -> u16 {
-    let mut current = NEXT_COUNT.with(|v| v.load(Ordering::Relaxed));
-    loop {
-        match NEXT_COUNT.with(|v| {
-            v.compare_exchange_weak(
-                current,
-                current.wrapping_add(1).max(1),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-        }) {
-            Ok(_) => return current,
-            Err(actual) => current = actual,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Flags(pub u16);
 
@@ -142,6 +114,9 @@ pub struct Stats {
     pub damage_object: DamageObject,
     pub damage_count: u32,
     pending: Option<Vec<Event>>,
+    /// The battle's motion and stat counts ([`ManagerCounts`]); the
+    /// fighter's motion IDs draw from them too.
+    pub counts: ManagerCounts,
 }
 
 impl Stats {
@@ -149,10 +124,12 @@ impl Stats {
         self.pending = Some(Vec::new());
     }
     /// Rebirth resets FTStruct fields but preserves undrained callbacks
-    /// and the host's campaign attachment, which live outside that struct.
+    /// and the host's campaign attachment, which live outside that struct,
+    /// and the battle's counts (`gFTManager*Count`).
     pub fn reinit(&mut self) -> Self {
         Self {
             pending: self.pending.take(),
+            counts: self.counts.clone(),
             ..Self::default()
         }
     }
@@ -167,7 +144,7 @@ impl Stats {
     /// A proc_status or repeated-shot callback starts another attack with
     /// the same flags, independently of the stale-move count.
     pub fn restart(&mut self) {
-        self.attack.count = next_count();
+        self.attack.count = self.counts.stat();
         self.count_attack(Flags(0));
     }
     fn count_attack(&mut self, previous: Flags) {
@@ -233,7 +210,7 @@ pub fn on_set_status(f: &mut Fighter, status: AnyStatus) {
     if new.id() == HitAttackId::None || new.id() != previous.id() {
         f.stats.attack = AttackStat {
             flags: new,
-            count: next_count(),
+            count: f.stats.counts.stat(),
         };
     }
     // These callbacks run inside ftMainSetStatus, before its final stat

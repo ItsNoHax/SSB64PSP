@@ -387,6 +387,41 @@ fn yoshi_egg_lay_matches_the_n64() {
     assert_eq!(first_bad, None, "{log}");
 }
 
+/// `gFTManagerMotionCount` and `gFTManagerStatUpdateCount` are the
+/// battle's, reset per battle (`ftmanager.c:163-164`): two runs of one
+/// replay draw the same counts tick for tick, and its fighters and pools
+/// draw from one pair.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn a_replay_draws_the_same_counts_every_run() {
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    let pad = |t: u64| match t {
+        200 => (button::B, 0, 0),
+        320 => (button::B, 0, 80),
+        _ => (0, 0, 0),
+    };
+    let run = || {
+        let (map, mut fighters) = castle_pair(&pack);
+        let mut pair = Pair::default();
+        let mut counts = Vec::new();
+        for tick in 1..=330u64 {
+            let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
+            for f in &fighters {
+                assert!(f.fighter.stats.counts.same(&pair.items.counts));
+            }
+            assert!(pair.weapons.counts.same(&pair.items.counts));
+            counts.push(pair.items.counts.peek());
+        }
+        counts
+    };
+    let first = run();
+    assert!(first[0] < first[first.len() - 1], "{first:?}");
+    assert_eq!(first, run());
+}
+
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn yoshi_double_jump_matches_the_n64() {

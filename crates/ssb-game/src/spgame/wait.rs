@@ -74,8 +74,11 @@ impl Wait {
         };
         let mut push = |tick, action| out.events.push(Event { tick, action });
         match stage {
+            // `sc1PGameWaitThreadUpdate` has no case for them: the 1P
+            // Game's own battle never says "Go". They run in
+            // `sc1PBonusStage` instead (`Battle::new_bonus`, Go on 61).
             Stage::Bonus1 | Stage::Bonus2 => {
-                out.go_tick = 0;
+                out.go_tick = u32::MAX;
             }
             Stage::Bonus3 => {
                 push(1, Action::Bonus3Follow);

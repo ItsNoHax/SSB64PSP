@@ -156,7 +156,6 @@ impl Session {
     /// totals reset when the new fighters are made, after allies were picked.
     pub fn start_battle(&mut self, backup: &Backup) {
         assert_eq!(self.manager.scene, manager::Scene::Battle);
-        super::live::reset_count();
         let game = Game::setup_stage_all(
             &mut self.state,
             &mut self.data,

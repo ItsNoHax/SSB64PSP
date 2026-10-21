@@ -71,7 +71,12 @@ pub enum Status {
     Thrown,
     Dropped,
 }
-pub(super) fn make(k: Kind, pos: Vec3, vel: Vec3) -> Item {
+pub(super) fn make(
+    counts: &crate::manager_counts::ManagerCounts,
+    k: Kind,
+    pos: Vec3,
+    vel: Vec3,
+) -> Item {
     let mut i = Item::new(
         ItemKind::Equipment(k),
         &ATTRIBUTES[k as usize],
@@ -79,7 +84,7 @@ pub(super) fn make(k: Kind, pos: Vec3, vel: Vec3) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     i.multi = match k {
         Kind::StarRod => 20,

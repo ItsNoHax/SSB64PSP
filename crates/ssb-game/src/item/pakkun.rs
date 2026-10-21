@@ -41,7 +41,7 @@ pub enum Status {
 
 /// `itPakkunMakeItem` (`ITEM_FLAG_PARENT_GROUND`). `index` is the plant's
 /// `pakkun_gobj` slot, which names its tree in the runtime.
-pub(super) fn make(index: u8, pos: Vec3, motion_count: u16) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, index: u8, pos: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::Pakkun,
         &ATTRIBUTES,
@@ -49,7 +49,7 @@ pub(super) fn make(index: u8, pos: Vec3, motion_count: u16) -> Item {
         AttackState::Off,
         pos,
         Vec3::ZERO,
-        motion_count,
+        counts,
     );
     item.update_attack_positions();
     item.vars.pakkun_index = index;

@@ -4283,9 +4283,13 @@ mod tests {
         throw_back(&mut mario, &mut dummy);
         assert_eq!(dummy.damage, 16);
         let (stale, motion) = (mario.stale, mario.motion);
+        let counts = mario.stats.counts.clone();
         mario = grounded(FighterKind::Mario, 0, 0.0);
         mario.stale = stale;
         mario.motion = motion;
+        // The same battle: the second throw's motion count follows the
+        // first's (`gFTManagerMotionCount`).
+        mario.stats.counts = counts;
         dummy = grounded(FighterKind::Mario, 1, 150.0);
         throw_back(&mut mario, &mut dummy);
         assert_eq!(dummy.damage, 12);

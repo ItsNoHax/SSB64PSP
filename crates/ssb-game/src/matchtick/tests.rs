@@ -1,6 +1,6 @@
 //! The order [`super::step`] runs the frame in, against the decomp's
 //! process table (`gcRunAll`: priority 5 to 0, then link id, then link
-//! order), with every departure named.
+//! order), plus the port-only settle (D-052).
 
 use super::*;
 use crate::fighter::FighterKind;
@@ -32,6 +32,13 @@ const PROCESSES: &[Process] = &[
         priority: 5,
         link: 3,
         decomp: "ftmanager.c:858 ftMainProcUpdateInterrupt",
+    },
+    Process {
+        phase: |_| Phase::Interface,
+        per_fighter: false,
+        priority: 5,
+        link: 10,
+        decomp: "ifcommon.c:2309, 2256, 2046 entry, focus, countdown threads",
     },
     Process {
         phase: |_| Phase::StageController,
@@ -96,13 +103,26 @@ const PROCESSES: &[Process] = &[
         link: 3,
         decomp: "ftmanager.c:861 ftMainProcSearchCatch",
     },
-    // ftmanager.c:862, itmanager.c:416, wpmanager.c:305: one phase here.
     Process {
-        phase: |_| Phase::Hits,
-        per_fighter: false,
+        phase: Phase::Hits,
+        per_fighter: true,
         priority: 1,
         link: 3,
         decomp: "ftmanager.c:862 ftMainProcSearchHitAll",
+    },
+    Process {
+        phase: |_| Phase::ItemHits,
+        per_fighter: false,
+        priority: 1,
+        link: 4,
+        decomp: "itmanager.c:416 itProcessProcSearchHitAll",
+    },
+    Process {
+        phase: |_| Phase::WeaponHits,
+        per_fighter: false,
+        priority: 1,
+        link: 5,
+        decomp: "wpmanager.c:305 wpProcessProcSearchHitWeapon",
     },
     Process {
         phase: |_| Phase::Params,
@@ -153,24 +173,11 @@ fn decomp_order(seats: u8, held: &[u8]) -> Vec<Phase> {
     out
 }
 
-/// [`decomp_order`] with the port's departures, each named.
+/// [`decomp_order`] as the port runs it: the decomp's order, plus the
+/// port's first-frame settle of the statuses the hit phase set, which is no
+/// process of its own (D-052).
 fn port_order(seats: u8, held: &[u8]) -> Vec<Phase> {
     let mut order = decomp_order(seats, held);
-    // G1: the appearance actor (ItemActor link 2, priority 3) runs after
-    // the capture pass (Fighter link 3, priority 3).
-    let actor = order.iter().position(|&p| p == Phase::ItemActor).unwrap();
-    order.remove(actor);
-    let items = order.iter().position(|&p| p == Phase::Items).unwrap();
-    order.insert(items, Phase::ItemActor);
-    // G6: the weapons' priority-0 hit-collision effects before the items'
-    // priority-0 process.
-    let item = order
-        .iter()
-        .position(|&p| p == Phase::ItemCollisions)
-        .unwrap();
-    order.swap(item, item + 1);
-    // The port's first-frame settle of the statuses the hit phase set: no
-    // process of its own (D-052).
     order.push(Phase::Settle);
     order
 }
@@ -259,6 +266,7 @@ fn trace(seats: u8, held: &[u8]) -> Vec<Phase> {
         battle: None,
         started: true,
         locked: false,
+        go: false,
     };
     let mut it = fighters.iter_mut();
     let mut seats: Seats<'_, Fighter> = [it.next(), it.next(), it.next(), it.next()];
@@ -273,7 +281,7 @@ fn trace(seats: u8, held: &[u8]) -> Vec<Phase> {
 }
 
 #[test]
-fn step_runs_the_decomp_process_order_with_the_named_departures() {
+fn step_runs_the_decomp_process_order() {
     for seats in 1..=4u8 {
         assert_eq!(
             trace(seats, &[]),
@@ -291,11 +299,12 @@ fn step_runs_the_decomp_process_order_with_the_named_departures() {
 fn the_decomp_table_sorts_by_priority_then_link() {
     let order = decomp_order(2, &[1]);
     assert_eq!(
-        &order[..8],
+        &order[..9],
         &[
             Phase::GroundAnim,
             Phase::Interrupt(0),
             Phase::Interrupt(1),
+            Phase::Interface,
             Phase::StageController,
             Phase::Physics(0),
             Phase::ItemActor,
@@ -303,13 +312,6 @@ fn the_decomp_table_sorts_by_priority_then_link() {
             Phase::Items,
         ]
     );
-    // The port's departures are departures: the table without them would
-    // not match the trace.
-    assert_ne!(trace(2, &[1]), {
-        let mut o = decomp_order(2, &[1]);
-        o.push(Phase::Settle);
-        o
-    });
 }
 
 #[test]
@@ -322,4 +324,70 @@ fn exchange_reaches_the_partner_before_the_first_other() {
     let seats: Seats<'_, Fighter> = [it.next(), it.next(), it.next(), None];
     assert_eq!(index_of(&seats, 2), Some(2));
     assert_eq!(crate::grab::partner(seats[0].as_deref().unwrap()), Some(2));
+}
+
+/// A seat that notes the countdown lock each pass sees.
+struct LockProbe {
+    fighter: Fighter,
+    at_interrupt: Option<bool>,
+    at_physics: Option<bool>,
+}
+
+impl HasFighter for LockProbe {
+    fn fighter(&self) -> &Fighter {
+        &self.fighter
+    }
+    fn fighter_mut(&mut self) -> &mut Fighter {
+        &mut self.fighter
+    }
+}
+
+impl Seat<NoGround> for LockProbe {
+    fn interrupt(&mut self, _: &NoGround, _: &InputView<'_>) {
+        self.at_interrupt = Some(self.fighter.interface.control_disable);
+    }
+    fn physics(&mut self, _: &NoGround) {
+        self.at_physics = Some(self.fighter.interface.control_disable);
+    }
+    fn settle_catch(&mut self, _: &NoGround) {}
+    fn settle_capture(&mut self, _: &NoGround) {}
+    fn settle_status(&mut self, _: &NoGround) {}
+}
+
+/// "Go" (`ifCommonAnnounceGoSetStatus`, link 11, priority 5) runs after
+/// the fighters' priority-5 interrupt, so on its frame the interrupt still
+/// reads the lock and physics (priority 4) does not: the RE-556 oracle's
+/// frame 390, with the first CPU draw at 391.
+#[test]
+fn go_unlocks_after_the_interrupt_and_before_physics() {
+    let mut probe = LockProbe {
+        fighter: Fighter::new(FighterKind::Mario, 0, 3),
+        at_interrupt: None,
+        at_physics: None,
+    };
+    let mut weapons: Box<WeaponPool> = Box::default();
+    let mut items: Box<ItemPool> = Box::default();
+    let mut stage = Stage::none();
+    let mut effects = crate::effect::NoEffects;
+    let mut world = World {
+        weapons: &mut weapons,
+        items: &mut items,
+        stage: &mut stage,
+        effects: &mut effects,
+        bonus: None,
+        battle: None,
+        started: true,
+        locked: true,
+        go: true,
+    };
+    let mut seats: Seats<'_, LockProbe> = [Some(&mut probe), None, None, None];
+    step(
+        &mut Bare(NoGround, NoProps),
+        &mut seats,
+        &mut world,
+        &mut (),
+    );
+    assert!(!world.locked && !world.go);
+    assert_eq!(probe.at_interrupt, Some(true));
+    assert_eq!(probe.at_physics, Some(false));
 }

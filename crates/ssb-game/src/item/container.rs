@@ -68,7 +68,12 @@ fn heavy_events(kind: Kind) -> &'static [(u16, i32, i32, f32); 4] {
     }
 }
 
-pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
+pub(super) fn make(
+    counts: &crate::manager_counts::ManagerCounts,
+    kind: Kind,
+    pos: Vec3,
+    vel: Vec3,
+) -> Item {
     let attr = match kind {
         Kind::Crate => &CRATE_ATTRIBUTES,
         Kind::Barrel => &BARREL_ATTRIBUTES,
@@ -82,7 +87,7 @@ pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     // `itManagerMakeItemSetupCommon`: slow appear spin is unsigned.
     item.spin_step = kind.spin_speed() * core::f32::consts::PI / 18.0;
@@ -459,7 +464,12 @@ mod tests {
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn egg_and_capsule_explosions_preserve_events_owner_and_end_frame() {
         for (kind, end) in [(Kind::Egg, 8), (Kind::Capsule, 6)] {
-            let mut item = make(kind, Vec3::ZERO, Vec3::new(12.0, 34.0, 0.0));
+            let mut item = make(
+                &crate::manager_counts::ManagerCounts::new(),
+                kind,
+                Vec3::ZERO,
+                Vec3::new(12.0, 34.0, 0.0),
+            );
             item.owner = Some(0);
             item.attack.throw_mul = 1.5;
             let mut fx = Emit::default();
@@ -527,7 +537,12 @@ mod tests {
                 HitProc::Reflector,
                 HitProc::Damage,
             ] {
-                let mut item = make(kind, Vec3::ZERO, Vec3::ZERO);
+                let mut item = make(
+                    &crate::manager_counts::ManagerCounts::new(),
+                    kind,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                );
                 let mut fx = Emit::default();
                 assert_eq!(
                     hit(&mut item, Status::Thrown, proc, &mut Drops(true), &mut fx),
@@ -545,6 +560,7 @@ mod tests {
     fn dropped_container_honours_forced_despawn_and_thrown_container_explodes_on_floor() {
         for kind in [Kind::Egg, Kind::Capsule] {
             let mut item = make(
+                &crate::manager_counts::ManagerCounts::new(),
                 kind,
                 Vec3::new(0.0, 300.0, 0.0),
                 Vec3::new(0.0, -200.0, 0.0),
@@ -560,6 +576,7 @@ mod tests {
                 &mut Emit::default()
             ));
             let mut item = make(
+                &crate::manager_counts::ManagerCounts::new(),
                 kind,
                 Vec3::new(0.0, 300.0, 0.0),
                 Vec3::new(0.0, -200.0, 0.0),
@@ -725,5 +742,48 @@ mod tests {
         assert!(pool.get(slot).unwrap().hidden);
         pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
         assert!(pool.get(slot).unwrap().hidden);
+    }
+
+    /// The items' searches (priority 1, link 4) run before the weapons'
+    /// clash search (link 5): a weapon that will clash with another weapon
+    /// this frame has no `hit_attack_damage` yet when an item searches it,
+    /// so an item whose attack it outranks still goes on to its hurtbox
+    /// (`itProcessSearchHitWeapon`'s `hurtbox_check`) and takes its damage.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn an_item_search_precedes_the_weapons_clash_search() {
+        let mut pool = ItemPool::default();
+        let slot = pool
+            .spawn_container(Kind::Egg, Vec3::ZERO, Vec3::ZERO)
+            .unwrap();
+        let item = pool.get_mut(slot).unwrap();
+        thrown(item);
+        item.attack.state = AttackState::New;
+        item.update_attack_positions();
+        item.owner = Some(2);
+        let mut weapons = WeaponPool::default();
+        for (port, x) in [(0, 0.0), (1, 20.0)] {
+            assert!(weapons.spawn(WeaponSpawn {
+                kind: WeaponKind::SamusChargeShot(7),
+                owner_port: port,
+                team: port,
+                position: Vec3::new(x, 0.0, 0.0),
+                facing: 1.0,
+                stale: crate::stale::WeaponStale::FRESH
+            }));
+        }
+        assert!(item.attack.priority < 2, "{}", item.attack.priority);
+        weapons.begin_clashes();
+        weapons.hit_item(
+            item,
+            super::super::ITEM_RECORD_BASE + slot,
+            &mut crate::wpeffect::Emit::default(),
+        );
+        assert_ne!(item.hit_attack_damage, 0);
+        assert_ne!(item.damage_queue, 0);
+        weapons.search_weapons();
+        weapons.finish_clashes();
+        // The full charges outrank each other alike: both stop.
+        assert_eq!(weapons.active_count(), 0);
     }
 }

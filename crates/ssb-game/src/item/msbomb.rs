@@ -47,7 +47,7 @@ pub enum Status {
 }
 
 /// `itMSBombMakeItem`.
-pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3, vel: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::MSBomb,
         &ATTRIBUTES,
@@ -55,7 +55,7 @@ pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     item.multi = 0;
     item.rotate_z = 0.0;

@@ -496,7 +496,7 @@ fn smash_changes_star_rod_descriptor_for_later_tilts() {
         let last = w.monster_shots().last().unwrap();
         assert_eq!(last.damage, damage);
         assert_eq!(last.velocity.x, speed);
-        f.motion.set(crate::stale::MotionAttackId::StarRodSwing3);
+        f.set_motion_id(crate::stale::MotionAttackId::StarRodSwing3);
     }
 }
 /// RE-472, How to Play frame 3701: Mario's `FireFlowerShootAir` lands, and

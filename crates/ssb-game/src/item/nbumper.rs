@@ -49,7 +49,7 @@ pub enum Status {
 }
 
 /// `itNBumperMakeItem`.
-pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3, vel: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::NBumper,
         &ATTRIBUTES,
@@ -57,7 +57,7 @@ pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     item.multi = 0;
     item.attack.interact_mask = super::INTERACT_FIGHTER;

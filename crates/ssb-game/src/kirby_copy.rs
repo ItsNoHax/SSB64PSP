@@ -540,7 +540,7 @@ fn update_blaster(f: &mut Fighter, s: K) {
 fn interrupt_blaster(f: &mut Fighter, s: K) {
     if f.status.clock >= blaster_frames(s).1 && taps(f).contains(N64Buttons::B) {
         set_blaster(f, f.is_grounded());
-        f.motion.set(MotionAttackId::SpecialNCopyFox);
+        f.set_motion_id(MotionAttackId::SpecialNCopyFox);
         f.stats.restart();
     }
 }

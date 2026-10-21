@@ -2094,19 +2094,29 @@ pub fn resolve_frame(fighters: &mut [&mut Fighter]) -> [bool; 4] {
 
 /// The search pass: attack positions, then every pair.
 pub fn search_all(fighters: &mut [&mut Fighter], rules: TeamRules) {
+    begin_search(fighters);
+    for this in 0..fighters.len() {
+        search_fighter_row(fighters, this, rules);
+    }
+}
+
+/// Every fighter's attack positions, before the first search.
+pub fn begin_search(fighters: &mut [&mut Fighter]) {
     for f in fighters.iter_mut() {
         update_attack_positions(f);
     }
-    let n = fighters.len();
-    for this in 0..n {
-        for other in 0..n {
-            if this == other {
-                continue;
-            }
-            let (a, b) = pair_mut(fighters, this, other);
-            search_fighter_hits(a, b, other > this, rules);
-            flush_thrown_stale(fighters);
+}
+
+/// `ftMainSearchHitFighter` for `fighters[this]`: every other fighter's
+/// attacks against it, in link order.
+pub fn search_fighter_row(fighters: &mut [&mut Fighter], this: usize, rules: TeamRules) {
+    for other in 0..fighters.len() {
+        if this == other {
+            continue;
         }
+        let (a, b) = pair_mut(fighters, this, other);
+        search_fighter_hits(a, b, other > this, rules);
+        flush_thrown_stale(fighters);
     }
 }
 
@@ -2137,19 +2147,42 @@ pub fn finish_frame_between(
     effects: &mut dyn HitEffectSink,
     between: &mut dyn FnMut(&mut dyn HitEffectSink),
 ) -> [bool; 4] {
-    // Also supports callers that use individual pair searches.
+    begin_finish(fighters, effects);
+    for f in fighters.iter_mut() {
+        process_hits(f, effects);
+    }
+    end_finish(fighters, effects, between)
+}
+
+/// The start of [`finish_frame_between`]: the thrown stale entries of
+/// separate pair searches, and the effects of the catch search's statuses
+/// (priority 2), made before any priority-1 effect.
+pub fn begin_finish(fighters: &mut [&mut Fighter], effects: &mut dyn HitEffectSink) {
     flush_thrown_stale(fighters);
-    // The catch search's statuses (priority 2) made their effects first.
     for f in fighters.iter_mut() {
         effects.fighter(f);
     }
-    for f in fighters.iter_mut() {
-        process_hit_collision(f);
-        for e in f.hits.effects[..f.hits.effects_len].iter().flatten() {
-            effects.make(e);
-        }
-        f.hits.effects_len = 0;
+}
+
+/// The end of `ftMainProcSearchHitAll` for one fighter
+/// (`ftMainProcessHitCollisionStatsMain`): its logged hits, then its
+/// search's set-offs and its hits' effects.
+pub fn process_hits(f: &mut Fighter, effects: &mut dyn HitEffectSink) {
+    process_hit_collision(f);
+    for e in f.hits.effects[..f.hits.effects_len].iter().flatten() {
+        effects.make(e);
     }
+    f.hits.effects_len = 0;
+}
+
+/// The rest of [`finish_frame_between`] after every fighter's
+/// [`process_hits`]: `between`, the attackers' elements, then
+/// `ftMainProcParams` fighter by fighter.
+pub fn end_finish(
+    fighters: &mut [&mut Fighter],
+    effects: &mut dyn HitEffectSink,
+    between: &mut dyn FnMut(&mut dyn HitEffectSink),
+) -> [bool; 4] {
     between(effects);
     let n = fighters.len();
     for this in 0..n {
@@ -2197,7 +2230,7 @@ fn flush_thrown_stale(fighters: &mut [&mut Fighter]) {
     }
 }
 
-fn pair_mut<'a>(
+pub(crate) fn pair_mut<'a>(
     fighters: &'a mut [&mut Fighter],
     a: usize,
     b: usize,

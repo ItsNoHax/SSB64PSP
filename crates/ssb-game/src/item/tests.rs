@@ -163,7 +163,10 @@ fn aerial_throw_landing_uses_the_source_descent_threshold() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn polygon_pickup_uses_its_own_authored_range() {
     let mut pool = ItemPool::default();
-    let mut bomb = link_bomb::make(Vec3::new(550.0, 0.0, 0.0), 1);
+    let mut bomb = link_bomb::make(
+        &crate::manager_counts::ManagerCounts::new(),
+        Vec3::new(550.0, 0.0, 0.0),
+    );
     bomb.is_allow_pickup = true;
     pool.alloc(bomb).unwrap();
     let mut fox = fighter(FighterKind::Fox, 0);
@@ -313,7 +316,10 @@ fn pk_fire_loses_three_times_jab_damage_and_one_update_tick() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pickup_script_holds_the_published_bomb() {
     let mut pool = ItemPool::default();
-    let mut bomb = link_bomb::make(Vec3::new(105.0, 0.0, 0.0), 1);
+    let mut bomb = link_bomb::make(
+        &crate::manager_counts::ManagerCounts::new(),
+        Vec3::new(105.0, 0.0, 0.0),
+    );
     bomb.status = ItemStatus::LinkBomb(link_bomb::Status::Wait);
     bomb.is_allow_pickup = true;
     let slot = pool.alloc(bomb).unwrap();
@@ -476,7 +482,7 @@ fn main_pass_runs_a_chansey_egg_once_without_skipping_its_surviving_parent() {
 fn held_and_loose_bomb_bloat_write_the_same_promoted_body_root() {
     for held in [false, true] {
         let mut pool = ItemPool::default();
-        let mut bomb = link_bomb::make(Vec3::ZERO, 0);
+        let mut bomb = link_bomb::make(&crate::manager_counts::ManagerCounts::new(), Vec3::ZERO);
         bomb.is_hold = held;
         if held {
             bomb.scale = Vec3::new(1.8, 1.8, 1.0);
@@ -499,13 +505,20 @@ fn held_and_loose_bomb_bloat_write_the_same_promoted_body_root() {
 fn main_pass_runs_pokemon_made_by_a_destroyed_ball_after_existing_siblings() {
     for siblings in [0, 1, 14] {
         let mut pool = ItemPool::default();
-        let mut ball = mball::make(Vec3::new(0.0, 1000.0, 0.0), Vec3::ZERO);
+        let mut ball = mball::make(
+            &crate::manager_counts::ManagerCounts::new(),
+            Vec3::new(0.0, 1000.0, 0.0),
+            Vec3::ZERO,
+        );
         ball.status = ItemStatus::MBall(mball::Status::Open);
         ball.multi = 0;
         let ball_slot = pool.alloc(ball).unwrap();
         for i in 0..siblings {
-            pool.alloc(link_bomb::make(Vec3::new(i as f32, 1000.0, 0.0), i as u16))
-                .unwrap();
+            pool.alloc(link_bomb::make(
+                &crate::manager_counts::ManagerCounts::new(),
+                Vec3::new(i as f32, 1000.0, 0.0),
+            ))
+            .unwrap();
         }
         pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
         assert!(pool.get(ball_slot).is_none());
@@ -640,19 +653,33 @@ fn sixteen_slot_pool_reuses_last_freed_slot_and_appends_creation_order() {
     let mut slots = [0; ITEM_ALLOC_MAX];
     for (i, slot) in slots.iter_mut().enumerate() {
         *slot = pool
-            .alloc(link_bomb::make(Vec3::new(i as f32, 0.0, 0.0), i as u16))
+            .alloc(link_bomb::make(
+                &crate::manager_counts::ManagerCounts::new(),
+                Vec3::new(i as f32, 0.0, 0.0),
+            ))
             .unwrap();
     }
     assert_eq!(pool.active_count(), 16);
-    assert!(pool.alloc(link_bomb::make(Vec3::ZERO, 99)).is_none());
+    assert!(pool
+        .alloc(link_bomb::make(
+            &crate::manager_counts::ManagerCounts::new(),
+            Vec3::ZERO
+        ))
+        .is_none());
     pool.destroy(slots[3]);
     pool.destroy(slots[11]);
     assert_eq!(
-        pool.alloc(link_bomb::make(Vec3::new(100.0, 0.0, 0.0), 100)),
+        pool.alloc(link_bomb::make(
+            &crate::manager_counts::ManagerCounts::new(),
+            Vec3::new(100.0, 0.0, 0.0)
+        )),
         Some(slots[11])
     );
     assert_eq!(
-        pool.alloc(link_bomb::make(Vec3::new(101.0, 0.0, 0.0), 101)),
+        pool.alloc(link_bomb::make(
+            &crate::manager_counts::ManagerCounts::new(),
+            Vec3::new(101.0, 0.0, 0.0)
+        )),
         Some(slots[3])
     );
     let positions: std::vec::Vec<_> = pool.items().map(|i| i.pos.x).collect();
@@ -680,7 +707,11 @@ fn bounds_destroy_items_strictly_outside_each_edge() {
         Vec3::new(0.0, 101.0, 0.0),
         Vec3::new(100.0, 100.0, 0.0),
     ] {
-        pool.alloc(link_bomb::make(pos, 1)).unwrap();
+        pool.alloc(link_bomb::make(
+            &crate::manager_counts::ManagerCounts::new(),
+            pos,
+        ))
+        .unwrap();
     }
     pool.tick(core::iter::empty, Some(bounds), &[], &mut NoItemAnims);
     assert_eq!(pool.active_count(), 1);
@@ -776,7 +807,7 @@ fn a_teammates_item_passes_through_only_with_team_attack_off() {
             ..ItemPool::default()
         };
         let slot = make_flame(&mut pool);
-        let pillar = *pool.get(slot).unwrap();
+        let pillar = pool.get(slot).unwrap().clone();
         assert_eq!((pillar.owner, pillar.team), (Some(0), 0));
         let mut victim = fighter(FighterKind::Mario, 2);
         victim.team = victim_team;
@@ -803,7 +834,7 @@ fn a_teammates_attack_passes_through_an_item_only_with_team_attack_off() {
             ..ItemPool::default()
         };
         let slot = make_flame(&mut pool);
-        let pillar = *pool.get(slot).unwrap();
+        let pillar = pool.get(slot).unwrap().clone();
         let mut attacker = fighter(FighterKind::Mario, 2);
         attacker.team = attacker_team;
         attacker.attack_colls[0] = crate::combat::AttackColl {
@@ -841,7 +872,7 @@ fn an_item_on_a_shield_makes_its_set_off() {
     bomb.pos = mario.pos + Vec3::new(-40.0, 30.0, 0.0);
     bomb.update_attack_positions();
     pool.search_fighter(&mut mario);
-    let bomb = *pool.get(slot).unwrap();
+    let bomb = pool.get(slot).unwrap().clone();
     assert!(bomb.hit_shield_damage > 0, "the shield took the hit");
     let set_offs: Vec<_> = mario.hits.effects[..mario.hits.effects_len]
         .iter()
@@ -877,7 +908,7 @@ fn a_fighters_attack_on_an_item_makes_its_spark() {
     }
     let mut pool = ItemPool::default();
     let slot = make_flame(&mut pool);
-    let pillar = *pool.get(slot).unwrap();
+    let pillar = pool.get(slot).unwrap().clone();
     let mut attacker = fighter(FighterKind::Mario, 2);
     let at = pillar.damage_coll_pos() + Vec3::new(20.0, 0.0, 0.0);
     attacker.attack_colls[0] = crate::combat::AttackColl {
@@ -947,6 +978,7 @@ fn a_made_item_snaps_with_its_own_box_and_projects_its_floor() {
         width: 60.0,
     };
     let mut egg = container::make(
+        &crate::manager_counts::ManagerCounts::new(),
         container::Kind::Egg,
         Vec3::new(500.0, 300.0, 0.0),
         Vec3::ZERO,

@@ -76,14 +76,16 @@ impl Dummy {
         level: u8,
         spawn: u16,
         port: u8,
+        counts: &ssb_game::manager_counts::ManagerCounts,
     ) -> Option<Dummy> {
         pack.spawn(stage, spawn)?;
-        let scene = FighterScene::at_spawn(pack, stage, kind, spawn);
+        let scene = FighterScene::at_spawn(pack, stage, kind, spawn, counts);
         Some(Self::with_scene(pack, stage, scene, costume, level, port))
     }
 
     /// A CPU fighter at `pos`, such as a 1P Game team's next member
     /// (`sc1PGameSpawnEnemyTeamNext`).
+    #[allow(clippy::too_many_arguments)]
     pub fn at_position(
         pack: &Pack<'_>,
         stage: &StageDesc,
@@ -92,8 +94,9 @@ impl Dummy {
         level: u8,
         pos: ssb_engine::math::Vec3,
         port: u8,
+        counts: &ssb_game::manager_counts::ManagerCounts,
     ) -> Dummy {
-        let scene = FighterScene::at_position(pack, stage, kind, port, Some(pos));
+        let scene = FighterScene::at_position(pack, stage, kind, port, Some(pos), counts);
         Self::with_scene(pack, stage, scene, costume, level, port)
     }
 

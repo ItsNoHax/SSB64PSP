@@ -93,6 +93,7 @@ pub mod kirby_copy;
 pub mod ko;
 pub mod link;
 mod luigi;
+pub mod manager_counts;
 pub mod map;
 pub mod matchtick;
 pub mod menu;

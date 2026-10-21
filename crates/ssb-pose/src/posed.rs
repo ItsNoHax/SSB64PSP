@@ -445,30 +445,6 @@ impl PosedFighter {
         );
     }
 
-    /// The entry thread's `ftCommonAppearSetStatus`, for a fighter it has
-    /// just entered: the thread runs at process priority 5 after every
-    /// fighter's `ftMainProcUpdateInterrupt` (link 10 after link 3), and
-    /// before the priority-4 `ftMainProcPhysicsMap`. So the clip's first
-    /// frame, which `ftMainSetStatus` plays (`ftMainPlayAnimEventsAll`),
-    /// and `ftCommonAppearProcPhysics`'s placement from that frame's TransN
-    /// both land on the entry frame itself: the fighter is drawn there
-    /// already posed and moved (Pikachu's 6000 units in front, Ness's
-    /// 15000), not standing at its spawn. The next frame's play advances
-    /// from this one. Call right after [`ssb_game::appear::appear_set_status`].
-    pub fn settle_appear(&mut self, pack: &Pack<'_>) {
-        let status = &self.fighter.status;
-        if ssb_game::appear::slot(status.status).is_none() {
-            return;
-        }
-        if self.started != Some((status.status, status.entry)) {
-            self.tick_animation(pack);
-        }
-        if let Some(p) = self.skeleton.pose(0) {
-            let t = ssb_engine::math::Vec3::new(p.translate[0], p.translate[1], p.translate[2]);
-            ssb_game::appear::place(&mut self.fighter, t);
-        }
-    }
-
     /// A status set in the hit phase that asked for its `proc_slope`
     /// (`ftCommonCatchPullProcCatch` and the other pending-slope sites):
     /// the new pose, the slope, and the joints and hand resampled from it.

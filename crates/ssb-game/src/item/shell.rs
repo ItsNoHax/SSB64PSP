@@ -83,7 +83,12 @@ pub enum Status {
 /// `it{G,R}ShellMakeItem`. The maker's `rotate.y` of 90° is lost: the
 /// `TraRotRpyR` it adds next resets the root's rotation, and the US build
 /// restores only the translation (RE-434). The palette picks the colour.
-pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
+pub(super) fn make(
+    counts: &crate::manager_counts::ManagerCounts,
+    kind: Kind,
+    pos: Vec3,
+    vel: Vec3,
+) -> Item {
     let attr = match kind {
         Kind::Green => &GREEN_ATTRIBUTES,
         Kind::Red => &RED_ATTRIBUTES,
@@ -95,7 +100,7 @@ pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     item.vars.shell_rotate_y = 0.0;
     item.palette = match kind {

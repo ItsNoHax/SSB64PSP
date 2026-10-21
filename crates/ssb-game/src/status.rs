@@ -2693,7 +2693,7 @@ pub fn set_fox_special_n(f: &mut Fighter) {
     f.fox_special_n = FoxSpecialNState::default();
     // `ftFoxSpecialNProcUpdate`'s repeat path calls `ftParamSetMotionID`, so
     // every blaster shot is a new motion.
-    f.motion.set(crate::stale::MotionAttackId::SpecialN);
+    f.set_motion_id(crate::stale::MotionAttackId::SpecialN);
 }
 
 /// `ftFoxSpecialLwStartSetStatus` and aerial counterpart.
@@ -5329,7 +5329,7 @@ fn set_fox_rapid_loop(f: &mut Fighter) {
     );
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
-    f.motion.set(crate::stale::MotionAttackId::Attack100);
+    f.set_motion_id(crate::stale::MotionAttackId::Attack100);
     f.stats.restart();
 }
 

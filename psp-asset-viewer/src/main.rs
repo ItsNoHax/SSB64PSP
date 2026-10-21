@@ -731,9 +731,15 @@ unsafe fn run() -> ! {
     // is the only way to see it happen at 60 Hz rather than in a test.
     let mut sim_fighter = true;
     let mut player = match (&pack, stage_count > 0) {
-        (Some(p), true) => p
-            .stage(stage_index)
-            .map(|s| play::FighterScene::at_spawn(p, &s, ssb_game::fighter::FighterKind::Mario, 0)),
+        (Some(p), true) => p.stage(stage_index).map(|s| {
+            play::FighterScene::at_spawn(
+                p,
+                &s,
+                ssb_game::fighter::FighterKind::Mario,
+                0,
+                &ssb_game::manager_counts::ManagerCounts::new(),
+            )
+        }),
         _ => None,
     };
     // The repeatable original-ROM camera reference uses Mario at player 1's
@@ -1012,6 +1018,7 @@ unsafe fn run() -> ! {
                                 &s,
                                 ssb_game::fighter::FighterKind::Mario,
                                 0,
+                                &ssb_game::manager_counts::ManagerCounts::new(),
                             )
                         });
                         if cfg!(feature = "camera_audit_capture") {

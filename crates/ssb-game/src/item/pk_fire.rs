@@ -22,6 +22,7 @@ mod stat_tests {
             count: 77,
         };
         let mut item = make(
+            &crate::manager_counts::ManagerCounts::new(),
             super::super::PKFireSpawn {
                 owner_port: 0,
                 team: 0,
@@ -68,7 +69,11 @@ pub enum Status {
 }
 
 /// `itNessPKFireMakeItem`.
-pub(super) fn make<I, F>(spawn: super::PKFireSpawn, surfaces: &F) -> Item
+pub(super) fn make<I, F>(
+    counts: &crate::manager_counts::ManagerCounts,
+    spawn: super::PKFireSpawn,
+    surfaces: &F,
+) -> Item
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
@@ -80,7 +85,7 @@ where
         AttackState::New,
         spawn.pos,
         Vec3::ZERO,
-        spawn.stale.motion_count,
+        counts,
     );
     // `ITEM_FLAG_COLLPROJECT | ITEM_FLAG_PARENT_WEAPON`.
     map::run_default_collision(&mut item, spawn.weapon_pos, spawn.weapon_coll, surfaces);

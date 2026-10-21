@@ -251,6 +251,7 @@ pub fn tick_pair_pads(
         battle: None,
         started: true,
         locked: false,
+        go: false,
     };
     ssb_game::matchtick::step(&mut arena, &mut seats, &mut world, &mut ());
     sink.queued

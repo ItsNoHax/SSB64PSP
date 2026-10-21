@@ -427,7 +427,7 @@ fn fire_pillar_allocation_and_initial_fall_are_independent_of_a_full_weapon_pool
     assert_eq!(items.active_count(), 1);
     assert!(pool.spawn(far));
     assert_eq!(pool.active_count(), crate::weapon::MAX_WEAPONS);
-    let initial = *items.items().next().unwrap();
+    let initial = items.items().next().unwrap().clone();
     items.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     let falling = items.items().next().unwrap();
     assert_eq!(falling.pos, initial.pos);

@@ -8,14 +8,12 @@
 //! The original keeps each player's queue in
 //! `gSCManagerBattleState->players[player].stale_info[5]` and hands out
 //! motion counts from the global `gFTManagerMotionCount`. Here the queue lives
-//! on the attacking [`Fighter`] ([`Fighter::stale`]), and each fighter counts
-//! its own motions. Thrown-body hits enter the thrower's queue with the
-//! body's motion ID/count. Those entries also carry their origin port, so
-//! two bodies' local counters do not cause false duplicate suppression.
-//! Body attacks have attack ID `None`, which the stale lookup bypasses.
-//! The remaining difference is when the
-//! 16-bit counter wraps (after 65,535 of that fighter's own motions rather
-//! than everyone's).
+//! on the attacking [`Fighter`] ([`Fighter::stale`]); the counts come from
+//! the battle's [`crate::manager_counts::ManagerCounts`], shared by every
+//! fighter, item and weapon of the battle. Thrown-body hits enter the
+//! thrower's queue with the body's motion ID/count. Those entries also carry
+//! their origin port. Body attacks have attack ID `None`, which the stale
+//! lookup bypasses.
 //!
 //! ## Documented deviations
 //!
@@ -218,44 +216,31 @@ impl StaleQueue {
     }
 }
 
-/// A fighter's current `motion_attack_id` / `motion_count` and the counter
-/// that hands out counts (`gFTManagerMotionCount`, module docs).
+/// A fighter's current `motion_attack_id` / `motion_count`. The counts
+/// come from the battle's `gFTManagerMotionCount`
+/// ([`crate::manager_counts::ManagerCounts`], in the fighter's stats).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MotionId {
     pub attack_id: MotionAttackId,
     pub count: u16,
-    next_count: u16,
 }
 
 impl Default for MotionId {
     /// `ftManagerMakeFighter` sets `motion_attack_id = None`,
-    /// `motion_count = 0`; `ftManagerInitFighters` starts the counter at 1.
+    /// `motion_count = 0`.
     fn default() -> Self {
         MotionId {
             attack_id: MotionAttackId::None,
             count: 0,
-            next_count: 1,
         }
     }
 }
 
-impl MotionId {
-    /// `ftParamSetMotionID` @ 0x800EA5E8 with `ftParamGetMotionCount`,
-    /// which skips zero when the counter wraps.
-    pub fn set(&mut self, attack_id: MotionAttackId) {
-        self.attack_id = attack_id;
-        self.count = self.take_count();
-    }
-
-    /// `ftParamGetMotionCount`: allocate a count without changing the
-    /// fighter's current motion ID, skipping zero on wrap.
-    pub fn take_count(&mut self) -> u16 {
-        let count = self.next_count;
-        self.next_count = self.next_count.wrapping_add(1);
-        if self.next_count == 0 {
-            self.next_count = 1;
-        }
-        count
+impl Fighter {
+    /// `ftParamSetMotionID` @ 0x800EA5E8 with `ftParamGetMotionCount`.
+    pub fn set_motion_id(&mut self, attack_id: MotionAttackId) {
+        self.motion.attack_id = attack_id;
+        self.motion.count = self.stats.counts.motion();
     }
 }
 
@@ -532,13 +517,13 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
 pub fn on_set_status(f: &mut Fighter, status: AnyStatus) {
     let id = status_attack_id(f.kind, status);
     if id == MotionAttackId::None || id != f.motion.attack_id {
-        f.motion.set(id);
+        f.set_motion_id(id);
     }
     if matches!(
         status,
         AnyStatus::Common(Status::Attack11 | Status::AttackLw3)
     ) {
-        f.motion.set(id);
+        f.set_motion_id(id);
     }
 }
 

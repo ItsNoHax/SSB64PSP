@@ -94,7 +94,7 @@ pub enum Status {
 }
 
 /// `itLinkBombMakeItem` up to `itMainSetFighterHold`, which the pool runs.
-pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::LinkBomb,
         &ATTRIBUTES,
@@ -102,7 +102,7 @@ pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
         AttackState::Off,
         pos,
         Vec3::ZERO,
-        motion_count,
+        counts,
     );
     item.update_attack_positions();
     item.multi = 0;

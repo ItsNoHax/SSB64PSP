@@ -784,25 +784,23 @@ pub(crate) fn update_game(
 pub(crate) fn entry_frame(
     p: &Pack<'_>,
     stage: &ssb_rom::pack::StageDesc,
-    pl: &mut play::FighterScene,
-    dummies: &mut Dummies,
-    hud: &mut Hud,
+    scenes: &mut [Option<&mut play::FighterScene>; 4],
+    countdown: &mut Option<ssb_game::countdown::Countdown>,
     b: &ssb_game::battle::Battle,
     wait: &spgame::wait::Wait,
-    boss: Option<&BossScene>,
 ) {
     let clock = b.clock();
     for action in wait.at(clock) {
         match action {
-            Action::Countdown => hud.countdown = Some(ssb_game::countdown::Countdown::new()),
+            Action::Countdown => *countdown = Some(ssb_game::countdown::Countdown::new()),
+            // Its first frame plays in the fighter's priority-4 physics.
             Action::Appear(port) => {
-                if let Some(f) = scenes(pl, dummies)[usize::from(port)].as_deref_mut() {
+                if let Some(f) = scenes[usize::from(port)].as_deref_mut() {
                     ssb_game::appear::appear_set_status(&mut f.fighter);
-                    f.settle_appear(p);
                 }
             }
             Action::AppearPosition(port) => {
-                if let Some(f) = scenes(pl, dummies)[usize::from(port)].as_deref_mut() {
+                if let Some(f) = scenes[usize::from(port)].as_deref_mut() {
                     ssb_game::appear::appear_set_position(
                         &mut f.fighter,
                         f32::from(stage.camera.top),
@@ -810,20 +808,24 @@ pub(crate) fn entry_frame(
                     );
                 }
             }
-            Action::Bonus3Follow => pl.bonus_follow = true,
+            Action::Bonus3Follow => {
+                if let Some(pl) = scenes[0].as_deref_mut() {
+                    pl.bonus_follow = true;
+                }
+            }
             Action::Go if stage.source_file == ssb_rom::ground_obj::BONUS3_FILE => {
                 let mut c = ssb_game::countdown::Countdown::sudden_death();
                 c.start_go();
-                hud.countdown = Some(c);
+                *countdown = Some(c);
             }
             // The camera follows [`entry_zoom_frame`]'s `zoom_port`.
             // Targets uses its separate bonus entry path.
             // separate bonus entry path.
             // `sc1PGameWaitStageBossUpdate` at Go: Final Destination's
             // music, unless an item's plays.
-            Action::BossGo => ssb_game::music::boss_go(
-                crate::scenes(pl, dummies).into_iter().flatten().map(|f| &f.fighter),
-            ),
+            Action::BossGo => {
+                ssb_game::music::boss_go(scenes.iter().flatten().map(|f| &f.fighter))
+            }
             // Before the step: [`entry_camera_frame`].
             Action::BossCameraAnim
             | Action::Zoom(_)
@@ -833,7 +835,7 @@ pub(crate) fn entry_frame(
             | Action::Go => {}
         }
     }
-    if let Some(c) = hud.countdown.as_mut() {
+    if let Some(c) = countdown.as_mut() {
         c.tick(&game_status_sizes(p));
     }
 }
@@ -842,7 +844,7 @@ pub(crate) fn entry_frame(
 /// thread (priority 5) starts the intro camera from the origin, one play
 /// at once (`gmCameraUpdateAnimVel`), before the frame's camera process
 /// (priority 3, [`boss_after_world`]) plays it again; Master Hand's Appear
-/// stays after the step ([`entry_frame`]).
+/// is the thread's in the step ([`entry_frame`]).
 pub(crate) fn entry_camera_frame(
     pl: &mut play::FighterScene,
     b: &ssb_game::battle::Battle,
@@ -952,8 +954,12 @@ pub(crate) fn replace_enemies(
                 ssb_game::dead::set_sleep(&mut d.fighter);
             }
             spgame::setup::NextEnemy::Spawn(e) => {
-                let mut n =
-                    play::Dummy::at_position(p, stage, e.fkind, e.costume, e.level, e.pos, port);
+                // `ftManagerMakeFighter` draws from the battle's counts,
+                // which the outgoing member shares.
+                let counts = d.fighter.stats.counts.clone();
+                let mut n = play::Dummy::at_position(
+                    p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts,
+                );
                 n.fighter.facing = e.facing;
                 n.fighter.team = d.fighter.team;
                 let detail = if e.detail_high {

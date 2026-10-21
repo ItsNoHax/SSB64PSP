@@ -249,7 +249,7 @@ impl ItemPool {
         {
             return;
         }
-        let Some(mut this) = self.slots[usize::from(this_slot)] else {
+        let Some(mut this) = self.slots[usize::from(this_slot)].clone() else {
             return;
         };
         let this_id = ITEM_RECORD_BASE + this_slot;
@@ -277,7 +277,7 @@ impl ItemPool {
                 continue;
             }
             // Copied only once it can be hit: an `Item` is large (RE-470).
-            let mut other = *peek;
+            let mut other = peek.clone();
             let mut to_hurtbox = true;
             if is_check_self
                 && this.attack.can_setoff

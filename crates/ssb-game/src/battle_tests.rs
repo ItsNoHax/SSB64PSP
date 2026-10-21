@@ -33,6 +33,11 @@ fn the_countdown_says_go_on_frame_391() {
     assert_eq!(run_to_go(&mut b), Battle::GO_TICK);
     assert_eq!(Battle::GO_TICK, 391);
     assert_eq!(b.time_remain, 3 * 3600);
+    // The countdown thread's "Go" lands after that frame's interrupts
+    // (RE-556 G2b), and on that frame only.
+    assert!(b.go_lands());
+    b.begin_frame();
+    assert!(!b.go_lands());
 }
 
 #[test]

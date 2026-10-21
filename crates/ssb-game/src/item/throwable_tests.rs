@@ -135,7 +135,7 @@ fn motion_sensor_bomb_sticks_arms_after_100_frames_and_explodes_near_a_fighter()
         }
     }
     assert!(stuck.is_some(), "the thrown bomb sticks to the floor");
-    let bomb = *pool.get(slot).unwrap();
+    let bomb = pool.get(slot).unwrap().clone();
     assert_eq!(bomb.vel_air, Vec3::ZERO);
     assert_eq!(bomb.owner, None);
     assert!(bomb.is_damage_all);
@@ -369,7 +369,7 @@ fn a_thrown_red_shell_steers_towards_the_nearest_fighter() {
         }
     }
     assert!(spin, "it slides once it lands");
-    let shell = *pool.get(slot).unwrap();
+    let shell = pool.get(slot).unwrap().clone();
     assert_eq!(shell.lifetime, shell::R_LIFETIME);
     assert_eq!(shell.vars.shell_interact, shell::R_INTERACT_MAX);
     assert_eq!(shell.owner, None);
@@ -854,13 +854,13 @@ fn bob_omb_dust_needs_a_fresh_floor_bit_or_the_override() {
     let mut pool = ItemPool::default();
     let slot = resting(&mut pool, 15, 0.0);
     tick(&mut pool);
-    let grounded = *pool.get(slot).unwrap();
+    let grounded = pool.get(slot).unwrap().clone();
     for (status, want) in [
         (bombhei::Status::Walk, 1),
         (bombhei::Status::ExplodeWait, 1),
         (bombhei::Status::ExplodeMap, 0),
     ] {
-        let mut bob = grounded;
+        let mut bob = grounded.clone();
         let mut fx = crate::wpeffect::Emit::default();
         bombhei::hit_proc(&mut bob, status, HitProc::Hit, 1.0, &mut fx);
         assert_eq!(dusts(&fx), want, "{status:?}");

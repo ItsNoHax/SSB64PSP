@@ -143,7 +143,7 @@ fn the_barrel_falls_rolls_and_smashes_into_a_wall() {
 /// Rolling down a slope speeds it up by 1.4 times the slope angle a frame.
 #[test]
 fn the_roll_gathers_speed_downhill() {
-    let mut item = tarubomb::make(Vec3::ZERO);
+    let mut item = tarubomb::make(&crate::manager_counts::ManagerCounts::new(), Vec3::ZERO);
     // A floor falling to the right at 45°.
     let n = Vec2::new(
         core::f32::consts::FRAC_1_SQRT_2,
@@ -193,7 +193,7 @@ fn ten_percent_or_any_contact_smashes_the_barrel() {
         (HitProc::SetOff, 0, true),
         (HitProc::Reflector, 0, true),
     ] {
-        let mut item = tarubomb::make(Vec3::ZERO);
+        let mut item = tarubomb::make(&crate::manager_counts::ManagerCounts::new(), Vec3::ZERO);
         item.percent_damage = percent;
         let mut common = Pieces(Vec::new());
         assert_eq!(
@@ -207,7 +207,7 @@ fn ten_percent_or_any_contact_smashes_the_barrel() {
         );
         assert_eq!(common.0.len(), usize::from(smashed));
     }
-    let mut item = tarubomb::make(Vec3::ZERO);
+    let mut item = tarubomb::make(&crate::manager_counts::ManagerCounts::new(), Vec3::ZERO);
     let mut common = Pieces(Vec::new());
     assert_eq!(
         tarubomb::hit_proc(&mut item, T::Roll, HitProc::Hop, &mut common, &mut fx),

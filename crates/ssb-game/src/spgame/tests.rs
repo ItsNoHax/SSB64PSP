@@ -215,6 +215,10 @@ fn waits_preserve_scene_clock_entry_order_and_hud_wrap() {
     assert_eq!(wait::interface_positions(3, 3), [160, 230, 0, 90]);
     assert_eq!(wait::Wait::new(Stage::Bonus3, 0, 4, 1).go_tick, 61);
     assert_eq!(wait::Wait::new(Stage::Boss, 0, 2, 1).go_tick, 601);
+    // `sc1PGameWaitThreadUpdate` has no bonus 1 or 2 case: never "Go".
+    for stage in [Stage::Bonus1, Stage::Bonus2] {
+        assert_eq!(wait::Wait::new(stage, 0, 1, 1).go_tick, u32::MAX);
+    }
 }
 
 #[test]

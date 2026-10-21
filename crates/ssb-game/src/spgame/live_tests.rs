@@ -61,13 +61,28 @@ fn hit(f: &mut Fighter, damage: i32, player: DamageBy, stat: AttackStat) {
     ));
 }
 
+/// `gFTManagerStatUpdateCount` is the battle's, not a fighter's: two
+/// fighters' status changes draw one sequence, and another battle starts
+/// its own at 1.
 #[test]
-fn global_stat_sequence_wraps_without_returning_zero() {
-    reset_count();
-    for expected in 1..=u16::MAX {
-        assert_eq!(next_count(), expected);
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn fighters_of_one_battle_share_the_stat_sequence() {
+    for _battle in 0..2 {
+        let counts = crate::manager_counts::ManagerCounts::new();
+        let mut a = Fighter::new(FighterKind::Mario, 0, 3);
+        let mut b = Fighter::new(FighterKind::Fox, 1, 3);
+        a.stats.counts = counts.clone();
+        b.stats.counts = counts.clone();
+        on_set_status(&mut a, AnyStatus::Common(Status::Wait));
+        on_set_status(&mut b, AnyStatus::Common(Status::Wait));
+        on_set_status(&mut a, AnyStatus::Common(Status::Fall));
+        assert_eq!(
+            (a.stats.attack.count, b.stats.attack.count),
+            (3, 2),
+            "each status without an attack ID draws a new count"
+        );
+        assert_eq!(counts.peek().1, 4);
     }
-    assert_eq!(next_count(), 1);
 }
 
 #[test]

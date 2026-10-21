@@ -1724,6 +1724,37 @@ pub struct WeaponPool {
     rehit: [[u8; 4]; MAX_WEAPONS],
     /// Onix's rocks' events for [`crate::item::ItemPool::observe_weapons`].
     rock_events: [Option<(u32, bool)>; 2 * MAX_WEAPONS],
+    /// The battle's motion and stat counts ([`crate::manager_counts`]).
+    pub counts: crate::manager_counts::ManagerCounts,
+    /// The weapons as `wpProcessProcSearchHitWeapon` reads them, taken
+    /// before any hit reacts ([`Self::begin_clashes`]).
+    clash_view: ClashView,
+}
+
+/// The weapons at priority 1, before the port's at-once reactions
+/// ([`WeaponPool::begin_clashes`]): link order, each slot's clash attack
+/// and group, and whether a slot was refilled since.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClashView {
+    taken: bool,
+    order: [usize; MAX_WEAPONS],
+    count: usize,
+    attacks: [Option<ClashAttack>; MAX_WEAPONS],
+    groups: [Option<u16>; MAX_WEAPONS],
+    refilled: [bool; MAX_WEAPONS],
+}
+
+impl Default for ClashView {
+    fn default() -> Self {
+        ClashView {
+            taken: false,
+            order: [0; MAX_WEAPONS],
+            count: 0,
+            attacks: [None; MAX_WEAPONS],
+            groups: [None; MAX_WEAPONS],
+            refilled: [false; MAX_WEAPONS],
+        }
+    }
 }
 
 /// `WEAPON_HOP_ANGLE_DEFAULT`: `F_CLC_DTOR32(135.0F)`.
@@ -2778,6 +2809,8 @@ impl Default for WeaponPool {
             set_off: [false; MAX_WEAPONS],
             rehit: [[0; 4]; MAX_WEAPONS],
             rock_events: [None; 2 * MAX_WEAPONS],
+            counts: crate::manager_counts::ManagerCounts::new(),
+            clash_view: ClashView::default(),
         }
     }
 }
@@ -2808,6 +2841,8 @@ impl WeaponPool {
         self.clash_fx.clear();
         self.clash_damage = [0; MAX_WEAPONS];
         self.set_off = [false; MAX_WEAPONS];
+        self.counts = crate::manager_counts::ManagerCounts::new();
+        self.clash_view = ClashView::default();
     }
 
     fn tick_pk_thunder<I, F>(&mut self, surfaces: F, bounds: Option<BlastZone>)
@@ -3415,8 +3450,14 @@ impl WeaponPool {
         lr: f32,
     ) -> Option<usize> {
         let i = self.slots.iter().position(|slot| slot.is_none())?;
+        // `wpManagerMakeWeapon`'s ground-parent case (wpmanager.c:185,
+        // :188): a fresh motion count, then a stat count. A fighter or item
+        // parent's counts ([`crate::stale::WeaponStale::of`]) are never 0.
+        if stale.motion_count == 0 {
+            stale.motion_count = self.counts.motion();
+        }
         if stale.stat.count == 0 {
-            stale.stat.count = crate::spgame::live::next_count();
+            stale.stat.count = self.counts.stat();
         }
         if let Weapon::Monster(m) = &mut weapon {
             if m.stat.count == 0 {
@@ -3432,6 +3473,7 @@ impl WeaponPool {
         self.pending_item_hits[i] = false;
         self.clash_damage[i] = 0;
         self.set_off[i] = false;
+        self.clash_view.refilled[i] = true;
         self.rehit[i] = [0; 4];
         self.next_seq = self.next_seq.wrapping_add(1);
         self.seq[i] = self.next_seq;
@@ -3595,6 +3637,7 @@ impl WeaponPool {
                 && item.attack.record(weapon_victim_id(i)).is_clear()
             {
                 if let Some(w) = self.clash_attack(i) {
+                    let mut skip = false;
                     for j in 0..item.attack.count {
                         let p = item.attack.pos[j];
                         if !crate::hurtbox::attacks_collide(
@@ -3633,11 +3676,18 @@ impl WeaponPool {
                                 },
                             );
                         }
-                        if self.clash_damage[i] != 0 || item.hit_attack_damage != 0 {
+                        // `wp->hit_attack_damage` (a fighter's set-off, an
+                        // earlier item's clash): the next weapon; the item's
+                        // own: its hurtbox check.
+                        if self.clash_damage[i] != 0 || self.set_off[i] {
+                            skip = true;
+                            break;
+                        }
+                        if item.hit_attack_damage != 0 {
                             break;
                         }
                     }
-                    if self.clash_damage[i] != 0 {
+                    if skip {
                         continue;
                     }
                 }
@@ -4545,48 +4595,76 @@ impl WeaponPool {
     }
 
     /// `wpProcessUpdateHitInteractStats(.., nGMHitTypeAttack, 0)`: slot `i`
-    /// (and every weapon of its group) records weapon `victim`.
+    /// (and every weapon of its group, as the clash view saw them) records
+    /// weapon `victim`. A slot refilled since the view holds another weapon.
     fn record_clash(&mut self, i: usize, victim: usize) {
         let id = weapon_victim_id(victim);
-        match self.slots[i].and_then(|w| w.group()) {
+        let view = &self.clash_view;
+        match view.groups[i] {
             Some(group) => {
                 for j in 0..MAX_WEAPONS {
-                    if self.slots[j].and_then(|w| w.group()) == Some(group) {
+                    if view.groups[j] == Some(group) && !view.refilled[j] {
                         record_weapon_victim(&mut self.hit_records[j], id);
                     }
                 }
             }
-            None => record_weapon_victim(&mut self.hit_records[i], id),
+            None if !view.refilled[i] => record_weapon_victim(&mut self.hit_records[i], id),
+            None => {}
         }
     }
 
+    /// The priority-1 view of the weapons for [`Self::search_weapons`]: call
+    /// it once a frame after [`Self::tick`] and before [`Self::apply_hits`].
+    /// The source's weapons are still whole when their clash search runs
+    /// (their hits react at priority 0), while the port's hit searches react
+    /// at once, so the search reads the attacks, owners, teams and groups
+    /// taken here. Also clears the frame's set-offs and clash damage.
+    pub fn begin_clashes(&mut self) {
+        self.set_off = [false; MAX_WEAPONS];
+        self.clash_damage = [0; MAX_WEAPONS];
+        let (order, count) = self.link_order();
+        let mut view = ClashView {
+            taken: true,
+            order,
+            count,
+            ..ClashView::default()
+        };
+        for i in 0..MAX_WEAPONS {
+            view.attacks[i] = self.clash_attack(i);
+            view.groups[i] = self.slots[i].and_then(|w| w.group());
+        }
+        self.clash_view = view;
+    }
+
     /// `wpProcessProcSearchHitWeapon` for every weapon, in link order (the
-    /// priority-1 process after the fighters' and items' searches). Each
-    /// weapon tests only the weapons after it in the link that are not its
-    /// owner's or, with team attack off, its team's, and that neither side
-    /// has recorded; the first pair of boxes that meet clashes
-    /// (`wpProcessUpdateAttackStatWeapon`): a side whose priority is not
-    /// above the other's records it, takes its staled damage as
-    /// `hit_attack_damage` and makes a set-off at the pair's midpoint, the
-    /// searched weapon's side first.
+    /// priority-1 process after the fighters' and items' searches, whose
+    /// records it reads). Each weapon tests only the weapons after it in the
+    /// link that are not its owner's or, with team attack off, its team's,
+    /// and that neither side has recorded; the first pair of boxes that
+    /// meet clashes (`wpProcessUpdateAttackStatWeapon`): a side whose
+    /// priority is not above the other's records it, takes its staled
+    /// damage as `hit_attack_damage` and makes a set-off at the pair's
+    /// midpoint, the searched weapon's side first.
     ///
-    /// Call it once a frame after [`Self::tick`] and before
-    /// [`Self::apply_hits`]: the source's weapons are still whole here (their
-    /// fighter hits land at priority 0), while the port's hit searches react
-    /// at once. The set-offs wait in a queue
+    /// Call it after the fighters' and items' hit searches and before
+    /// [`Self::finish_clashes`]. It reads the weapons as
+    /// [`Self::begin_clashes`] took them (or, without one this frame, as
+    /// they stand). The set-offs wait in a queue
     /// ([`Self::flush_clash_effects`]) and the reactions for
     /// [`Self::finish_clashes`].
     pub fn search_weapons(&mut self) {
-        self.set_off = [false; MAX_WEAPONS];
-        self.clash_damage = [0; MAX_WEAPONS];
-        let (order, n) = self.link_order();
+        if !self.clash_view.taken {
+            self.begin_clashes();
+        }
+        self.clash_view.taken = false;
+        let (order, n) = (self.clash_view.order, self.clash_view.count);
         for a in 0..n {
             let this = order[a];
-            let Some(this_attack) = self.clash_attack(this) else {
+            let Some(this_attack) = self.clash_view.attacks[this] else {
                 continue;
             };
             for &other in &order[a + 1..n] {
-                let Some(other_attack) = self.clash_attack(other) else {
+                let Some(other_attack) = self.clash_view.attacks[other] else {
                     continue;
                 };
                 if this_attack.owner == other_attack.owner
@@ -4628,9 +4706,12 @@ impl WeaponPool {
             crate::combat::attack_point(v.pos_curr, v.pos_prev, v.state),
             crate::combat::attack_point(o.pos_curr, o.pos_prev, o.state),
         );
+        let refilled = self.clash_view.refilled;
         if v.priority <= o.priority {
             self.record_clash(victim, other);
-            self.clash_damage[victim] = self.clash_damage[victim].max(v.damage);
+            if !refilled[victim] {
+                self.clash_damage[victim] = self.clash_damage[victim].max(v.damage);
+            }
             self.clash_fx.push(
                 0,
                 Fx::SetOff {
@@ -4641,7 +4722,9 @@ impl WeaponPool {
         }
         if o.priority <= v.priority {
             self.record_clash(other, victim);
-            self.clash_damage[other] = self.clash_damage[other].max(o.damage);
+            if !refilled[other] {
+                self.clash_damage[other] = self.clash_damage[other].max(o.damage);
+            }
             self.clash_fx.push(
                 0,
                 Fx::SetOff {
@@ -5270,11 +5353,11 @@ mod tests {
     fn a_repeated_egg_throw_is_staled_and_recorded() {
         use crate::stale::MotionAttackId;
         let mut owner = Fighter::new(FighterKind::Yoshi, 0, 3);
-        owner.motion.set(MotionAttackId::SpecialHi);
+        owner.set_motion_id(MotionAttackId::SpecialHi);
         owner
             .stale
             .push(MotionAttackId::SpecialHi, owner.motion.count);
-        owner.motion.set(MotionAttackId::SpecialHi);
+        owner.set_motion_id(MotionAttackId::SpecialHi);
         let stale = crate::stale::WeaponStale::of(&owner);
         assert_eq!(stale.stale, 0.75);
         let mut weapons = WeaponPool::default();

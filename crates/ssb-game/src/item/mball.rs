@@ -36,7 +36,7 @@ pub enum Status {
 }
 
 /// `itMBallMakeItem`.
-pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3, vel: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::MBall,
         &ATTRIBUTES,
@@ -44,7 +44,7 @@ pub(super) fn make(pos: Vec3, vel: Vec3) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     item.multi = SPAWN_WAIT;
     item.vars.mball_is_rebound = false;

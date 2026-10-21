@@ -550,8 +550,11 @@ pub struct ItemVars {
 }
 
 /// `ITStruct`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Item {
+    /// The battle's motion and stat counts (`gFTManager*Count`), which
+    /// `itManagerMakeItem` and `itMainSetStatus` draw.
+    pub counts: crate::manager_counts::ManagerCounts,
     pub kind: ItemKind,
     pub ty: ItemType,
     /// `owner_gobj`, a fighter port.
@@ -721,9 +724,13 @@ impl Item {
         attack_state: AttackState,
         pos: Vec3,
         vel: Vec3,
-        motion_count: u16,
+        counts: &crate::manager_counts::ManagerCounts,
     ) -> Self {
+        // `itManagerMakeItemSetupCommon` (itmanager.c:340, :343).
+        let motion_count = counts.motion();
+        let stat_count = counts.stat();
         let mut item = Item {
+            counts: counts.clone(),
             kind,
             ty: attr.ty,
             owner: None,
@@ -778,7 +785,7 @@ impl Item {
                     flags: crate::spgame::live::Flags(
                         crate::spgame::bonus::HitAttackId::Null as u16,
                     ),
-                    count: crate::spgame::live::next_count(),
+                    count: stat_count,
                 },
                 motion_count,
                 count: attr.attack_count,
@@ -950,7 +957,7 @@ impl Item {
     pub(crate) fn set_status(&mut self, status: ItemStatus) {
         self.attack.stat = crate::spgame::live::AttackStat {
             flags: crate::spgame::live::Flags(crate::spgame::bonus::HitAttackId::Null as u16),
-            count: crate::spgame::live::next_count(),
+            count: self.counts.stat(),
         };
         self.status = status;
         self.is_thrown = false;
@@ -1325,6 +1332,9 @@ pub struct ItemPool {
     /// maker fails without one.
     weapon_free: u8,
     fx: crate::wpeffect::WeaponFx,
+    /// The battle's motion and stat counts, which every item made here
+    /// carries ([`crate::manager_counts`]).
+    pub counts: crate::manager_counts::ManagerCounts,
 }
 
 impl Default for ItemPool {
@@ -1335,7 +1345,7 @@ impl Default for ItemPool {
             *f = (ITEM_ALLOC_MAX - 1 - i) as u8;
         }
         ItemPool {
-            slots: [None; ITEM_ALLOC_MAX],
+            slots: core::array::from_fn(|_| None),
             free,
             free_len: ITEM_ALLOC_MAX,
             order: [0; ITEM_ALLOC_MAX],
@@ -1358,6 +1368,7 @@ impl Default for ItemPool {
             monster_shots: [None; ITEM_ALLOC_MAX],
             weapon_free: crate::weapon::MAX_WEAPONS as u8,
             fx: crate::wpeffect::WeaponFx::default(),
+            counts: crate::manager_counts::ManagerCounts::new(),
         }
     }
 }
@@ -1434,7 +1445,7 @@ pub(crate) struct Effects {
 impl ItemPool {
     /// `itManagerMakeItemSetupCommon` for a supported container.
     pub fn spawn_container(&mut self, kind: container::Kind, pos: Vec3, vel: Vec3) -> Option<u8> {
-        let slot = self.alloc(container::make(kind, pos, vel))?;
+        let slot = self.alloc(container::make(&self.counts, kind, pos, vel))?;
         let mut emit = crate::wpeffect::Emit::default();
         emit.push(crate::wpeffect::WeaponEffect::ItemSpawnSwirl(pos));
         self.fx.extend(self.order_len as u32 - 1, &emit);
@@ -1461,18 +1472,19 @@ impl ItemPool {
             return None;
         }
         let mut item = match index {
-            0 => container::make(container::Kind::Crate, pos, vel),
-            1 => container::make(container::Kind::Barrel, pos, vel),
-            2 => container::make(container::Kind::Capsule, pos, vel),
-            3 => container::make(container::Kind::Egg, pos, vel),
-            7..=13 => equipment::make(equipment::Kind::from_index(index)?, pos, vel),
-            14 => msbomb::make(pos, vel),
-            15 => bombhei::make(pos, vel),
-            16 => nbumper::make(pos, vel),
-            17 => shell::make(shell::Kind::Green, pos, vel),
-            18 => shell::make(shell::Kind::Red, pos, vel),
-            19 => mball::make(pos, vel),
+            0 => container::make(&self.counts, container::Kind::Crate, pos, vel),
+            1 => container::make(&self.counts, container::Kind::Barrel, pos, vel),
+            2 => container::make(&self.counts, container::Kind::Capsule, pos, vel),
+            3 => container::make(&self.counts, container::Kind::Egg, pos, vel),
+            7..=13 => equipment::make(&self.counts, equipment::Kind::from_index(index)?, pos, vel),
+            14 => msbomb::make(&self.counts, pos, vel),
+            15 => bombhei::make(&self.counts, pos, vel),
+            16 => nbumper::make(&self.counts, pos, vel),
+            17 => shell::make(&self.counts, shell::Kind::Green, pos, vel),
+            18 => shell::make(&self.counts, shell::Kind::Red, pos, vel),
+            19 => mball::make(&self.counts, pos, vel),
             _ => utility::make(
+                &self.counts,
                 utility::Kind::from_index(index)?,
                 pos,
                 vel,
@@ -1509,7 +1521,7 @@ impl ItemPool {
         }
         let owners = self.owners;
         let vel = Vec3::new(0.0, 16.0, 0.0);
-        let mut monster = mmonster::make(kind, ball, vel, &owners, surfaces);
+        let mut monster = mmonster::make(&self.counts, kind, ball, vel, &owners, surfaces);
         monster.owner = ball.owner;
         monster.team = ball.team;
         monster.player = ball.player;
@@ -1537,7 +1549,7 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let mut ball = mball::make(pos, Vec3::ZERO);
+        let mut ball = mball::make(&self.counts, pos, Vec3::ZERO);
         ball.owner = owner;
         ball.player = owner;
         ball.team = team;
@@ -1804,8 +1816,7 @@ impl ItemPool {
                     }
                 }
                 ItemRequest::MakeLinkBomb { pos } => {
-                    let count = f.motion.take_count();
-                    let item = link_bomb::make(pos, count);
+                    let item = link_bomb::make(&self.counts, pos);
                     if let Some(slot) = self.alloc(item) {
                         self.set_fighter_hold(slot, f);
                     }
@@ -2044,7 +2055,7 @@ impl ItemPool {
         I: IntoIterator<Item = MapSurface>,
     {
         for spawn in weapons.take_item_spawns() {
-            let item = pk_fire::make(spawn, &surfaces);
+            let item = pk_fire::make(&self.counts, spawn, &surfaces);
             self.alloc(item);
         }
     }
@@ -2097,7 +2108,7 @@ impl ItemPool {
         let mut link = 0;
         while cursor < self.order_len {
             let slot = self.order[cursor];
-            let Some(mut item) = self.slots[usize::from(slot)] else {
+            let Some(mut item) = self.slots[usize::from(slot)].clone() else {
                 unreachable!("live item link names an empty struct");
             };
             let handle = self.handle_of(slot);
@@ -2170,7 +2181,7 @@ impl ItemPool {
         let mut link = 0;
         while cursor < self.order_len {
             let slot = self.order[cursor];
-            let Some(mut item) = self.slots[usize::from(slot)] else {
+            let Some(mut item) = self.slots[usize::from(slot)].clone() else {
                 unreachable!("live item link names an empty struct");
             };
             let mut push = |e| push_event(&mut events, e);
@@ -2247,26 +2258,26 @@ impl crate::stage::StageItems for ItemPool {
     fn make_item(&mut self, kind: crate::stage::StageItem, pos: Vec3) -> Option<u32> {
         use crate::stage::StageItem;
         let item = match kind {
-            StageItem::Target(i) => target::make(pos, i),
+            StageItem::Target(i) => target::make(&self.counts, pos, i),
             StageItem::Bonus2Bumper(i) => {
-                let mut item = gbumper::make(pos, 0, false);
+                let mut item = gbumper::make(&self.counts, pos, false);
                 item.vars.bonus2_bumper_joint = Some(i);
                 item
             }
             StageItem::Bumper { castle, joint } => {
-                let mut item = gbumper::make(pos, 0, castle);
+                let mut item = gbumper::make(&self.counts, pos, castle);
                 item.vars.bonus3_bumper_joint = joint;
                 item
             }
-            StageItem::TaruBomb => tarubomb::make(pos),
-            StageItem::PowerBlock => power_block::make(pos, 0),
-            StageItem::Pakkun(i) => pakkun::make(i, pos, 0),
+            StageItem::TaruBomb => tarubomb::make(&self.counts, pos),
+            StageItem::PowerBlock => power_block::make(&self.counts, pos),
+            StageItem::Pakkun(i) => pakkun::make(&self.counts, i, pos),
             StageItem::Monster(id) => {
                 let kind = monsters::Kind::from_id(id)?;
                 if self.free_len == 0 {
                     return None;
                 }
-                monsters::make(kind, pos, &mut self.monster_attack_prev)
+                monsters::make(&self.counts, kind, pos, &mut self.monster_attack_prev)
             }
         };
         let slot = self.alloc(item)?;
@@ -2760,7 +2771,7 @@ where
         if self.pool.free_len == 0 {
             return false;
         }
-        let mut egg = container::make(container::Kind::Egg, pos, vel);
+        let mut egg = container::make(&self.pool.counts, container::Kind::Egg, pos, vel);
         map::run_default_collision(&mut egg, parent.pos, parent.coll, self.surfaces);
         // Ground Chansey is GLucky, not MLucky: no direction RNG here.
         egg.update_attack_positions();

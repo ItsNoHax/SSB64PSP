@@ -217,7 +217,7 @@ f1-training-link-bomb-turn	psp-game	linkbomb@330	pass	RE-444
 f1-training-link-bomb-loose	psp-game	linkbomb@345	pass	RE-444
 f1-vs-push-ko	psp-game	vspush	pass	RE-469
 f1-vs-knock-ko	psp-game	vsknock	pass	RE-469
-f1-vs-four-magnifier	psp-game	vs4@3000	pass	RE-440 RE-470 RE-472 RE-473 RE-508 RE-541 RE-551
+f1-vs-four-magnifier	psp-game	vs4@1720	pass	RE-440 RE-470 RE-472 RE-473 RE-508 RE-541 RE-551
 f1-opening-mario	psp-game	op-mario@60	pass	RE-467 RE-476 RE-497
 f1-opening-run	psp-game	op-run@140	pass	RE-467 RE-476 RE-497
 f1-opening-clash	psp-game	op-clash@80	pass	RE-467 RE-476 RE-497
@@ -251,7 +251,7 @@ f1-training-select-held	psp-game	trainingselectpicked@30	pass	RE-411
 f1-training-fox-fire	psp-game	foxfire	pass	RE-503
 f1-training-pikachu-quick	psp-game	pikachuquick	pass	RE-503
 f1-training-ness-jibaku	psp-game	nessjibaku	pass	RE-503
-f1-vs-four-fly-roll	psp-game	vs4@2530	pass	RE-503
+f1-vs-four-fly-roll	psp-game	vs4@2440	pass	RE-503
 f1-training-twister-spin	psp-game	trainingtwister@1760	pass	RE-503 RE-507
 f1-training-kirby-stone-slope	psp-game	kirbystoneslope	pass	RE-503
 f1-training-captain-kick-roll	psp-game	captainkickroll	pass	RE-503

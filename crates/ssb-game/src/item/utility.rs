@@ -69,7 +69,13 @@ pub static STAR_ATTRIBUTES: ItemAttributes = super::attributes::STAR;
 
 /// `it{Tomato,Heart,Star}MakeItem`. `camera_at_x` is the battle camera's
 /// look-at X, which turns the Star towards the middle of the screen.
-pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3, camera_at_x: f32) -> Item {
+pub(super) fn make(
+    counts: &crate::manager_counts::ManagerCounts,
+    kind: Kind,
+    pos: Vec3,
+    vel: Vec3,
+    camera_at_x: f32,
+) -> Item {
     let (attr, status, vel) = match kind {
         Kind::Tomato => (&TOMATO_ATTRIBUTES, Status::Fall, vel),
         Kind::Heart => (&HEART_ATTRIBUTES, Status::Fall, vel),
@@ -94,7 +100,7 @@ pub(super) fn make(kind: Kind, pos: Vec3, vel: Vec3, camera_at_x: f32) -> Item {
         AttackState::Off,
         pos,
         vel,
-        0,
+        counts,
     );
     if kind == Kind::Star {
         // Star Man can only interact with fighters.

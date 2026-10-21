@@ -373,6 +373,7 @@ fn lr_sign(x: f32) -> f32 {
 /// maker takes the ball's owner and team and faces its nearest opponent
 /// (`itKamexCommonFindTargetsSetLR`) from where it is made.
 pub(super) fn make<I, F>(
+    counts: &crate::manager_counts::ManagerCounts,
     k: Kind,
     parent: &Item,
     vel: Vec3,
@@ -395,7 +396,7 @@ where
         attack,
         pos,
         vel,
-        0,
+        counts,
     );
     map::run_default_collision(&mut item, parent.pos, parent.coll, surfaces);
     item.update_attack_positions();

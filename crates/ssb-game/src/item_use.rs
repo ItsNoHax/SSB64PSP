@@ -429,7 +429,7 @@ fn flower(f: &mut Fighter) {
             f.item_use.flame_index += 1;
             if f.item_use.flame_index == 8 {
                 f.item_use.flame_index = 0;
-                f.motion.set(crate::stale::MotionAttackId::FireFlowerShoot);
+                f.set_motion_id(crate::stale::MotionAttackId::FireFlowerShoot);
                 f.stats.restart();
             }
         }

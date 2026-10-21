@@ -101,7 +101,7 @@ fn set_attack100_loop(f: &mut Fighter) {
     set(f, CaptainStatus::Attack100Loop, 0.0, RAPID_LOOP_LENGTH);
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
-    f.motion.set(crate::stale::MotionAttackId::Attack100);
+    f.set_motion_id(crate::stale::MotionAttackId::Attack100);
     f.stats.restart();
 }
 

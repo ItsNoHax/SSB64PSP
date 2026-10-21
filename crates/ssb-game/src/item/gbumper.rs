@@ -29,7 +29,7 @@ pub enum Status {
 /// `castle` is `gSCManagerBattleState->gkind == nGRKindCastle`: only Peach's
 /// Castle's Bumper takes the Castle knockback; Race to the Finish's keep
 /// the attributes'.
-pub(super) fn make(pos: Vec3, motion_count: u16, castle: bool) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3, castle: bool) -> Item {
     let mut item = Item::new(
         ItemKind::GBumper,
         &ATTRIBUTES,
@@ -37,7 +37,7 @@ pub(super) fn make(pos: Vec3, motion_count: u16, castle: bool) -> Item {
         AttackState::New,
         pos,
         Vec3::ZERO,
-        motion_count,
+        counts,
     );
     item.update_attack_positions();
     item.clear_owner_stats();

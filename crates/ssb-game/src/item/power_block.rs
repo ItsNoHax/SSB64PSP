@@ -28,7 +28,7 @@ pub enum Status {
 /// the descriptor's child a pop-in; `itManagerMakeItem`'s
 /// `lbCommonEjectTreeDObj` then makes that child the item's root, so the
 /// block settles when the pop-in ends (RE-429).
-pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::PowerBlock,
         &ATTRIBUTES,
@@ -36,7 +36,7 @@ pub(super) fn make(pos: Vec3, motion_count: u16) -> Item {
         AttackState::Off,
         pos,
         Vec3::ZERO,
-        motion_count,
+        counts,
     );
     item.update_attack_positions();
     item.damage_coll.interact_mask = super::INTERACT_FIGHTER;

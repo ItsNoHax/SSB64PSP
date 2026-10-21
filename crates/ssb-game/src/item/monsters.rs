@@ -51,7 +51,12 @@ pub static ATTRIBUTES: [ItemAttributes; 5] = [
 
 /// The shared `dGRYamabukiMonsterAttackKind` anti-repeat rule. Draw only
 /// after allocation succeeds, as the two source makers do.
-pub(super) fn make(kind: Kind, pos: Vec3, prev: &mut u8) -> Item {
+pub(super) fn make(
+    counts: &crate::manager_counts::ManagerCounts,
+    kind: Kind,
+    pos: Vec3,
+    prev: &mut u8,
+) -> Item {
     let mut item = Item::new(
         ItemKind::Monster(kind),
         &ATTRIBUTES[kind as usize],
@@ -63,7 +68,7 @@ pub(super) fn make(kind: Kind, pos: Vec3, prev: &mut u8) -> Item {
         },
         pos,
         Vec3::ZERO,
-        0,
+        counts,
     );
     item.vars.monster_offset = pos;
     item.is_allow_knockback = true;
@@ -415,7 +420,12 @@ mod tests {
     #[test]
     fn flame_and_razor_preserve_their_different_spawn_frame_decrements() {
         for (k, interval) in [(Kind::Charmander, 9), (Kind::Venusaur, 16)] {
-            let mut item = make(k, Vec3::ZERO, &mut 4);
+            let mut item = make(
+                &crate::manager_counts::ManagerCounts::new(),
+                k,
+                Vec3::ZERO,
+                &mut 4,
+            );
             item.vars.monster_flags = 1;
             let mut clock = Clock {
                 frame: 39.0,
@@ -446,7 +456,12 @@ mod tests {
             (Kind::Porygon, (18, 40, 0, 70), (8, 70, 0, 40)),
             (Kind::Venusaur, (20, 100, 90, 0), (8, 70, 0, 30)),
         ] {
-            let mut item = make(k, Vec3::ZERO, &mut 4);
+            let mut item = make(
+                &crate::manager_counts::ManagerCounts::new(),
+                k,
+                Vec3::ZERO,
+                &mut 4,
+            );
             let mut clock = Clock::default();
             update(&mut item, &mut clock);
             let fields = |a: &Item| {
@@ -497,7 +512,12 @@ mod tests {
     #[test]
     fn strong_hits_clear_the_gate_and_stop_only_the_root_animation() {
         for k in [Kind::Chansey, Kind::Charmander] {
-            let mut item = make(k, Vec3::ZERO, &mut 4);
+            let mut item = make(
+                &crate::manager_counts::ManagerCounts::new(),
+                k,
+                Vec3::ZERO,
+                &mut 4,
+            );
             let mut clock = Clock::default();
             let mut events = Vec::new();
             item.damage_knockback = 99.99;
@@ -532,7 +552,12 @@ mod tests {
 
     #[test]
     fn chansey_disabled_egg_takes_no_rng_and_enabled_egg_retries_allocation() {
-        let mut item = make(Kind::Chansey, Vec3::ZERO, &mut 4);
+        let mut item = make(
+            &crate::manager_counts::ManagerCounts::new(),
+            Kind::Chansey,
+            Vec3::ZERO,
+            &mut 4,
+        );
         let mut clock = Clock {
             frame: 80.0,
             ..Clock::default()

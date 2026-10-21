@@ -265,7 +265,7 @@ fn piranha_plant_waits_for_a_clear_pipe_then_bites() {
     let mut anims = Scripted::new(141);
     let base = Vec3::new(0.0, 100.0, 0.0);
     let slot = make(&mut pool, StageItem::Pakkun(1), base);
-    let plant = *pool.get(slot).unwrap();
+    let plant = pool.get(slot).unwrap().clone();
     assert_eq!(plant.anim_target(), ItemAnimTarget::Pakkun(1));
     assert_eq!(plant.multi, pakkun::APPEAR_WAIT);
     assert!(plant.is_allow_knockback);
@@ -335,7 +335,7 @@ fn piranha_plant_knocked_out_regrows_after_the_rebirth_wait() {
     // A light hit only hurts.
     hit(&mut pool, slot, 0, SOFT);
     pool.resolve(&[], &mut anims, core::iter::empty);
-    let plant = *pool.get(slot).unwrap();
+    let plant = pool.get(slot).unwrap().clone();
     assert_eq!(plant.status, ItemStatus::Pakkun(pakkun::Status::Appear));
     assert!(plant.damage_knockback == 0.0);
 
@@ -346,7 +346,7 @@ fn piranha_plant_knocked_out_regrows_after_the_rebirth_wait() {
     let kb = pool.get(slot).unwrap().damage_knockback;
     assert!(kb >= pakkun::NDAMAGE_KNOCKBACK_MIN, "{kb}");
     pool.resolve(&[], &mut anims, core::iter::empty);
-    let plant = *pool.get(slot).unwrap();
+    let plant = pool.get(slot).unwrap().clone();
     assert_eq!(plant.status, ItemStatus::Pakkun(pakkun::Status::Damaged));
     assert_eq!(plant.rotate_z, core::f32::consts::PI);
     assert_eq!(plant.damage_coll.hitstatus, HitStatus::None);
@@ -370,7 +370,7 @@ fn piranha_plant_knocked_out_regrows_after_the_rebirth_wait() {
         frames += 1;
         assert!(frames < 100);
     }
-    let plant = *pool.get(slot).unwrap();
+    let plant = pool.get(slot).unwrap().clone();
     assert_eq!(plant.pos, base);
     assert_eq!(plant.vel_air, Vec3::ZERO);
     assert_eq!(plant.rotate_z, 0.0);
@@ -409,7 +409,7 @@ fn castle_bumper_follows_the_ground_and_swells_on_a_hit() {
         },
         Vec3::new(100.0, 200.0, 0.0),
     );
-    let bumper = *pool.get(slot).unwrap();
+    let bumper = pool.get(slot).unwrap().clone();
     assert_eq!(bumper.attack.kb_weight, gbumper::CASTLE_KNOCKBACK);
     assert_eq!(bumper.attack.angle, gbumper::CASTLE_ANGLE);
     assert_eq!(bumper.attack.interact_mask, INTERACT_FIGHTER);

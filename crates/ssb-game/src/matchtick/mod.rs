@@ -11,17 +11,22 @@
 //! |---|---|---|---|
 //! | 5 | 1, 2 | `gcPlayAnimAll` (stage anim) | [`Arena::play_anim`] |
 //! | 5 | 3 | `ftMainProcUpdateInterrupt` | [`Seat::interrupt`], jostle, rebirth halo |
+//! | 5 | 10, 11 | entry, focus, countdown threads; "Go" unlock | [`MatchHooks::interface`], [`World::go`] |
 //! | 4 | 1, 2 | `gr*ProcUpdate` | [`Arena::tick_stage`] |
 //! | 4 | 3 | `ftMainProcPhysicsMapDefault` | [`Seat::physics`] |
+//! | 3 | 2 | item appear actor | [`ItemPool::tick_appear`] |
 //! | 3 | 3 | `ftMainProcPhysicsMapCapture` | [`Seat::physics`], held fighters |
-//! | 3 | 2, 4, 5 | appear actor, item, weapon main | the pools |
+//! | 3 | 4, 5 | item, weapon main | the pools |
 //! | 3 | 6, 9 | effect `proc_update`, camera | [`MatchHooks::tick_camera`] |
 //! | 2 | 3 | `ftMainProcSearchCatch` | hazard and catch search |
-//! | 1 | 3, 4, 5 | `ftMainProcSearchHitAll`, item and weapon hit searches | |
-//! | 0 | 3, 4, 5 | `ftMainProcParams`, item and weapon hit collisions | |
+//! | 1 | 3 | `ftMainProcSearchHitAll`, fighter by fighter | [`crate::combat::process_hits`] |
+//! | 1 | 4, 5 | item and weapon hit searches | the pools |
+//! | 0 | 3, 4, 5 | `ftMainProcParams`, item then weapon hit collisions | |
 //!
-//! Where this order departs from the table, [`Phase`] says so; the order
-//! test (`tests.rs`) pins every departure.
+//! The order test (`tests.rs`) pins [`step`] to this table (RE-556). The
+//! one port-only phase is [`Phase::Settle`] (D-052); the weapons' clash
+//! search runs ahead of the fighters' hit searches because those react at
+//! once (RE-416).
 //!
 //! Platform and pack concerns stay outside: the stage's map, objects and
 //! animation behind [`Arena`], the fighter's skeleton and clip behind
@@ -173,6 +178,8 @@ pub enum Phase {
     GroundAnim,
     /// P5, Fighter: `ftMainProcUpdateInterrupt`.
     Interrupt(u8),
+    /// P5, Interface (links 10, 11): the entry, wait and countdown threads.
+    Interface,
     /// Bonus 2's board check (`sc1PBonusStage`).
     Board,
     /// P4, Ground: the stage controller.
@@ -193,8 +200,15 @@ pub enum Phase {
     Camera,
     /// P2, Fighter: `ftMainProcSearchCatch`.
     Catch(u8),
-    /// P1, Fighter, Item, Weapon: the hit searches, batched by kind.
-    Hits,
+    /// P1, Fighter: `ftMainProcSearchHitAll`, one fighter at a time: its
+    /// searches of the fighters, items, weapons and ground, then its logged
+    /// hits' stats and effects (RE-556 G3).
+    Hits(u8),
+    /// P1, Item: `itProcessProcSearchHitAll`.
+    ItemHits,
+    /// P1, Weapon: `wpProcessProcSearchHitWeapon`'s reactions and
+    /// set-offs; its search runs ahead of the fighters' (RE-416).
+    WeaponHits,
     /// P0, Fighter: `ftMainProcParams` (after the P1 effects).
     Params,
     /// P0, Weapon: the weapons' hit collisions' effects.
@@ -217,6 +231,10 @@ pub trait MatchHooks<S: ?Sized> {
     fn boss_camera(&mut self, _seat: &mut S, _request: CameraRequest) {}
     /// The camera's process (priority 3, link 9).
     fn tick_camera(&mut self, _seats: &mut Seats<'_, S>) {}
+    /// The interface threads (priority 5, links 10 and 11, after every
+    /// fighter's interrupt): the entry focus's or the 1P wait thread's
+    /// `ftCommonAppearSetStatus`, the countdown.
+    fn interface(&mut self, _seats: &mut Seats<'_, S>, _battle: Option<&crate::battle::Battle>) {}
 }
 
 impl<S: ?Sized> MatchHooks<S> for () {}
@@ -231,8 +249,13 @@ pub struct World<'w> {
     pub battle: Option<&'w mut crate::battle::Battle>,
     /// `gSCManagerBattleState->game_status != nSCBattleGameStatusWait`.
     pub started: bool,
-    /// The VS countdown's control lock.
+    /// The control lock the fighters' interrupts run under: the VS
+    /// countdown's, Training's menu, Master Hand's defeat.
     pub locked: bool,
+    /// "Go" lands in this frame's interface threads
+    /// ([`crate::battle::Battle::go_lands`]): the countdown's lock lifts
+    /// after the interrupts (`ftParamUnlockPlayerControl`).
+    pub go: bool,
 }
 
 /// One battle frame, priority 5 down to 0. The frame's `func_run`s (the
@@ -244,6 +267,12 @@ where
     S: Seat<A::Ground> + ?Sized,
     H: MatchHooks<S>,
 {
+    // One battle, one pair of motion and stat counts (`ftmanager.c:163-164`):
+    // a fighter or pool made with a handle of its own joins the items'.
+    world.weapons.counts.adopt(&world.items.counts);
+    for f in seats.iter_mut().flatten() {
+        f.fighter_mut().stats.counts.adopt(&world.items.counts);
+    }
     // Priority 5, Ground link: `gcPlayAnimAll` precedes every fighter
     // interrupt and the priority-4 controller.
     hooks.phase(Phase::GroundAnim);
@@ -251,6 +280,18 @@ where
     hooks.begin(Span::Interrupt);
     interrupt_pass(arena, seats, world, hooks);
     hooks.end(Span::Interrupt);
+    // Priority 5, Interface links: the threads that enter the fighters,
+    // after their interrupts and before their priority-4 physics plays the
+    // entry's first frame (RE-556 G2).
+    hooks.phase(Phase::Interface);
+    hooks.interface(seats, world.battle.as_deref());
+    // `ifCommonAnnounceGoSetStatus` (RE-556 G2b).
+    if core::mem::take(&mut world.go) {
+        world.locked = false;
+        for f in seats.iter_mut().flatten() {
+            f.fighter_mut().interface.control_disable = false;
+        }
+    }
     board_and_stage(arena, seats, world, hooks);
     hooks.begin(Span::Physics);
     physics_pass(arena, seats, world, hooks);
@@ -395,14 +436,23 @@ fn physics_pass<A, S, H>(
     S: Seat<A::Ground> + ?Sized,
     H: MatchHooks<S>,
 {
-    // The capture pass is priority 3 on the Fighter link (3): before the
-    // item, weapon, effect and camera processes. The item actor (link 2)
-    // runs after it here (G1).
-    for capture_pass in [false, true] {
-        fighter_physics(arena, seats, world, hooks, capture_pass);
+    fighter_physics(arena, seats, world, hooks, false);
+    // Priority 3, Item actor link (2), ahead of the Fighter link's capture
+    // pass (3): the appearance actor (RE-556 G1). The Star's maker reads
+    // the camera's look-at, which the camera (link 9) last moved in the
+    // frame before.
+    if let Some(camera) = seats[0].as_deref().and_then(|s| s.camera()) {
+        world.items.camera_at_x = camera.at.x;
     }
+    hooks.phase(Phase::ItemActor);
+    {
+        let ground = arena.ground();
+        world.items.tick_appear(world.started, || ground.surfaces());
+    }
+    // The capture pass, priority 3 on the Fighter link: before the item,
+    // weapon, effect and camera processes.
+    fighter_physics(arena, seats, world, hooks, true);
     let ground = arena.ground();
-    let map = || ground.surfaces();
     for f in seats.iter().flatten() {
         world.weapons.observe_owner(f.fighter());
     }
@@ -419,19 +469,11 @@ fn physics_pass<A, S, H>(
         tops[top_count] = crate::item::pakkun::fighter_top(f.fighter());
         top_count += 1;
     }
-    // Priority 3, Item actor link (2), before the item link: the
-    // appearance actor. The Star's maker reads the camera's look-at, which
-    // the camera (link 9) last moved in the frame before.
-    if let Some(camera) = seats[0].as_deref().and_then(|s| s.camera()) {
-        world.items.camera_at_x = camera.at.x;
-    }
     // The weapon link's last pass: free structs for the items' weapon
     // makers, and Onix's rock events.
     hooks.begin(Span::Items);
     hooks.poison();
     world.items.observe_weapons(world.weapons);
-    hooks.phase(Phase::ItemActor);
-    world.items.tick_appear(world.started, map);
     hooks.phase(Phase::Items);
     {
         let (ground, props) = arena.split();
@@ -632,48 +674,51 @@ where
     for f in seats.iter_mut().flatten() {
         f.settle_capture(ground);
     }
-    hooks.phase(Phase::Hits);
-    crate::combat::search_all(&mut fighters_mut(seats), rules);
-    for f in seats.iter_mut().flatten() {
-        world.items.search_fighter(f.fighter_mut());
-    }
     // `wpProcessProcSearchHitWeapon` reads the weapons as they stand before
-    // any hit reacts (RE-416).
-    world.weapons.search_weapons();
-    for f in seats.iter_mut().flatten() {
-        world.weapons.apply_hits(f.fighter_mut());
-    }
-    for i in 0..SEATS {
-        for j in 0..SEATS {
-            if let Some((attacker, defender)) = pair(seats, i, j) {
-                crate::link::apply_spin_attack_hits(attacker, defender, rules);
+    // any hit reacts (RE-416): the port's fighter searches react at once,
+    // so the clash search's view is taken here.
+    world.weapons.begin_clashes();
+    {
+        let present: ArrayVec<u8, SEATS> = (0..SEATS as u8)
+            .filter(|&i| seats[usize::from(i)].is_some())
+            .collect();
+        let mut fs = fighters_mut(seats);
+        crate::combat::begin_search(&mut fs);
+        crate::combat::begin_finish(&mut fs, world.effects);
+        // Each fighter's `ftMainProcSearchHitAll` in turn: its searches, then
+        // its logged hits' stats and effects, before the next fighter's
+        // search (RE-556 G3).
+        for (k, &seat) in present.iter().enumerate() {
+            hooks.phase(Phase::Hits(seat));
+            crate::combat::search_fighter_row(&mut fs, k, rules);
+            world.items.search_fighter(fs[k]);
+            world.weapons.apply_hits(fs[k]);
+            for a in 0..fs.len() {
+                if a != k {
+                    let (attacker, defender) = crate::combat::pair_mut(&mut fs, a, k);
+                    crate::link::apply_spin_attack_hits(attacker, defender, rules);
+                }
             }
+            crate::hazard::search_ground_hit(fs[k], world.stage);
+            crate::combat::process_hits(fs[k], world.effects);
         }
     }
+    // The items' searches' set-offs and sparks (RE-473).
+    hooks.phase(Phase::ItemHits);
     world
         .items
         .search_hurt(&mut fighters_mut(seats), world.weapons);
-    // The clashes' `proc_setoff`s, after every `proc_hit`.
+    world.items.flush_effects(world.effects);
+    // `wpProcessProcSearchHitWeapon` for each weapon (priority 1, link 5:
+    // after the fighters' and items' searches and their records), then
+    // the clashes' `proc_setoff`s, after every `proc_hit`, and their
+    // set-offs.
+    hooks.phase(Phase::WeaponHits);
+    world.weapons.search_weapons();
     world.weapons.finish_clashes();
-    // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
-    for f in seats.iter_mut().flatten() {
-        crate::hazard::search_ground_hit(f.fighter_mut(), world.stage);
-    }
-    // The hit sparks, made in each fighter's `ftMainProcSearchHitAll`, then
-    // the items' searches' set-offs and sparks (item link, RE-473) and the
-    // clash search's set-offs (weapon link; all priority 1).
+    world.weapons.flush_clash_effects(world.effects);
     hooks.phase(Phase::Params);
-    {
-        let (items, weapons) = (&mut *world.items, &mut *world.weapons);
-        crate::combat::finish_frame_between(&mut fighters_mut(seats), world.effects, &mut |fx| {
-            items.flush_effects(fx);
-            weapons.flush_clash_effects(fx)
-        });
-    }
-    // The weapons' hit collisions (priority 0, after every
-    // `ftMainProcParams`).
-    hooks.phase(Phase::WeaponCollisions);
-    world.weapons.flush_effects(world.effects);
+    crate::combat::end_finish(&mut fighters_mut(seats), world.effects, &mut |_| {});
     for f in seats.iter_mut().flatten() {
         f.fighter_mut().resolve_cliff_release(&map);
     }
@@ -693,6 +738,10 @@ where
     for f in seats.iter_mut().flatten() {
         world.items.sync_owner(f.fighter_mut());
     }
+    // The weapons' hit collisions (priority 0, link 5): after the items'
+    // (link 4, RE-556 G6). PK Fire's flame item is made in its weapon's.
+    hooks.phase(Phase::WeaponCollisions);
+    world.weapons.flush_effects(world.effects);
     let ground = arena.ground();
     let map = || ground.surfaces();
     world.items.take_weapon_spawns(world.weapons, map);

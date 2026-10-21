@@ -6,7 +6,7 @@ use super::*;
 /// (`ITBonus1ObjectHeader`).
 pub static ATTRIBUTES: ItemAttributes = super::attributes::TARGET;
 
-pub(super) fn make(pos: Vec3, instance: u8) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3, instance: u8) -> Item {
     let mut item = Item::new(
         ItemKind::Target,
         &ATTRIBUTES,
@@ -14,7 +14,7 @@ pub(super) fn make(pos: Vec3, instance: u8) -> Item {
         AttackState::Off,
         pos,
         Vec3::ZERO,
-        0,
+        counts,
     );
     item.ga = Ga::Ground;
     item.vars.target_index = instance;
@@ -76,7 +76,11 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn targets_are_grounded_non_pickup_items_with_no_attack() {
-        let mut item = make(Vec3::new(50.0, 100.0, 0.0), 4);
+        let mut item = make(
+            &crate::manager_counts::ManagerCounts::new(),
+            Vec3::new(50.0, 100.0, 0.0),
+            4,
+        );
         assert_eq!(item.ga, Ga::Ground);
         assert!(item.floor.line.is_none());
         assert_eq!(item.attack.state, AttackState::Off);
@@ -87,7 +91,7 @@ mod tests {
         let mut pool = ItemPool::default();
         pool.alloc(item);
         pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
-        item = *pool.items().next().unwrap();
+        item = pool.items().next().unwrap().clone();
         assert_eq!(item.pos, pos);
     }
 }

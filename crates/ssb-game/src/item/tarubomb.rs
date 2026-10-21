@@ -41,7 +41,7 @@ pub enum Status {
 /// `itTaruBombMakeItem` (`ITEM_FLAG_PARENT_GROUND`: no map projection).
 /// `itTaruBombCommonSetMapCollisionBox` stands the barrel on its side,
 /// `rotate.x` 90° on the root, and squares its map box.
-pub(super) fn make(pos: Vec3) -> Item {
+pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3) -> Item {
     let mut item = Item::new(
         ItemKind::TaruBomb,
         &ATTRIBUTES,
@@ -49,7 +49,7 @@ pub(super) fn make(pos: Vec3) -> Item {
         AttackState::New,
         pos,
         Vec3::ZERO,
-        0,
+        counts,
     );
     item.update_attack_positions();
     item.vars.taru_roll_step = 0.0;
