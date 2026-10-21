@@ -430,42 +430,11 @@ impl BossScene {
     }
 }
 
-/// Every fighter's view of Master Hand's target: the first other fighter
-/// in link (port) order (`ftCommonAppearSetStatus`), as it stands now.
-pub(crate) fn refresh_boss_targets(s: &mut [Option<&mut play::FighterScene>; 4]) {
-    for i in 0..s.len() {
-        let is_boss = s[i]
-            .as_deref()
-            .is_some_and(|f| f.fighter.kind == ssb_game::fighter::FighterKind::Boss);
-        if !is_boss {
-            continue;
-        }
-        let target = s.iter().enumerate().filter(|&(j, _)| j != i).find_map(|(_, x)| {
-            x.as_deref().map(|t| ssb_game::boss::Target {
-                port: t.fighter.port,
-                pos: t.fighter.pos,
-                floor_line: t.fighter.floor.map(|f| f.line),
-            })
-        });
-        if let Some(f) = s[i].as_deref_mut() {
-            f.fighter.boss.target = target;
-        }
-    }
-}
-
-/// Master Hand's camera requests (`gmCameraSetStatusMapZoom` and
-/// `gmCameraSetStatusDefault`) on the battle camera.
-pub(crate) fn take_boss_camera(s: &mut [Option<&mut play::FighterScene>; 4]) {
-    let mut request = None;
-    for f in s.iter_mut().flatten() {
-        if let Some(r) = f.fighter.boss.camera.take() {
-            request = Some(r);
-        }
-    }
-    let (Some(r), Some(pl)) = (request, s[0].as_deref_mut()) else {
-        return;
-    };
-    match r {
+/// Master Hand's camera request ([`ssb_game::matchtick::take_boss_camera`])
+/// on the battle camera: `gmCameraSetStatusMapZoom` or
+/// `gmCameraSetStatusDefault`.
+pub(crate) fn apply_boss_camera(pl: &mut play::FighterScene, request: ssb_game::boss::CameraRequest) {
+    match request {
         ssb_game::boss::CameraRequest::MapZoom { at, eye } => {
             pl.camera.begin_map_zoom(at, eye);
             pl.camera_status = Some(ssb_psp_runtime::scene::CameraStatus::MapZoom {

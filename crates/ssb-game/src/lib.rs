@@ -94,6 +94,7 @@ pub mod ko;
 pub mod link;
 mod luigi;
 pub mod map;
+pub mod matchtick;
 pub mod menu;
 pub mod model_pitch;
 pub mod modelpart;

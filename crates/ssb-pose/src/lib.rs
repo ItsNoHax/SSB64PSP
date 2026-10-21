@@ -16,8 +16,10 @@
 
 pub mod joints;
 pub mod posed;
+pub mod quake;
 pub mod skeleton_tick;
 
 pub use joints::{part_locals_into, sample_demo_joints, set_joint_parents, set_posed_joints};
 pub use posed::{PhysicsHooks, PhysicsSpan, PosedFighter, Snapshot};
+pub use quake::quake_translate;
 pub use skeleton_tick::{fighter_skeleton, tick_skeleton_animation};

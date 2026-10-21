@@ -26,7 +26,7 @@ use ssb_game::status::Status;
 
 #[path = "common/posed.rs"]
 mod posed;
-use posed::{tick_pair, Posed};
+use posed::{tick_pair, Pair, Posed};
 
 #[path = "common/dream_land.rs"]
 mod dream_land;
@@ -358,7 +358,7 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
     let scene = GameScene::YoshiEgg;
     let capture = script::capture_tick(scene).unwrap();
     let mut timeline: Vec<(u64, String, String)> = Vec::new();
-    let mut jump_was_held = false;
+    let mut pair = Pair::default();
     for tick in FIRST_TICK..capture {
         let _ = tick_pair(
             &pack,
@@ -366,7 +366,7 @@ fn yoshi_egg_lays_the_dummy_in_an_egg() {
             &mut fighters,
             &scene_pad(scene),
             tick,
-            &mut jump_was_held,
+            &mut pair,
         );
         let now = (
             format!("{:?}", fighters[0].fighter.status.status),
@@ -462,7 +462,7 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
         129..=131 => (button::A, 0, 0),
         _ => (0, 0, 0),
     };
-    let mut jump_was_held = false;
+    let mut pair = Pair::default();
     let mut star: Option<(u64, Vec<E>, [f32; 2])> = None;
     let mut log = vec![format!(
         "spawn Kirby ({:.2},{:.2}) Samus ({:.2},{:.2})",
@@ -472,7 +472,7 @@ fn kirby_spit_star_lands_with_a_quake_and_an_impact_wave_on_its_first_frame() {
         fighters[1].fighter.pos.y
     )];
     for tick in 1..=150 {
-        let [_, queued] = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut jump_was_held);
+        let [_, queued] = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
         let (k, dummy) = (&fighters[0].fighter, &fighters[1].fighter);
         let impacts: Vec<E> = queued
             .into_iter()

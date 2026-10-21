@@ -1494,51 +1494,9 @@ fn scenes_ref<'a>(pl: &'a play::FighterScene, dummies: &'a Dummies) -> [Option<&
     [Some(pl), scene(0), scene(1), scene(2)]
 }
 
-/// Fighters `a` and `b` of `s` at once, in that order.
-fn pair<'b>(
-    s: &'b mut [Option<&mut play::FighterScene>; 4],
-    a: usize,
-    b: usize,
-) -> Option<(&'b mut ssb_game::fighter::Fighter, &'b mut ssb_game::fighter::Fighter)> {
-    if a == b || a.max(b) >= s.len() {
-        return None;
-    }
-    let (lo, hi) = s.split_at_mut(a.max(b));
-    let low = &mut lo[a.min(b)].as_deref_mut()?.fighter;
-    let high = &mut hi[0].as_deref_mut()?.fighter;
-    Some(if a < b { (low, high) } else { (high, low) })
-}
-
-/// The index in `s` of the fighter on `port`.
-fn index_of(s: &[Option<&mut play::FighterScene>; 4], port: u8) -> Option<usize> {
-    s.iter().position(|x| x.as_deref().is_some_and(|x| x.fighter.port == port))
-}
-
-/// [`ssb_game::grab::exchange`] from fighter `from` to its grab partner
-/// (`ssb_game::grab::partner`, the fighter the original's direct writes
-/// reach through `catch_gobj` or `capture_gobj`), or to the first other
-/// fighter in port order when it has never been linked.
-fn exchange_from(s: &mut [Option<&mut play::FighterScene>; 4], from: usize) {
-    let Some(f) = s[from].as_deref() else { return };
-    let to = ssb_game::grab::partner(&f.fighter)
-        .and_then(|port| index_of(s, port))
-        .filter(|&to| to != from)
-        .or_else(|| (0..s.len()).find(|&i| i != from && s[i].is_some()));
-    if let Some((a, b)) = to.and_then(|to| pair(s, from, to)) {
-        ssb_game::grab::exchange(a, b);
-    }
-}
-
-/// Every fighter in `s` in port order, for the passes that take them all.
-fn fighters_mut<'b>(
-    s: &'b mut [Option<&mut play::FighterScene>; 4],
-) -> ssb_engine::array_vec::ArrayVec<&'b mut ssb_game::fighter::Fighter, 4> {
-    s.iter_mut().flatten().map(|x| &mut x.fighter).collect()
-}
-
-/// One Training simulation frame: the stage controllers, every fighter's
-/// interrupt, physics and map passes in port order, and the weapon and item
-/// pools. Kept out of [`run`] so `run` stays inside MIPS branch range.
+/// One Training simulation frame: [`ssb_game::matchtick::step`] over the
+/// player and the dummies, on the pack's stage. Kept out of [`run`] so
+/// `run` stays inside MIPS branch range.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 unsafe fn training_step(
@@ -1557,431 +1515,107 @@ unsafe fn training_step(
     locked: bool,
     effects: &mut dyn ssb_game::effect::HitEffectSink,
     bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
-    mut battle: Option<&mut ssb_game::battle::Battle>,
+    battle: Option<&mut ssb_game::battle::Battle>,
     lead: &mut play::Lead,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
         return;
     };
-    // Priority 5, Ground link: `gcPlayAnimAll` precedes
-    // every fighter interrupt and the priority-4 controller.
-    let _ = stage_objects.advance(p);
-    if let Some(map) = stage_map.as_mut() {
-        let _ = map.tick(p);
-    }
-    let groups = stage_map
-        .as_ref()
-        .map_or(&[][..], |map| map.groups.as_slice());
-    let t = profile::start();
-    interrupt_pass(
-        p,
-        &stage,
-        groups,
-        pl,
-        dummies,
-        items,
-        weapons,
-        stage_ctl,
-        controller,
-        locked,
-        effects,
-        lead,
-    );
-    profile::stop(profile::Span::Interrupt, t);
-    // Bonus2's priority-4 process observes the fighter after interrupts,
-    // before priority-3 movement, item hits and death scoring.
-    if let (Some(bonus), Some(battle), Some(map)) = (bonus, battle.as_deref_mut(), stage_map.as_mut()) {
-        if let Some(group) = pl.fighter.floor.and_then(|s| p.stage_lines(&stage).find(|l| l.id == s.line)).map(|l| l.yakumono) {
-            if let Some(i) = bonus.board(&pl.fighter, group, battle) {
-                map.platforms[i].board(p);
-            }
-        }
-    }
-    // Priority 4, Ground link: the stage controller.
-    {
-        let mut empty: [ssb_game::map::MapGroup; 0] = [];
-        let groups_mut = stage_map
-            .as_mut()
-            .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
-        // `mpCollisionSetDObjNoID`: a floor's original
-        // line id to its collision group.
-        let line_group = |line: u16| {
-            p.stage_lines(&stage)
-                .find(|l| l.id == line)
-                .map(|l| l.yakumono as u8)
-        };
-        let mut s = scenes(pl, dummies);
-        let mut fighters = fighters_mut(&mut s);
-        ssb_psp_runtime::stack_poison::poison();
-        stage_ctl.tick(
-            &mut fighters,
-            ssb_game::stage::TickInput {
-                groups: groups_mut,
-                objects: &mut ssb_psp_runtime::scene::StageObjectsPort {
-                    pack: p,
-                    objects: stage_objects,
-                },
-                items: &mut *items,
-                // The groups are being written, so the
-                // controller sees the static map; only the
-                // Twister queries it, on a static floor.
-                map: ssb_game::stage::MapQuery {
-                    surfaces: || ssb_psp_runtime::scene::MapSegments::new(p, &stage),
-                    line_group: &line_group,
-                },
-                started,
-            },
-        );
-    }
-    // The finish process runs at priority 4, before fighter physics and
-    // death scoring. A timer callback already dispatched keeps its end.
-    if let ssb_game::stage::Controller::Bonus3(race) = &stage_ctl.controller {
-        if race.complete {
-            if let Some(battle) = battle.as_deref_mut() {
-                battle.announce_complete(ssb_game::sound::id::nSYAudioVoiceAnnounceComplete);
-                battle.add_end_sound(ssb_game::sound::id::nSYAudioFGMBonusComplete);
-            }
-        }
-    }
-    // The vapor and sparkles the stage process made.
-    stage_ctl.flush_effects(effects);
-    // Sector Z's Arwing lasers: `wpManagerMakeWeapon` inside the
-    // controller; a pair's second shot only after the first.
-    for laser in stage_ctl.take_lasers() {
-        if !weapons.spawn_arwing_laser(laser) {
-            break;
-        }
-    }
-    if let Some(a) = stage_objects.arwing.as_ref() {
-        weapons.observe_arwing_roll(a.rotate(1)[2]);
-    }
-    let groups = stage_map
-        .as_ref()
-        .map_or(&[][..], |map| map.groups.as_slice());
-    let mut s = scenes(pl, dummies);
-    let t = profile::start();
-    physics_pass(p, &stage, groups, &mut s, weapons, items,
-        stage_ctl,
-        stage_objects,
-        started,
-        effects);
-    profile::stop(profile::Span::Physics, t);
-    let t = profile::start();
-    hit_pass(p, &stage, groups, &mut s, weapons, items, stage_objects, stage_ctl, effects,
-    );
-    profile::stop(profile::Span::Hit, t);
-    // The stage calls the items made (`grInishiePowerBlockSetDamage` in
-    // their hit collisions, `grInishiePowerBlockSetWait` in their main
-    // process): no stage process runs between them and here.
-    stage_ctl.apply_item_events(
-        items.take_stage_events(),
-        groups,
-        &mut ssb_psp_runtime::scene::StageObjectsPort {
+    let mut arena = ssb_psp_runtime::arena::MatchArena {
+        ground: ssb_psp_runtime::arena::PackGround {
+            pack: p,
+            stage: &stage,
+            map: stage_map.as_deref_mut(),
+        },
+        props: ssb_psp_runtime::scene::StageObjectsPort {
             pack: p,
             objects: stage_objects,
         },
-    );
-    ssb_psp_runtime::scene::place_item_trees(stage_objects, items);
+    };
+    let mut lead = play::Player::Lead {
+        scene: pl,
+        lead,
+        controller,
+    };
+    let [d0, d1, d2] = dummies;
+    fn dummy(d: &mut Option<alloc::boxed::Box<play::Dummy>>, controller: ControllerState) -> Option<play::Player<'_>> {
+        d.as_deref_mut().map(|dummy| play::Player::Dummy { dummy, controller })
+    }
+    let mut players = [dummy(d0, controller), dummy(d1, controller), dummy(d2, controller)];
+    let [p1, p2, p3] = &mut players;
+    let mut seats = [Some(&mut lead), p1.as_mut(), p2.as_mut(), p3.as_mut()];
+    let mut world = ssb_game::matchtick::World {
+        weapons,
+        items,
+        stage: stage_ctl,
+        effects,
+        bonus,
+        battle,
+        started,
+        locked,
+    };
+    let mut hooks = MatchHooks {
+        stage: &stage,
+        started_at: [0; 7],
+    };
+    ssb_game::matchtick::step(&mut arena, &mut seats, &mut world, &mut hooks);
+}
+
+/// The PSP's half of [`ssb_game::matchtick::step`]: the profiler's spans,
+/// stack poisoning, and the battle camera.
+struct MatchHooks<'a> {
+    stage: &'a ssb_rom::pack::StageDesc,
+    /// Each span's `profile::start`.
+    started_at: [u32; 7],
+}
+
+impl MatchHooks<'_> {
+    fn span(span: ssb_game::matchtick::Span) -> (usize, profile::Span) {
+        use ssb_game::matchtick::Span as S;
+        match span {
+            S::Interrupt => (0, profile::Span::Interrupt),
+            S::Physics => (1, profile::Span::Physics),
+            S::FighterPhysics => (2, profile::Span::FighterPhysics),
+            S::Items => (3, profile::Span::Items),
+            S::Weapons => (4, profile::Span::Weapons),
+            S::Camera => (5, profile::Span::Camera),
+            S::Hit => (6, profile::Span::Hit),
+        }
+    }
+}
+
+impl<'s> ssb_game::matchtick::MatchHooks<play::Player<'s>> for MatchHooks<'_> {
+    #[inline(always)]
+    fn poison(&mut self) {
+        ssb_psp_runtime::stack_poison::poison();
+    }
+
+    #[inline(always)]
+    fn begin(&mut self, span: ssb_game::matchtick::Span) {
+        self.started_at[Self::span(span).0] = profile::start();
+    }
+
+    #[inline(always)]
+    fn end(&mut self, span: ssb_game::matchtick::Span) {
+        let (i, span) = Self::span(span);
+        profile::stop(span, self.started_at[i]);
+    }
+
+    fn boss_camera(&mut self, seat: &mut play::Player<'s>, request: ssb_game::boss::CameraRequest) {
+        campaign::apply_boss_camera(seat.scene_mut(), request);
+    }
+
+    fn tick_camera(&mut self, seats: &mut ssb_game::matchtick::Seats<'_, play::Player<'s>>) {
+        let mut scenes = seats.each_mut().map(|s| s.as_deref_mut().map(play::Player::scene_mut));
+        tick_battle_camera(self.stage, &mut scenes);
+    }
 }
 
 /// A new weapon pool on the heap, built in this frame rather than `run`'s.
 #[inline(never)]
 fn new_weapon_pool() -> alloc::boxed::Box<ssb_game::weapon::WeaponPool> {
     alloc::boxed::Box::default()
-}
-
-/// `efManagerQuakeProcUpdate`'s `DObj` translation `(y, z)` after `ticks`
-/// plays of the quake's packed animation (RE-416).
-#[inline(never)]
-fn quake_translate(p: &Pack<'_>, magnitude: u8, ticks: u16) -> Option<(f32, f32)> {
-    let anim = p.effect_anim(ssb_rom::effect::QUAKE_ANIM_SLOT + u32::from(magnitude))?;
-    let joint = p.anim_joint(anim.first_joint)?;
-    let data = p.anim_script(&anim)?;
-    let mut j = ssb_rom::objanim::StageJoint::start_changed(joint.script, 0.0);
-    let mut pose = ssb_rom::figatree::JointPose {
-        rotate: [0.0; 3],
-        translate: [0.0; 3],
-        scale: [1.0; 3],
-    };
-    for _ in 0..ticks {
-        j.tick(data, 1.0, &mut pose).ok()?;
-    }
-    Some((pose.translate[1], pose.translate[2]))
-}
-
-/// Makes every fighter's queued effects (`ssb_game::fteffect`), in port
-/// order, where the process that asked for them ends.
-#[inline(never)]
-fn flush_fighter_effects(s: &mut [Option<&mut play::FighterScene>; 4], effects: &mut dyn ssb_game::effect::HitEffectSink) {
-    for f in s.iter_mut().flatten() {
-        effects.fighter(&mut f.fighter);
-    }
-}
-
-/// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in port order,
-/// the player's from the pad and each CPU's from `ftComputerProcessAll`
-/// against every other fighter as it stands. Each fighter's grab events
-/// land before the next one's half, matching the original's direct status
-/// writes (`ssb_game::grab` module docs).
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn interrupt_pass(
-    p: &Pack<'_>,
-    stage: &ssb_rom::pack::StageDesc,
-    groups: &[ssb_game::map::MapGroup],
-    pl: &mut play::FighterScene,
-    dummies: &mut Dummies,
-    items: &mut ssb_game::item::ItemPool,
-    weapons: &ssb_game::weapon::WeaponPool,
-    stage_ctl: &ssb_game::stage::Stage,
-    controller: ControllerState,
-    // The VS countdown locks every fighter's control, the CPUs' too.
-    locked: bool,
-    effects: &mut dyn ssb_game::effect::HitEffectSink,
-    lead: &mut play::Lead,
-) {
-    // Real jump binding (RE-295): any N64 C-button tap is a
-    // real `FTCOMMON_KNEEBEND` button-jump input
-    // (`ftCommonKneeBendCheckButtonTap`). An upward stick
-    // flick is the game's other real jump input and needs no
-    // separate wiring here: `Fighter::tick`'s own status
-    // machine reads `stick_y` directly.
-    let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
-    // `DeadUpFall` drops from above `gGMCameraGObj`'s eye.
-    let eye = pl.camera.eye;
-    for f in scenes(pl, dummies).into_iter().flatten() {
-        f.fighter.dead.camera_eye = eye;
-        f.fighter.interface.control_disable = locked;
-    }
-    for i in 0..4 {
-        // Master Hand reads his target as it stands (`target_gobj`).
-        campaign::refresh_boss_targets(&mut scenes(pl, dummies));
-        if i == 0 {
-            items.publish(&mut pl.fighter);
-            let (input, jump) = match lead {
-                play::Lead::Pad => (controller, jump_held),
-                _ if locked => (ControllerState::default(), false),
-                play::Lead::Key(key) => play::key_input(key),
-                play::Lead::Computer(computer) => {
-                    let all = scenes_ref(pl, dummies);
-                    let opponents: play::Opponents = all
-                        .into_iter()
-                        .flatten()
-                        .filter(|x| ssb_game::computer::behave::is_opponent(&pl.fighter, &x.fighter))
-                        .map(|x| ssb_game::computer::behave::opponent(&x.fighter))
-                        .collect();
-                    let sight = play::CpuSight::observe(pl.fighter.port, items, weapons, stage_ctl);
-                    let input = play::computer_input(computer, pl, p, stage, groups, &opponents, &sight, false);
-                    (input, false)
-                }
-            };
-            pl.tick_fighter_interrupt(p, stage, input, jump, groups);
-        } else {
-            // The CPU's fighter walks skip itself and its team.
-            let all = scenes_ref(pl, dummies);
-            let opponents: play::Opponents = all[i].map_or_else(play::Opponents::new, |me| {
-                all.into_iter()
-                    .flatten()
-                    .filter(|x| ssb_game::computer::behave::is_opponent(&me.fighter, &x.fighter))
-                    .map(|x| ssb_game::computer::behave::opponent(&x.fighter))
-                    .collect()
-            });
-            let Some(d) = dummies[i - 1].as_deref_mut() else {
-                continue;
-            };
-            items.publish(&mut d.fighter);
-            // The items as the fighters before it left them this pass.
-            let sight = play::CpuSight::observe(d.fighter.port, items, weapons, stage_ctl);
-            if d.mirror && !locked {
-                d.tick_fighter_interrupt(p, stage, controller, jump_held, groups);
-            } else {
-                d.tick_interrupt(p, stage, groups, &opponents, &sight, locked);
-            }
-        }
-        let mut s = scenes(pl, dummies);
-        after_interrupt(&mut s, i);
-        jostle_from(&mut s, i);
-        exchange_from(&mut s, i);
-        flush_fighter_effects(&mut s, effects);
-    }
-}
-
-/// Priority 4, Fighter link: every fighter's `ftMainProcPhysicsMap` in port
-/// order (`ftMainProcPhysicsMapDefault`), then priority 3's
-/// `ftMainProcPhysicsMapCapture` for the held fighters, which follow their
-/// catchers' (RE-511), then the weapon and item pools.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn physics_pass(
-    p: &Pack<'_>,
-    stage: &ssb_rom::pack::StageDesc,
-    groups: &[ssb_game::map::MapGroup],
-    s: &mut [Option<&mut play::FighterScene>; 4],
-    weapons: &mut ssb_game::weapon::WeaponPool,
-    items: &mut ssb_game::item::ItemPool,
-    stage_ctl: &mut ssb_game::stage::Stage,
-    stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
-    started: bool,
-    effects: &mut dyn ssb_game::effect::HitEffectSink,
-) {
-    let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
-    // The capture pass is priority 3 on the Fighter link (3): after the
-    // item actor (link 2), which no fighter reads, and before the item,
-    // weapon, effect and camera processes.
-    for capture_pass in [false, true] {
-        for i in 0..s.len() {
-            if s[i].as_deref().is_none_or(|f| ssb_game::grab::runs_in_capture_pass(&f.fighter) != capture_pass) {
-                continue;
-            }
-            let mut held = [None; 3];
-            let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
-            for (slot, o) in held.iter_mut().zip(others) {
-                *slot = ssb_game::map::is_cliff_hold(o.fighter.status.status).then_some((o.fighter.cliff.line, o.fighter.facing));
-            }
-            campaign::refresh_boss_targets(s);
-            let Some(f) = s[i].as_deref_mut() else {
-                continue;
-            };
-            f.fighter.occupied_cliffs = held;
-            let t = profile::start();
-            f.tick_fighter_physics(p, stage, groups);
-            profile::stop(profile::Span::FighterPhysics, t);
-            if core::mem::take(&mut f.fighter.dead.died) {
-                weapons.destroy_boomerang(f.fighter.port);
-            }
-            if i == 0 {
-                // The Boomerang projects through the camera last drawn.
-                weapons.observe_camera(&f.camera);
-            }
-            items.take_requests(&mut f.fighter, map);
-            let spawn = f.fighter.take_weapon_spawn_with_parent();
-            exchange_from(s, i);
-            // The motion scripts' effects, made at the end of this fighter's
-            // `ftMainProcPhysicsMap`.
-            flush_fighter_effects(s, effects);
-            if let Some((spawn, parent)) = spawn {
-                // `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass.
-                weapons.spawn_projected(spawn, Some(parent), &map);
-                // A weapon's making effect (the Blaster's glow), in the
-                // fighter's process.
-                weapons.flush_effects(effects);
-            }
-        }
-    }
-    for f in s.iter().flatten() {
-        weapons.observe_owner(&f.fighter);
-    }
-    let blast_zone = ssb_game::status::BlastZone {
-        top: stage.bounds.top as f32,
-        bottom: stage.bounds.bottom as f32,
-        left: stage.bounds.left as f32,
-        right: stage.bounds.right as f32,
-    };
-    // `gMPCollisionGroundData->map_bound_*` for the effect processes.
-    effects.map_bounds(blast_zone);
-    for f in s.iter().flatten() {
-        items.observe_owner(&f.fighter);
-    }
-    // `itPakkunCommonCheckNoFighter` walks the fighter link's `TopN`s.
-    let mut tops = [ssb_engine::math::Vec3::ZERO; 4];
-    let mut top_count = 0;
-    for f in s.iter().flatten() {
-        tops[top_count] = ssb_game::item::pakkun::fighter_top(&f.fighter);
-        top_count += 1;
-    }
-    // Priority 3, Item actor link (2), before the item link: the
-    // appearance actor. The Star's maker reads the camera's look-at, which
-    // the camera (link 9) last moved in the frame before.
-    if let Some(pl) = s[0].as_deref() {
-        items.camera_at_x = pl.camera.at.x;
-    }
-    // The weapon link's last pass: free structs for the items' weapon
-    // makers, and Onix's rock events.
-    let t = profile::start();
-    ssb_psp_runtime::stack_poison::poison();
-    items.observe_weapons(weapons);
-    items.tick_appear(started, map);
-    items.tick_with_effects(map, Some(blast_zone),
-        &tops[..top_count],
-        &mut ssb_psp_runtime::scene::ItemAnimsPort {
-            pack: p,
-            objects: stage_objects,
-        },
-        effects,
-    );
-    // Monster completion calls the gate from the item main process,
-    // before the weapon link and its particle RNG draws.
-    stage_ctl.apply_item_events(
-        items.take_stage_events(),
-        groups,
-        &mut ssb_psp_runtime::scene::StageObjectsPort {
-            pack: p,
-            objects: stage_objects,
-        },
-    );
-    for f in s.iter_mut().flatten() {
-        items.sync_owner(&mut f.fighter);
-    }
-    items.flush_effects(effects);
-    items.flush_monster_shots(weapons);
-    profile::stop(profile::Span::Items, t);
-    let t = profile::start();
-    ssb_psp_runtime::stack_poison::poison();
-    weapons.tick(map, Some(blast_zone));
-    for f in s.iter_mut().flatten() {
-        weapons.sync_owner(&mut f.fighter);
-    }
-    // The weapons' main processes' effects: the weapon link runs after the
-    // item link (RE-416).
-    weapons.flush_effects(effects);
-    profile::stop(profile::Span::Weapons, t);
-    // `grZebesAcidGetLevelInfo` as the acid's process left it this tick.
-    let acid = match &stage_ctl.controller {
-        ssb_game::stage::Controller::Zebes(z) => z.level_info(),
-        _ => (0.0, 0.0),
-    };
-    effects_and_camera(p, stage, s, weapons, acid, effects);
-}
-
-/// Priority 3 past the weapon link (5): the effects' processes (link 6),
-/// then the camera's (link 9), whose interests read the weapons where
-/// their processes left them (RE-542); the quakes past magnitude 0
-/// (priorities 2 to 0) write after it
-/// ([`ssb_game::camera::effects_then_camera`]).
-#[inline(never)]
-fn effects_and_camera(
-    p: &Pack<'_>,
-    stage: &ssb_rom::pack::StageDesc,
-    s: &mut [Option<&mut play::FighterScene>; 4],
-    weapons: &ssb_game::weapon::WeaponPool,
-    acid: (f32, f32),
-    effects: &mut dyn ssb_game::effect::HitEffectSink,
-) {
-    ssb_game::camera::effects_then_camera(
-        s,
-        effects,
-        &|magnitude, ticks| quake_translate(p, magnitude, ticks),
-        &|s| s[0].as_deref_mut().map(|f| &mut f.camera),
-        &mut |s| {
-            // Master Hand's camera requests reach the camera before its
-            // process.
-            campaign::take_boss_camera(s);
-            let t = profile::start();
-            // `gmCameraUpdateInterests`' weapon loop: the
-            // `is_camera_follow` weapons, an egg still in Yoshi's hand
-            // included.
-            let follow = weapons.camera_follow_positions();
-            let held = s.iter().flatten().filter_map(|f| ssb_game::yoshi::held_egg_position(&f.fighter));
-            let follow = ssb_game::camera::WeaponInterests::collect(follow.chain(held));
-            if let Some(pl) = s[0].as_deref_mut() {
-                pl.camera.weapon_interests = follow;
-                pl.camera.acid_level = acid;
-            }
-            tick_battle_camera(stage, s);
-            profile::stop(profile::Span::Camera, t);
-        },
-    );
 }
 
 /// `sc1PGameSetCameraZoom`: `gmCameraSetStatusPlayerZoom` on the player
@@ -2032,141 +1666,6 @@ fn tick_battle_camera(stage: &ssb_rom::pack::StageDesc, s: &mut [Option<&mut pla
         }
         pl.tick_camera(stage, &others[..count], entry);
     }
-}
-
-/// `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll` (fighters, then
-/// weapons), then `ftMainProcParams` for every fighter -- the original's
-/// process priorities, each over the fighters in port order.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn hit_pass(
-    p: &Pack<'_>,
-    stage: &ssb_rom::pack::StageDesc,
-    groups: &[ssb_game::map::MapGroup],
-    s: &mut [Option<&mut play::FighterScene>; 4],
-    weapons: &mut ssb_game::weapon::WeaponPool,
-    items: &mut ssb_game::item::ItemPool,
-    stage_objects: &mut ssb_rom::ground_obj::GroundObjects,
-    stage_ctl: &mut ssb_game::stage::Stage,
-    effects: &mut dyn ssb_game::effect::HitEffectSink,
-) {
-    let map = || ssb_psp_runtime::scene::MapSegments::with_groups(p, stage, groups);
-    // The battle's team rule, which `enter_training` gave the pools.
-    let rules = weapons.team_rules;
-    for i in 0..s.len() {
-        // `ftMainProcSearchCatch` opens with the obstacle search
-        // (`ftMainSearchHitHazard`), which reads the others' statuses.
-        let mut statuses = [ssb_game::status::AnyStatus::Common(ssb_game::status::Status::Wait); 3];
-        let mut count = 0;
-        for o in s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref()) {
-            statuses[count] = o.fighter.status.status;
-            count += 1;
-        }
-        let Some(f) = s[i].as_deref_mut() else {
-            continue;
-        };
-        ssb_game::hazard::search_hit_hazard(
-            &mut f.fighter,
-            stage_ctl,
-            &mut ssb_psp_runtime::scene::StageObjectsPort {
-                pack: p,
-                objects: stage_objects,
-            },
-            &statuses[..count],
-        );
-        // `ftMainSearchFighterCatch` over the fighter link, then the
-        // catch of the nearest.
-        let others = s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref());
-        let caught = s[i]
-            .as_deref()
-            .and_then(|f| {
-                ssb_game::grab::nearest_catch(&f.fighter, others.map(|o| &o.fighter), rules)
-            })
-            .and_then(|port| index_of(s, port));
-        if let Some((catcher, other)) = caught.and_then(|j| pair(s, i, j)) {
-            ssb_game::grab::search_catch(catcher, other, rules);
-        }
-    }
-    // The catcher's `proc_catch` poses `CatchPull` before the caught
-    // fighter's `proc_capture` reads the hand (RE-511).
-    for f in s.iter_mut().flatten() {
-        f.settle_catch(p, stage, groups);
-    }
-    for i in 0..s.len() {
-        exchange_from(s, i);
-    }
-    // A fighter caught above is at its catcher's hand this frame.
-    for f in s.iter_mut().flatten() {
-        f.settle_capture(p, stage, groups);
-    }
-    ssb_game::combat::search_all(&mut fighters_mut(s), rules);
-    for f in s.iter_mut().flatten() {
-        items.search_fighter(&mut f.fighter);
-    }
-    // `wpProcessProcSearchHitWeapon` reads the weapons as they stand before
-    // any hit reacts (RE-416).
-    weapons.search_weapons();
-    for f in s.iter_mut().flatten() {
-        weapons.apply_hits(&mut f.fighter);
-    }
-    for i in 0..s.len() {
-        for j in 0..s.len() {
-            if let Some((attacker, defender)) = pair(s, i, j) {
-                ssb_game::link::apply_spin_attack_hits(attacker, defender, rules);
-            }
-        }
-    }
-    items.search_hurt(&mut fighters_mut(s), weapons);
-    // The clashes' `proc_setoff`s, after every `proc_hit`.
-    weapons.finish_clashes();
-    // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
-    for f in s.iter_mut().flatten() {
-        ssb_game::hazard::search_ground_hit(&mut f.fighter, stage_ctl);
-    }
-    // The hit sparks, made in each fighter's `ftMainProcSearchHitAll`, then
-    // the items' searches' set-offs and sparks (item link, RE-473) and the
-    // clash search's set-offs (weapon link; all priority 1).
-    ssb_game::combat::finish_frame_between(&mut fighters_mut(s), effects, &mut |fx| {
-        items.flush_effects(fx);
-        weapons.flush_clash_effects(fx)
-    });
-    // The weapons' hit collisions (priority 0, after every
-    // `ftMainProcParams`).
-    weapons.flush_effects(effects);
-    for f in s.iter_mut().flatten() {
-        f.fighter.resolve_cliff_release(&map);
-    }
-    for f in s.iter_mut().flatten() {
-        items.take_requests(&mut f.fighter, map);
-    }
-    let all: alloc::vec::Vec<&ssb_game::fighter::Fighter> = s.iter().flatten().map(|x| &x.fighter).collect();
-    items.resolve_with_effects(&all,
-        &mut ssb_psp_runtime::scene::ItemAnimsPort {
-            pack: p,
-            objects: stage_objects,
-        },
-        map,
-        effects,
-    );
-    items.flush_effects(effects);
-    for f in s.iter_mut().flatten() {
-        items.sync_owner(&mut f.fighter);
-    }
-    items.take_weapon_spawns(weapons, map);
-    for f in s.iter_mut().flatten() {
-        items.record_landed(&mut f.fighter);
-    }
-    for f in s.iter_mut().flatten() {
-        weapons.record_landed(&mut f.fighter);
-    }
-    for i in 0..s.len() {
-        exchange_from(s, i);
-    }
-    // The statuses the hit phase set stand at their first frame.
-    for f in s.iter_mut().flatten() {
-        f.settle_status(p);
-    }
-    flush_fighter_effects(s, effects);
 }
 
 /// The fighter Training spawns for the player: Fox for the Fox capture
@@ -2914,47 +2413,6 @@ fn clock_byte() -> u8 {
 /// `syUtilsRandTimeUCharRange(9)`: the clock's low byte, scaled to 0..9.
 fn stage_select_rand() -> u8 {
     (u32::from(clock_byte()) * 9 / 256) as u8
-}
-
-/// `ftMainProcUpdateInterrupt`'s jostle for fighter `i`, outside hitlag,
-/// against the others as their interrupts have left them (RE-466).
-fn jostle_from(s: &mut [Option<&mut play::FighterScene>; 4], i: usize) {
-    let Some(me) = s[i].as_deref() else { return };
-    if me.fighter.is_in_hitlag() {
-        return;
-    }
-    let mut others = [(ssb_game::fighter::JostleBody::of(&me.fighter), false); 3];
-    let mut count = 0;
-    for (j, o) in s.iter().enumerate() {
-        if j == i {
-            continue;
-        }
-        if let Some(o) = o.as_deref() {
-            others[count] = (ssb_game::fighter::JostleBody::of(&o.fighter), j > i);
-            count += 1;
-        }
-    }
-    if let Some(me) = s[i].as_deref_mut() {
-        ssb_game::fighter::jostle(&mut me.fighter, &others[..count]);
-    }
-}
-
-/// The half of `ftCommonDeadCheckRebirth` fighter `i` cannot do itself:
-/// the rebirth takes the lowest halo no other fighter is using.
-fn after_interrupt(s: &mut [Option<&mut play::FighterScene>; 4], i: usize) {
-    let mut others = [(ssb_game::status::AnyStatus::Common(ssb_game::status::Status::Wait), 0u8); 3];
-    let mut count = 0;
-    for o in s.iter().enumerate().filter(|&(j, _)| j != i).filter_map(|(_, x)| x.as_deref()) {
-        others[count] = (o.fighter.status.status, o.fighter.dead.rebirth.halo_number);
-        count += 1;
-    }
-    let Some(f) = s[i].as_deref_mut().map(|x| &mut x.fighter) else {
-        return;
-    };
-    if f.dead.rebirth_pending {
-        let halo = ssb_game::dead::halo_number(others[..count].iter().copied());
-        ssb_game::dead::rebirth_down(f, halo);
-    }
 }
 
 /// A VS battle's rules (`gSCManagerTransferBattleState`), as the VS mode

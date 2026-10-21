@@ -13,7 +13,7 @@ use ssb_game::fighter::FighterKind;
 
 #[path = "common/posed.rs"]
 mod posed;
-use posed::{tick_pair, tick_pair_pads, Posed};
+use posed::{tick_pair, tick_pair_pads, Pair, Posed};
 
 #[path = "common/dream_land.rs"]
 mod dream_land;
@@ -348,11 +348,11 @@ fn yoshi_egg_lay_matches_the_n64() {
         _ => (0, 0, 0),
     };
     let want: Vec<Vec<f32>> = rows(YOSHI_A).collect();
-    let mut jump_was_held = false;
+    let mut pair = Pair::default();
     let mut log = Vec::new();
     let mut first_bad = None;
     for tick in 1..=330u64 {
-        let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut jump_was_held);
+        let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
         let (y, m) = (&fighters[0].fighter, &fighters[1].fighter);
         let got = [
             f32::from(y.status.status.id()),
@@ -400,13 +400,13 @@ fn yoshi_double_jump_matches_the_n64() {
         _ => (0, 0, 0),
     };
     let want: Vec<Vec<f32>> = rows(YOSHI_DJ).collect();
-    let mut jump_was_held = false;
+    let mut pair = Pair::default();
     let mut log = Vec::new();
     let mut first_bad = None;
     // The N64 frame a replay tick stands for, around the bumper hitlag.
     let n64_tick = |tick: u64| if tick <= 54 { tick } else { tick + 4 };
     for tick in 1..=118u64 {
-        let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut jump_was_held);
+        let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
         let y = &fighters[0].fighter;
         let tick = n64_tick(tick);
         let got = [
@@ -553,20 +553,12 @@ fn kirby_down_wiggle_drops_through_the_castle_floor_as_on_the_n64() {
         _ => (0, 0, 0),
     };
     let want: Vec<Vec<f32>> = rows(KIRBY_DOWN_WIGGLE).collect();
-    let mut jump_was_held = false;
+    let mut pair = Pair::default();
     let mut log = Vec::new();
     let mut first_bad = None;
     let mut transitions = Vec::new();
     for tick in 1..=140u64 {
-        let _ = tick_pair_pads(
-            &pack,
-            &map,
-            &mut fighters,
-            &pad0,
-            &pad1,
-            tick,
-            &mut jump_was_held,
-        );
+        let _ = tick_pair_pads(&pack, &map, &mut fighters, &pad0, &pad1, tick, &mut pair);
         let (k, s) = (&fighters[0].fighter, &fighters[1].fighter);
         let got = [
             f32::from(k.status.status.id()),
@@ -680,19 +672,11 @@ fn kirby_side_wiggles_restart_the_drawn_clip_as_on_the_n64() {
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.split_whitespace().map(str::to_owned).collect())
         .collect();
-    let mut jump_was_held = false;
+    let mut pair = Pair::default();
     let mut log = Vec::new();
     let mut first_bad = None;
     for tick in 0..=140u64 {
-        let _ = tick_pair_pads(
-            &pack,
-            &map,
-            &mut fighters,
-            &pad0,
-            &pad1,
-            tick,
-            &mut jump_was_held,
-        );
+        let _ = tick_pair_pads(&pack, &map, &mut fighters, &pad0, &pad1, tick, &mut pair);
         // `ftKirbySpecialNCatchEatSetStatusParam` and
         // `ftKirbySpecialNEatSetStatusParam` run `proc_slope` at once, but
         // keep the contour SpecialNStart/Loop cleared: no leg fit (the N64's

@@ -16,7 +16,7 @@
 
 ## Current work
 
-- Landed: shared `PosedFighter` and fighter tick in `crates/ssb-pose` ([D-052](docs/decisions/D-052.md)); pure move, goldens unchanged. Divergences now live on the host are in D-052.
+- Landed: shared match-loop frame `ssb_game::matchtick::step` over the PSP game and host replays, with `PosedFighter` in `crates/ssb-pose` ([D-052](docs/decisions/D-052.md)); pure move, goldens unchanged. Order audit: RE-556.
 - Open: stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555 deviation, no current move). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: `ssb-pose` move (D-052).
+Baseline: `matchtick` move (D-052); deepest game stack 366976 B.
 
 | Check | Result |
 |---|---|

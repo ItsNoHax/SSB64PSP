@@ -10,6 +10,7 @@
 
 extern crate alloc;
 
+pub mod arena;
 pub mod assets;
 pub mod audio;
 pub mod boss;

@@ -219,9 +219,6 @@ pub fn lead_computer(
 /// `gSCManagerBattleState->players[dummy].level` in Training.
 pub const TRAINING_CPU_LEVEL: u8 = 3;
 
-/// Opponents a CPU sees: every other fighter.
-pub type Opponents = ArrayVec<ssb_game::computer::behave::Opponent, 3>;
-
 /// What a CPU reads of the match besides the fighters, as it stands when
 /// its interrupt runs: the items and weapons in link order, the Twister,
 /// the Zebes acid and its own PK Thunder trail.
@@ -313,5 +310,127 @@ where
         pk_thunder_trail: sight.pk_thunder_trail,
         twister: sight.twister,
         acid: sight.acid,
+    }
+}
+
+/// One seat of the battle frame ([`ssb_game::matchtick`]): the lead
+/// (pad, key script or CPU) or a dummy.
+pub enum Player<'a> {
+    Lead {
+        scene: &'a mut FighterScene,
+        lead: &'a mut Lead,
+        /// The pad, already cleared while the countdown locks it.
+        controller: ssb_engine::input::ControllerState,
+    },
+    Dummy {
+        dummy: &'a mut Dummy,
+        /// The lead's pad, for a mirror dummy.
+        controller: ssb_engine::input::ControllerState,
+    },
+}
+
+impl Player<'_> {
+    pub fn scene(&self) -> &FighterScene {
+        match self {
+            Player::Lead { scene, .. } => scene,
+            Player::Dummy { dummy, .. } => dummy,
+        }
+    }
+
+    pub fn scene_mut(&mut self) -> &mut FighterScene {
+        match self {
+            Player::Lead { scene, .. } => scene,
+            Player::Dummy { dummy, .. } => dummy,
+        }
+    }
+}
+
+impl ssb_game::matchtick::HasFighter for Player<'_> {
+    fn fighter(&self) -> &ssb_game::fighter::Fighter {
+        &self.scene().fighter
+    }
+    fn fighter_mut(&mut self) -> &mut ssb_game::fighter::Fighter {
+        &mut self.scene_mut().fighter
+    }
+    /// Only the lead carries the battle camera.
+    fn camera(&self) -> Option<&ssb_game::camera::Camera> {
+        match self {
+            Player::Lead { scene, .. } => Some(&scene.camera),
+            Player::Dummy { .. } => None,
+        }
+    }
+    fn camera_mut(&mut self) -> Option<&mut ssb_game::camera::Camera> {
+        match self {
+            Player::Lead { scene, .. } => Some(&mut scene.camera),
+            Player::Dummy { .. } => None,
+        }
+    }
+}
+
+impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p>> for Player<'_> {
+    fn interrupt(
+        &mut self,
+        ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>,
+        view: &ssb_game::matchtick::InputView<'_>,
+    ) {
+        let (pack, stage, groups) = (ground.pack, ground.stage, ground.groups());
+        let sight = |port| CpuSight::observe(port, view.items, view.weapons, view.stage);
+        match self {
+            Player::Lead {
+                scene,
+                lead,
+                controller,
+            } => {
+                // Real jump binding (RE-295): any N64 C-button tap is a
+                // real `FTCOMMON_KNEEBEND` button-jump input
+                // (`ftCommonKneeBendCheckButtonTap`). An upward stick
+                // flick is the game's other real jump input and needs no
+                // separate wiring here: `Fighter::tick`'s own status
+                // machine reads `stick_y` directly.
+                let jump_held = controller.buttons.contains(crate::JUMP_BUTTON_MASK);
+                let (input, jump) = match lead {
+                    Lead::Pad => (*controller, jump_held),
+                    _ if view.locked => (ssb_engine::input::ControllerState::default(), false),
+                    Lead::Key(key) => key_input(key),
+                    Lead::Computer(computer) => {
+                        let sight = sight(scene.fighter.port);
+                        let input =
+                            computer_input(computer, scene, pack, stage, groups, view.opponents, &sight, false);
+                        (input, false)
+                    }
+                };
+                scene.tick_fighter_interrupt(pack, stage, input, jump, groups);
+            }
+            Player::Dummy { dummy, controller } => {
+                if dummy.mirror && !view.locked {
+                    let jump_held = controller.buttons.contains(crate::JUMP_BUTTON_MASK);
+                    dummy.tick_fighter_interrupt(pack, stage, *controller, jump_held, groups);
+                } else {
+                    // The items as the fighters before it left them this
+                    // pass.
+                    let sight = sight(dummy.fighter.port);
+                    dummy.tick_interrupt(pack, stage, groups, view.opponents, &sight, view.locked);
+                }
+            }
+        }
+    }
+
+    fn physics(&mut self, ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>) {
+        let groups = ground.groups();
+        self.scene_mut().tick_fighter_physics(ground.pack, ground.stage, groups);
+    }
+
+    fn settle_catch(&mut self, ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>) {
+        let groups = ground.groups();
+        self.scene_mut().settle_catch(ground.pack, ground.stage, groups);
+    }
+
+    fn settle_capture(&mut self, ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>) {
+        let groups = ground.groups();
+        self.scene_mut().settle_capture(ground.pack, ground.stage, groups);
+    }
+
+    fn settle_status(&mut self, ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>) {
+        self.scene_mut().settle_status(ground.pack);
     }
 }

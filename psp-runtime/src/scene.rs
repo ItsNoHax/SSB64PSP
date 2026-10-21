@@ -1894,10 +1894,9 @@ pub struct StageObjectsPort<'a, 'p> {
 /// the POW Block and the Piranha Plants are ground objects of Mushroom
 /// Kingdom ([`ssb_rom::ground_obj::POWER_BLOCK`], [`ssb_rom::ground_obj::PAKKUN`]),
 /// played by their items rather than by [`ssb_rom::ground_obj::GroundObjects::advance`].
-pub struct ItemAnimsPort<'a, 'p> {
-    pub pack: &'a Pack<'p>,
-    pub objects: &'a mut ssb_rom::ground_obj::GroundObjects,
-}
+/// The same port as [`StageObjectsPort`], so one value serves both traits
+/// ([`ssb_game::matchtick::Arena::Props`]).
+pub type ItemAnimsPort<'a, 'p> = StageObjectsPort<'a, 'p>;
 
 /// The ground object and instance an item's tree is.
 fn item_tree(target: ssb_game::item::ItemAnimTarget, objects: &ssb_rom::ground_obj::GroundObjects) -> Option<(u8, u8)> {

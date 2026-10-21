@@ -24,7 +24,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 | `crates/ssb-rom` | `archive`, `vpk0`, F3DEX2 decoding (`dl`), mesh and texture conversion (`mesh`, `texture`, `psp_texture`, `filter_compensation`), `pack`, scene file closures, `reloc_link`, `audio` data |
 | `crates/ssb-engine` | Traits (renderer, input, timing), the N64 audio system (`audio`), math incl. `lbCommonSin`, the one N64 → PSP screen mapping (`coord`), allocators (`memory`) |
 | `crates/ssb-game` | Gameplay translated from the decomp: fighters, statuses, motion scripts, combat, collision, items, weapons, effects, stages, CPU, camera, HUD, menus, 1P campaign (`spgame`), opening, save data (`backup`) |
-| `crates/ssb-pose` | `PosedFighter`: a fighter with its skeleton and clip state, ticked in the match's two halves and settled after the hit phase; joint sampling, played-spawn placement; run by `psp-runtime`'s `FighterScene` and the host replays ([D-052](decisions/D-052.md)) |
+| `crates/ssb-pose` | `PosedFighter`: a fighter with its skeleton and clip state, ticked in the match's two halves and settled after the hit phase; joint sampling, played-spawn placement, `quake_translate`; run by `psp-runtime`'s `FighterScene` and the host replays ([D-052](decisions/D-052.md)) |
 | `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests |
 | `crates/ssb-tablegen` | Build-time generation of the tables the game reads from the ROM (layout and decoders only, [D-048](decisions/D-048.md)) |
 | `psp-runtime` | All PSP code: pack and scene files (`assets`, `scene_files`), GE (`gu`, `meshdraw`), `audio`, input, timing, save file, profiler, main thread, transitions, movie and particle draws |
@@ -70,6 +70,14 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
   - status tables, animation file tables
 - Archive data, from the pack: models, animations, `FTAttributes`, collision, sprites
 - Objects: explicit state machines, replacing the original's `GObjProcess` coroutine threads
+
+#### Match loop
+
+- One frame: `ssb_game::matchtick::step`, run by `psp-game` (`training_step`) and the host replays (`tick_pair_pads`) ([D-052](decisions/D-052.md)).
+- Passes, in order: `interrupt_pass`, `board_and_stage`, `physics_pass` → `fighter_physics`, `effects_and_camera`, `hit_pass`; then the settle after the hit phase.
+- Platform seams: `Seat<G>` (fighter and its ground), `Ground`, `Arena`, `MatchHooks` (poison, profiler spans, camera, boss camera).
+- Pack-bound halves: `psp-runtime` `arena.rs` (`PackGround`, `MatchArena`); `FighterScene` implements `HasFighter`.
+- Order is pinned by `matchtick/tests.rs`: decomp `PROCESSES` table vs port order, with named departures (RE-556).
 
 ### Asset Pipeline
 
