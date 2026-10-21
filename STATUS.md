@@ -16,9 +16,9 @@
 
 ## Current work
 
-- Landed: item/weapon N64 parity: Egg joint timing, deferred weapon reactions, hit order, Saffron monsters, Barrel clip (RE-566). 5 goldens rebaselined (72283, 88374, 78119, 9678, 1114 native px).
-- Landed: setter first frames (RE-565); battle draw order (RE-563); fireball DL entry (RE-564).
-- Open: CPU item tracking N64 trace (RE-566); magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: entry effect clock starts the frame after the make; capture entry focus pinned (RE-567). 8 goldens rebaselined (see RE-567, 2642-95158 native px).
+- Landed: map-step skeleton fix for motion -1/-2; Kirby air catch, Yoshi grab and throws, dummy tech, GuardSetOff checked against the N64 (RE-567).
+- Open: Mario entry pipe disk over the front wall in the id-2 zoom (RE-567, D-051 proof). CPU item tracking N64 trace (RE-566); magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 31 (RE-566); deepest game stack 366992 B.
+Baseline: batch 32 (RE-567); deepest game stack 366992 B.
 
 | Check | Result |
 |---|---|

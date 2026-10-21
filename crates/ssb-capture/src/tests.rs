@@ -208,3 +208,34 @@ fn cpufx_scenes_parse_with_their_dashes_and_ticks() {
         assert_eq!(spec.to_string(), text);
     }
 }
+
+#[test]
+fn entry_scenes_pin_their_n64_reference_focus() {
+    // RE-425's vehicle and ball rows were compared against an N64 build
+    // with focus id 1; `vslinkentry` and the cpufx references draw id 2.
+    // The pin keeps each scene on its reference's entry timing when the
+    // capture RNG's draw changes.
+    for s in [
+        GameScene::VsArwing,
+        GameScene::VsCar,
+        GameScene::VsBall,
+        GameScene::VsRays,
+    ] {
+        assert_eq!(s.entry_focus(), Some(1), "{s}");
+    }
+    for s in [
+        GameScene::VsLinkEntry,
+        GameScene::CpuFxD,
+        GameScene::CpuFxU,
+        GameScene::CpuFxN,
+        GameScene::CpuFxK,
+        GameScene::CpuFxS,
+    ] {
+        assert_eq!(s.entry_focus(), Some(2), "{s}");
+    }
+    let pinned = GameScene::ALL
+        .iter()
+        .filter(|s| s.entry_focus().is_some())
+        .count();
+    assert_eq!(pinned, 10);
+}

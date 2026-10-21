@@ -1226,6 +1226,27 @@ impl GameScene {
         }
     }
 
+    /// The entry focus id (`ifCommonEntryFocusMakeInterface`) this scene
+    /// pins over its RNG draw, which still runs. Each matches its N64
+    /// reference build: RE-425's vehicle and ball scenes are id 1 (the
+    /// first fighter enters at tick 204, the second at 219: port tick =
+    /// N64 frame + 8), `vslinkentry` and every `cpufx` reference are id 2
+    /// (Link enters at 159, Mario at 219, the camera zooms on each).
+    pub const fn entry_focus(self) -> Option<u8> {
+        match self {
+            GameScene::VsArwing | GameScene::VsCar | GameScene::VsBall | GameScene::VsRays => {
+                Some(1)
+            }
+            GameScene::VsLinkEntry
+            | GameScene::CpuFxD
+            | GameScene::CpuFxU
+            | GameScene::CpuFxN
+            | GameScene::CpuFxK
+            | GameScene::CpuFxS => Some(2),
+            _ => None,
+        }
+    }
+
     pub fn parse(spec: &str) -> Option<GameScene> {
         let spec = spec.trim();
         GameScene::ALL.into_iter().find(|s| s.name() == spec)

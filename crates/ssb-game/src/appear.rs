@@ -92,8 +92,13 @@ pub fn entry_effect(kind: FighterKind) -> Option<EntryEffect> {
     })
 }
 
-/// Advances the entry effect's clock and the rays', once per frame from
-/// `ftMainProcPhysicsMap`'s slot (the effects' `gcPlayAnimAll`).
+/// Advances the entry effect's clock and the rays', once per frame at the
+/// head of `ftMainProcUpdateInterrupt`'s slot. `efManagerMakeEffect` leaves
+/// `efManagerFuncRun` as the effect `GObj`'s `func_run`, which adds its
+/// `gcPlayAnimAll` process (priority 3) in the next frame's `gcRunAll` link
+/// pass, before every process: a clock made this frame (by the focus
+/// thread or the Appear update, both later in the frame) has not counted
+/// it. Nothing reads the clocks between here and the effects' own slot.
 pub fn tick_effect_clock(f: &mut Fighter) {
     for t in [f.entry.effect_ticks.as_mut(), f.entry.rays_ticks.as_mut()]
         .into_iter()

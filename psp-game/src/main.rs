@@ -383,14 +383,14 @@ const fn capture_ticks(scene: GameScene) -> u64 {
     }
 }
 
-/// RE-425's entry captures. The capture RNG gives the entry focus id 1, so
+/// RE-425's entry captures. They pin the entry focus id 1 (`GameScene::entry_focus`), so
 /// the first fighter enters at tick 204 and the second at 219: the Arwing
 /// is 50 frames into its flight, the car 45 into its drive, the ball 26
 /// into its throw, and the ball 50 frames in has opened under its rays.
 const VS_ARWING_CAPTURE_TICK: u64 = 254;
 const VS_CAR_CAPTURE_TICK: u64 = 264;
 const VS_BALL_CAPTURE_TICK: u64 = 230;
-/// `vslinkentry`: this roster's capture RNG gives the entry focus id 2, so
+/// `vslinkentry`: it pins the entry focus id 2, so
 /// Link enters at tick 159 and Mario at 219, and the camera holds on Link
 /// from 189 to 249. Link 60 frames into his Appear, as N64 frame 256 of a
 /// focus-1 entry (RE-425).
@@ -1174,12 +1174,17 @@ fn log_entry_state(
     ) {
         return;
     }
-    for f in [player.map(|p| &p.fighter), dummy.map(|d| &d.fighter)].into_iter().flatten() {
+    for (f, sk) in [player.map(|p| (&p.fighter, &p.skeleton)), dummy.map(|d| (&d.fighter, &d.skeleton))]
+        .into_iter()
+        .flatten()
+    {
         let line = alloc::format!(
-            "re425 tick={} port={} status={:?} fx={:?} rays={:?} lr={:?} link1={} z={:.0}\n",
+            "re425 tick={} port={} status={:?} af={:.2} flags={} fx={:?} rays={:?} lr={:?} link1={} z={:.0}\n",
             sim_frame_index,
             f.port,
             f.status.status,
+            sk.frame(),
+            sk.any_flags(),
             f.entry.effect_ticks,
             f.entry.rays_ticks,
             f.entry.lr,
@@ -4023,16 +4028,16 @@ unsafe fn session_frame(
                             s.scene_gkind = gkind;
                         }
                         prepare_monster_capture(capture_scene, pack.as_ref(), s);
+                        // The entry focus of the scene's N64 reference build
+                        // (cpufx: a zoom on each fighter, so the camera is
+                        // still settling after "Go").
+                        s.damage_hud.entry_focus_pin = capture_scene.and_then(GameScene::entry_focus);
                         // These scenes set the behaviour directly rather than
                         // through Training's CP option (`trainingmenu` does).
                         if capture_scene.is_some_and(is_cpufx) {
                             for d in s.dummies.iter_mut().flatten() {
                                 d.mirror = true;
                             }
-                            // Every cpufx reference ROM's run draws focus 2,
-                            // a zoom on each fighter, so its camera is still
-                            // settling after "Go".
-                            s.damage_hud.entry_focus_pin = Some(2);
                         }
                         // `cpufx-k`'s Kirbys are made holding their copies
                         // (`FTCreateDesc::copy_kind`).

@@ -43,6 +43,86 @@ pub struct Pair {
     /// Jungle's Barrel root translation this tick, fed from an N64 trace
     /// (the host plays no ground animation); `None` puts it out of reach.
     pub barrel: Option<ssb_engine::math::Vec3>,
+    /// Fighter 1 as Training's dummy runs it: a CPU
+    /// (`sc1PTrainingModeUpdateDummyBehavior`'s Stand) whose controller
+    /// replaces its pad; `None` drives it from the pad.
+    pub cpu: Option<HostCpu>,
+}
+
+/// A CPU seat on the host, as `psp-game`'s `Dummy` runs one: the computer
+/// and the stage it reads (`cpu_world`).
+pub struct HostCpu {
+    pub computer: Box<ssb_game::computer::Computer>,
+    pub stage: ssb_game::dead::StageBounds,
+    /// `gSCManagerBattleState->gkind`.
+    pub gkind: Option<u8>,
+}
+
+impl HostCpu {
+    /// `ftComputerSetupAll` for Training's dummy `f` on the pack stage
+    /// `stage` with map `map`: level 3 (`TRAINING_CPU_LEVEL`), the menu's
+    /// Stand, no trait.
+    pub fn training_dummy(
+        f: &ssb_game::fighter::Fighter,
+        stage: &ssb_rom::pack::StageDesc,
+        bounds: ssb_game::dead::StageBounds,
+        map: &[ssb_game::weapon::MapSurface],
+    ) -> HostCpu {
+        let mut computer = Box::new(ssb_game::computer::Computer::setup(f, 3));
+        computer.behavior = ssb_game::computer::Behavior::Stand;
+        computer.trait_kind = ssb_game::computer::attack::Trait::None;
+        let mut cpu = HostCpu {
+            computer,
+            stage: bounds,
+            gkind: ssb_rom::stage::common_ground_kind(stage.source_file),
+        };
+        let sight = ssb_game::computer::CpuSight::default();
+        let world = cpu_world(cpu.stage, cpu.gkind, || map.iter().copied(), &[], &sight);
+        cpu.computer.setup_world(f, &world);
+        cpu
+    }
+
+    fn world<'a, F, I>(
+        &self,
+        surfaces: F,
+        opponents: &'a [ssb_game::computer::behave::Opponent],
+        sight: &'a ssb_game::computer::CpuSight,
+    ) -> ssb_game::computer::behave::World<'a, F>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = ssb_game::weapon::MapSurface>,
+    {
+        cpu_world(self.stage, self.gkind, surfaces, opponents, sight)
+    }
+}
+
+/// What a CPU reads of the match this frame (`psp-game`'s `cpu_world`).
+fn cpu_world<'a, F, I>(
+    stage: ssb_game::dead::StageBounds,
+    gkind: Option<u8>,
+    surfaces: F,
+    opponents: &'a [ssb_game::computer::behave::Opponent],
+    sight: &'a ssb_game::computer::CpuSight,
+) -> ssb_game::computer::behave::World<'a, F>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = ssb_game::weapon::MapSurface>,
+{
+    let geometry = ssb_game::computer::behave::geometry_bounds(surfaces());
+    ssb_game::computer::behave::World {
+        surfaces,
+        geometry,
+        stage,
+        gkind,
+        opponents,
+        items: &sight.items,
+        weapon_threats: &sight.weapons,
+        team_rules: sight.team_rules,
+        is_1p_game: false,
+        pk_thunder_trail: sight.pk_thunder_trail,
+        twister: sight.twister,
+        acid: sight.acid,
+    }
 }
 
 impl Default for Pair {
@@ -55,6 +135,7 @@ impl Default for Pair {
             groups: None,
             objects: None,
             barrel: None,
+            cpu: None,
         }
     }
 }
@@ -342,6 +423,8 @@ pub struct HostSeat<'a, 'p> {
     /// The jump button's edges this tick.
     pub tapped: bool,
     pub released: bool,
+    /// The CPU that drives this seat instead of `input`.
+    pub cpu: Option<&'a mut HostCpu>,
 }
 
 impl ssb_game::matchtick::HasFighter for HostSeat<'_, '_> {
@@ -354,10 +437,26 @@ impl ssb_game::matchtick::HasFighter for HostSeat<'_, '_> {
 }
 
 impl ssb_game::matchtick::Seat<HostGround<'_, '_>> for HostSeat<'_, '_> {
-    fn interrupt(&mut self, ground: &HostGround<'_, '_>, _: &ssb_game::matchtick::InputView<'_>) {
+    fn interrupt(
+        &mut self,
+        ground: &HostGround<'_, '_>,
+        view: &ssb_game::matchtick::InputView<'_>,
+    ) {
         use ssb_game::matchtick::Ground;
         let top = map_bound_top(self.posed);
         let surfaces = || ground.surfaces();
+        // `ftComputerProcessAll` sets `fp->input.cp`, which the fighter
+        // reads as its controller; a locked fighter runs no CPU.
+        if let Some(cpu) = self.cpu.as_deref_mut() {
+            self.input = ssb_engine::input::ControllerState::default();
+            (self.tapped, self.released) = (false, false);
+            if !view.locked {
+                let sight = view.sight(self.posed.fighter.port);
+                let world = cpu.world(surfaces, view.opponents, &sight);
+                cpu.computer.process(&self.posed.fighter, &world);
+                self.input = cpu.computer.controller();
+            }
+        }
         self.posed.tick_interrupt(
             self.pack,
             top,
@@ -507,6 +606,7 @@ fn tick_seats(
         input: c[0],
         tapped: edges[0].0,
         released: edges[0].1,
+        cpu: None,
     };
     let mut s1 = HostSeat {
         posed: b,
@@ -514,6 +614,7 @@ fn tick_seats(
         input: c[1],
         tapped: edges[1].0,
         released: edges[1].1,
+        cpu: pair.cpu.as_mut(),
     };
     let mut seats: ssb_game::matchtick::Seats<'_, HostSeat<'_, '_>> =
         [Some(&mut s0), Some(&mut s1), None, None];

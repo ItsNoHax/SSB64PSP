@@ -133,14 +133,26 @@ fn the_entry_focus_staggers_two_fighters() {
     assert_eq!(f(2).zoom(210), None);
 }
 
+/// The clock skips the frame the effect is made on: `efManagerFuncRun`
+/// adds its process in the next frame's link pass. The N64 (ParaLLEl, Fox
+/// vs Captain Falcon on Dream Land) shows the Arwing at anim frame 0 on the
+/// frame Fox's Appear starts and frame 60 with Fox's clip at frame 60.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[test]
 fn the_entry_effect_clock_starts_with_the_entry() {
+    let surfaces = || core::iter::empty::<crate::weapon::MapSurface>();
     let mut f = standing(FighterKind::Mario, Facing::Right);
     assert_eq!(f.entry.effect_ticks, None);
+    // The make frame: the interrupt pass, then the focus thread, then
+    // physics.
+    f.tick_interrupt(&surfaces);
     appear_set_status(&mut f);
+    f.tick_physics_map(&surfaces);
     assert_eq!(f.entry.effect_ticks, Some(0));
-    tick_effect_clock(&mut f);
-    tick_effect_clock(&mut f);
+    for _ in 0..2 {
+        f.tick_interrupt(&surfaces);
+        f.tick_physics_map(&surfaces);
+    }
     assert_eq!(f.entry.effect_ticks, Some(2));
     let mut n = standing(FighterKind::Ness, Facing::Right);
     appear_set_status(&mut n);
@@ -174,14 +186,16 @@ fn the_poke_balls_rays_start_on_the_scripts_flag() {
         appear_set_status(&mut f);
         let mut started = None;
         for frame in 1..=60 {
+            // The interrupt pass's head, then the Appear update.
+            tick_effect_clock(&mut f);
             status::update(&mut f);
             if f.entry.rays_ticks.is_some() && started.is_none() {
                 started = Some(frame);
             }
-            tick_effect_clock(&mut f);
         }
         assert_eq!(started, Some(40), "{kind:?}");
-        assert_eq!(f.entry.rays_ticks, Some(21));
+        // Made in frame 40's update; counted from frame 41.
+        assert_eq!(f.entry.rays_ticks, Some(20));
         assert_eq!(f.motion_script.flags[1], 0);
     }
     let mut m = standing(FighterKind::Mario, Facing::Right);

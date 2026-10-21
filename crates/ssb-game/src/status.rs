@@ -10210,6 +10210,29 @@ mod tests {
         }
     }
 
+    /// How to Play's N64 trace (RE-466 `n64_full.txt`, Luigi, frames
+    /// 4143-4165): a 7-damage hit sets `GuardSetOff` with `vel_ground`
+    /// 30.68 (15.34 setoff frames * 2); after the hitlag (4143-4149) the
+    /// updates at 4150-4164 count 15 of them down, and with Z up the 16th
+    /// (4165) leaves for `GuardOff`, not `Guard`.
+    #[test]
+    fn a_setoff_counts_its_frames_down_then_drops_the_shield_as_on_the_n64() {
+        let mut f = mario();
+        f.input.buttons = N64Buttons(N64Buttons::Z);
+        set_guard_on(&mut f);
+        set_guard(&mut f);
+        let lr = f.facing.sign();
+        set_guard_set_off(&mut f, 7.0, lr);
+        assert!((f.physics.vel_ground.x.abs() - 30.68).abs() < 1e-4);
+        f.input.buttons = N64Buttons(0);
+        for frame in 4150..=4164 {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::GuardSetOff, "{frame}");
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, Status::GuardOff);
+    }
+
     #[test]
     fn every_status_entry_counts_and_records_its_start_frame() {
         let mut f = mario();

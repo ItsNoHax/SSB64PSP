@@ -1322,6 +1322,7 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        crate::appear::tick_effect_clock(self);
         if !self.interface.control_disable {
             self.status.total_tics = self.status.total_tics.wrapping_add(1);
         }
@@ -1603,7 +1604,6 @@ impl Fighter {
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.physics_pass = true;
-        crate::appear::tick_effect_clock(self);
         // `ftCommonThrownReleaseFighterLoseGrip`'s
         // `mpCommonRunFighterCollisionDefault`: one collision pass from the
         // catcher's position with its diamond to the dropped TopN. It runs

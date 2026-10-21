@@ -334,11 +334,20 @@ impl PosedFighter {
             ssb_game::spawn_pose::place_switch(&mut self.fighter);
         }
         // A status the map step set (a landing) parses its first frame at
-        // once (`ftMainSetStatus`).
+        // once (`ftMainSetStatus`). A `motion_id` -1 or -2 status parses
+        // nothing there (`ftmain.c:4613`): its pose stands as this frame's
+        // play left it, and the next play advances (-1: Kirby's
+        // `ftKirbySpecialAirNCatchSwitchStatusGround`) or holds (-2:
+        // `ftCommonCapturePulledProcPhysics`'s `CaptureWait`) it.
         if !self.fighter.is_in_hitlag()
             && self.started != Some((self.fighter.status.status, self.fighter.status.entry))
         {
-            hooks.span(PhysicsSpan::Anim, || self.tick_animation(pack));
+            if self.fighter.status.status.keeps_motion() {
+                self.started = Some((self.fighter.status.status, self.fighter.status.entry));
+                self.skeleton.speed = ssb_game::status::clip_speed(&self.fighter);
+            } else {
+                hooks.span(PhysicsSpan::Anim, || self.tick_animation(pack));
+            }
         }
         self.sample_held_child_offset();
         if (ssb_game::map::is_cliff_hold(self.fighter.status.status)

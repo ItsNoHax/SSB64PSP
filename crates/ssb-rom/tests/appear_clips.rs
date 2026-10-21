@@ -216,3 +216,30 @@ fn two_lead_figatrees_bind_every_model_joint() {
         }
     }
 }
+
+/// Fox's Appear clips hide his model until the Arwing's canopy opens: the
+/// N64 (ParaLLEl, RE-425) first draws his head in the cockpit on the frame
+/// his clip and the Arwing's both reach 60.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn foxs_entry_shows_him_from_frame_60() {
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    for slot in [SLOT_APPEAR_R as u32, SLOT_APPEAR_R as u32 + 1] {
+        let anim = pack.fighter_anim(1, slot).unwrap();
+        let script = pack.anim_script(&anim).unwrap();
+        let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+        skeleton.start(&pack, &anim, 0.0, 1.0);
+        let nodes: Vec<u32> = (0..anim.joint_count)
+            .map(|j| pack.anim_joint(anim.first_joint + j).unwrap().node)
+            .filter(|&n| n != AnimJoint::NO_NODE)
+            .collect();
+        for _ in 0..70 {
+            skeleton.tick(script).unwrap();
+            let hidden = nodes.iter().filter(|&&n| skeleton.hidden(&pack, n)).count();
+            let frame = skeleton.frame();
+            let want = if frame < 60.0 { nodes.len() } else { 0 };
+            assert_eq!(hidden, want, "slot {slot} frame {frame}");
+        }
+    }
+}
