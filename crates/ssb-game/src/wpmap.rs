@@ -260,6 +260,20 @@ pub fn mag(v: Vec3) -> f32 {
     ssb_engine::math::sqrt(v.x * v.x + v.y * v.y)
 }
 
+/// `wpMainApplyGravityClampTVel` (= `itMainApplyGravityClampTVel`): gravity,
+/// then a 2D speed over `tvel` is scaled down to `tvel`, the direction kept.
+/// `lbCommonNormDist2D` multiplies by the reciprocal of the magnitude, then
+/// `lbCommonScale2D`; a division or a `tvel / mag` factor rounds differently.
+pub fn apply_gravity_clamp_tvel(vel: &mut Vec3, gravity: f32, tvel: f32) {
+    vel.y -= gravity;
+    let m = mag(*vel);
+    if m > tvel {
+        let factor = 1.0 / m;
+        vel.x = vel.x * factor * tvel;
+        vel.y = vel.y * factor * tvel;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

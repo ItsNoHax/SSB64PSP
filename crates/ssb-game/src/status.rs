@@ -645,6 +645,8 @@ impl Status {
             Status::LandingHeavy => 0.5,
             // `FTCOMMON_CAPTURECAPTAIN_ANIM_SPEED`: the pose holds frame 4.
             Status::CaptureCaptain => 0.0,
+            // `ftCommonTaruCannSetStatus` passes 0: the pose holds frame 0.
+            Status::TaruCann => 0.0,
             _ => 1.0,
         }
     }
@@ -1707,6 +1709,16 @@ impl StatusTiming {
         }
     }
 
+    /// `ftMainSetStatus` with an `anim_speed` of 0: the figatree, the
+    /// status clock and the motion script hold.
+    pub fn held() -> Self {
+        StatusTiming {
+            anim_length: None,
+            anim_speed: 0.0,
+            looping: false,
+        }
+    }
+
     /// A looping animation of `len` frames.
     pub fn looping(len: f32) -> Self {
         StatusTiming {
@@ -1928,6 +1940,11 @@ pub struct StatusState {
     /// unless `is_control_disable` (the entry, a locked pause). The
     /// camera's idle zoom-out reads it (`gmCameraCalcFighterZoomRange`).
     pub total_tics: u32,
+    /// `status_vars.common.throwf.kneebend_anim_frame` and
+    /// `...landing_anim_frame`: Donkey Kong's cargo jumpsquat and landing
+    /// count their frames here, as both play at an animation speed of 0
+    /// and `anim_frame` holds (RE-474). Each setter zeroes it.
+    pub throwf_anim_frame: f32,
 }
 
 /// `ftCommonTurnStatusVars`: the pivot's state. `lr_turn` shares its word
@@ -1995,6 +2012,7 @@ impl Default for StatusState {
             anim_frame_begin: 0.0,
             entry: 0,
             total_tics: 0,
+            throwf_anim_frame: 0.0,
         }
     }
 }
@@ -2299,11 +2317,16 @@ fn guard_update_joints(f: &mut Fighter) {
 }
 
 /// `ftCommonGuardInitJoints`' gameplay half: `GuardSetOff` keeps the angle
-/// it was hit at.
+/// it was hit at. `lbCommonAddDObjAnimJointAll(XRotN, shield_anim_joints
+/// [angle_i], angle_f)` sets `gobj->anim_frame` to `angle_f`, and the
+/// `ftMainPlayAnimEventsAll` after it leaves it there: the figatree clock
+/// reads the degrees into the sector (RE-474). The status clock, which the
+/// drawn pose follows, is untouched.
 fn guard_init_joints(f: &mut Fighter) {
     if f.status.status != Status::GuardSetOff {
         guard_update_shield_angle(f);
     }
+    f.status.anim_frame = f.guard.angle_f;
 }
 
 /// `ftCommonGuardOffSetStatus` @ `ftcommonguard2.c:78`: the bubble stays up
@@ -6357,6 +6380,8 @@ pub fn update(f: &mut Fighter) {
                 } else {
                     set_guard(f);
                 }
+            } else {
+                guard_init_joints(f);
             }
         }
         // `ftCommonCliffCatchProcUpdate` @ `ftcommoncliffcatchwait.c:10`: see
@@ -10149,6 +10174,34 @@ mod tests {
         assert_eq!(f.status.status, Status::GuardSetOff);
         assert_eq!(f.guard.angle_i, 2);
         assert_eq!(shield_pose(&f), Some(ShieldPose::AllJoints));
+    }
+
+    /// `ftCommonGuardInitJoints` puts the figatree clock at `angle_f`: a
+    /// tilted Guard reads the degrees into its sector, and a `GuardSetOff`
+    /// holds the angle it was hit at while its setoff frames run, though its
+    /// own clip plays at speed 1 (the How to Play N64 trace, RE-474).
+    #[test]
+    fn the_shield_angle_drives_the_guard_anim_frame() {
+        let mut f = mario();
+        f.input.buttons = N64Buttons(N64Buttons::Z);
+        set_guard_on(&mut f);
+        set_guard(&mut f);
+        hold_stale(&mut f, 80, 29);
+        play_anim(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Guard);
+        let angle = f.guard.angle_f;
+        assert!((angle - 19.92).abs() < 0.05, "{angle}");
+        assert_eq!(f.status.anim_frame, angle);
+        let lr = f.facing.sign();
+        set_guard_set_off(&mut f, 10.0, lr);
+        hold(&mut f, 0, -80);
+        for _ in 0..3 {
+            play_anim(&mut f);
+            update(&mut f);
+            assert_eq!(f.status.status, Status::GuardSetOff);
+            assert_eq!(f.status.anim_frame, angle);
+        }
     }
 
     #[test]

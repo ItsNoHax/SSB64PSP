@@ -227,12 +227,7 @@ impl ThunderJolt {
                 return false;
             }
             // `wpMainApplyGravityClampTVel`.
-            self.velocity.y -= JOLT_GRAVITY;
-            let mag = crate::wpmap::mag(self.velocity);
-            if mag > JOLT_TVEL {
-                self.velocity.x = self.velocity.x / mag * JOLT_TVEL;
-                self.velocity.y = self.velocity.y / mag * JOLT_TVEL;
-            }
+            crate::wpmap::apply_gravity_clamp_tvel(&mut self.velocity, JOLT_GRAVITY, JOLT_TVEL);
             self.pos_prev = self.position;
             self.position += self.velocity;
             return self.air_map(surfaces, fx);

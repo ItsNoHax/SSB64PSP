@@ -16,7 +16,7 @@ use crate::ground::BodyColl;
 use crate::status::BlastZone;
 use crate::weapon::MapSurface;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
-use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
+use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec3};
 
 /// `nWPKindMonsterStart` .. `nWPKindMonsterEnd`, with the two swarm
 /// descriptors apart.
@@ -650,12 +650,7 @@ impl MonsterShot {
                 }
             }
             ShotKind::IwarkRock => {
-                self.velocity.y -= ROCK_GRAVITY;
-                let mag = Vec2::new(self.velocity.x, self.velocity.y).length();
-                if mag > ROCK_TVEL {
-                    self.velocity.x = self.velocity.x / mag * ROCK_TVEL;
-                    self.velocity.y = self.velocity.y / mag * ROCK_TVEL;
-                }
+                crate::wpmap::apply_gravity_clamp_tvel(&mut self.velocity, ROCK_GRAVITY, ROCK_TVEL);
                 self.rotate_z += ROCK_ROTATE_STEP;
             }
             // `itNyarsWeaponCoinProcUpdate` tests before it counts down.

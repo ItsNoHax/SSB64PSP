@@ -229,3 +229,17 @@ fn barrel_drop_rolls_and_uses_a_stationary_lifetime_without_pickup() {
     pool.tick(|| [floor()], None, &[], &mut NoItemAnims);
     assert_eq!(pool.active_count(), 0);
 }
+
+/// `itMainApplyGravityClampTVel` normalises with `lbCommonNormDist2D`'s
+/// reciprocal: `x * (1 / mag) * tvel`. A division (`x / mag * tvel`) gives
+/// -92.07967 here, one ulp off; a thrown Beam Sword drifted out of the N64's
+/// trace from that (`castle_replays` back throw, tick 216).
+#[test]
+fn terminal_velocity_clamp_multiplies_by_the_reciprocal() {
+    let mut pool = ItemPool::default();
+    let slot = waiting(&mut pool, Kind::Crate);
+    let item = pool.get_mut(slot).unwrap();
+    item.vel_air = Vec3::new(-93.25, 39.5, 0.0);
+    item.apply_gravity_clamp_tvel(0.0, 100.0);
+    assert_eq!(item.vel_air.x.to_bits(), 0xc2b8_28cc);
+}

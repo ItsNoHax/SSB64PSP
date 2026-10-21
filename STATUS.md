@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: battle draw order (RE-563). Per-pass head-0/head-1 phases for items, weapons, fighters, effects; head tags derived from the ROM (`task_head.rs`); 15 goldens rebaselined (intended reorders, no hardware proof, D-051).
-- Landed: fireball DL entry 0x1A8 under TEX_EDGE (pack v127, 4 goldens rebaselined), boss bullet confirmed, Falcon Punch leak documented (RE-564).
+- Landed: setter first frames against N64 traces; DK cargo, Barrel, Guard clocks; item-throw `1/mag` gravity clamp and Fireball 2D clamp (RE-565). 2 goldens rebaselined (379 and 489 native px).
+- Landed: battle draw order (RE-563); fireball DL entry under TEX_EDGE (RE-564).
 - Open: magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 29 (RE-564); deepest game stack 366904 B.
+Baseline: batch 30 (RE-565); deepest game stack 366952 B.
 
 | Check | Result |
 |---|---|

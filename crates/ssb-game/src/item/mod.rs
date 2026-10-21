@@ -860,13 +860,7 @@ impl Item {
 
     /// `itMainApplyGravityClampTVel`.
     pub(crate) fn apply_gravity_clamp_tvel(&mut self, gravity: f32, tvel: f32) {
-        self.vel_air.y -= gravity;
-        let v = Vec2::new(self.vel_air.x, self.vel_air.y);
-        let mag = v.length();
-        if mag > tvel {
-            self.vel_air.x = self.vel_air.x / mag * tvel;
-            self.vel_air.y = self.vel_air.y / mag * tvel;
-        }
+        crate::wpmap::apply_gravity_clamp_tvel(&mut self.vel_air, gravity, tvel);
     }
 
     /// `itMainGetDamageOutput`.

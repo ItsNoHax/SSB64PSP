@@ -1629,12 +1629,9 @@ fn check_donkey_kneebend(f: &mut Fighter) -> bool {
     if input == JumpInput::None {
         return false;
     }
-    set_donkey(
-        f,
-        DonkeyStatus::ThrowFKneeBend,
-        0.0,
-        StatusTiming::unknown(),
-    );
+    // Speed 0: the N64 holds `anim_frame` 0 through the jumpsquat (RE-474).
+    set_donkey(f, DonkeyStatus::ThrowFKneeBend, 0.0, StatusTiming::held());
+    f.status.throwf_anim_frame = 0.0;
     f.status.jump_force = f.stick.y;
     f.status.jump_input = input;
     f.status.is_shorthop = false;
@@ -1681,14 +1678,17 @@ fn check_donkey_turn(f: &mut Fighter) -> bool {
 /// `ftDonkeyThrowFFallSetStatus` @ 0x8014DA98.
 fn set_donkey_throwf_fall(f: &mut Fighter) {
     f.become_airborne();
-    set_donkey_keep_fastfall(f, DonkeyStatus::ThrowFFall, StatusTiming::unknown());
+    // Speed 0: `anim_frame` holds at 0 (RE-474).
+    set_donkey_keep_fastfall(f, DonkeyStatus::ThrowFFall, StatusTiming::held());
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
 /// `ftDonkeyThrowFJumpSetStatus` @ 0x8014DAF8.
 fn set_donkey_throwf_jump(f: &mut Fighter) {
     f.become_airborne();
-    set_donkey(f, DonkeyStatus::ThrowFFall, 0.0, StatusTiming::unknown());
+    // Speed 0, no play: the N64 holds `anim_frame` 0 through the rise
+    // (RE-474).
+    set_donkey(f, DonkeyStatus::ThrowFFall, 0.0, StatusTiming::held());
     let (vel_x, vel_y) = match f.status.jump_input {
         JumpInput::Button => status::jump_force_button(f.input.stick_x, f.status.is_shorthop),
         _ => (f.input.stick_x as f32, f.status.jump_force as f32),
@@ -1702,7 +1702,9 @@ fn set_donkey_throwf_jump(f: &mut Fighter) {
 
 /// `ftDonkeyThrowFLandingSetStatus` @ 0x8014DCA4.
 fn set_donkey_throwf_landing(f: &mut Fighter) {
-    set_donkey(f, DonkeyStatus::ThrowFLanding, 0.0, StatusTiming::unknown());
+    set_donkey(f, DonkeyStatus::ThrowFLanding, 0.0, StatusTiming::held());
+    // `landing_anim_frame = 0.0F`, which shares its word with `jump_force`.
+    f.status.throwf_anim_frame = 0.0;
     f.status.jump_force = 0;
 }
 
@@ -1958,10 +1960,10 @@ pub fn update(f: &mut Fighter) -> bool {
             }
         }
         // `ftDonkeyThrowFKneeBendProcUpdate` / `...ProcInterrupt`. The
-        // status plays at speed 0; `anim_frame` is the source's
-        // `kneebend_anim_frame` counter.
+        // status plays at speed 0; `kneebend_anim_frame` counts instead.
         AnyStatus::Donkey(DonkeyStatus::ThrowFKneeBend) => {
-            let frame = f.status.anim_frame;
+            f.status.throwf_anim_frame += 1.0;
+            let frame = f.status.throwf_anim_frame;
             if f.status.jump_input == JumpInput::Button
                 && frame <= status::KNEEBEND_SHORTHOP_FRAMES
                 && f.stick.jump_released
@@ -1985,7 +1987,8 @@ pub fn update(f: &mut Fighter) -> bool {
         // `landing_anim_frame <= 4.0F` after incrementing it, which is true on
         // the first update: the cargo landing lasts one frame.
         AnyStatus::Donkey(DonkeyStatus::ThrowFLanding) => {
-            if f.status.clock <= 4.0 {
+            f.status.throwf_anim_frame += 1.0;
+            if f.status.throwf_anim_frame <= 4.0 {
                 set_donkey_throwf_wait(f);
             }
         }
@@ -4020,6 +4023,64 @@ mod tests {
         assert_eq!(dk.status.status, AnyStatus::Donkey(DonkeyStatus::ThrowFF));
         assert_eq!(dk.status.anim_frame, 1.0, "the throw");
         assert_eq!(frames_in(&mut dk, &mut dummy), 39);
+    }
+
+    /// `ftDonkeyThrowFKneeBendSetStatus`, `ftDonkeyThrowFJumpSetStatus` and
+    /// `ftDonkeyThrowFLandingSetStatus` pass an animation speed of 0 and do
+    /// not play: `anim_frame` holds 0 while `kneebend_anim_frame` and
+    /// `landing_anim_frame` count. The N64 rows are the castle replay's
+    /// (`ssb-rom` `castle_replays.rs`, `re474/dkc2.txt`); unit fighters
+    /// carry Mario's physics, so this checks the clocks only.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn donkey_cargo_jump_holds_anim_frame_as_the_n64s() {
+        let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut dk, &mut dummy);
+        to_catch_wait(&mut dk, &mut dummy);
+        press(&mut dk, N64Buttons::A, 0);
+        frame(&mut dk, &mut dummy);
+        while dk.status.status != AnyStatus::Donkey(DonkeyStatus::ThrowFWait) {
+            press(&mut dk, 0, 0);
+            frame(&mut dk, &mut dummy);
+        }
+        let tap = ssb_engine::input::ControllerState {
+            buttons: N64Buttons(N64Buttons::C_UP),
+            ..Default::default()
+        };
+        dk.set_input(tap, true, false);
+        frame(&mut dk, &mut dummy);
+        let knee = AnyStatus::Donkey(DonkeyStatus::ThrowFKneeBend);
+        let fall = AnyStatus::Donkey(DonkeyStatus::ThrowFFall);
+        assert_eq!(dk.status.status, knee);
+        let mut knee_frames = 1.0;
+        while dk.status.status == knee {
+            assert_eq!(dk.status.anim_frame, 0.0, "the jumpsquat");
+            press(&mut dk, 0, 0);
+            frame(&mut dk, &mut dummy);
+            knee_frames += 1.0;
+        }
+        assert_eq!(knee_frames - 1.0, dk.attributes.kneebend_anim_length);
+        assert_eq!(dk.status.status, fall);
+        for _ in 0..4 {
+            assert_eq!(dk.status.anim_frame, 0.0, "the rise");
+            assert_eq!(dk.status.clock, 0.0);
+            press(&mut dk, 0, 0);
+            frame(&mut dk, &mut dummy);
+        }
+        // The landing lasts one frame (`landing_anim_frame <= 4.0F`).
+        dk.physics.vel_air.y = THROWFFALL_SKIPLANDING_VEL_Y_MAX - 1.0;
+        assert!(on_landing(&mut dk, 0.0));
+        assert_eq!(
+            dk.status.status,
+            AnyStatus::Donkey(DonkeyStatus::ThrowFLanding)
+        );
+        assert_eq!(dk.status.timing.anim_speed, 0.0);
+        status::update(&mut dk);
+        assert_eq!(
+            dk.status.status,
+            AnyStatus::Donkey(DonkeyStatus::ThrowFWait)
+        );
     }
 
     /// `ftDonkeyThrowFFSetStatus`: the grounded throw passes

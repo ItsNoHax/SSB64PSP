@@ -325,15 +325,25 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
 // Statuses
 // ---------------------------------------------------------------------------
 
-/// The common entry of both setters: drop the grab and stop.
-fn enter(f: &mut Fighter, status: Status) {
-    // Heavy items are not ported, so there is nothing to drop.
+/// The common entry of both setters: drop a heavy item and the grab, set
+/// the status at `anim_speed`, play its first frame and stop.
+fn enter(f: &mut Fighter, status: Status, anim_speed: f32) {
+    if f.items
+        .held
+        .is_some_and(|i| i.weight == crate::item::ItemWeight::Heavy)
+    {
+        crate::item_throw::drop_item(f);
+    }
     if f.grab.catch.is_some() {
         crate::grab::release_on_hit(f);
     } else {
         crate::grab::release_on_capture_hit(f);
     }
-    status::set_status(f, status, 0.0, StatusTiming::unknown());
+    let timing = StatusTiming {
+        anim_speed,
+        ..StatusTiming::unknown()
+    };
+    status::set_status(f, status, 0.0, timing);
     status::play_anim_events(f);
     crate::physics::stop_all(&mut f.physics);
     f.hazard.release_wait = 0;
@@ -349,7 +359,7 @@ pub fn set_twister(f: &mut Fighter) {
     if f.is_grounded() {
         f.become_airborne();
     }
-    enter(f, Status::Twister);
+    enter(f, Status::Twister, 1.0);
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMHyruleTwisterTrapped);
 }
 
@@ -357,7 +367,9 @@ pub fn set_twister(f: &mut Fighter) {
 pub fn set_tarucann(f: &mut Fighter) {
     // `ftParamStopVoiceRunProcDamage`.
     crate::fighter_sound::stop_voice(f);
-    enter(f, Status::TaruCann);
+    // `ftMainSetStatus(..., 0.0F, 0.0F, ...)`: speed 0, so the play leaves
+    // `anim_frame` 0 and the barrel's pose holds.
+    enter(f, Status::TaruCann, 0.0);
     crate::hurtbox::set_hit_status_all(f, HitStatus::Intangible);
     f.is_invisible = true;
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMJungleTaruCannEnter);
@@ -606,6 +618,61 @@ mod tests {
         f.physics.jumps_used = 2;
         set_twister(&mut f);
         assert_eq!(f.physics.jumps_used, 2);
+    }
+
+    /// `ftCommonTaruCannSetStatus` sets the barrel at an animation speed of
+    /// 0 before its `ftMainPlayAnimEventsAll`: `anim_frame` stays 0 while
+    /// the release clock counts. `ftCommonTwisterSetStatus` passes 1: the
+    /// play leaves 1, and the clock runs on.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_barrel_holds_anim_frame_and_the_twister_plays() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        set_tarucann(&mut f);
+        assert_eq!(f.status.anim_frame, 0.0);
+        for _ in 0..5 {
+            status::update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Common(Status::TaruCann));
+        assert_eq!(f.status.anim_frame, 0.0);
+        assert_eq!(f.hazard.release_wait, 5);
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        set_twister(&mut f);
+        assert_eq!(f.status.anim_frame, 1.0);
+        status::update(&mut f);
+        assert_eq!(f.status.anim_frame, 2.0);
+    }
+
+    /// Both setters drop a heavy item first (`ftSetupDropItem`); a light
+    /// one stays in hand.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_stage_captures_drop_a_heavy_item() {
+        type Setter = fn(&mut Fighter);
+        for (set, name) in [
+            (set_tarucann as Setter, "barrel"),
+            (set_twister as Setter, "twister"),
+        ] {
+            for weight in [
+                crate::item::ItemWeight::Heavy,
+                crate::item::ItemWeight::Light,
+            ] {
+                let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+                f.items.held = Some(crate::item::HeldItem {
+                    slot: 0,
+                    kind: crate::item::ItemKind::Target,
+                    ty: crate::item::ItemType::Throw,
+                    weight,
+                });
+                set(&mut f);
+                assert_eq!(
+                    f.items.held.is_none(),
+                    weight == crate::item::ItemWeight::Heavy,
+                    "{name} {weight:?}"
+                );
+            }
+        }
     }
 
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

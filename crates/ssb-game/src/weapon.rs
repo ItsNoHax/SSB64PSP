@@ -636,13 +636,11 @@ impl SamusBomb {
             self.velocity.y = self.lr * -angle.x * self.vel_ground;
             self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND * self.lr;
         } else {
-            self.velocity.y -= SAMUS_BOMB_WAIT_GRAVITY;
-            let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
-            if speed > SAMUS_BOMB_WAIT_TVEL {
-                let scale = SAMUS_BOMB_WAIT_TVEL / speed;
-                self.velocity.x *= scale;
-                self.velocity.y *= scale;
-            }
+            crate::wpmap::apply_gravity_clamp_tvel(
+                &mut self.velocity,
+                SAMUS_BOMB_WAIT_GRAVITY,
+                SAMUS_BOMB_WAIT_TVEL,
+            );
             self.rotate_z -= SAMUS_BOMB_WAIT_ROTATE_SPEED_AIR * self.lr;
         }
         self.blink_timer -= 1;
@@ -1247,12 +1245,11 @@ impl YoshiEgg {
                 return true;
             }
             self.rotate_z += self.spin_step;
-            self.velocity.y -= EGGTHROW_GRAVITY;
-            let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
-            if speed > EGGTHROW_TVEL {
-                self.velocity.x *= EGGTHROW_TVEL / speed;
-                self.velocity.y *= EGGTHROW_TVEL / speed;
-            }
+            crate::wpmap::apply_gravity_clamp_tvel(
+                &mut self.velocity,
+                EGGTHROW_GRAVITY,
+                EGGTHROW_TVEL,
+            );
         } else {
             self.is_spin = true;
             self.velocity = Self::launch_velocity(self.throw_force, self.stick_x, self.lr);
@@ -1619,7 +1616,7 @@ impl MarioFireball {
             return false;
         }
         let attr = self.attributes();
-        self.velocity.y = (self.velocity.y - attr.gravity).max(-attr.vel_terminal);
+        crate::wpmap::apply_gravity_clamp_tvel(&mut self.velocity, attr.gravity, attr.vel_terminal);
         self.rotate_x += attr.rotate_speed;
         let pos_prev = self.position;
         self.position += self.velocity;

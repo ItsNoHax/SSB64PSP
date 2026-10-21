@@ -110,6 +110,44 @@ impl<'a, 'p> ssb_game::matchtick::Arena for HostArena<'a, 'p> {
     fn split(&mut self) -> (&Self::Ground, &mut Self::Props) {
         (&self.0, &mut self.1)
     }
+
+    /// The stage controller on the replay's static map
+    /// (`psp_runtime::arena`'s `tick_stage` without moving groups): a
+    /// replay with a stage hazard (Hyrule's Twister) sets [`Pair::stage`].
+    fn tick_stage(
+        &mut self,
+        stage: &mut ssb_game::stage::Stage,
+        fighters: &mut [&mut ssb_game::fighter::Fighter],
+        items: &mut dyn ssb_game::stage::StageItems,
+        started: bool,
+    ) {
+        tick_stage(stage, self.0.map, fighters, items, started);
+    }
+}
+
+/// [`ssb_game::stage::Stage::tick`] on the static `map`, no objects, no
+/// moving groups.
+pub fn tick_stage(
+    stage: &mut ssb_game::stage::Stage,
+    map: &[ssb_game::weapon::MapSurface],
+    fighters: &mut [&mut ssb_game::fighter::Fighter],
+    items: &mut dyn ssb_game::stage::StageItems,
+    started: bool,
+) {
+    let line_group = |_: u16| None;
+    stage.tick(
+        fighters,
+        ssb_game::stage::TickInput {
+            groups: &mut [],
+            objects: &mut NoProps,
+            items,
+            map: ssb_game::stage::MapQuery {
+                surfaces: || map.iter().copied(),
+                line_group: &line_group,
+            },
+            started,
+        },
+    );
 }
 
 /// One replay fighter with this tick's pad.
