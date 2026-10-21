@@ -366,6 +366,15 @@ where
     }
 }
 
+/// `DokanWait` and `DokanWalk`: no `proc_physics`; their `proc_map`
+/// ([`tick_status`]) places the fighter.
+pub fn places_itself(f: &Fighter) -> bool {
+    matches!(
+        f.status.status,
+        AnyStatus::Common(Status::DokanWait | Status::DokanWalk)
+    )
+}
+
 /// The physics and map steps the pipe statuses replace. `DokanStart`'s and
 /// `DokanEnd`'s map step is the common ground one, so they return `false`
 /// and leave their physics to [`apply_ground_physics`]; `DokanWait` and

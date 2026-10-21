@@ -31,7 +31,7 @@ fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
     assert!(f.is_invisible && f.is_shadow_hidden && f.dead.is_ghost);
     assert!(f.interface.tag_hide);
     // Entry holds the fighter where it is.
-    assert!(tick_status(&mut f));
+    assert!(physics(&mut f).is_some());
 
     appear_set_status(&mut f);
     assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::AppearR));
@@ -45,7 +45,7 @@ fn a_vs_fighter_waits_hidden_then_enters_facing_the_camera() {
 
     // TransN places it: the spawn point plus the clip's translation.
     f.root_motion.translate = Vec3::new(10.0, -300.0, 5.0);
-    assert!(tick_status(&mut f));
+    assert!(physics(&mut f).is_some());
     assert_eq!(f.pos, Vec3::new(-790.0, -300.0, 5.0));
 
     // 120 frames on, it stands at its spawn facing right.
@@ -70,7 +70,7 @@ fn a_leftward_captain_turns_around_and_has_two_phases() {
     assert!(f.entry.is_rotate);
     assert_eq!(model_yaw(&f), Some(core::f32::consts::PI));
     f.root_motion.translate = Vec3::new(100.0, 0.0, 50.0);
-    tick_status(&mut f);
+    physics(&mut f);
     assert_eq!(f.pos, Vec3::new(-900.0, 0.0, -50.0));
     run(&mut f, 90);
     assert_eq!(

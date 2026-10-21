@@ -2182,34 +2182,59 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = (u16, Segment)>,
 {
-    if !is_held(f.status.status) {
+    let Some(map) = held_physics(f) else {
         return false;
+    };
+    held_map(f, map, floors);
+    true
+}
+
+/// The `proc_map` a held fighter's [`held_physics`] leaves for
+/// `ftMainProcPhysicsMap` to run after the dead check.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HeldMap {
+    /// No map step (`CaptureYoshi`, `CaptureCaptain`, a lost link).
+    None,
+    /// `CaptureKirby`'s `mpCommonUpdateFighterProjectFloor`.
+    KirbyProjectFloor,
+    /// `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap` on the
+    /// catcher's floor line.
+    Pulled(Holder),
+    /// `ftCommonThrownProcMap`.
+    Thrown,
+}
+
+/// The `proc_physics` half of [`tick_held`]: the placement at the catcher's
+/// hand and the status switch. `None` when the fighter is not held.
+pub fn held_physics(f: &mut Fighter) -> Option<HeldMap> {
+    if !is_held(f.status.status) {
+        return None;
     }
     let Some(holder) = f.grab.holder else {
         // The link is gone without a release event; do not leave the
         // fighter pinned.
         lose_grip(f);
         status::set_fall(f);
-        return true;
+        return Some(HeldMap::None);
     };
     f.physics.vel_air = Vec3::ZERO;
     f.physics.vel_ground = Vec3::ZERO;
     if f.status.status == Status::CaptureYoshi {
         let attachment = held_attachment(f, holder);
         crate::capture_yoshi::update_held(f, attachment);
-        return true;
+        return Some(HeldMap::None);
     }
     if f.status.status == Status::CaptureCaptain {
         update_capture_captain(f, holder);
-        return true;
+        return Some(HeldMap::None);
     }
     if crate::capture_kirby::is_captured(f.status.status) {
         crate::capture_kirby::update_held(f, holder);
-        if f.status.status == Status::CaptureKirby {
-            // `CaptureKirby`'s `proc_map`, `mpCommonUpdateFighterProjectFloor`.
-            crate::capture_kirby::project_floor(f, floors());
-        }
-        return true;
+        return Some(if f.status.status == Status::CaptureKirby {
+            HeldMap::KirbyProjectFloor
+        } else {
+            HeldMap::None
+        });
     }
     let pulled = matches!(
         f.status.status,
@@ -2229,58 +2254,79 @@ where
     if f.status.status == Status::CapturePulled && f.grab.is_goto_pulled_wait {
         set_capture_wait(f);
     }
-    if pulled {
-        // `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap`.
-        let Some(line) = holder.floor_line else {
+    Some(if pulled {
+        HeldMap::Pulled(holder)
+    } else {
+        HeldMap::Thrown
+    })
+}
+
+/// The `proc_map` half of [`tick_held`].
+pub fn held_map<I, F>(f: &mut Fighter, map: HeldMap, floors: F)
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = (u16, Segment)>,
+{
+    let holder = match map {
+        HeldMap::None => return,
+        // `CaptureKirby`'s `proc_map`, `mpCommonUpdateFighterProjectFloor`.
+        HeldMap::KirbyProjectFloor => {
+            crate::capture_kirby::project_floor(f, floors());
+            return;
+        }
+        HeldMap::Thrown => {
+            // `ftCommonThrownProcMap`: the fighter stays airborne; the floor
+            // lookup only feeds the shadow.
             f.situation = Situation::Air;
             f.floor = None;
-            return true;
-        };
-        let on_line = || floors().into_iter().filter(move |(l, _)| *l == line);
-        match collision::floor_height(on_line(), f.pos.x) {
-            Some(below) => {
-                let dist = below.y - f.pos.y;
-                if f.status.status == Status::CaptureWait || dist >= 0.0 {
-                    f.pos.y += dist;
-                    f.situation = Situation::Ground;
-                    f.floor = Some(crate::ground::Standing {
-                        line: below.line,
-                        flags: below.flags,
-                        normal: below.normal,
-                    });
-                    f.physics.jumps_used = 0;
-                } else {
-                    f.pos.y += dist * 0.5;
-                    f.situation = Situation::Air;
-                    f.floor = None;
-                    f.physics.jumps_used = 1;
-                }
-            }
-            None => {
-                let edge_x = if holder.facing == Facing::Right {
-                    f32::MAX
-                } else {
-                    f32::MIN
-                };
-                if let Some(edge) = collision::line_edge(on_line(), edge_x) {
-                    f.pos.y = if f.status.status == Status::CaptureWait {
-                        edge.y
-                    } else {
-                        f.pos.y + (edge.y - f.pos.y) * 0.5
-                    };
-                }
+            return;
+        }
+        HeldMap::Pulled(holder) => holder,
+    };
+    // `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap`.
+    let Some(line) = holder.floor_line else {
+        f.situation = Situation::Air;
+        f.floor = None;
+        return;
+    };
+    let on_line = || floors().into_iter().filter(move |(l, _)| *l == line);
+    match collision::floor_height(on_line(), f.pos.x) {
+        Some(below) => {
+            let dist = below.y - f.pos.y;
+            if f.status.status == Status::CaptureWait || dist >= 0.0 {
+                f.pos.y += dist;
+                f.situation = Situation::Ground;
+                f.floor = Some(crate::ground::Standing {
+                    line: below.line,
+                    flags: below.flags,
+                    normal: below.normal,
+                });
+                f.physics.jumps_used = 0;
+            } else {
+                f.pos.y += dist * 0.5;
                 f.situation = Situation::Air;
                 f.floor = None;
                 f.physics.jumps_used = 1;
             }
         }
-    } else {
-        // `ftCommonThrownProcMap`: the fighter stays airborne; the floor
-        // lookup only feeds the shadow.
-        f.situation = Situation::Air;
-        f.floor = None;
+        None => {
+            let edge_x = if holder.facing == Facing::Right {
+                f32::MAX
+            } else {
+                f32::MIN
+            };
+            if let Some(edge) = collision::line_edge(on_line(), edge_x) {
+                f.pos.y = if f.status.status == Status::CaptureWait {
+                    edge.y
+                } else {
+                    f.pos.y + (edge.y - f.pos.y) * 0.5
+                };
+            }
+            f.situation = Situation::Air;
+            f.floor = None;
+            f.physics.jumps_used = 1;
+        }
     }
-    true
 }
 
 /// Whether a catcher in a holding status just lost its floor. Called from the

@@ -305,3 +305,117 @@ fn ignore_dead_skips_every_blast_zone_until_the_status_changes() {
         assert!(dead::check(&mut f), "{pos:?}");
     }
 }
+
+/// One floor (line 0) from x -1000 to 1000 at `y`.
+fn floor_at(y: i16) -> crate::weapon::MapSurface {
+    crate::map::floor_surface((
+        0,
+        crate::collision::Segment {
+            x1: -1000,
+            y1: y,
+            x2: 1000,
+            y2: y,
+            flags: 0,
+        },
+    ))
+}
+
+fn falling(f: &mut Fighter, pos: Vec3, vy: f32) {
+    f.become_airborne();
+    status::set_fall(f);
+    f.pos = pos;
+    f.physics.vel_air = Vec3::new(0.0, vy, 0.0);
+}
+
+/// `ftMainProcPhysicsMap` (`ftmain.c:1814-1829`): the dead check reads TopN
+/// after the velocity step, before `proc_map`; the dead status it sets has
+/// no `proc_map`, so the floor the step crossed never lands the fighter.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_bottom_ko_on_the_velocity_step_replaces_the_landing() {
+    let s = [floor_at(-1990)];
+    let mut f = fighter(0);
+    falling(&mut f, Vec3::new(0.0, -1985.0, 0.0), -20.0);
+    f.tick_physics_map(&|| s.iter().copied());
+    assert_eq!(f.status.status, AnyStatus::Common(Status::DeadDown));
+    assert!(f.pos.y < -2000.0, "TopN stays below the floor: {:?}", f.pos);
+    assert_eq!(f.situation, Situation::Air);
+    assert_eq!(f.floor, None);
+}
+
+/// The mask roll (`ftmain.c:1830`) sits inside the `proc_map != NULL`
+/// branch after the dead check: the frame a fighter dies keeps the masks
+/// of the frame before.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_death_frame_keeps_the_masks() {
+    let s = [floor_at(-1990)];
+    let mut f = fighter(0);
+    falling(&mut f, Vec3::new(0.0, -1985.0, 0.0), -20.0);
+    let before = crate::map::Contacts {
+        right_wall: Some(crate::map::Contact {
+            line: 3,
+            flags: 0,
+            normal: Vec2::new(-1.0, 0.0),
+        }),
+        ..Default::default()
+    };
+    f.map_contacts = before;
+    f.tick_physics_map(&|| s.iter().copied());
+    assert_eq!(f.status.status, AnyStatus::Common(Status::DeadDown));
+    assert_eq!(f.map_contacts, before);
+    assert_eq!(f.map_contacts_prev, Default::default());
+}
+
+/// `ftCommonDeadCheckInterruptCommon`'s `is_limit_map_bounds` clamp
+/// (`ftcommondead.c:546`) moves TopN and stops `vel_air` before `proc_map`,
+/// which then sweeps from `pos_prev` to the clamped TopN: the floor the
+/// velocity step crossed is never reached.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_limit_bounds_clamp_runs_before_the_map_step() {
+    let s = [floor_at(-1995)];
+    let mut f = fighter(0);
+    f.dead.is_limit_map_bounds = true;
+    falling(&mut f, Vec3::new(0.0, -1990.0, 0.0), -20.0);
+    f.tick_physics_map(&|| s.iter().copied());
+    assert_eq!(f.pos.y, -1500.0);
+    assert_eq!(f.physics.vel_air, Vec3::ZERO);
+    assert_eq!(f.situation, Situation::Air);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::Fall));
+}
+
+/// `ftmain.c:1821-1827`: the crowd forgets a knockback once TopN is 450
+/// units inside the side bounds, read on TopN before `proc_map`. A wall that
+/// stops the fighter back inside the line does not count.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_public_knockback_clear_reads_the_pre_map_x() {
+    let mut f = fighter(0);
+    // Mario's waist meets the wall at `wall - width`, 3540 (inside the
+    // 3550 line); the velocity step alone ends near 3590 (outside it).
+    let wall_x = (3540.0 + f.coll.width).ceil();
+    let s = [crate::weapon::MapSurface {
+        motion: None,
+        kind: crate::weapon::MapSurfaceKind::LeftWall,
+        segment: crate::collision::Segment {
+            x1: wall_x as i16,
+            y1: 1000,
+            x2: wall_x as i16,
+            y2: -1000,
+            flags: 0,
+        },
+        topology: None,
+    }];
+    let x0 = wall_x - f.coll.width - 100.0;
+    falling(&mut f, Vec3::new(x0, 0.0, 0.0), 0.0);
+    f.physics.vel_air.x = 150.0;
+    f.public_knockback = 50.0;
+    f.tick_physics_map(&|| s.iter().copied());
+    assert!(f.pos.x < 3550.0, "the wall stopped it inside: {:?}", f.pos);
+    assert_eq!(f.public_knockback, 50.0);
+    // The next step stays inside the line: cleared.
+    f.physics.vel_air.x = 0.0;
+    f.tick_physics_map(&|| s.iter().copied());
+    assert_eq!(f.public_knockback, 0.0);
+}

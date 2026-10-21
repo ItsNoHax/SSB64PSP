@@ -345,6 +345,32 @@ fn start_is_refused_before_tick_sixty_one_and_when_not_ready() {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn with_the_stage_select_off_start_draws_a_stage_other_than_the_last() {
+    let outcome = random_stage_start();
+    assert!(matches!(
+        outcome,
+        Some(Outcome::Battle { gkind: 6, state }) if state.pl_count == 1
+    ));
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_tampered_save_battles_the_random_stage_at_the_castle() {
+    use crate::backup::ERROR_VS_BATTLE_CASTLE;
+    use crate::battle::vs_battle_gkind;
+    use crate::stage_select::gkind;
+    // `scVSBattleStartScene` (scvsbattle.c:513-523): the random pick stays
+    // the scene's; the battle's stage is Castle on a tampered save (RE-460).
+    let Some(Outcome::Battle { gkind: pick, .. }) = random_stage_start() else {
+        panic!("no battle");
+    };
+    assert_eq!(pick, 6);
+    assert_eq!(vs_battle_gkind(pick, 0), pick);
+    assert_eq!(vs_battle_gkind(pick, ERROR_VS_BATTLE_CASTLE), gkind::CASTLE);
+}
+
+/// Start with the stage select off: 0 (the last stage, Castle) is drawn
+/// again, then 200 * 8 / 256 = 6.
+fn random_stage_start() -> Option<Outcome> {
     let state = BattleState {
         is_stage_select: false,
         ..BattleState::default()
@@ -359,13 +385,8 @@ fn with_the_stage_select_off_start_draws_a_stage_other_than_the_last() {
     for _ in 0..29 {
         idle(&mut s);
     }
-    // 0 is the last stage (Castle) and is drawn again; 200 * 8 / 256 = 6.
     let mut draws = [0u8, 200].into_iter();
-    let outcome = s.tick(&port0(Pad::default()), &mut || draws.next().unwrap());
-    assert!(matches!(
-        outcome,
-        Some(Outcome::Battle { gkind: 6, state }) if state.pl_count == 1
-    ));
+    s.tick(&port0(Pad::default()), &mut || draws.next().unwrap())
 }
 
 #[test]

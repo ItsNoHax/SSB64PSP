@@ -369,20 +369,32 @@ fn finish(f: &mut Fighter) {
     status::anim_end_set_wait(f);
 }
 
-/// `ftCommonAppearProcPhysics`, and no map step: the spawn point plus the
-/// clip's TransN translation (`root_motion.translate`), mirrored across for
-/// Captain Falcon's turned entry. Returns whether the fighter is entering,
-/// so the caller skips its own physics and map.
-pub fn tick_status(f: &mut Fighter) -> bool {
-    if f.status.status == AnyStatus::Common(Status::Entry) {
-        return true;
+/// The entry statuses' callbacks in `ftMainProcPhysicsMap`
+/// ([`physics`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryMap {
+    /// `Entry` and `EntryNull`: no `proc_physics`, no `proc_map`.
+    None,
+    /// The appear statuses' `mpCommonUpdateFighterProjectFloor`, which only
+    /// finds the floor under the fighter for its shadow.
+    ProjectFloor,
+}
+
+/// `ftCommonAppearProcPhysics`: the spawn point plus the clip's TransN
+/// translation (`root_motion.translate`), mirrored across for Captain
+/// Falcon's turned entry. Returns the entry statuses' `proc_map`, or `None`
+/// outside them, so the caller skips its own physics.
+pub fn physics(f: &mut Fighter) -> Option<EntryMap> {
+    if matches!(
+        f.status.status,
+        AnyStatus::Common(Status::Entry | Status::EntryNull)
+    ) {
+        return Some(EntryMap::None);
     }
-    if slot(f.status.status).is_none() {
-        return false;
-    }
+    slot(f.status.status)?;
     let t = f.root_motion.translate;
     place(f, t);
-    true
+    Some(EntryMap::ProjectFloor)
 }
 
 /// `ftCommonAppearProcPhysics`'s placement: the entry position plus the

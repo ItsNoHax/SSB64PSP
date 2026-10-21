@@ -490,13 +490,9 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
     f.hazard.tarucann_wait = TARUCANN_PICKUP_WAIT;
 }
 
-/// `proc_physics` + `proc_map` (`mpCommonProcFighterProject`) of both
-/// statuses. Returns `false` when neither is current.
-pub fn tick_status<I, F>(f: &mut Fighter, surfaces: &F) -> bool
-where
-    F: Fn() -> I,
-    I: IntoIterator<Item = crate::weapon::MapSurface>,
-{
+/// `proc_physics` of both statuses: TopN's target this frame, for
+/// [`project_map`] after the dead check. `None` when neither is current.
+pub fn physics(f: &mut Fighter) -> Option<Vec3> {
     let target = match f.status.status {
         AnyStatus::Common(Status::Twister) => {
             // `ftCommonTwisterProcPhysics` @ 0x80143A20.
@@ -516,8 +512,18 @@ where
         }
         // `ftCommonTaruCannProcPhysics`: the fighter sits at the barrel.
         AnyStatus::Common(Status::TaruCann) => f.hazard.anchor,
-        _ => return false,
+        _ => return None,
     };
+    Some(target)
+}
+
+/// `proc_map` of both statuses (`mpCommonProcFighterProject`) from TopN to
+/// the [`physics`] target.
+pub fn project_map<I, F>(f: &mut Fighter, target: Vec3, surfaces: &F)
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = crate::weapon::MapSurface>,
+{
     // `MAP_PROC_TYPE_PROJECT`: floors stop the body but it stays airborne.
     let push = core::mem::take(&mut f.hazard.vel_push);
     let from = f.pos;
@@ -532,7 +538,6 @@ where
     f.pos = moved.moved.pos;
     f.floor = None;
     f.map_contacts = moved.contacts;
-    true
 }
 
 #[cfg(test)]

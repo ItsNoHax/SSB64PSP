@@ -12,10 +12,10 @@
 //!   [`Fighter::tick_interrupt`] calls [`update`] with the stage's surfaces
 //!   instead of `status::update`'s map-free dispatch. The order within the
 //!   frame is the source's: animation, motion script, update, interrupt.
-//! - `proc_physics` and `proc_map` run from [`tick_status`], which owns
-//!   the fighter's position the way `ftMainProcPhysicsMap` does for an
-//!   airborne fighter: physics, `translate += vel_air`, then the map
-//!   callback of whatever status physics left current.
+//! - `proc_physics` ([`proc_physics`]) and `proc_map` ([`proc_map`]) run
+//!   from `ftMainProcPhysicsMap`'s port like any status's: physics,
+//!   `translate += vel_air`, the dead check, then the map callback of
+//!   whatever status physics left current.
 //! - The target fighter (`ftBossInfo::target_gobj`) is another object; the
 //!   host copies its position and floor line into [`BossState::target`]
 //!   before Master Hand's tick ([`Target`]).
@@ -1641,20 +1641,28 @@ where
     }
 }
 
-/// `ftMainProcPhysicsMap` for Master Hand: `proc_physics`, the airborne
-/// `translate += vel_air`, then `proc_map`. Returns whether Master Hand
-/// owned the step, so the caller skips the common kinetics.
-pub fn tick_status<I, F>(f: &mut Fighter, surfaces: &F) -> bool
+/// Master Hand's `proc_physics`. Returns whether Master Hand is in one of
+/// its own statuses, so the caller skips the common physics; the common
+/// `translate += vel_air` and [`proc_map`] follow in `ftMainProcPhysicsMap`.
+pub fn proc_physics(f: &mut Fighter) -> bool {
+    let AnyStatus::Boss(s) = f.status.status else {
+        return false;
+    };
+    physics(f, s);
+    true
+}
+
+/// Whether Master Hand's status has a `proc_map` ([`proc_map`]): not
+/// `Walk`, `DeadLeft` or `DeadRight`, which then keep their collision masks.
+pub fn has_proc_map(f: &Fighter) -> bool {
+    matches!(f.status.status, AnyStatus::Boss(s) if !matches!(s, B::Walk | B::DeadLeft | B::DeadRight))
+}
+
+/// Master Hand's `proc_map`, from `pos_prev` (`from`) to TopN.
+pub fn proc_map<I, F>(f: &mut Fighter, from: Vec3, surfaces: &F)
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let AnyStatus::Boss(s) = f.status.status else {
-        return false;
-    };
-    let from = f.pos;
-    physics(f, s);
-    f.pos += f.physics.vel_air;
     map(f, from, surfaces);
-    true
 }

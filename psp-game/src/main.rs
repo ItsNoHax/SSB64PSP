@@ -4002,9 +4002,14 @@ unsafe fn session_frame(
                             capture_roster(scene, s.training_scene)
                         });
                         let gkind = capture_stage_gkind(capture_scene);
-                        s.enter(pack.as_ref(), gkind, roster, rules);
+                        // The capture skips the menus' music.
+                        if let Some(rules) = rules {
+                            s.enter_vs_battle(pack.as_ref(), gkind, roster, rules);
+                        } else {
+                            s.enter(pack.as_ref(), gkind, roster, None);
+                            s.scene_gkind = gkind;
+                        }
                         prepare_monster_capture(capture_scene, pack.as_ref(), s);
-                        s.scene_gkind = gkind;
                         // These scenes set the behaviour directly rather than
                         // through Training's CP option (`trainingmenu` does).
                         if capture_scene.is_some_and(is_cpufx) {
@@ -4096,29 +4101,16 @@ unsafe fn session_frame(
                     } else {
                         s.maps_training_gkind = saved.remembered;
                     }
-                    s.scene_gkind = saved.gkind;
-                    let roster = if s.vs {
-                        vs_roster(&s.vs_state)
-                    } else {
-                        training_roster(s.training_scene)
-                    };
-                    // `scVSBattleStartScene`: a tampered save forces the
-                    // VS stage (RE-460); `scene_gkind` keeps the selection.
-                    let gkind = if s.vs {
-                        ssb_game::battle::vs_battle_gkind(saved.gkind, s.backup.error_flags)
-                    } else {
-                        saved.gkind
-                    };
-                    s.enter(pack.as_ref(), gkind, roster, s.vs.then_some(s.vs_menu_rules));
-                    // `scVSBattleStartBattle` / `sc1PTrainingModeFuncStart`.
                     if s.vs {
-                        if let Some(bgm_id) = stage_bgm_id(pack.as_ref(), gkind) {
-                            ssb_game::music::start_battle(bgm_id);
-                        }
+                        let (roster, rules) = (vs_roster(&s.vs_state), s.vs_menu_rules);
+                        s.start_vs_battle(pack.as_ref(), saved.gkind, roster, rules);
                     } else {
+                        s.scene_gkind = saved.gkind;
+                        s.enter(pack.as_ref(), saved.gkind, training_roster(s.training_scene), None);
+                        // `sc1PTrainingModeFuncStart`.
                         ssb_game::music::start_training();
+                        s.screen = Screen::Training;
                     }
-                    s.screen = Screen::Training;
                 }
                 // B returns to the character select, with the fighters
                 // it saved. B and the idle return also save the scene
@@ -4625,6 +4617,30 @@ impl Session {
         // `sc1PTrainingModeInitVars`; the player is on port 0.
         self.training_menu = rules.is_none().then(|| ssb_game::training::TrainingMenu::new(0));
         self.training_paused = false;
+    }
+
+    /// `scVSBattleStartScene`'s stage: the scene keeps `scene_gkind` (the
+    /// selection or the random pick) and the battle loads
+    /// [`ssb_game::battle::vs_battle_gkind`] of it, Castle on a tampered
+    /// save (RE-460). Returns the battle's stage.
+    #[inline(never)]
+    fn enter_vs_battle(&mut self, pack: Option<&Pack<'_>>, scene_gkind: u8, roster: Roster, rules: VsRules) -> u8 {
+        self.scene_gkind = scene_gkind;
+        let gkind = ssb_game::battle::vs_battle_gkind(scene_gkind, self.backup.error_flags);
+        self.enter(pack, gkind, roster, Some(rules));
+        gkind
+    }
+
+    /// Every VS start but a capture's skip (the stage select, the random
+    /// stage): [`Self::enter_vs_battle`], then `scVSBattleStartBattle`'s
+    /// music on the battle's stage.
+    #[inline(never)]
+    fn start_vs_battle(&mut self, pack: Option<&Pack<'_>>, scene_gkind: u8, roster: Roster, rules: VsRules) {
+        let gkind = self.enter_vs_battle(pack, scene_gkind, roster, rules);
+        if let Some(bgm_id) = stage_bgm_id(pack, gkind) {
+            ssb_game::music::start_battle(bgm_id);
+        }
+        self.screen = Screen::Training;
     }
 
     /// The backup's battle settings: `ifScreenFlashMakeInterface`'s
@@ -5681,13 +5697,8 @@ fn players_vs_frame(
         }
         // `nSCKindVSBattle` on the random stage.
         Some(gkind) => {
-            s.scene_gkind = gkind;
-            s.enter(pack.as_ref(), gkind, vs_roster(&state), Some(s.vs_menu_rules));
-            // `scVSBattleStartBattle`.
-            if let Some(bgm_id) = stage_bgm_id(pack.as_ref(), gkind) {
-                ssb_game::music::start_battle(bgm_id);
-            }
-            s.screen = Screen::Training;
+            let rules = s.vs_menu_rules;
+            s.start_vs_battle(pack.as_ref(), gkind, vs_roster(&state), rules);
         }
     }
 }

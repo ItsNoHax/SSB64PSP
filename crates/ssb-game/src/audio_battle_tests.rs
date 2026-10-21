@@ -291,6 +291,40 @@ fn falling_below_the_grounds_alt_warning_whistles_once_on_the_crossing_tick() {
     assert_eq!(whistles(&ticks), [1]);
 }
 
+/// `ftmain.c:1817`: the whistle reads TopN after the velocity step, before
+/// `proc_map`. A fall whose step crosses Peach's Castle's `alt_warning`
+/// (-1900) whistles even when the map step lands it on a floor above the
+/// line that frame.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn a_step_below_the_line_whistles_on_the_frame_a_floor_above_it_lands() {
+    let r = Recorder::install();
+    crate::battle::start_scene(
+        crate::stage_select::gkind::CASTLE,
+        crate::stale::DAMAGE_RATIO_DEFAULT,
+    );
+    let floor = crate::map::floor_surface((
+        0,
+        crate::collision::Segment {
+            x1: -1000,
+            y1: -1890,
+            x2: 1000,
+            y2: -1890,
+            flags: 0,
+        },
+    ));
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.become_airborne();
+    crate::status::set_fall(&mut f);
+    f.pos.y = -1880.0;
+    f.physics.vel_air.y = -30.0;
+    r.take();
+    f.tick_physics_map(&|| [floor]);
+    assert!(f.is_grounded(), "{:?}", f.pos);
+    assert_eq!(f.pos.y, -1890.0);
+    assert!(plays(&r.take()).contains(&nSYAudioFGMAltitudeWarn));
+}
+
 fn holding_hammer(port: u8) -> Fighter {
     let mut f = Fighter::new(FighterKind::Mario, port, 3);
     f.items.held = Some(crate::item::HeldItem {

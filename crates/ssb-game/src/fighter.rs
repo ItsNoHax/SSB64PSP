@@ -1583,41 +1583,86 @@ impl Fighter {
     {
         self.physics_pass = true;
         crate::appear::tick_effect_clock(self);
-        let y_prev = self.pos.y;
         // `ftCommonThrownReleaseFighterLoseGrip`'s
         // `mpCommonRunFighterCollisionDefault`: one collision pass from the
-        // catcher's position with its diamond to the dropped TopN.
+        // catcher's position with its diamond to the dropped TopN. It runs
+        // in the catcher's update, before this pass samples `pos_prev`.
         if let Some((from, previous)) = self.grab.release_sweep.take() {
             self.pos =
                 crate::map::run_default_collision(&self.coll, &previous, from, self.pos, || {
                     surfaces()
                 });
         }
-        if self.is_in_hitlag() {
-            // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
-            self.smash_di(surfaces);
-            crate::dead::check(self);
-            self.after_dead_check(y_prev);
-            return;
+        let in_hitlag = self.is_in_hitlag();
+        if !in_hitlag {
+            // `ftCommonCliffCommon2UpdateCollData`, from the phase-2 status
+            // change in the update pass: also before `pos_prev`.
+            self.place_cliff_phase2(surfaces);
         }
-        let surfaces = || surfaces();
-        // The dead and rebirth statuses have no `proc_physics`, and their
-        // `proc_map` (if any) replaces the map step.
-        if crate::dead::tick_status(self) {
+        // `ftMainProcPhysicsMap` (`ftmain.c:1747`): `coll_data.pos_prev`.
+        let mut pos_prev = self.pos;
+        let (step, want) = if let Some(step) = self.own_physics_step(in_hitlag) {
+            step
+        } else if in_hitlag {
+            // `ftmain.c:1800` `proc_lagupdate`: Smash DI nudges a fighter
+            // frozen by a hit; `proc_map` still runs (after the dead check).
+            (MapStep::Lag, self.smash_di_nudge())
+        } else {
+            self.physics_step(surfaces, &mut pos_prev)
+        };
+        self.map_window(step, want, pos_prev, surfaces);
+        // Root motion is an input sample, not persistent fighter state. This
+        // prevents a missed runtime sample from replaying an old displacement.
+        if !in_hitlag {
             self.root_motion = RootMotion::default();
-            return;
         }
-        // Master Hand's statuses own their physics and map callbacks.
-        if crate::boss::tick_status(self, &surfaces) {
-            self.root_motion = RootMotion::default();
-            return;
-        }
-        // The battle entry places the fighter itself and skips the map.
-        if crate::appear::tick_status(self) {
-            self.root_motion = RootMotion::default();
-            return;
-        }
+    }
 
+    /// The statuses whose callbacks replace the common ones: the dead,
+    /// sleep and rebirth statuses, Master Hand's, and the battle entry.
+    /// `ftMainProcPhysicsMap` runs for them as for any other: `proc_physics`
+    /// and `translate += vel_air` outside hitlag, then the dead check, the
+    /// altitude whistle and their `proc_map`, if any. Master Hand in hitlag
+    /// takes the common hitlag step.
+    fn own_physics_step(&mut self, in_hitlag: bool) -> Option<(MapStep, Vec3)> {
+        let step = |f: &Fighter| {
+            if in_hitlag {
+                f.pos
+            } else {
+                f.pos + f.physics.vel_air
+            }
+        };
+        if let Some(map) = crate::dead::own_map(self) {
+            let map = match map {
+                crate::dead::OwnMap::None => MapStep::NoProc,
+                crate::dead::OwnMap::Rebirth => MapStep::Rebirth,
+            };
+            return Some((map, step(self)));
+        }
+        if in_hitlag {
+            return None;
+        }
+        if crate::boss::proc_physics(self) {
+            return Some((MapStep::Boss, step(self)));
+        }
+        let map = match crate::appear::physics(self)? {
+            crate::appear::EntryMap::None => MapStep::NoProc,
+            crate::appear::EntryMap::ProjectFloor => MapStep::ProjectFloor,
+        };
+        Some((map, step(self)))
+    }
+
+    /// `ftMainProcPhysicsMap` up to `ftmain.c:1799` outside hitlag: each
+    /// status's `proc_physics` and the velocity step. Returns the
+    /// `proc_map` to run and TopN after the step (the line speed not yet
+    /// added); `self.pos` stays where the map sweeps from, except for the
+    /// statuses that place TopN themselves (`MapStep::None`). A sweep in
+    /// `proc_physics` moves `pos_prev` (the Yoshi egg's lay).
+    fn physics_step<I, F>(&mut self, surfaces: &F, pos_prev: &mut Vec3) -> (MapStep, Vec3)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         // `ftCommonYoshiEggProcPhysics`'s own half, ahead of the common
         // physics it ends with.
         if self.status.status == crate::status::Status::YoshiEgg {
@@ -1628,7 +1673,7 @@ impl Fighter {
 
         // A held fighter's position is its catcher's hand, not the result
         // of its own velocity (`ftCommonCapturePulledProcPhysics`).
-        if crate::grab::tick_held(self, || crate::map::floors(surfaces())) {
+        if let Some(held) = crate::grab::held_physics(self) {
             self.root_motion = RootMotion::default();
             if let Some((from, previous)) = crate::capture_yoshi::take_lay_sweep(self) {
                 // `ftCommonCaptureYoshiProcPhysics` laid the egg: its
@@ -1641,46 +1686,114 @@ impl Fighter {
                 self.pos = crate::map::run_default_collision(
                     &self.coll, &previous, from, self.pos, surfaces,
                 );
+                *pos_prev = from;
                 let want = crate::physics::integrated_position(self.pos, &self.physics, false);
-                self.map_contacts_prev = self.map_contacts;
-                self.map_contacts = crate::map::Contacts::default();
-                self.air_map_step(from, want, surfaces);
+                return (MapStep::EggLay, want);
             }
-            crate::dead::check(self);
-            self.after_dead_check(y_prev);
+            return (MapStep::Held(held), self.pos);
+        }
+        if crate::dokan::places_itself(self) {
+            self.root_motion = RootMotion::default();
+            return (MapStep::Dokan, self.pos);
+        }
+        if let Some(target) = crate::hazard::physics(self) {
+            self.root_motion = RootMotion::default();
+            return (MapStep::Project, target);
+        }
+        if let Some(step) = self.cliff_physics(surfaces) {
+            return step;
+        }
+        match self.situation {
+            Situation::Ground => self.ground_physics(),
+            Situation::Air => self.air_physics(),
+        }
+    }
+
+    /// `ftMainProcPhysicsMap` from `ftmain.c:1804`: the moving floor's
+    /// `vel_speed`, `ftCommonDeadCheckInterruptCommon`, the altitude
+    /// whistle and the crowd's knockback on that pre-map TopN, then, for a
+    /// status with a `proc_map` (none once the check set a dead status),
+    /// the collision masks' roll, `proc_map` and Kirby's map stars.
+    fn map_window<I, F>(&mut self, step: MapStep, want: Vec3, pos_prev: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        // `ftmain.c:1806-1812`: a grounded fighter rides its line's
+        // `vel_speed`. The port's ground sweep adds it on its first substep
+        // ([`crate::map::move_ground_pushed`]); TopN carries it here. A held
+        // fighter is grounded on its catcher's line once
+        // `ftCommonCapturePulledProcMap` has put it there.
+        let speed = match step {
+            MapStep::Ground(standing) => crate::map::line_speed(surfaces, standing.line),
+            MapStep::CliffGround { line, .. } => crate::map::line_speed(surfaces, line),
+            MapStep::Lag | MapStep::Held(_) => match (self.situation, self.floor) {
+                (Situation::Ground, Some(standing)) => {
+                    crate::map::line_speed(surfaces, standing.line)
+                }
+                _ => Vec3::ZERO,
+            },
+            _ => Vec3::ZERO,
+        };
+        let from = self.pos;
+        let pre_map = want + speed;
+        self.pos = pre_map;
+        let dead = crate::dead::check(self);
+        self.after_dead_check(pos_prev.y);
+        let has_proc_map = match step {
+            MapStep::NoProc => false,
+            // `Walk` and Master Hand's dead statuses have none.
+            MapStep::Boss => crate::boss::has_proc_map(self),
+            _ => true,
+        };
+        if dead || !has_proc_map {
+            // No `proc_map` (the dead statuses' included): TopN stays where
+            // the check left it, and the masks keep their last roll.
             return;
         }
+        // `ftmain.c:1830-1834`, ahead of `proc_map`.
         self.map_contacts_prev = self.map_contacts;
         self.map_contacts = crate::map::Contacts::default();
-        if crate::dokan::tick_status(self) {
-            self.root_motion = RootMotion::default();
-            crate::dead::check(self);
-            self.after_dead_check(y_prev);
-            return;
-        }
-        if crate::hazard::tick_status(self, &surfaces) {
-            crate::fteffect::kirby_map_star(self);
-            self.root_motion = RootMotion::default();
-            crate::dead::check(self);
-            self.after_dead_check(y_prev);
-            return;
-        }
-        if !self.tick_cliff(&surfaces) {
-            match self.situation {
-                Situation::Ground => self.tick_ground(surfaces),
-                Situation::Air => self.tick_air(surfaces),
+        if step.sweeps() {
+            // The sweep runs from where the physics half left TopN to the
+            // pre-map TopN, less the line speed the ground sweep adds
+            // itself; `is_limit_map_bounds`'s clamp moves that target.
+            let want = if self.pos == pre_map {
+                want
+            } else {
+                self.pos - speed
+            };
+            self.pos = from;
+            match step {
+                MapStep::Lag => self.lag_map(want, surfaces),
+                MapStep::EggLay => self.air_map_step(pos_prev, want, surfaces),
+                MapStep::Project => crate::hazard::project_map(self, want, surfaces),
+                MapStep::Ground(standing) => self.ground_map(standing, want, surfaces),
+                MapStep::Air => self.air_map_step(self.pos, want, surfaces),
+                MapStep::CliffGround { line, stop } => {
+                    self.cliff_ground_map(line, stop, want, surfaces)
+                }
+                MapStep::CliffAir => self.cliff_air_map(want, surfaces),
+                _ => unreachable!("{step:?} does not sweep"),
+            }
+        } else {
+            // These `proc_map`s work on TopN where it stands.
+            match step {
+                MapStep::None | MapStep::ProjectFloor => {}
+                MapStep::Held(held) => {
+                    crate::grab::held_map(self, held, || crate::map::floors(surfaces()));
+                }
+                MapStep::Dokan => {
+                    crate::dokan::tick_status(self);
+                }
+                MapStep::GroundBreak => self.on_ground_break(),
+                MapStep::Rebirth => crate::dead::rebirth_map(self),
+                MapStep::Boss => crate::boss::proc_map(self, pos_prev, surfaces),
+                _ => unreachable!("{step:?} sweeps"),
             }
         }
         // `ftParamKirbyTryMakeMapStarEffect`, after `proc_map`.
         crate::fteffect::kirby_map_star(self);
-        // `ftCommonDeadCheckInterruptCommon` runs between the position step
-        // and `proc_map` in `ftMainProcPhysicsMap`; here the ground and air
-        // ticks do both, so it runs after the map step.
-        crate::dead::check(self);
-        self.after_dead_check(y_prev);
-        // Root motion is an input sample, not persistent fighter state. This
-        // prevents a missed runtime sample from replaying an old displacement.
-        self.root_motion = RootMotion::default();
     }
 
     /// `ftMainProcPhysicsMap` after `ftCommonDeadCheckInterruptCommon`:
@@ -1719,35 +1832,54 @@ impl Fighter {
         }
     }
 
-    fn tick_cliff<I, F>(&mut self, surfaces: &F) -> bool
+    /// `ftCommonCliffCommon2UpdateCollData`: a phase-2 cliff status starts
+    /// on the floor 5 units in from the corner.
+    fn place_cliff_phase2<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        use crate::map;
+        if !self.cliff.place_phase2 || !map::is_cliff_phase2(self.status.status) {
+            return;
+        }
+        let Some(corner) = map::cliff_corner(surfaces, self.cliff.line, self.facing.sign()) else {
+            return;
+        };
+        self.cliff.corner = corner;
+        self.pos.x = corner.x + 5.0 * self.facing.sign();
+        if let Some((y, floor)) = map::floor_point(surfaces, self.cliff.line, self.pos.x) {
+            self.pos.y = y;
+            self.floor = Some(floor);
+        }
+        self.cliff.place_phase2 = false;
+    }
+
+    /// The cliff statuses' `proc_physics`: `ftCommonCliffCommonProcPhysics`
+    /// holds TopN at the corner (its `proc_map` does nothing);
+    /// `ftCommonCliffCommon2ProcPhysics` steps by TransN. `None` outside
+    /// them, or when the cliff's line is gone (the fighter falls).
+    fn cliff_physics<I, F>(&mut self, surfaces: &F) -> Option<(MapStep, Vec3)>
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         use crate::map;
         if !map::is_cliff_hold(self.status.status) && !map::is_cliff_phase2(self.status.status) {
-            return false;
+            return None;
         }
         let Some(corner) = map::cliff_corner(surfaces, self.cliff.line, self.facing.sign()) else {
             self.floor = None;
             self.cliffcatch_wait = crate::status::CLIFF_CATCH_WAIT;
             crate::status::set_fall(self);
-            return false;
+            return None;
         };
         self.cliff.corner = corner;
         if map::is_cliff_hold(self.status.status) {
             self.physics = PhysicsState::default();
             self.pos.x = corner.x + self.transn.z * self.facing.sign() * self.attributes.size;
             self.pos.y = corner.y + self.transn.y * self.attributes.size;
-            return true;
-        }
-        if self.cliff.place_phase2 {
-            self.pos.x = corner.x + 5.0 * self.facing.sign();
-            if let Some((y, floor)) = map::floor_point(surfaces, self.cliff.line, self.pos.x) {
-                self.pos.y = y;
-                self.floor = Some(floor);
-            }
-            self.cliff.place_phase2 = false;
+            return Some((MapStep::None, self.pos));
         }
         let mut motion = self.root_motion;
         motion.delta *= self.attributes.size;
@@ -1764,14 +1896,13 @@ impl Fighter {
                         | crate::status::Status::CliffClimbSlow2
                 )
             );
-            let (moved, contacts) =
-                map::move_ground(&self.coll, self.pos, want, self.cliff.line, stop, surfaces);
-            self.pos = moved.pos;
-            self.floor = moved.floor;
-            self.map_contacts = contacts;
-            if self.floor.is_none() {
-                crate::status::set_fall(self);
-            }
+            Some((
+                MapStep::CliffGround {
+                    line: self.cliff.line,
+                    stop,
+                },
+                want,
+            ))
         } else {
             // `motion` is already scaled by `attr->size` above.
             crate::physics::apply_air_vel_transn_all(
@@ -1787,29 +1918,76 @@ impl Fighter {
                 want.y = y + self.transn.y;
                 self.physics.vel_air = want - self.pos;
             }
-            let result = map::move_air(
-                &self.coll,
-                self.pos,
-                want,
-                map::AirOptions::default(),
-                surfaces,
-            );
-            self.pos = result.moved.pos;
-            self.map_contacts = result.contacts;
-            if let Some(floor) = result.moved.floor {
-                self.floor = Some(floor);
-                self.land(self.pos.y);
-            }
+            Some((MapStep::CliffAir, want))
         }
-        true
+    }
+
+    /// The grounded phase-2 cliff statuses' `proc_map`
+    /// (`mpCommonSetFighterFallOnGroundBreak` / `...OnEdgeBreak`).
+    fn cliff_ground_map<I, F>(&mut self, line: u16, stop: bool, want: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        let (moved, contacts) =
+            crate::map::move_ground(&self.coll, self.pos, want, line, stop, surfaces);
+        self.pos = moved.pos;
+        self.floor = moved.floor;
+        self.map_contacts = contacts;
+        if self.floor.is_none() {
+            crate::status::set_fall(self);
+        }
+    }
+
+    /// The airborne phase-2 cliff statuses' `proc_map`
+    /// (`mpCommonCheckFighterLanding`).
+    fn cliff_air_map<I, F>(&mut self, want: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        let result = crate::map::move_air(
+            &self.coll,
+            self.pos,
+            want,
+            crate::map::AirOptions::default(),
+            surfaces,
+        );
+        self.pos = result.moved.pos;
+        self.map_contacts = result.contacts;
+        if let Some(floor) = result.moved.floor {
+            self.floor = Some(floor);
+            self.land(self.pos.y);
+        }
     }
 
     /// `ftCommonDamageCommonProcLagUpdate`: during a hit's hitlag, a fresh
     /// hard stick tilt moves the fighter `2.1` units per stick unit (US),
-    /// once per tilt. The move then goes through the map like any other
-    /// (`proc_map` still runs in hitlag); an airborne fighter that reaches
-    /// a floor stops on it and lands when hitlag ends.
-    fn smash_di<I, F>(&mut self, surfaces: &F)
+    /// once per tilt. Returns TopN after the nudge; the move then goes
+    /// through the map like any other ([`Self::lag_map`]).
+    fn smash_di_nudge(&mut self) -> Vec3 {
+        let (x, y) = (self.stick.x as i32, self.stick.y as i32);
+        let nudge = self.is_smash_di
+            && self.hitlag != 0
+            && x * x + y * y >= SMASH_DI_RANGE_MIN * SMASH_DI_RANGE_MIN
+            && (self.stick.tap_x < SMASH_DI_BUFFER_TICS_MAX
+                || self.stick.tap_y < SMASH_DI_BUFFER_TICS_MAX);
+        if nudge {
+            self.stick.tap_x = crate::status::STICKBUFFER_MAX;
+            self.stick.tap_y = crate::status::STICKBUFFER_MAX;
+            Vec3::new(
+                self.pos.x + x as f32 * SMASH_DI_RANGE_MUL,
+                self.pos.y + y as f32 * SMASH_DI_RANGE_MUL,
+                self.pos.z,
+            )
+        } else {
+            self.pos
+        }
+    }
+
+    /// `proc_map` in hitlag, from TopN to `want`: an airborne fighter that
+    /// reaches a floor stops on it and lands when hitlag ends.
+    fn lag_map<I, F>(&mut self, want: Vec3, surfaces: &F)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
@@ -1824,26 +2002,9 @@ impl Fighter {
             self.reaction.coll_mask_prev = self.reaction.coll_mask_curr;
             self.reaction.coll_mask_curr = 0;
         }
-        let (x, y) = (self.stick.x as i32, self.stick.y as i32);
-        let nudge = self.is_smash_di
-            && self.hitlag != 0
-            && x * x + y * y >= SMASH_DI_RANGE_MIN * SMASH_DI_RANGE_MIN
-            && (self.stick.tap_x < SMASH_DI_BUFFER_TICS_MAX
-                || self.stick.tap_y < SMASH_DI_BUFFER_TICS_MAX);
-        let want = if nudge {
-            self.stick.tap_x = crate::status::STICKBUFFER_MAX;
-            self.stick.tap_y = crate::status::STICKBUFFER_MAX;
-            Vec3::new(
-                self.pos.x + x as f32 * SMASH_DI_RANGE_MUL,
-                self.pos.y + y as f32 * SMASH_DI_RANGE_MUL,
-                self.pos.z,
-            )
-        } else {
-            self.pos
-        };
         match (self.situation, self.floor) {
             (Situation::Ground, Some(standing)) => {
-                let (moved, _) = crate::map::move_ground(
+                let (moved, contacts) = crate::map::move_ground(
                     &self.coll,
                     self.pos,
                     want,
@@ -1852,6 +2013,7 @@ impl Fighter {
                     surfaces,
                 );
                 self.pos = moved.pos;
+                self.map_contacts = contacts;
                 if let Some(f) = moved.floor {
                     self.floor = Some(f);
                 }
@@ -1874,6 +2036,7 @@ impl Fighter {
                     surfaces,
                 );
                 self.pos = result.moved.pos;
+                self.map_contacts = result.contacts;
                 // `mpCommonUpdateFighterKinetics`, `proc_map` in hitlag too:
                 // a hit reaction launched from where it stood and nudged into
                 // the floor lands there, and slides once the hitlag is over
@@ -1884,7 +2047,6 @@ impl Fighter {
                         crate::status::AnyStatus::Common(s) if s.keeps_situation()
                     )
                 }) {
-                    self.map_contacts = result.contacts;
                     self.floor = Some(floor);
                     self.ignore_line = None;
                     self.land(result.moved.pos.y);
@@ -1999,19 +2161,16 @@ impl Fighter {
         }
     }
 
-    fn tick_ground<I, F>(&mut self, surfaces: F)
-    where
-        F: Fn() -> I,
-        I: IntoIterator<Item = crate::weapon::MapSurface>,
-    {
+    /// The grounded `proc_physics` and the velocity step: the step's
+    /// target for [`Self::ground_map`].
+    fn ground_physics(&mut self) -> (MapStep, Vec3) {
         let Some(standing) = self.floor else {
             // Grounded on no line: the rebirth halo's fake floor (`-2`,
             // `ftCommonRebirthDownSetStatus`). The first ground status after
             // the rebirth statuses finds no floor in its `proc_map` and falls
             // (RE-468: Luigi's down tap on the halo squats and falls on the
             // same frame).
-            self.on_ground_break();
-            return;
+            return (MapStep::GroundBreak, self.pos);
         };
 
         // `proc_physics`: each grounded status drives the along-floor velocity
@@ -2090,7 +2249,7 @@ impl Fighter {
         {
             if crate::status::apply_mario_special_lw_ground_physics(self) {
                 self.floor = None;
-                return;
+                return (MapStep::None, self.pos);
             }
         } else if matches!(
             self.status.status,
@@ -2186,6 +2345,16 @@ impl Fighter {
                     )
             },
         );
+        (MapStep::Ground(standing), want)
+    }
+
+    /// The grounded `proc_map` on `standing` from TopN to `want`
+    /// (`mpCommonProcFighterOnFloor` and the statuses' own).
+    fn ground_map<I, F>(&mut self, standing: crate::ground::Standing, want: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         let stop_edge = crate::map::stops_at_edge(self.status.status)
             || crate::captain::special_lw_stops_at_edge(self);
         let cliff_edge = crate::map::teeters_at_edge(self).then_some(crate::map::CliffEdge {
@@ -2204,7 +2373,7 @@ impl Fighter {
             standing.line,
             stop_edge,
             cliff_edge,
-            &surfaces,
+            surfaces,
         );
         self.map_contacts = contacts;
         self.pos = moved.pos;
@@ -2232,7 +2401,7 @@ impl Fighter {
                     self.fox_special_hi.angle =
                         ssb_engine::math::sy_arc_tan2(-f.normal.x * self.facing.sign(), f.normal.y);
                 }
-                crate::status::ottotto_proc_map(self, &surfaces);
+                crate::status::ottotto_proc_map(self, surfaces);
                 // `ftCaptainSpecialLwProcMap` after its floor probe kept the
                 // floor: the wall rebound, or the flag-1 pulse cleared.
                 crate::captain::special_lw_proc_map(self);
@@ -2247,14 +2416,12 @@ impl Fighter {
         }
     }
 
-    fn tick_air<I, F>(&mut self, surfaces: F)
-    where
-        F: Fn() -> I,
-        I: IntoIterator<Item = crate::weapon::MapSurface>,
-    {
+    /// The airborne `proc_physics` and the velocity step: the step's
+    /// target for [`Self::air_map_step`].
+    fn air_physics(&mut self) -> (MapStep, Vec3) {
         if crate::map::is_cliff_hold(self.status.status) {
             self.physics = crate::physics::PhysicsState::default();
-            return;
+            return (MapStep::None, self.pos);
         }
         // `ftPhysicsCheckSetFastFall` runs from every airborne status's own
         // `proc_physics` in the original; here it is the one thing every
@@ -2421,12 +2588,12 @@ impl Fighter {
             self.attributes.traction,
         );
         let want = crate::physics::integrated_position(self.pos, &self.physics, false);
-        self.air_map_step(self.pos, want, surfaces);
+        (MapStep::Air, want)
     }
 
     /// The airborne `proc_map` from `from` (`coll_data.pos_prev`) to
     /// `want`, TopN after the position step.
-    fn air_map_step<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: F)
+    fn air_map_step<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: &F)
     where
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
@@ -2450,7 +2617,7 @@ impl Fighter {
             self.status.status,
             crate::status::AnyStatus::Common(s) if crate::reaction::is_damage_air(s)
         ) {
-            self.tick_damage_map(from, want, &surfaces);
+            self.tick_damage_map(from, want, surfaces);
             return;
         }
         let cliff = crate::map::CliffQuery {
@@ -2472,7 +2639,7 @@ impl Fighter {
                 ceil_heavy: crate::map::is_ceil_heavy_status(self.status.status)
                     && self.physics.vel_air.y >= crate::map::CEILHEAVY_VEL_Y_MIN,
             },
-            &surfaces,
+            surfaces,
         );
         let moved = result.moved;
         self.map_contacts = result.contacts;
@@ -2590,6 +2757,63 @@ impl Fighter {
     }
 }
 
+/// The `proc_map` [`Fighter::tick_physics_map_procs`] runs after
+/// `ftCommonDeadCheckInterruptCommon` (`ftmain.c:1829`), chosen by the
+/// physics half.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MapStep {
+    /// No `proc_map` at all (the dead statuses, `Sleep`, `Entry`): no
+    /// mask roll, no map stars.
+    NoProc,
+    /// No map step: the status placed TopN itself (the cliff hold, Mario's
+    /// grounded Tornado lifting off).
+    None,
+    /// `mpCommonUpdateFighterProjectFloor` (the appear statuses): the
+    /// floor under TopN for the shadow only.
+    ProjectFloor,
+    /// `ftCommonRebirthCommonProcMap`.
+    Rebirth,
+    /// Master Hand's own `proc_map`, from `pos_prev`.
+    Boss,
+    /// The status's `proc_map` in hitlag.
+    Lag,
+    /// A held fighter's `proc_map` against its catcher's line.
+    Held(crate::grab::HeldMap),
+    /// The laid egg's airborne `proc_map` from Yoshi (`pos_prev`).
+    EggLay,
+    /// `ftCommonDokanWaitProcMap` / `DokanWalk`'s.
+    Dokan,
+    /// `mpCommonProcFighterProject` (Twister, barrel).
+    Project,
+    /// A grounded status on no line falls (`mpCommonSetFighterFallOnGroundBreak`).
+    GroundBreak,
+    /// The grounded `proc_map` on the floor it stood on.
+    Ground(crate::ground::Standing),
+    /// The airborne `proc_map`.
+    Air,
+    /// A grounded phase-2 cliff status on the cliff's line.
+    CliffGround { line: u16, stop: bool },
+    /// An airborne phase-2 cliff status.
+    CliffAir,
+}
+
+impl MapStep {
+    /// Whether the port's `proc_map` sweeps from where the physics half
+    /// left TopN to a target, rather than working on TopN in place.
+    fn sweeps(self) -> bool {
+        matches!(
+            self,
+            MapStep::Lag
+                | MapStep::EggLay
+                | MapStep::Project
+                | MapStep::Ground(_)
+                | MapStep::Air
+                | MapStep::CliffGround { .. }
+                | MapStep::CliffAir
+        )
+    }
+}
+
 /// What [`jostle`] reads of another fighter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JostleBody {
@@ -2692,6 +2916,10 @@ fn ground_vel_z(z: f32, jostle_z: f32, ground_z: f32) -> f32 {
     }
     v + ground_z
 }
+
+#[cfg(test)]
+#[path = "physics_map_tests.rs"]
+mod physics_map_tests;
 
 #[cfg(test)]
 mod tests {

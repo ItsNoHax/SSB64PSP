@@ -835,17 +835,26 @@ fn set_rebirth_wait(f: &mut Fighter) {
     f.dead.is_rebirth = true;
 }
 
-/// The position step and `proc_map` of these statuses, in place of the
-/// ordinary ground and air ticks. The `Dead*` statuses and `Sleep`
+/// The callbacks [`own_map`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnMap {
+    /// The `Dead*` statuses and `Sleep`: no `proc_map`.
+    None,
+    /// The rebirth statuses: `ftCommonRebirthCommonProcMap` ([`rebirth_map`]).
+    Rebirth,
+}
+
+/// The statuses whose callbacks replace the ordinary ground and air ones in
+/// `ftMainProcPhysicsMap`. The `Dead*` statuses and `Sleep`
 /// (`ftcommonstatus.h`) have neither `proc_physics` nor `proc_map`: the
 /// fighter only moves by its air velocity, and its `is_ghost` skips the
-/// blast check. The ordinary ticks would set `Fall` on a sleeper, which
-/// clears `is_ghost` and kills it again where it died: a 1P Game enemy put
-/// to sleep below the team bounds then scored a KO every replacement wait.
-/// The rebirth statuses lower the fighter along
-/// `ftCommonRebirthCommonProcMap`'s curve. Returns `false` for any other
-/// status.
-pub fn tick_status(f: &mut Fighter) -> bool {
+/// blast check (the altitude whistle still listens: a falling top-out
+/// crosses `alt_warning`). The ordinary ticks would set `Fall` on a
+/// sleeper, which clears `is_ghost` and kills it again where it died: a 1P
+/// Game enemy put to sleep below the team bounds then scored a KO every
+/// replacement wait. The rebirth statuses have no `proc_physics`; their
+/// `proc_map` lowers the fighter. `None` for any other status.
+pub fn own_map(f: &Fighter) -> Option<OwnMap> {
     match f.status.status {
         AnyStatus::Common(
             Status::DeadDown
@@ -853,18 +862,33 @@ pub fn tick_status(f: &mut Fighter) -> bool {
             | Status::DeadUpStar
             | Status::DeadUpFall
             | Status::Sleep,
-        ) => {
-            f.pos += f.physics.vel_air;
-            true
-        }
+        ) => Some(OwnMap::None),
         AnyStatus::Common(Status::RebirthDown | Status::RebirthStand | Status::RebirthWait) => {
-            let r = f.dead.rebirth;
-            let lower = r.halo_lower_wait as f32;
-            f.pos.y = ((r.pos.y - r.halo_offset.y) / 8100.0) * (lower * lower) + r.halo_offset.y;
-            true
+            Some(OwnMap::Rebirth)
         }
-        _ => false,
+        _ => None,
     }
+}
+
+/// `ftCommonRebirthCommonProcMap`: TopN's height on the halo's descent.
+pub fn rebirth_map(f: &mut Fighter) {
+    let r = f.dead.rebirth;
+    let lower = r.halo_lower_wait as f32;
+    f.pos.y = ((r.pos.y - r.halo_offset.y) / 8100.0) * (lower * lower) + r.halo_offset.y;
+}
+
+/// The velocity step and [`own_map`]'s `proc_map` alone, without the rest
+/// of `ftMainProcPhysicsMap`. Returns `false` for any other status.
+#[cfg(test)]
+pub fn tick_status(f: &mut Fighter) -> bool {
+    let Some(map) = own_map(f) else {
+        return false;
+    };
+    f.pos += f.physics.vel_air;
+    if map == OwnMap::Rebirth {
+        rebirth_map(f);
+    }
+    true
 }
 
 #[cfg(test)]

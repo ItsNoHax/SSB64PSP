@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: Chansey egg flip (`itegg.c:322`), Clefairy selection vs 14-row N64 sweep, Starmie artifact resolved; `game_static!`, `public`, `sound` per thread on host builds (`rng_lock` removed); `battle::start_scene` wires `set_ground_kind`, altitude whistle plays, N64-matched. Goldens unchanged. RE-557.
-- Open: stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555 deviation, no current move). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: `ftMainProcPhysicsMap` order for every status (velocity, moving floor, dead check, whistle, mask roll, `proc_map`, Kirby star); random-stage VS applies `vs_battle_gkind`. `f1-vs-team` rebaselined (2786 native px, Kirby star in a hitlag landing). RE-558.
+- Open: physics/map approximations (RE-558); stage-clear zoom N64 trace (RE-554); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 22 (RE-557); deepest game stack 366880 B.
+Baseline: batch 23 (RE-558); deepest game stack 366880 B.
 
 | Check | Result |
 |---|---|
