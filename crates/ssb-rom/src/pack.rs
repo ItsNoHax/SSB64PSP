@@ -448,7 +448,13 @@ pub const MAGIC: u32 = 0x5342_5350;
 // sprite, RE-550) and converts the Kirby star list (86 + 0x5458, RE-551)
 // and the Fire Spark tree (84 + 0x2040, RE-427) under the effect CLD seed
 // on head 1. No layout change.
-pub const VERSION: u32 = 125;
+// 126 marks head 1 on every object the N64 draws whole on task head 1, from
+// the effect descs' `proc_display` and the weapon descs' flags
+// (`task_head`): the unlinked weapons, Falcon Punch and Yoshi's egg (CLD
+// seed, depth off), Yoshi's entry egg and Pikachu's Thunder frames (their
+// link's `list_id`); the boss's bullets take the weapon seed. No layout
+// change.
+pub const VERSION: u32 = 126;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

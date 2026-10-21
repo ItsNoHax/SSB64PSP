@@ -58,6 +58,7 @@ mod d_arrays {
     include!(concat!(env!("OUT_DIR"), "/d_arrays.rs"));
 }
 pub mod battle;
+pub mod battle_draw;
 pub mod boss;
 pub mod camera;
 pub mod captain;

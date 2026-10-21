@@ -145,6 +145,20 @@ pub enum Heads {
     Head1,
 }
 
+impl DrawState {
+    /// Whether a primitive with these `flags` draws under [`Self::heads`].
+    /// A head-1 primitive a [`Heads::Head0`] draw skips sets
+    /// [`Self::head1_pending`].
+    #[inline]
+    pub fn admits(&mut self, flags: u32) -> bool {
+        let admitted = self.heads.admits(flags);
+        if !admitted && self.heads == Heads::Head0 {
+            self.head1_pending = true;
+        }
+        admitted
+    }
+}
+
 impl Heads {
     /// Whether a primitive with these `flags` draws under this filter.
     pub fn admits(self, flags: u32) -> bool {
@@ -163,6 +177,15 @@ pub struct DrawState {
     /// The task heads draws submit; [`Heads::Both`] except while a caller
     /// splits a camera pass (RE-422).
     pub heads: Heads,
+    /// Set by a [`Heads::Head0`] draw that skipped a head-1 primitive, so a
+    /// caller splitting a pass runs the same draws again under
+    /// [`Heads::Head1`] only when they have head-1 content.
+    pub head1_pending: bool,
+    /// Set while a caller replays a split pass's draws under
+    /// [`Heads::Head1`]: the non-mesh draws (sprites, quads, trails,
+    /// particles, fills, shadows) already ran in the head-0 replay and
+    /// return at once.
+    pub mesh_only: bool,
     /// Colour registers an effect's display callback sets for the whole draw
     /// (`efManagerShieldProcDisplay`'s per-player PRIM and ENV, RE-384).
     /// Takes the place of a material animation's live colours while set.
@@ -1844,7 +1867,7 @@ unsafe fn draw_mesh_vertices(
         let Some(p) = pack.prim(mesh.first_prim + i) else {
             continue;
         };
-        if !st.heads.admits(p.flags) {
+        if !st.admits(p.flags) {
             continue;
         }
         let Some(indices) = pack.indices(&p) else {
@@ -3754,6 +3777,9 @@ pub unsafe fn draw_texture_quad(
     verts: &mut [TexQuadVertex; 6],
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(index) else { return };
     bind_texture(pack, index, &t, TextureDesc::NO_ANIM);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
@@ -3912,6 +3938,9 @@ unsafe fn draw_sprite_xy_with(
     prim_alpha: bool,
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -4016,6 +4045,9 @@ pub unsafe fn draw_wallpaper(
     scale: f32,
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     #[cfg(feature = "texture_probe")]
     let _cat = probe_cat(draw_state, crate::texprobe::Cat::Wallpaper);
     let Some(t) = pack.texture(sprite.texture) else {
@@ -4072,6 +4104,9 @@ pub unsafe fn draw_sprite_tiled(
     size: [f32; 2],
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -4118,6 +4153,9 @@ pub unsafe fn draw_sprite_mirror_t(
     size: [f32; 2],
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -4173,6 +4211,9 @@ pub unsafe fn draw_sprite_glow(
     glow: u8,
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(sprite.texture) else {
         return;
     };
@@ -4292,6 +4333,9 @@ pub unsafe fn draw_depth_image(
     rect: [f32; 4],
     st: &mut DrawState,
 ) {
+    if st.mesh_only {
+        return;
+    }
     let [x, y, width, height] = rect;
     let k = ssb_engine::coord::SCREEN_SCALE;
     let x0 = ssb_engine::coord::n64_to_psp_x(x);
@@ -4392,6 +4436,9 @@ impl DepthSprites {
 ///
 /// Between `begin_frame` and `end_frame`.
 pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut DrawState) {
+    if draw_state.mesh_only {
+        return;
+    }
     #[repr(C, align(4))]
     struct FillVertex {
         color: u32,
@@ -4445,6 +4492,9 @@ pub unsafe fn fill_rect_n64(rect: [f32; 4], rgba: [u8; 4], draw_state: &mut Draw
 ///
 /// Between `begin_frame` and `end_frame`.
 pub unsafe fn fill_triangles_n64(tris: &[[[f32; 2]; 3]], rgba: [u8; 4], draw_state: &mut DrawState) {
+    if draw_state.mesh_only {
+        return;
+    }
     #[repr(C, align(4))]
     struct FillVertex {
         color: u32,
@@ -4519,6 +4569,9 @@ pub unsafe fn draw_trail(
     mode: TrailMode,
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     #[repr(C, align(4))]
     struct TrailVertex {
         color: u32,
@@ -4599,6 +4652,9 @@ pub unsafe fn draw_quad_3d(
     color: [u8; 4],
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
@@ -4701,6 +4757,9 @@ pub unsafe fn draw_particle(
     verts: &mut [TexQuadVertex; 6],
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
@@ -4805,6 +4864,9 @@ pub unsafe fn draw_particle_rect(
     r: &ParticleRect,
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
@@ -4943,6 +5005,9 @@ pub unsafe fn draw_fighter_shadow(
     verts: &mut [TexQuadVertex; 18],
     draw_state: &mut DrawState,
 ) {
+    if draw_state.mesh_only {
+        return;
+    }
     if !geometry.visible() {
         return;
     }

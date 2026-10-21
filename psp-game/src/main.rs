@@ -8555,131 +8555,6 @@ unsafe fn draw_training(
         })
     });
     damage_hud.players.views = views;
-    // Links 1-2, before layer 0 (which clears `G_ZBUFFER` and covers
-    // them): Captain Falcon on a leftward entry (`ftParamMoveDLLink`) and
-    // the entry vehicles `efManagerSortZNeg` puts behind z -1000 (RE-425).
-    for f in fighters
-        .iter()
-        .flatten()
-        .filter(|f| f.fighter.entry.is_link_1)
-    {
-        if !views[usize::from(f.fighter.port)].offscreen {
-            draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
-        }
-    }
-    draw_entry_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        fighter_refs,
-        material_anim,
-        2,
-        stage.light_angle_xy,
-    );
-    let t = profile::start();
-    stage_pass(0..=5, Head0, draw_state);
-    stage_pass(0..=5, Head1, draw_state);
-    stage_pass(6..=8, Head0, draw_state);
-    profile::stop(profile::Span::DrawStage, t);
-
-    // The N64 puts shadows on their own display link between the stage and
-    // fighters.  Resolve each independently from its live floor/air state;
-    // the fixed scratch is copied into GE memory by the renderer, so it is
-    // safe to reuse for every fighter without a per-frame allocation.
-    if let Some(shadow_texture) = assets.shadow_texture.as_ref() {
-        let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
-        let groups = stage_map.map_or(&[][..], |m| &m.groups[..]);
-        let is_team_battle = battle.is_some_and(|b| b.is_team_battle);
-        let is_not_teamshadows = battle.is_some_and(|b| b.is_not_teamshadows);
-        for f in fighters.iter().flatten() {
-            let shadow = ssb_psp_runtime::scene::fighter_shadow(
-                p,
-                &stage,
-                groups,
-                &f.fighter,
-                f.shadow_size,
-            );
-            meshdraw::draw_fighter_shadow(
-                p,
-                shadow_texture,
-                &shadow,
-                ssb_game::shadow::color(is_team_battle, is_not_teamshadows, f.fighter.team),
-                &mut shadow_verts,
-                draw_state,
-            );
-        }
-    }
-
-    // Each fighter in port order, the CPUs drawn the same way as the
-    // player's -- their own pose, their own per-fighter light rebuild
-    // (RE-164).
-    let t = profile::start();
-    for f in fighters
-        .iter()
-        .flatten()
-        .filter(|f| !f.fighter.entry.is_link_1)
-    {
-        if !views[usize::from(f.fighter.port)].offscreen {
-            draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
-        }
-    }
-    profile::stop(profile::Span::DrawFighters, t);
-    // Link 10: the title demos' fade (made before any effect), the entry
-    // effects, the trapping egg, the halo, the impact wave and particle
-    // list 4.
-    if damage_hud.demo_fade_alpha != 0 {
-        meshdraw::fill_rect_n64(viewport, [0, 0, 0, damage_hud.demo_fade_alpha], draw_state);
-    }
-    draw_egg_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        fighter_refs,
-        &pl.camera,
-    );
-    draw_entry_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        fighter_refs,
-        material_anim,
-        10,
-        stage.light_angle_xy,
-    );
-    draw_ko_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        &damage_hud.ko,
-        fighter_refs,
-        REBIRTH_HALO_LINK,
-    );
-    draw_display_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        &mut damage_hud.display_scratch,
-        &damage_hud.effects,
-        fighter_refs,
-        &pl.camera,
-        10,
-    );
-    draw_particles(
-        p,
-        pl,
-        damage_hud,
-        draw_state,
-        &ssb_psp_runtime::particles::LINK10_LISTS,
-    );
     let battle_part = |part, draw_state: &mut meshdraw::DrawState, gpu: &mut Gpu| {
         draw_items_weapons_effects(
             gpu,
@@ -8695,119 +8570,234 @@ unsafe fn draw_training(
             part,
         );
     };
-    // Items draw after the fighters, each of which restores the stage's
-    // light (`ftDisplayMainProcDisplay`'s closing
-    // `ftDisplayLightsDrawReflect`) under the pass's `G_LIGHTING`: a lit
-    // item primitive takes that direction and its own `G_MW_LIGHTCOL`.
-    draw_state.configure_item_light(stage.light_angle_xy);
-    battle_part(BattlePart::Items, draw_state, gpu);
-    draw_state.finish_fighter_light();
-    {
-        for display in damage_hud
-            .effects
-            .displays()
-            .filter(|d| d.kind == ssb_game::effect::DisplayKind::ContainerSmash)
-        {
-            if let Some((kind, pieces)) = damage_hud.effects.container_pieces(display) {
-                let mesh = match kind {
-                    ssb_game::effect::SmashPiece::Box => assets.container_piece.as_ref(),
-                    ssb_game::effect::SmashPiece::TaruBomb => assets.tarubomb_piece.as_ref(),
-                };
-                let Some(mesh) = mesh else { continue; };
-                for piece in pieces {
-                    gpu.model_transform_xyz(
-                        [piece.pos.x, piece.pos.y, piece.pos.z],
-                        [piece.rotate.x, piece.rotate.y, piece.rotate.z],
-                        [meshdraw::MODEL_SCALE; 3],
-                    );
-                    meshdraw::draw_mesh(p, mesh, draw_state, None, None);
+    // `ssb_game::battle_draw::BATTLE`: each pass's head-0 draws, then its
+    // head-1 draws (RE-422). A split group's head-1 step replays its draws
+    // under `Heads::Head1` only when its head-0 step skipped a head-1
+    // primitive, so a pass with no head-1 content submits the same list as
+    // one draw per group; the replay skips the non-mesh draws, which stay
+    // in the head-0 step.
+    let mut head1_pending = [false; ssb_game::battle_draw::GROUPS];
+    for step in &ssb_game::battle_draw::BATTLE {
+        use ssb_game::battle_draw::{Group as G, Head as H};
+        let split = step.group.split();
+        match (step.head, split) {
+            (H::One, true) if step.group != G::Stage => {
+                if !head1_pending[step.group as usize] {
+                    continue;
+                }
+                draw_state.heads = Head1;
+                draw_state.mesh_only = true;
+            }
+            (H::One, true) => draw_state.heads = Head1,
+            (H::Zero, true) => {
+                draw_state.heads = Head0;
+                draw_state.head1_pending = false;
+            }
+            _ => draw_state.heads = meshdraw::Heads::Both,
+        }
+        let heads = draw_state.heads;
+        match step.group {
+            G::Stage => {
+                // The stage's own spans: layers 0 and 1 (RE-422).
+                let t = (step.last <= 8).then(profile::start);
+                stage_pass(step.link..=step.last, heads, draw_state);
+                if let Some(t) = t {
+                    profile::stop(profile::Span::DrawStage, t);
                 }
             }
+            // Links 1-2, before layer 0 (which clears `G_ZBUFFER` and covers
+            // them): Captain Falcon on a leftward entry
+            // (`ftParamMoveDLLink`).
+            G::EntryFighters => {
+                for f in fighters
+                    .iter()
+                    .flatten()
+                    .filter(|f| f.fighter.entry.is_link_1)
+                {
+                    if !views[usize::from(f.fighter.port)].offscreen {
+                        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
+                    }
+                }
+            }
+            // Links 2, 10 and 20: the entry vehicles `efManagerSortZNeg`
+            // puts behind z -1000, the others, and those sorted in front
+            // (RE-425).
+            G::EntryEffects => draw_entry_effects(
+                gpu,
+                p,
+                draw_state,
+                assets,
+                effect_visuals,
+                fighter_refs,
+                material_anim,
+                step.link,
+                stage.light_angle_xy,
+            ),
+            // The N64 puts shadows on their own display link between the
+            // stage and fighters. Resolve each independently from its live
+            // floor/air state; the fixed scratch is copied into GE memory by
+            // the renderer, so it is safe to reuse for every fighter without
+            // a per-frame allocation.
+            G::Shadows => {
+                if let Some(shadow_texture) = assets.shadow_texture.as_ref() {
+                    let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
+                    let groups = stage_map.map_or(&[][..], |m| &m.groups[..]);
+                    let is_team_battle = battle.is_some_and(|b| b.is_team_battle);
+                    let is_not_teamshadows = battle.is_some_and(|b| b.is_not_teamshadows);
+                    for f in fighters.iter().flatten() {
+                        let shadow = ssb_psp_runtime::scene::fighter_shadow(
+                            p,
+                            &stage,
+                            groups,
+                            &f.fighter,
+                            f.shadow_size,
+                        );
+                        meshdraw::draw_fighter_shadow(
+                            p,
+                            shadow_texture,
+                            &shadow,
+                            ssb_game::shadow::color(is_team_battle, is_not_teamshadows, f.fighter.team),
+                            &mut shadow_verts,
+                            draw_state,
+                        );
+                    }
+                }
+            }
+            // Each fighter in port order, the CPUs drawn the same way as
+            // the player's -- their own pose, their own per-fighter light
+            // rebuild (RE-164).
+            G::Fighters => {
+                let t = profile::start();
+                for f in fighters
+                    .iter()
+                    .flatten()
+                    .filter(|f| !f.fighter.entry.is_link_1)
+                {
+                    if !views[usize::from(f.fighter.port)].offscreen {
+                        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
+                    }
+                }
+                profile::stop(profile::Span::DrawFighters, t);
+            }
+            // Link 10: the title demos' fade, made before any effect.
+            G::DemoFade => {
+                if damage_hud.demo_fade_alpha != 0 {
+                    meshdraw::fill_rect_n64(viewport, [0, 0, 0, damage_hud.demo_fade_alpha], draw_state);
+                }
+            }
+            G::EggEffects => draw_egg_effects(
+                gpu,
+                p,
+                draw_state,
+                assets,
+                effect_visuals,
+                fighter_refs,
+                &pl.camera,
+            ),
+            // The rebirth halo (link 10) and the KO explosion (link 18).
+            G::KoEffects => draw_ko_effects(
+                gpu,
+                p,
+                draw_state,
+                assets,
+                effect_visuals,
+                &damage_hud.ko,
+                fighter_refs,
+                if step.link == 10 {
+                    REBIRTH_HALO_LINK
+                } else {
+                    DEAD_EXPLODE_LINK
+                },
+            ),
+            G::DisplayEffects => draw_display_effects(
+                gpu,
+                p,
+                draw_state,
+                assets,
+                &mut damage_hud.display_scratch,
+                &damage_hud.effects,
+                fighter_refs,
+                &pl.camera,
+                step.link,
+            ),
+            G::Particles => draw_particles(
+                p,
+                pl,
+                damage_hud,
+                draw_state,
+                match step.link {
+                    10 => &ssb_psp_runtime::particles::LINK10_LISTS[..],
+                    15 => &ssb_psp_runtime::particles::LINK15_LISTS[..],
+                    _ => &ssb_psp_runtime::particles::LINK18_LISTS[..],
+                },
+            ),
+            // Items draw after the fighters, each of which restores the
+            // stage's light (`ftDisplayMainProcDisplay`'s closing
+            // `ftDisplayLightsDrawReflect`) under the pass's `G_LIGHTING`: a
+            // lit item primitive takes that direction and its own
+            // `G_MW_LIGHTCOL`.
+            G::Items => {
+                draw_state.configure_item_light(stage.light_angle_xy);
+                battle_part(BattlePart::Items, draw_state, gpu);
+                draw_state.finish_fighter_light();
+            }
+            G::ContainerPieces => {
+                for display in damage_hud
+                    .effects
+                    .displays()
+                    .filter(|d| d.kind == ssb_game::effect::DisplayKind::ContainerSmash)
+                {
+                    if let Some((kind, pieces)) = damage_hud.effects.container_pieces(display) {
+                        let mesh = match kind {
+                            ssb_game::effect::SmashPiece::Box => assets.container_piece.as_ref(),
+                            ssb_game::effect::SmashPiece::TaruBomb => assets.tarubomb_piece.as_ref(),
+                        };
+                        let Some(mesh) = mesh else { continue };
+                        for piece in pieces {
+                            gpu.model_transform_xyz(
+                                [piece.pos.x, piece.pos.y, piece.pos.z],
+                                [piece.rotate.x, piece.rotate.y, piece.rotate.z],
+                                [meshdraw::MODEL_SCALE; 3],
+                            );
+                            meshdraw::draw_mesh(p, mesh, draw_state, None, None);
+                        }
+                    }
+                }
+            }
+            // Link 9's head-1 lists: the sword trails, in fighter order.
+            G::SwordTrails => {
+                for f in fighters.iter().flatten().filter(|f| {
+                    !f.fighter.entry.is_link_1 && !views[usize::from(f.fighter.port)].offscreen
+                }) {
+                    draw_fighter_trail(gpu, draw_state, &f.fighter, TRAIL_MODE);
+                }
+            }
+            G::Weapons => battle_part(BattlePart::Weapons, draw_state, gpu),
+            G::Link15Effects => draw_link15_effects(
+                gpu,
+                draw_state,
+                p,
+                pl,
+                dummies,
+                assets,
+                effect_visuals,
+                material_anim,
+                &mut damage_hud.display_scratch,
+                &damage_hud.effects,
+            ),
+            G::Monsters => {
+                draw_state.configure_item_light(stage.light_angle_xy);
+                draw_link18_monsters(gpu, p, draw_state, assets, pl, items, effect_visuals);
+                draw_state.finish_fighter_light();
+            }
         }
+        if step.head == H::Zero && split {
+            head1_pending[step.group as usize] = draw_state.head1_pending;
+        }
+        draw_state.heads = meshdraw::Heads::Both;
+        draw_state.mesh_only = false;
+        draw_state.head1_pending = false;
     }
-    stage_pass(9..=12, Head0, draw_state);
-    stage_pass(6..=12, Head1, draw_state);
-    // Link 9's head-1 lists: the sword trails, in fighter order, after the
-    // stage's link-6 head-1 lists (the stage has none on links 7-12).
-    for f in fighters
-        .iter()
-        .flatten()
-        .filter(|f| !f.fighter.entry.is_link_1 && !views[usize::from(f.fighter.port)].offscreen)
-    {
-        draw_fighter_trail(gpu, draw_state, &f.fighter, TRAIL_MODE);
-    }
-
-    // Links 13-15: layer 2 (no head-1 lists on any stage), the weapons, then
-    // the link-15 effects and particle list 1.
-    stage_pass(13..=15, meshdraw::Heads::Both, draw_state);
-    battle_part(BattlePart::Weapons, draw_state, gpu);
-    draw_link15_effects(
-        gpu,
-        draw_state,
-        p,
-        pl,
-        dummies,
-        assets,
-        effect_visuals,
-        material_anim,
-        &mut damage_hud.display_scratch,
-        &damage_hud.effects,
-    );
-    draw_particles(
-        p,
-        pl,
-        damage_hud,
-        draw_state,
-        &ssb_psp_runtime::particles::LINK15_LISTS,
-    );
-
-    // Links 16-18: the front flowers and layer 3, then the link-18 effects
-    // and particle lists 0 and 2, then the stage's head-1 lists.
-    stage_pass(16..=17, Head0, draw_state);
-    draw_state.configure_item_light(stage.light_angle_xy);
-    draw_link18_monsters(gpu, p, draw_state, assets, pl, items, effect_visuals);
-    draw_state.finish_fighter_light();
-    draw_ko_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        &damage_hud.ko,
-        fighter_refs,
-        DEAD_EXPLODE_LINK,
-    );
-    draw_display_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        &mut damage_hud.display_scratch,
-        &damage_hud.effects,
-        fighter_refs,
-        &pl.camera,
-        18,
-    );
-    draw_particles(
-        p,
-        pl,
-        damage_hud,
-        draw_state,
-        &ssb_psp_runtime::particles::LINK18_LISTS,
-    );
-    stage_pass(16..=18, Head1, draw_state);
-    // Links 19-20: the entry vehicles sorted in front (RE-425).
-    draw_entry_effects(
-        gpu,
-        p,
-        draw_state,
-        assets,
-        effect_visuals,
-        fighter_refs,
-        material_anim,
-        20,
-        stage.light_angle_xy,
-    );
     // The boss's first camera (priority 40, tag 1): the near comets and
     // the closing effect, whose fades cover the battle.
     if let Some((effects, controller)) = boss {
@@ -10755,6 +10745,7 @@ unsafe fn draw_items_weapons_effects(
         }
     }
         draw_monster_weapons(p, gpu, assets, pl, weapons, draw_state);
+        // The PK Fire spark: `wpDisplayDLHead1`.
         let first_mesh = |object: &ssb_rom::pack::ObjectDesc, node: u32| {
         p.node(object.first_node + node)
             .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)

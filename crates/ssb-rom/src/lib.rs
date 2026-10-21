@@ -65,6 +65,7 @@ pub mod sprite_fringe;
 pub mod sprite_offsets;
 pub mod stage;
 pub mod strict;
+pub mod task_head;
 pub mod texture;
 pub mod title;
 pub mod transition;

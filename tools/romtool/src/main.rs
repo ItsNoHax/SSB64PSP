@@ -835,11 +835,9 @@ fn plan_draw_order(
         match resolver.resolve(node_dl) {
             NodeDl::Direct(dl) => out.push(own(
                 dl,
-                // lbCommonDrawDObjScaleX submits these direct effects to
-                // gSYTaskmanDLHeads[1], under the link's CLD setup (RE-443).
-                EFFECT_SCALE_X_GRAPHS
-                    .contains(&(file.id, graph.offset))
-                    .then_some(1),
+                // A manager effect or weapon whose display draws its whole
+                // object on gSYTaskmanDLHeads[1] (`ssb_rom::task_head`).
+                (whole_object_stream((file.id, graph.offset)) == 1).then_some(1),
             )),
             NodeDl::Links(links) => out.extend(
                 links
@@ -2590,20 +2588,28 @@ const EFFECT_CLD_GRAPHS: &[(u32, u32)] = &[
     (353, 0x11C0),
 ];
 
-/// Direct effects rendered by lbCommonDObjScaleXProcDisplay, whose walker
-/// uses task head 1 (not head 0). Their links 15/18 install CLD first.
-/// The Kirby capture and lost stars (`efManagerCaptureKirbyStarMakeEffect`,
-/// link 15) draw file 86's list at 0x5458, the Star Rod star's `data`
-/// (RE-551). The Fire Spark (`dEFManagerFireSparkEffectDesc`, link 15) is a
-/// two-node tree whose walker puts every node's list on head 1 too
-/// (RE-427).
-const EFFECT_SCALE_X_GRAPHS: &[(u32, u32)] = &[
-    (83, 0x7E80),
-    (83, 0x8FA0),
-    (84, 0x1500),
-    (84, 0x2040),
-    (86, 0x5458),
-];
+/// `mesh::SequenceItem::stream` for the plain lists of the object at
+/// `place`: 1 when the N64 draws that whole object on task head 1, by its
+/// manager effect's `proc_display` or its weapon's `WPDesc.flags`
+/// ([`ssb_rom::task_head`]). The ScaleX effects (RE-427, RE-443, RE-551),
+/// Falcon Punch, Yoshi's entry egg and every unlinked weapon are;
+/// `DObjDLLink` lists name their head themselves.
+fn whole_object_stream(place: (u32, u32)) -> u8 {
+    u8::from(ssb_rom::task_head::whole_head1_object(place).is_some())
+}
+
+/// [`whole_object_stream`] for a weapon converted outside the graph walk:
+/// `place` must be a whole-head-1 weapon's `WPAttributes.data`, so a
+/// block keyed to the wrong place fails the build instead of drawing on
+/// the wrong head.
+fn weapon_stream(place: (u32, u32)) -> u8 {
+    assert_eq!(
+        ssb_rom::task_head::whole_head1_object(place),
+        Some(ssb_rom::task_head::Head1Object::Weapon),
+        "{place:?} is not a whole-head-1 weapon's object"
+    );
+    1
+}
 
 /// Weapons whose `WPAttributes.data` is a direct display list with its own
 /// `anim_joints`, so they need a one-node graph for the animation to bind
@@ -2824,7 +2830,15 @@ fn initial_material_for(
             translucent: true,
             ..ssb_rom::mesh::InitialMaterial::SCENE
         }
-    } else if WEAPON_SEEDED_GRAPHS.contains(&(file, graph_offset)) {
+    } else if WEAPON_SEEDED_GRAPHS.contains(&(file, graph_offset))
+        || (ssb_rom::task_head::whole_head1_object((file, graph_offset))
+            == Some(ssb_rom::task_head::Head1Object::Weapon)
+            && ssb_rom::task_head::whole_head1_effect((file, graph_offset)).is_none())
+    {
+        // Every whole-head-1 weapon's head 1 starts under
+        // `wpDisplayDrawNormal` (RE-379); an object a manager effect also
+        // draws keeps the effect's seed (its weapon copy is converted
+        // separately where the two differ).
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else if (file, graph_offset) == SHIELD_GRAPH {
         ssb_rom::mesh::InitialMaterial::SHIELD_EXTERNAL
@@ -2834,7 +2848,7 @@ fn initial_material_for(
             ..ssb_rom::mesh::InitialMaterial::SCENE
         }
     } else if EFFECT_CLD_GRAPHS.contains(&(file, graph_offset))
-        || EFFECT_SCALE_X_GRAPHS.contains(&(file, graph_offset))
+        || ssb_rom::task_head::whole_head1_effect((file, graph_offset)).is_some_and(|e| e.cld)
     {
         ssb_rom::mesh::InitialMaterial {
             head1: ssb_rom::mesh::Head1Seed::EffectCld,
@@ -4387,7 +4401,18 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // it binds (`palettes[1]`, file offset 0x08).
         if id == 297 {
             const FIREBALL_MOBJ_TABLE: u32 = 0xD8;
+            // The mesh key: the decomp's `SuperJumpPunchDL` label.
             const FIREBALL_DISPLAY_LIST: u32 = 0x1D8;
+            // `WPAttributes.data` (`llMarioMainFireballWeaponAttributes`
+            // relocates here): the list starts six commands earlier than the
+            // label, setting its own TLUT (`G_TT_RGBA16`), alpha compare,
+            // render mode (`0x00553048`, alpha as coverage) and combiner, as
+            // the Charge Shot's does (file 321). The conversion still starts
+            // at the label under the weapon seed's translucent state, as
+            // before task heads were derived: starting at `FIREBALL_DATA`
+            // turns the fireball's blended edges into an alpha-test cutout,
+            // a material change of its own (follow-up).
+            const FIREBALL_DATA: u32 = 0x1A8;
             const LUIGI_FIREBALL_KEY: u32 = 0x08;
             if let (Some(materials), Ok(cmds)) = (
                 ssb_rom::mobj::read_table(file, FIREBALL_MOBJ_TABLE, 1),
@@ -4412,9 +4437,12 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         mobjs: &mobjs,
                         mat_anims: &[],
                         depth_seed: None,
+                        // Head 0's TLUT state: the label's commands load
+                        // the palette without setting `G_TT_RGBA16`, which
+                        // head 1 starts cleared (`mesh.rs` stream seeds).
                         stream: 0,
                     };
-                    let Some(Ok(fireball)) = mesh::convert_sequence(
+                    let Some(Ok(mut fireball)) = mesh::convert_sequence(
                         &[item],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -4423,6 +4451,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     .next() else {
                         continue;
                     };
+                    // `wpDisplayDLHead1` draws the whole list on head 1.
+                    let head1 = weapon_stream((297, FIREBALL_DATA)) == 1;
+                    for prim in &mut fireball.primitives {
+                        prim.material.head1 = head1;
+                    }
                     if fireball.triangle_count() != 0 {
                         pack_mesh(
                             &mut writer,
@@ -4462,7 +4495,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             mobjs: &[],
                             mat_anims: &[],
                             depth_seed: None,
-                            stream: 0,
+                            stream: weapon_stream((316, BLASTER_DISPLAY_LIST)),
                         }],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -4511,7 +4544,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             mobjs: &[],
                             mat_anims: &[],
                             depth_seed: None,
-                            stream: 0,
+                            stream: weapon_stream((321, CHARGE_SHOT_DISPLAY_LIST)),
                         }],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -4582,6 +4615,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                  mat_anims: &[Option<ssb_rom::mesh::MatAnimRef>],
                  key: u32,
                  initial: mesh::InitialMaterial,
+                 stream: u8,
                  mat_anim_data: &BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>| {
                     let cmds = file
                         .data
@@ -4594,7 +4628,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         mobjs,
                         mat_anims,
                         depth_seed: None,
-                        stream: 0,
+                        stream,
                     };
                     let converted =
                         mesh::convert_sequence(&[item], mesh::Source::of(file), initial)
@@ -4674,6 +4708,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[Some(green)],
                 GREEN_SHELL_KEY,
                 mesh::InitialMaterial::SCENE,
+                0,
                 &mat_anim_data,
             );
 
@@ -4686,6 +4721,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[Some(walk)],
                 BOMBHEI_LEFT_LIST,
                 mesh::InitialMaterial::SCENE,
+                0,
                 &mat_anim_data,
             );
 
@@ -4707,6 +4743,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[None],
                 BUMPER_LIT_KEY,
                 mesh::InitialMaterial::SCENE,
+                0,
                 &mat_anim_data,
             );
             let wait = ssb_rom::mobj::read_sub(file, BUMPER_WAIT_MOBJ)
@@ -4718,6 +4755,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[None],
                 BUMPER_WAIT_MOBJ,
                 mesh::InitialMaterial::SCENE,
+                0,
                 &mat_anim_data,
             );
             variant(
@@ -4726,6 +4764,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[None],
                 BUMPER_WAIT_LIT_KEY,
                 mesh::InitialMaterial::SCENE,
+                0,
                 &mat_anim_data,
             );
 
@@ -4768,6 +4807,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &[ball],
                 MBALL_SCRIPT,
                 mesh::InitialMaterial::SCENE,
+                0,
                 &mat_anim_data,
             );
 
@@ -4791,6 +4831,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     &[],
                     key,
                     mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    // Head 0: item displays, and Clefairy's swarm weapon's
+                    // (`ssb_rom::task_head::HEAD0_DISPLAY_WEAPONS`).
+                    0,
                     &mat_anim_data,
                 );
             }
@@ -4818,6 +4861,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     &[],
                     key,
                     mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    weapon_stream((ssb_rom::mmonster::FILE, ssb_rom::mmonster::ROCK_GRAPH)),
                     &mat_anim_data,
                 );
             }
@@ -4852,7 +4896,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         mobjs: &mobjs,
                         mat_anims: &[],
                         depth_seed: None,
-                        stream: 0,
+                        stream: weapon_stream((320, BOMB_DISPLAY_LIST)),
                     };
                     let Some(Ok(bomb)) = mesh::convert_sequence(
                         &[item],
@@ -4964,6 +5008,20 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         if id == 341 {
             const THUNDER_MOBJ_TABLE: u32 = 0x9420;
             const THUNDER_DISPLAY_LIST: u32 = 0x94F8;
+            // The array's one `DObjDLLink` (`{ list_id, dl }`) names the
+            // task head the head, trail and segment draw the list on
+            // (`gcDrawDObjDLLinksForGObj`).
+            const THUNDER_LINKS: u32 = 0x95B0;
+            assert_eq!(
+                ssb_rom::sprite::pointer_place(file, THUNDER_LINKS + 4),
+                Some((341, THUNDER_DISPLAY_LIST)),
+                "file 341 Thunder link names its list"
+            );
+            let thunder_list_id = u32::from_be_bytes(
+                file.data[THUNDER_LINKS as usize..][..4]
+                    .try_into()
+                    .expect("four bytes"),
+            );
             if let (Some(materials), Some(Ok(cmds))) = (
                 ssb_rom::mobj::read_table(file, THUNDER_MOBJ_TABLE, 1),
                 file.data
@@ -4997,7 +5055,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         mobjs: &mobjs,
                         mat_anims: &[],
                         depth_seed: None,
-                        stream: 0,
+                        stream: u8::from(thunder_list_id == 1),
                     };
                     let Some(Ok(frame)) = mesh::convert_sequence(
                         &[item],
@@ -5178,7 +5236,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             mobjs: &[],
                             mat_anims: &[],
                             depth_seed: None,
-                            stream: 0,
+                            stream: weapon_stream((86, STAR_DISPLAY_LIST)),
                         }],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -5221,7 +5279,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             mobjs: &[],
                             mat_anims: &[],
                             depth_seed: None,
-                            stream: 0,
+                            stream: weapon_stream((86, RAY_DISPLAY_LIST)),
                         }],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -5273,7 +5331,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             mobjs: &[],
                             mat_anims: &[],
                             depth_seed: None,
-                            stream: 0,
+                            stream: weapon_stream((ssb_rom::sector::FLIGHT_FILE, dl)),
                         }],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -15404,6 +15462,8 @@ mod tests {
         let loaded = super::load_all(&archive);
         let mut total = 0;
         let mut mode_writers = 0;
+        let mut weapons = 0;
+        let mut effect_modes = Vec::new();
         for (file_id, graphs) in &loaded.graphs {
             let Some(file) = loaded.files.get(*file_id as usize).and_then(Option::as_ref) else {
                 continue;
@@ -15429,7 +15489,17 @@ mod tests {
                         }
                     }
                 }
-                if !own_modes.is_empty() {
+                // `wpDisplayMain` resets head 1 after every weapon
+                // (`wpDisplayDrawZBuffer`, `wp/wpdisplay.c:139-144`), so a
+                // weapon's own modes reach no later list.
+                let weapon = ssb_rom::task_head::whole_head1_object((*file_id, graph.offset))
+                    == Some(ssb_rom::task_head::Head1Object::Weapon);
+                if weapon {
+                    weapons += 1;
+                } else if ssb_rom::task_head::whole_head1_effect((*file_id, graph.offset)).is_some()
+                {
+                    effect_modes.push(((*file_id, graph.offset), own_modes));
+                } else if !own_modes.is_empty() {
                     mode_writers += 1;
                     assert_eq!(
                         own_modes,
@@ -15449,8 +15519,28 @@ mod tests {
         // The Fire Spark tree (84 + 0x2040, RE-427) and the Kirby star list
         // (86 + 0x5458, RE-551) join the scale-X effects; neither sets a
         // mode.
-        assert_eq!(total, 112);
+        // 123 since the whole-head-1 weapons and effects are derived from
+        // their descs (`ssb_rom::task_head`): nine more weapon objects (the
+        // Kirby star was already one of the 112), Falcon Punch and Yoshi's
+        // entry egg. Falcon Punch's list sets `0x00553048` (alpha as
+        // coverage) and does not restore it: on the N64 a later head-1 list
+        // of link 15 that sets no mode inherits it, which per-graph seeding
+        // does not model. The entry egg sets the XLU mode's second half.
+        assert_eq!(total, 123);
         assert_eq!(mode_writers, 3);
+        assert_eq!(weapons, 10);
+        effect_modes.sort_unstable();
+        assert_eq!(
+            effect_modes,
+            [
+                ((83, 0x7E80), vec![]),
+                ((83, 0x8FA0), vec![]),
+                ((84, 0x1500), vec![]),
+                ((84, 0x2040), vec![]),
+                ((333, 0x760), vec![0x0055_3048]),
+                ((354, 0x530), vec![0x0050_49D8, 0x0050_49D8]),
+            ]
+        );
     }
 
     #[test]

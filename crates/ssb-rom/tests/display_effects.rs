@@ -76,7 +76,8 @@ fn scale_x_effects_draw_on_head_one_under_the_effect_links_cld_state() {
 /// Star Rod star's list, file 86 + 0x5458, the same list Yoshi's star names
 /// (`llYoshiMainStarWeaponAttributes`, file 247 + 0x40). The effect draws it
 /// under the CLD state, the weapon under `G_RM_AA_XLU_SURF`, so the pack
-/// holds one mesh of each, keyed apart (RE-551).
+/// holds one mesh of each, keyed apart (RE-551). Both draw on head 1
+/// (`lbCommonDObjScaleXProcDisplay`, `wpDisplayDLHead1`).
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_kirby_star_and_yoshi_star_are_one_list_under_two_states() {
@@ -105,7 +106,8 @@ fn the_kirby_star_and_yoshi_star_are_one_list_under_two_states() {
         let digest = |t| p.texture(t).unwrap().source_digest;
         assert_eq!(digest(k.texture), digest(y.texture));
         assert_ne!(k.flags & flags::HEAD1, 0);
-        assert_eq!(y.flags & flags::HEAD1, 0);
+        assert_ne!(y.flags & flags::HEAD1, 0);
+        assert_ne!(k.flags, y.flags);
     }
 }
 

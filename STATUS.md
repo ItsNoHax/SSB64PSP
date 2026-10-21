@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v125 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v126 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 243 of 243 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed: battle camera parity (RE-562). Rebirth `camera_zoom_range` 0.6 ported (N64 trace error 0.0014); stage-clear zoom N64 trace matches (0.0002, X then Y draw); Smash DI lag-update equivalent, pinned by tests; `rebirth` scenes now KO Mario (rebaselined `f1-training-rebirth`, `rebirthblast`, `f1-vs-knock-ko`).
-- Open: magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: battle draw order (RE-563). Per-pass head-0/head-1 phases for items, weapons, fighters, effects; head tags derived from the ROM (pack v126, `task_head.rs`); 15 goldens rebaselined (intended reorders, no hardware proof, D-051).
+- Open: fireball material from 0x1A8, boss bullet seed, Falcon Punch mode leak (RE-563); magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 27 (RE-562); deepest game stack 366904 B.
+Baseline: batch 28 (RE-563); deepest game stack 366904 B.
 
 | Check | Result |
 |---|---|

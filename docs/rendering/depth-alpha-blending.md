@@ -97,7 +97,9 @@ N64 has two independent discard gates; GE has one alpha-test unit. `pack::alpha_
 - `draw_training` draws in this order.
   - Stage: `meshdraw::draw_stage_links`, `DrawState::heads`.
   - Pack marks head-1 primitives with `flags::HEAD1` (RE-422).
-- Effects draw whole at their link's place; head-1 lists of an effect on link 10 or 18 do not wait for the stage's.
+- Objects split by head (RE-563): `battle_draw::BATTLE` lists each pass's steps; a group's head-1 step runs only if its head-0 step skipped a head-1 primitive (`DrawState::head1_pending`).
+  - Head tags come from the ROM (`ssb-rom` `task_head.rs`): whole-head-1 weapons and effects are packed `HEAD1`.
+  - Non-mesh draws (sprites, quads, trails, particles, shadows) stay in the head-0 step (`mesh_only`).
 - Stage controllers' objects on link 6 draw under layer 1's `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF`, inherited by their lists (RE-423).
   - Objects: Saffron City's gate, Yoshi's Island's clouds, Kongo Jungle's barrel, Mushroom Kingdom's scales.
 

@@ -128,7 +128,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Kirby | PSP spit-tick capture vs N64 shots 007/008; SpecialAirNCatch af unchecked vs N64 | RE-552 |
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
-| Battle draw order | Object head-1 lists don't wait for stage head-1 lists of same pass | RE-422 |
+| Fireball material: decode from 0x1A8, map 0x00553048 to blend; N64 coverage capture | List entry is 0x1A8 (RDRAM `DObj->dl`); pack still decodes 0x1D8; cutout moved 4 rows | RE-563 |
+| Boss bullet seed / Falcon Punch render-mode leak | Boss bullet translucent seed unchecked vs N64; Falcon Punch's 0x00553048 leaks into later link-15 head-1 lists on N64 | RE-563 |
 | Yoshi | Tongue and Egg Lay timeline matched (RE-552); remaining: grab vs N64, effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552 |
 | Setter first frames | No N64 trace: Barrel/Tornado captures, item throws, Final Cutter landing, Yoshi aerial release, Link aerial Boomerang return | RE-468, RE-473, RE-474 |
 | `anim_frame` | Shield pose clock; DK speed-0 cargo jump/fall; idle camera `status_total_tics` | RE-472, RE-474 |

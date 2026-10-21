@@ -2,13 +2,15 @@
 //! its code overlays' data segments: each fighter's main file and
 //! `FTAttributes` offset (`dFTManagerDataFiles`), the loading-break
 //! transitions (`dLBTransitionDescs`) and the manager effects
-//! (`dEFManager*EffectDesc`). Only the layout is committed: where each
-//! array is, and the labels and counts the port gives its entries.
+//! (`dEFManager*EffectDesc`), and the weapons' `WPDesc` render flags. Only
+//! the layout is committed: where each array is, and the labels and counts
+//! the port gives its entries.
 
 use std::fmt::Write;
 
 use crate::emit;
-use crate::source::{OverlayData, OVL0, OVL2};
+use crate::item_sounds::WEAPONS;
+use crate::source::{OverlayData, OVL0, OVL2, OVL3};
 use crate::{Error, Generated, Result, Source};
 
 /// `dFTManagerDataFiles` (`ft/ftdata.c`): `FTData *` per `FTKind`.
@@ -58,10 +60,12 @@ pub const FILE_HEADS: [(u32, u32); 5] = [
     (0x8013_0D98, 163),
     (0x8018_D040, 86),
 ];
-/// `EFDesc` (`ef/efdef.h`): `file_head` at +4, `o_dobjdesc` at +0x18,
-/// `o_mobjsub` at +0x1C, `o_anim_joint` at +0x20, `o_matanim_joint` at
-/// +0x24.
+/// `EFDesc` (`ef/eftypes.h`): `dl_link` at +1, `file_head` at +4,
+/// `proc_display` at +0x14, `o_dobjdesc` at +0x18, `o_mobjsub` at +0x1C,
+/// `o_anim_joint` at +0x20, `o_matanim_joint` at +0x24.
+const EF_DESC_DL_LINK: u32 = 1;
 const EF_DESC_FILE_HEAD: u32 = 4;
+const EF_DESC_PROC_DISPLAY: u32 = 0x14;
 const EF_DESC_O_DOBJDESC: u32 = 0x18;
 const EF_DESC_O_ANIM_JOINT: u32 = 0x20;
 const EF_DESC_O_MATANIM_JOINT: u32 = 0x24;
@@ -124,6 +128,58 @@ pub const EFFECTS: [(&str, u32); 46] = [
 const DEAD_EXPLODE_DESC: u32 = 0x8012_E33C;
 const DEAD_EXPLODE_MAT_ANIM_JOINTS: u32 = 0x8012_E36C;
 
+/// `WPDesc` (`wp/wptypes.h`): `flags` at +0, `o_attributes` at +0xC.
+const WP_DESC_FLAGS: u32 = 0;
+const WP_DESC_O_ATTRIBUTES: u32 = 0xC;
+/// The `WPDesc` each [`WEAPONS`] row is made with, in that order:
+/// `(row name, desc address)`. The `ovl3` descs are `wp/*.c`'s and
+/// `it/*.c`'s `d*WeaponDesc`; the Arwing's are `gr/grcommon/grsector.c`'s,
+/// in `ovl2`. Two rows share another row's desc, whose `o_attributes` the
+/// maker rewrites before `wpManagerMakeWeapon`:
+/// - `LUIGI_FIREBALL`: `dWPMarioFireballWeaponDesc`
+///   (`wpMarioFireballMakeWeapon`, `wpmariofireball.c:167-168`);
+/// - `STARROD_SMASH`: `dITStarRodWeaponStarWeaponDesc`
+///   (`itStarRodWeaponStarMakeWeapon`, `itstarrod.c:374`).
+pub const WEAPON_DESCS: [(&str, u32); 35] = [
+    ("MARIO_FIREBALL", 0x8018_8E90),
+    ("LUIGI_FIREBALL", 0x8018_8E90),
+    ("FOX_BLASTER", 0x8018_8ED0),
+    ("SAMUS_BOMB", 0x8018_9070),
+    ("SAMUS_CHARGE_SHOT", 0x8018_9030),
+    ("LINK_SPIN_ATTACK", 0x8018_9360),
+    ("LINK_BOOMERANG", 0x8018_93A0),
+    ("KIRBY_CUTTER", 0x8018_92A0),
+    ("NESS_PK_THUNDER", 0x8018_91D0),
+    ("NESS_PK_THUNDER_TRAIL", 0x8018_9204),
+    ("NESS_PK_FIRE", 0x8018_9190),
+    ("PIKACHU_THUNDER_HEAD", 0x8018_9120),
+    ("PIKACHU_THUNDER_TRAIL", 0x8018_9154),
+    ("PIKACHU_THUNDER_JOLT_AIR", 0x8018_90B0),
+    ("PIKACHU_THUNDER_JOLT_GROUND", 0x8018_90E4),
+    ("YOSHI_EGG_THROW", 0x8018_92E0),
+    ("YOSHI_STAR", 0x8018_9320),
+    ("BOSS_BULLET_NORMAL", 0x8018_93E0),
+    ("BOSS_BULLET_HARD", 0x8018_9414),
+    ("LGUN_AMMO", 0x8018_9C24),
+    ("FFLOWER_FLAME", 0x8018_9D34),
+    ("STARROD", 0x8018_A1C4),
+    ("STARROD_SMASH", 0x8018_A1C4),
+    ("WARK_ROCK", 0x8018_AB04),
+    ("NYARS_COIN", 0x8018_ACF4),
+    ("LIZARDON_FLAME", 0x8018_ADC4),
+    ("SPEAR_SWARM", 0x8018_AE74),
+    ("KAMEX_HYDRO", 0x8018_AF74),
+    ("STARMIE_SWIFT", 0x8018_B1E4),
+    ("DOGAS_SMOG", 0x8018_B334),
+    ("PIPPI_SWARM", 0x8018_AEA8),
+    ("ARWING_LASER_2D", 0x8012_E9F0),
+    ("ARWING_LASER_3D", 0x8012_EA24),
+    ("HITOKAGE_FLAME", 0x8018_B4F4),
+    ("FUSHIGIBANA_RAZOR", 0x8018_B564),
+];
+/// The rows whose desc's `o_attributes` is rewritten at run time (above).
+const WEAPON_DESC_SHARED: [&str; 2] = ["LUIGI_FIREBALL", "STARROD_SMASH"];
+
 /// `ssb-rom`'s tables.
 pub fn generate_rom(rom: Option<&Source>) -> Result<Vec<Generated>> {
     let ovl2 = OverlayData::new(rom, OVL2);
@@ -140,6 +196,10 @@ pub fn generate_rom(rom: Option<&Source>) -> Result<Vec<Generated>> {
         Generated {
             name: "effect_tables.rs",
             text: effects(ovl2, &heads)?,
+        },
+        Generated {
+            name: "weapon_tables.rs",
+            text: weapons(rom)?,
         },
     ])
 }
@@ -232,8 +292,20 @@ fn effects(d: OverlayData, fighter_heads: &[(u32, u32)]) -> Result<String> {
     let mut anims = String::new();
     let mut mats = String::new();
     let mut slots = String::new();
+    let mut links = String::new();
+    let mut displays = String::new();
     for (slot, (name, at)) in EFFECTS.iter().enumerate() {
         let at = *at;
+        let (link, display) = if d.rom.is_some() {
+            (
+                d.u8(at + EF_DESC_DL_LINK)?,
+                d.u32(at + EF_DESC_PROC_DISPLAY)?,
+            )
+        } else {
+            (0, 0)
+        };
+        let _ = writeln!(links, "    {link},");
+        let _ = writeln!(displays, "    0x{display:08X},");
         let (file, dobj, anim, mat) = if d.rom.is_some() {
             let head = d.u32(at + EF_DESC_FILE_HEAD)?;
             let file = FILE_HEADS
@@ -283,7 +355,70 @@ fn effects(d: OverlayData, fighter_heads: &[(u32, u32)]) -> Result<String> {
     );
     let _ = writeln!(
         w,
-        "/// Each effect's index in the three tables above.\npub mod slot {{\n{slots}}}"
+        "/// `EFDesc.dl_link`.\npub const MANAGER_EFFECT_DL_LINKS: &[u8] = &[\n{links}];"
+    );
+    let _ = writeln!(
+        w,
+        "/// `EFDesc.proc_display`'s address.\npub const MANAGER_EFFECT_DISPLAYS: &[u32] = &[\n{displays}];"
+    );
+    let _ = writeln!(
+        w,
+        "/// Each effect's index in the tables above.\npub mod slot {{\n{slots}}}"
+    );
+    Ok(w)
+}
+
+/// `WEAPON_DESC_FLAGS`: each [`WEAPONS`] row's `(attributes file,
+/// attributes offset, WPDesc.flags, data)`: `data` is where
+/// `WPAttributes.data` (offset 0) relocates to, `None` when it is `NULL`
+/// (the Fire Flower's flame draws particles only). A desc's own
+/// `o_attributes` must name its row's record (two readings: the decomp's
+/// pairing and the ROM's word), except where the maker rewrites it.
+fn weapons(rom: Option<&Source>) -> Result<String> {
+    let mut rows = String::new();
+    for ((name, file, attributes), (desc_name, at)) in WEAPONS.iter().zip(WEAPON_DESCS) {
+        assert_eq!(*name, desc_name, "WEAPON_DESCS follows WEAPONS");
+        let (flags, data) = match rom {
+            Some(source) => {
+                let d = OverlayData::new(rom, if at >= OVL3.vram { OVL3 } else { OVL2 });
+                let o_attributes = d.u32(at + WP_DESC_O_ATTRIBUTES)?;
+                if !WEAPON_DESC_SHARED.contains(name) && o_attributes != *attributes {
+                    return Err(Error::BadRelocation {
+                        file: *file,
+                        offset: o_attributes as usize,
+                    });
+                }
+                let f = source.file(*file)?;
+                let data = f
+                    .intern_relocs
+                    .iter()
+                    .find(|r| r.at == *attributes)
+                    .map(|r| (*file, r.target))
+                    .or_else(|| {
+                        f.extern_relocs
+                            .iter()
+                            .find(|r| r.at == *attributes)
+                            .map(|r| (u32::from(r.target_file), r.target_offset))
+                    });
+                (d.u8(at + WP_DESC_FLAGS)?, data)
+            }
+            None => (0, None),
+        };
+        let data = match data {
+            Some((f, o)) => format!("Some(({f}, 0x{o:04X}))"),
+            None => "None".to_string(),
+        };
+        let _ = writeln!(
+            rows,
+            "    ({file}, 0x{attributes:04X}, 0x{flags:02X}, {data}), // {name}"
+        );
+    }
+    let mut w = emit::header("the weapons' `WPDesc.flags` and `WPAttributes.data`");
+    let _ = writeln!(
+        w,
+        "/// `(attributes file, attributes offset, WPDesc.flags, WPAttributes.data)`.\n\
+         pub type WeaponDescFlags = (u32, u32, u8, Option<(u32, u32)>);\n\
+         pub const WEAPON_DESC_FLAGS: &[WeaponDescFlags] = &[\n{rows}];"
     );
     Ok(w)
 }
@@ -295,11 +430,22 @@ mod tests {
     #[test]
     fn stubs_have_every_row() {
         let files = generate_rom(None).unwrap();
-        assert_eq!(files.len(), 3);
+        assert_eq!(files.len(), 4);
         assert_eq!(files[0].text.matches("FighterFile {").count(), 27);
         assert_eq!(files[1].text.matches("TransitionAsset {").count(), 11);
         assert_eq!(files[2].text.matches("    (0, 0x0000),").count(), 46);
-        assert_eq!(files[2].text.matches("pub const").count(), 3 + 46);
+        assert_eq!(files[2].text.matches("pub const").count(), 5 + 46);
+        assert_eq!(files[3].text.matches(", 0x00, None), //").count(), 35);
+    }
+
+    #[test]
+    fn weapon_descs_follow_the_weapon_records_and_lie_in_their_overlay() {
+        for ((name, ..), (desc_name, at)) in WEAPONS.iter().zip(WEAPON_DESCS) {
+            assert_eq!(*name, desc_name);
+            let overlay = if at >= OVL3.vram { OVL3 } else { OVL2 };
+            overlay.at(at);
+            overlay.at(at + WP_DESC_O_ATTRIBUTES + 3);
+        }
     }
 
     #[test]

@@ -112,6 +112,7 @@ crates/ssb-rom/tests/special_hi_pitch.rs	BOUND	test fixture: N64 measurements or
 crates/ssb-rom/tests/special_hi_pitch.rs	FOX	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	QUICK_END	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/src/task_head.rs	HEAD0_DISPLAY_WEAPONS	link-time label: (file ID, ll* offset) key of the weapon object whose display stays head 0
 psp-asset-viewer/src/addr_diag.rs	PROBES	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/main.rs	TRIANGLE	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/normal_diag.rs	CASES	tooling: render-validation probe fixtures, no ROM data
@@ -156,7 +157,6 @@ tools/romtool/src/main.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjD
 tools/romtool/src/main.rs	IMPACT_WAVE_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	ITEM_MAT_ANIMS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	KIRBY_COPY_TABLE	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	EFFECT_SCALE_X_GRAPHS	link-time labels: (file ID, ll* offset) keys of the effect graphs whose scale-X seed romtool patches
 tools/romtool/src/main.rs	SHIELD_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	WEAPON_MAT_ANIM_JOINTS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	WEAPON_SEEDED_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
@@ -167,3 +167,4 @@ tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
 tools/romtool/src/main.rs	PK_THUNDER_TRAIL_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
 crates/ssb-game/src/matchtick/tests.rs	PROCESSES	fixture: decomp process priorities, links and file:line the order test checks; no ROM data
 crates/ssb-game/src/item/mmonster_tests.rs	N64	test fixture: N64 measurements or expected ROM values
+crates/ssb-game/src/battle_draw.rs	BATTLE	port constant: the six battle passes as (link, head) steps from gmCameraDefaultProcDisplay (layout, no ROM data)
