@@ -442,6 +442,7 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
         auto_demo::LEVEL,
         ssb_game::computer::Behavior::Default,
         ssb_game::computer::attack::Trait::Default,
+        s.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice()),
     )));
     let names = [setup.fkinds[0], setup.fkinds[1]];
     let mut fade = None;

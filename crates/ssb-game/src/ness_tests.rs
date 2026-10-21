@@ -338,6 +338,40 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
     pool.sync_owner(&mut f);
     assert!(f.ness.thunder_destroyed);
 }
+/// `wpNessPKThunderTrailProcHit` is the trail's `proc_shield` too and
+/// returns FALSE: a shield leaves the trail flying.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_shield_leaves_the_pk_thunder_trail_flying() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    pool.spawn(f.take_weapon_spawn().unwrap());
+    pool.observe_owner(&f);
+    for _ in 0..12 {
+        pool.tick(core::iter::empty, None);
+    }
+    let trails = pool.pk_trails().count();
+    let trail = pool.pk_trails().last().unwrap();
+    let mut guard = fighter(FighterKind::Mario, 1, true);
+    guard.guard.is_shield = true;
+    guard.guard.shield_health = 55.0;
+    let mut shielded = false;
+    for dy in [100.0, 150.0, 200.0, 250.0] {
+        guard.pos = trail.hit_position() - Vec3::new(0.0, dy, 0.0);
+        pool.apply_hits(&mut guard);
+        crate::combat::resolve(&mut guard);
+        if pool.pk_trails().any(|t| t.hit_ports & 2 != 0) {
+            shielded = true;
+            break;
+        }
+    }
+    assert!(shielded, "the shield meets a trail");
+    assert_eq!(guard.damage, 0);
+    assert_eq!(pool.pk_trails().count(), trails);
+    assert_eq!(pool.pk_thunders().count(), 1);
+}
 /// `ftMainUpdateAbsorbStatWeapon` heals at once but only sets the weapon's
 /// `absorb_gobj`: `proc_absorb` waits for `wpProcessProcHitCollisions`,
 /// after every fighter's search, so a fighter searched after Ness the same

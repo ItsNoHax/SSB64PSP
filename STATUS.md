@@ -16,6 +16,7 @@
 
 ## Current work
 
+- Landed (batch 36): Poké Ball and Saffron traces; PK Fire/Thunder on deferred procs (5 decomp fixes); yakumono anim at P4 link 2; CPU cliff scan on live groups (RE-566, RE-568). No golden moved.
 - Landed (batch 35): Master Hand struck-joint zoom, stock snap, fog darkening, comet tint, wallpaper matanims; pack v129 (RE-457). No golden moved.
 - Landed (batch 34): CPU item tracking, 1P stage-start level/trait and Link wake, VS entry focus ids 0-2 with 2-4 fighters checked against N64 traces; 2 small decomp fixes (RE-568). No golden moved.
 - Landed (batch 32): entry effect clock, capture entry focus pinned, map-step skeleton, link-10 entry effects (RE-567).
@@ -32,7 +33,7 @@
 
 ## Verification
 
-Baseline: batch 35 (RE-457); deepest game stack 367040 B of 524288.
+Baseline: batch 36 (RE-566); deepest game stack 367040 B of 524288.
 
 | Check | Result |
 |---|---|

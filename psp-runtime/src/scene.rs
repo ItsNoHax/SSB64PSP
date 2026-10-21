@@ -693,8 +693,15 @@ impl StageMap {
         }
     }
 
-    pub fn tick(&mut self, pack: &Pack<'_>) -> Result<(), ssb_rom::objanim::AnimError> {
+    /// The Bonus 2 platforms' trees (priority 5, with the stage objects).
+    pub fn tick_platforms(&mut self, pack: &Pack<'_>) -> Result<(), ssb_rom::objanim::AnimError> {
         for platform in &mut self.platforms { platform.tick(pack)?; }
+        Ok(())
+    }
+
+    /// The moving groups: `mpCollisionPlayYakumonoAnim` (priority 4,
+    /// GroundDisplay link, after the stage controller).
+    pub fn tick_groups(&mut self, pack: &Pack<'_>) -> Result<(), ssb_rom::objanim::AnimError> {
         self.ground.tick(pack)
     }
 }

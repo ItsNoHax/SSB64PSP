@@ -546,6 +546,68 @@ fn a_poke_ball_opens_on_its_second_landing_and_releases_after_30_frames() {
     assert_eq!((data.monster_prev, data.monsters_num), (u8::MAX, 11));
 }
 
+/// `itMainMakeMonster` records `gSC1PGameBonusMewCatcher` for the ball's
+/// player when the draw makes Mew (the 1P session keeps it for the scene
+/// player only); `itMBallCommonProcUpdate`'s forced kind skips that
+/// function and records nothing, even for Mew.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn only_a_drawn_mew_counts_for_the_mew_catcher() {
+    // A seed whose next `rand(151)` is 0.
+    let mew_seed = (1..)
+        .find(|&s| {
+            crate::rng::set_seed(s);
+            crate::rng::rand_int_range(151) == 0
+        })
+        .unwrap();
+    for force in [0, 13] {
+        let mut pool = ItemPool {
+            unlock_newcomers: true,
+            force_monster_kind: force,
+            ..ItemPool::default()
+        };
+        let slot = resting(&mut pool, 19, 0.0);
+        let mut mario = fighter(FighterKind::Mario, 0, 0.0);
+        // A 1P session's attachment.
+        mario.stats.enable();
+        throw(&mut pool, &mut mario, slot, Vec3::new(10.0, 40.0, 0.0));
+        let mut ticks = 0;
+        while status_of(&pool, slot) != ItemStatus::MBall(mball::Status::Open) {
+            tick(&mut pool);
+            ticks += 1;
+            assert!(ticks < 200);
+        }
+        for _ in 0..mball::SPAWN_WAIT {
+            tick(&mut pool);
+        }
+        let ball = pool.get(slot).unwrap();
+        assert_eq!(
+            (ball.owner, ball.player),
+            (Some(0), Some(0)),
+            "the thrower's"
+        );
+        crate::rng::set_seed(mew_seed);
+        tick(&mut pool);
+        assert!(pool.get(slot).is_none(), "the ball made its Pokémon");
+        let made: std::vec::Vec<_> = pool.items().map(|it| (it.kind, it.status)).collect();
+        assert_eq!(made.len(), 1, "force {force}: {made:?}");
+        assert_eq!(
+            made[0].0,
+            ItemKind::MMonster(mmonster::Kind::Mew),
+            "force {force}"
+        );
+        // The forced kind leaves the draw's bookkeeping alone.
+        let curr = if force == 0 { MEW } else { u8::MAX };
+        assert_eq!(pool.monster_data.monster_curr, curr, "force {force}");
+        pool.sync_owner(&mut mario);
+        let caught = mario
+            .stats
+            .drain()
+            .any(|e| e == crate::spgame::live::Event::Mew);
+        assert_eq!(caught, force == 0, "force {force}");
+    }
+}
+
 #[test]
 fn a_reflected_poke_ball_stays_its_throwers() {
     let mut pool = ItemPool::default();

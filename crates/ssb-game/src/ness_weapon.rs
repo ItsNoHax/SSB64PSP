@@ -2,7 +2,6 @@
 //! (`crate::item::pk_fire`): the spark's hit callback queues it for the item
 //! pool.
 use super::{BodyColl, Hitbox, MapSurface, OwnerView, WeaponSpawn};
-use crate::fighter::Fighter;
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
@@ -80,9 +79,12 @@ impl PKFire {
         }
         true
     }
-    pub(super) fn reflect(&mut self, f: &Fighter) {
-        self.owner_port = f.port;
-        if self.velocity.x * f.facing.sign() < 0.0 {
+    /// `wpProcessProcHitCollisions`' owner swap, `wpNessPKFireProcReflector`
+    /// (the life, `wpMainReflectorSetLR`, the negated roll) and, as it
+    /// returns FALSE, the reflect bonus.
+    pub(super) fn reflect(&mut self, r: &super::Reflector) {
+        self.owner_port = r.port;
+        if self.velocity.x * r.lr < 0.0 {
             self.velocity.x = -self.velocity.x;
         }
         self.lifetime = 20;
@@ -250,23 +252,33 @@ impl PKThunder {
         }
         true
     }
-    pub(super) fn reflect(&mut self, f: &Fighter, group: u16) {
+    /// The owner swap, then `wpNessPKThunderHeadProcReflector` (the first
+    /// reflection) or `wpNessPKReflectHeadProcReflector` (a later one).
+    pub(super) fn reflect(&mut self, r: &super::Reflector, group: u16) {
         let first = !self.reflected;
         self.reflected = true;
-        self.owner_port = f.port;
+        self.owner_port = r.port;
         self.lifetime = 160;
         self.group = group;
         if first {
-            // `wpNessPKThunderReflectHeadMakeWeapon`: a new weapon, whose
-            // `wpManagerMakeWeapon` adds the animation afresh.
+            // `wpNessPKReflectHeadMakeWeapon`: a new weapon, whose
+            // `wpManagerMakeWeapon` adds the animation afresh, aimed away
+            // from its owner (the reflector) and dealing the attributes'
+            // damage: the old head's `proc_reflector` returns TRUE, so no
+            // reflect bonus.
             self.anim_ticks = 0;
-            let direction = self.position - (f.pos + Vec3::new(0.0, 250.0, 0.0));
+            let direction = self.position - (r.pos + Vec3::new(0.0, 250.0, 0.0));
             self.velocity = direction.normalized() * 60.0;
             self.velocity.z = 0.0;
-        } else if self.velocity.x * f.facing.sign() < 0.0 {
-            self.velocity.x = -self.velocity.x;
+            self.damage = 6;
+        } else {
+            // `wpMainReflectorSetLR`; the callback returns FALSE and the
+            // bonus follows.
+            if self.velocity.x * r.lr < 0.0 {
+                self.velocity.x = -self.velocity.x;
+            }
+            self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
         }
-        self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -349,7 +361,7 @@ impl PKThunderTrail {
         let i = usize::from(self.id).min(PK_THUNDER_TRAIL_PRIM.len() - 1);
         (PK_THUNDER_TRAIL_PRIM[i], PK_THUNDER_TRAIL_ENV[i])
     }
-    pub(super) fn hit_position(&self) -> Vec3 {
+    pub(crate) fn hit_position(&self) -> Vec3 {
         let (sin, cos) = sin_cos(self.rotation);
         self.position + Vec3::new(100.0 * sin, -100.0 * cos, 0.0)
     }

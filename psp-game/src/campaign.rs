@@ -900,6 +900,7 @@ pub(crate) fn collect_fall(
 pub(crate) fn replace_enemies(
     p: &Pack<'_>,
     stage: &ssb_rom::pack::StageDesc,
+    groups: &[ssb_game::map::MapGroup],
     dummies: &mut Dummies,
     sp: &mut Campaign1P,
     battle: &mut Option<ssb_game::battle::Battle>,
@@ -942,7 +943,7 @@ pub(crate) fn replace_enemies(
                 // which the outgoing member shares.
                 let counts = d.fighter.stats.counts.clone();
                 let mut n = play::Dummy::at_position(
-                    p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts,
+                    p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts, groups,
                 );
                 n.fighter.facing = e.facing;
                 n.fighter.team = d.fighter.team;

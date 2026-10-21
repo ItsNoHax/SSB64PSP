@@ -77,10 +77,11 @@ impl Dummy {
         spawn: u16,
         port: u8,
         counts: &ssb_game::manager_counts::ManagerCounts,
+        groups: &[ssb_game::map::MapGroup],
     ) -> Option<Dummy> {
         pack.spawn(stage, spawn)?;
         let scene = FighterScene::at_spawn(pack, stage, kind, spawn, counts);
-        Some(Self::with_scene(pack, stage, scene, costume, level, port))
+        Some(Self::with_scene(pack, stage, scene, costume, level, port, groups))
     }
 
     /// A CPU fighter at `pos`, such as a 1P Game team's next member
@@ -95,9 +96,10 @@ impl Dummy {
         pos: ssb_engine::math::Vec3,
         port: u8,
         counts: &ssb_game::manager_counts::ManagerCounts,
+        groups: &[ssb_game::map::MapGroup],
     ) -> Dummy {
         let scene = FighterScene::at_position(pack, stage, kind, port, Some(pos), counts);
-        Self::with_scene(pack, stage, scene, costume, level, port)
+        Self::with_scene(pack, stage, scene, costume, level, port, groups)
     }
 
     fn with_scene(
@@ -107,6 +109,7 @@ impl Dummy {
         costume: u8,
         level: u8,
         port: u8,
+        groups: &[ssb_game::map::MapGroup],
     ) -> Dummy {
         scene.fighter.port = port;
         scene.fighter.costume = costume;
@@ -114,7 +117,9 @@ impl Dummy {
         // `sc1PTrainingModeUpdateDummyBehavior`: the menu's Stand, no trait.
         computer.behavior = ssb_game::computer::Behavior::Stand;
         computer.trait_kind = ssb_game::computer::attack::Trait::None;
-        let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
+        // The groups as the stage's init left them: the cliff scan skips a
+        // moving or switched group's lines (`mpCollisionCheckExistPlatformLineID`).
+        let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
         let sight = CpuSight::default();
         let world = cpu_world(stage, surfaces, &[], &sight, false);
         computer.setup_world(&scene.fighter, &world);
@@ -208,11 +213,12 @@ pub fn lead_computer(
     level: u8,
     behavior: ssb_game::computer::Behavior,
     trait_kind: ssb_game::computer::attack::Trait,
+    groups: &[ssb_game::map::MapGroup],
 ) -> ssb_game::computer::Computer {
     let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, level);
     computer.behavior = behavior;
     computer.trait_kind = trait_kind;
-    let surfaces = || ssb_psp_runtime::scene::MapSegments::new(pack, stage);
+    let surfaces = || ssb_psp_runtime::scene::MapSegments::with_groups(pack, stage, groups);
     let sight = CpuSight::default();
     let world = cpu_world(stage, surfaces, &[], &sight, false);
     computer.setup_world(&scene.fighter, &world);

@@ -63,12 +63,16 @@ pub struct HostCpu {
 impl HostCpu {
     /// `ftComputerSetupAll` for Training's dummy `f` on the pack stage
     /// `stage` with map `map`: level 3 (`TRAINING_CPU_LEVEL`), the menu's
-    /// Stand, no trait.
+    /// Stand, no trait. `groups` (the groups and each surface's group) as
+    /// the stage left them at the fighter's creation: the cliff scan skips
+    /// the lines of a moving or switched group
+    /// (`mpCollisionCheckExistPlatformLineID`).
     pub fn training_dummy(
         f: &ssb_game::fighter::Fighter,
         stage: &ssb_rom::pack::StageDesc,
         bounds: ssb_game::dead::StageBounds,
         map: &[ssb_game::weapon::MapSurface],
+        groups: Option<(&[ssb_game::map::MapGroup], &[u16])>,
     ) -> HostCpu {
         let mut computer = Box::new(ssb_game::computer::Computer::setup(f, 3));
         computer.behavior = ssb_game::computer::Behavior::Stand;
@@ -79,7 +83,14 @@ impl HostCpu {
             gkind: ssb_rom::stage::common_ground_kind(stage.source_file),
         };
         let sight = ssb_game::computer::CpuSight::default();
-        let world = cpu_world(cpu.stage, cpu.gkind, || map.iter().copied(), &[], &sight);
+        let (groups, yakumono) = groups.unwrap_or((&[], &[]));
+        let surfaces = || GroupedSurfaces {
+            map,
+            yakumono,
+            groups,
+            next: 0,
+        };
+        let world = cpu_world(cpu.stage, cpu.gkind, surfaces, &[], &sight);
         cpu.computer.setup_world(f, &world);
         cpu
     }
@@ -324,7 +335,7 @@ impl<'a, 'p> ssb_game::matchtick::Arena for HostArena<'a, 'p> {
         (&self.0, &mut self.1)
     }
 
-    fn play_anim(&mut self) {
+    fn play_yakumono_anim(&mut self) {
         if let Some((groups, _)) = self.0.groups.as_mut() {
             groups.tick(self.0.pack).unwrap();
         }

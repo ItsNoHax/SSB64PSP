@@ -2789,7 +2789,8 @@ unsafe fn training_frame(
         campaign::boss_after_world(boss, pl, dummies, b, damage_hud);
     }
     if let (Some(c), Some(stage)) = (campaign, p.stage(stage_index)) {
-        campaign::replace_enemies(p, &stage, dummies, c, battle, damage_hud);
+        let groups = stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
+        campaign::replace_enemies(p, &stage, groups, dummies, c, battle, damage_hud);
     }
     frame_end_audio(p, stage_index, pl, dummies, battle.as_ref());
     false
@@ -3684,8 +3685,9 @@ fn enter_training(
     *world.dummies = core::array::from_fn(|i| {
         let e = roster[i + 1]?;
         let port = i as u8 + 1;
+        let groups = world.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
         let mut d = play::Dummy::at_spawn(
-            p, &stage, e.kind, e.costume, e.level, e.spawn, port, &counts,
+            p, &stage, e.kind, e.costume, e.level, e.spawn, port, &counts, groups,
         )?;
         d.fighter.team = e.team;
         d.fighter.handicap = e.handicap;

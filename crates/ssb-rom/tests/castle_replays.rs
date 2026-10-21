@@ -1775,14 +1775,17 @@ fn replay_pair_rows(
             ssb_pose::ground::StageGroups::new(&pack, CASTLE, &stage),
             map_groups(&pack, &stage),
         )),
-        cpu: Some(HostCpu::training_dummy(
-            &fighters[1].fighter,
-            &stage,
-            stage_bounds(&pack, &stage),
-            &map,
-        )),
         ..Pair::default()
     };
+    pair.cpu = Some(HostCpu::training_dummy(
+        &fighters[1].fighter,
+        &stage,
+        stage_bounds(&pack, &stage),
+        &map,
+        pair.groups
+            .as_ref()
+            .map(|(g, y)| (g.groups.as_slice(), y.as_slice())),
+    ));
     // The program's seed 1; the effect makers' draws are not played (see
     // [`N64Seed`]).
     ssb_game::rng::set_seed(1);

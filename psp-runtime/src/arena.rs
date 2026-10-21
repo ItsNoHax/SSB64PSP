@@ -77,7 +77,14 @@ impl<'a, 'p> Arena for MatchArena<'a, 'p> {
         let pack = self.ground.pack;
         let _ = self.props.objects.advance(pack);
         if let Some(map) = self.ground.map.as_deref_mut() {
-            let _ = map.tick(pack);
+            let _ = map.tick_platforms(pack);
+        }
+    }
+
+    fn play_yakumono_anim(&mut self) {
+        let pack = self.ground.pack;
+        if let Some(map) = self.ground.map.as_deref_mut() {
+            let _ = map.tick_groups(pack);
         }
     }
 

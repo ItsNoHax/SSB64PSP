@@ -599,6 +599,39 @@ fn gate_opens_on_the_first_frame_and_closes_without_a_monster() {
     assert_eq!(y.gate_pos.x, yamabuki::GATE_NEAR_X);
 }
 
+/// The first seed from 1 whose next `syUtilsRandIntRange(5)` is `id`.
+fn seed_drawing(id: i32) -> i32 {
+    (1..)
+        .find(|&s| {
+            crate::rng::set_seed(s);
+            crate::rng::rand_int_range(5) == id
+        })
+        .unwrap()
+}
+
+#[test]
+fn gate_redraw_steps_past_the_previous_monster() {
+    // `grYamabukiGateMakeMonster`: a draw equal to `monster_id_prev` takes
+    // the next id, 4 wrapping to 0; a different draw stands. The forced
+    // kind neither draws nor stores (RE-566; N64 trace `b36ys_unforced`).
+    for (prev, draw, want) in [(2u8, 2, 3u8), (4, 4, 0), (1, 3, 3)] {
+        let mut groups = vec![MapGroup::default(); 4];
+        let mut y = yamabuki::Yamabuki::new(&mut groups, &mut NoObjects, &mut NoItems);
+        y.status = yamabuki::GateStatus::Wait;
+        y.gate_wait = 5;
+        y.monster_wait = 1;
+        y.monster_prev = prev;
+        let mut made = Made::default();
+        crate::rng::set_seed(seed_drawing(draw));
+        y.tick(&[], &mut groups, &mut NoObjects, &mut made, true);
+        assert_eq!(
+            made.made.first().map(|m| m.0),
+            Some(StageItem::Monster(want))
+        );
+        assert_eq!(y.monster_prev, want);
+    }
+}
+
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn barrel_captures_and_fires_on_a_button_press() {

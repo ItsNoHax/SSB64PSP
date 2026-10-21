@@ -45,7 +45,14 @@ const PROCESSES: &[Process] = &[
         per_fighter: false,
         priority: 4,
         link: 1,
-        decomp: "grdisplay.c:209,214 gr*ProcUpdate",
+        decomp: "grcastle.c:38 grCastleBumperProcUpdate, gr*ProcUpdate",
+    },
+    Process {
+        phase: |_| Phase::Yakumono,
+        per_fighter: false,
+        priority: 4,
+        link: 2,
+        decomp: "grdisplay.c:209 mpCollisionPlayYakumonoAnim (GroundDisplay link)",
     },
     Process {
         phase: Phase::Physics,
@@ -299,13 +306,14 @@ fn step_runs_the_decomp_process_order() {
 fn the_decomp_table_sorts_by_priority_then_link() {
     let order = decomp_order(2, &[1]);
     assert_eq!(
-        &order[..9],
+        &order[..10],
         &[
             Phase::GroundAnim,
             Phase::Interrupt(0),
             Phase::Interrupt(1),
             Phase::Interface,
             Phase::StageController,
+            Phase::Yakumono,
             Phase::Physics(0),
             Phase::ItemActor,
             Phase::Capture(1),

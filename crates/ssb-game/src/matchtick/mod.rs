@@ -9,10 +9,11 @@
 //!
 //! | Priority | Link | Process | Here |
 //! |---|---|---|---|
-//! | 5 | 1, 2 | `gcPlayAnimAll` (stage anim) | [`Arena::play_anim`] |
+//! | 5 | 1 | `gcPlayAnimAll` (stage objects) | [`Arena::play_anim`] |
 //! | 5 | 3 | `ftMainProcUpdateInterrupt` | [`Seat::interrupt`], jostle, rebirth halo |
 //! | 5 | 10, 11 | entry, focus, countdown threads; "Go" unlock | [`MatchHooks::interface`], [`World::go`] |
-//! | 4 | 1, 2 | `gr*ProcUpdate` | [`Arena::tick_stage`] |
+//! | 4 | 1 | `gr*ProcUpdate` | [`Arena::tick_stage`] |
+//! | 4 | 2 | `mpCollisionPlayYakumonoAnim` (moving groups) | [`Arena::play_yakumono_anim`] |
 //! | 4 | 3 | `ftMainProcPhysicsMapDefault` | [`Seat::physics`] |
 //! | 3 | 2 | item appear actor | [`ItemPool::tick_appear`] |
 //! | 3 | 3 | `ftMainProcPhysicsMapCapture` | [`Seat::physics`], held fighters |
@@ -135,9 +136,14 @@ pub trait Arena {
     fn ground(&self) -> &Self::Ground;
     /// The map and the stage's objects at once.
     fn split(&mut self) -> (&Self::Ground, &mut Self::Props);
-    /// Priority 5, Ground link: `gcPlayAnimAll` on the stage's objects and
-    /// moving groups.
+    /// Priority 5, Ground link: `gcPlayAnimAll` on the stage's objects.
     fn play_anim(&mut self) {}
+    /// Priority 4, GroundDisplay link (2), after the stage controller and
+    /// before the fighters' physics: the geometry layer's
+    /// `mpCollisionPlayYakumonoAnim` (`grdisplay.c:209`), which moves the
+    /// stage's groups and turns them on and off. The fighters' interrupts
+    /// (the CPU's floor checks) see the previous frame's groups.
+    fn play_yakumono_anim(&mut self) {}
     /// The collision group of floor `line` (`mpCollisionSetDObjNoID`), for
     /// a stage with moving groups.
     fn floor_group(&self, _line: u16) -> Option<u16> {
@@ -204,6 +210,8 @@ pub enum Phase {
     Board,
     /// P4, Ground: the stage controller.
     StageController,
+    /// P4, GroundDisplay: `mpCollisionPlayYakumonoAnim`.
+    Yakumono,
     /// P4, Fighter: `ftMainProcPhysicsMapDefault`.
     Physics(u8),
     /// P3, Fighter: `ftMainProcPhysicsMapCapture`.
@@ -382,8 +390,9 @@ fn interrupt_pass<A, S, H>(
     }
 }
 
-/// Bonus 2's board check, then priority 4 on the Ground link: the stage
-/// controller and what it made.
+/// Bonus 2's board check, then priority 4 on the Ground link (the stage
+/// controller and what it made) and the GroundDisplay link (the moving
+/// groups).
 #[inline(never)]
 fn board_and_stage<A, S, H>(
     arena: &mut A,
@@ -440,6 +449,9 @@ fn board_and_stage<A, S, H>(
     if let Some(roll) = arena.arwing_roll() {
         world.weapons.observe_arwing_roll(roll);
     }
+    // Priority 4, GroundDisplay link: the moving groups.
+    hooks.phase(Phase::Yakumono);
+    arena.play_yakumono_anim();
 }
 
 /// Priority 4, Fighter link: every fighter's `ftMainProcPhysicsMap` in port

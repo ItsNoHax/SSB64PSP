@@ -126,7 +126,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
-| Items | Unobserved: Hyrule monsters, Saffron unforced pick and Poké Ball bonus, PK weapons and reflector hit order, two-fighter weapon clank; Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
+| Items | Unobserved: VS host harness for the PK reflect and weapon-clank replays, Mew N64 read, RE-566 gaps; Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
 | Stages | N64 captures: pipes, plant notification, cloud vapor, scale sparkles, plant KO, Sector Z Arwing, Board the Platforms blocks | RE-428, RE-429, RE-442, RE-446, RE-455 |
 | Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |
 | Window matanim blobs | Script packs whole source file; command 22 rejected, skippable | RE-010, RE-378, RE-381 |
