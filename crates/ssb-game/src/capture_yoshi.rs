@@ -174,7 +174,8 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.is_catch_or_capture = false;
     f.grab.is_catchstatus = false;
     f.facing = holder.facing.flipped();
-    f.become_airborne();
+    // `mpCommonSetFighterAir`, unconditional (`ftcommoncaptureyoshi.c:112`).
+    f.set_fighter_air();
     status::set_status(f, Status::CaptureYoshi, 0.0, StatusTiming::unknown());
     // `ftCommonCaptureYoshiProcCapture` plays the first frame (RE-474).
     status::play_anim_events(f);
@@ -210,7 +211,8 @@ fn set_egg(f: &mut Fighter) {
     let Some(holder) = f.grab.holder else {
         return;
     };
-    f.become_airborne();
+    // `ftcommoncaptureyoshi.c:353-359`: guarded, then again unconditionally.
+    f.set_fighter_air();
     status::set_status(
         f,
         Status::YoshiEgg,
@@ -322,7 +324,8 @@ fn escape(f: &mut Fighter) {
     f.physics.vel_air = Vec3::new(0.0, ESCAPE_VEL_Y, 0.0);
 
     f.pos.y += ESCAPE_OFF_Y;
-    f.become_airborne();
+    // `mpCommonSetFighterAir`, unconditional (`ftcommoncaptureyoshi.c:193`).
+    f.set_fighter_air();
     status::set_any_status_preserve(
         f,
         Status::Fall.into(),
@@ -393,12 +396,13 @@ pub fn on_hit(f: &mut Fighter, damage: i32) {
     }
 }
 
-/// `ftCommonYoshiEggProcMap`, grounded half: the egg keeps its status.
+/// `ftCommonYoshiEggProcMap`, grounded half: the egg keeps its status and
+/// only `ga` turns, like [`on_landing`] (the jump count is untouched).
 pub fn on_ground_lost(f: &mut Fighter) -> bool {
     if f.status.status != Status::YoshiEgg {
         return false;
     }
-    f.become_airborne();
+    f.set_ga_air();
     true
 }
 
@@ -492,6 +496,34 @@ mod tests {
         f.egg.stage = 3;
         update_held(&mut f, Vec3::ZERO);
         f
+    }
+
+    /// `ftCommonYoshiEggSetStatus` (`:353-359`): `mpCommonSetFighterAir`
+    /// runs again unconditionally, so an airborne swallowed fighter lays with
+    /// `jumps_used` 1 whatever it held.
+    #[test]
+    fn the_egg_is_laid_with_one_jump_spent() {
+        let mut f = swallowed();
+        assert_eq!(f.situation, Situation::Air);
+        f.physics.jumps_used = 2;
+        f.egg.stage = 3;
+        update_held(&mut f, Vec3::ZERO);
+        assert_eq!(f.status.status, Status::YoshiEgg);
+        assert_eq!(f.physics.jumps_used, 1);
+    }
+
+    /// `ftCommonYoshiEggProcMap` (`:283`): an egg leaving its floor turns
+    /// only `ga`; the jump count and depth stay as they were.
+    #[test]
+    fn an_egg_leaving_its_floor_only_turns_airborne() {
+        let mut f = egg();
+        f.situation = Situation::Ground;
+        f.physics.jumps_used = 0;
+        f.pos.z = 5.0;
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.situation, Situation::Air);
+        assert_eq!(f.physics.jumps_used, 0);
+        assert_eq!(f.pos.z, 5.0);
     }
 
     /// `ftCommonYoshiEggProcTrap`: an acid hit (`damage_object_class`
@@ -695,7 +727,9 @@ mod tests {
     /// `ftCommonYoshiEggProcUpdate`'s escape (`:179-196`): the explosion
     /// (Yoshi's particle script 3) and the shell (`efManagerEggBreakMakeEffect`)
     /// at TopN's translation with `z` zeroed, then the shatter FGM; TopN
-    /// itself keeps its `z` and rises by `ESCAPE_OFF_Y`.
+    /// rises by `ESCAPE_OFF_Y` and the unconditional `mpCommonSetFighterAir`
+    /// (`ftcommoncaptureyoshi.c:193`) zeroes its `z` and spends the ground
+    /// jump, even for an egg already airborne.
     #[test]
     fn the_escape_explodes_and_breaks_the_egg_then_plays_the_shatter() {
         use crate::fteffect::{kind, FighterEffect};
@@ -704,6 +738,8 @@ mod tests {
         f.pos = Vec3::new(120.0, 400.0, 7.0);
         update_egg(&mut f);
         f.egg.escape_wait = 0;
+        assert_eq!(f.situation, crate::fighter::Situation::Air);
+        f.physics.jumps_used = 0;
         let mut frames = 0;
         while f.status.status == Status::YoshiEgg {
             f.effects.clear();
@@ -732,7 +768,8 @@ mod tests {
                 crate::sound::id::nSYAudioFGMYoshiEggLayShatter
             )]
         );
-        assert_eq!(f.pos, Vec3::new(120.0, 400.0 + ESCAPE_OFF_Y, 7.0));
+        assert_eq!(f.pos, Vec3::new(120.0, 400.0 + ESCAPE_OFF_Y, 0.0));
+        assert_eq!(f.physics.jumps_used, 1);
         crate::sound::uninstall();
     }
 

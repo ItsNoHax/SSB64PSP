@@ -1740,6 +1740,11 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         ) {
             f.hits.damage_knockback *= 2.0 / 3.0;
         }
+        // `ftmain.c:3862`: the Twister keeps its fighter; the hit only
+        // flashes it.
+        if status_before == AnyStatus::Common(Status::Twister) {
+            f.hits.damage_kind = DamageKind::ColAnim;
+        }
         let resist = f.knockback_resist.max(f.knockback_resist_passive);
         f.hits.damage_knockback -= resist;
         if f.hits.damage_knockback <= 0.0 {
@@ -1788,6 +1793,9 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         }
         damage = f.hits.shield_damage;
     } else if f.hits.attack_shield_push != 0 {
+        // `proc_shield`: only Captain Falcon's kicks set one
+        // (`ftCaptainSpecialLwSetStatus`), the same as their `proc_hit`.
+        crate::captain::on_kick_hit(f);
         if f.hits.attack_rebound != 0.0 && f.grab.catch.is_none() && f.grab.capture.is_none() {
             crate::fighter_sound::stop_voice(f);
             crate::reaction::set_rebound_wait(f, f.hits.attack_rebound, f.hits.hit_lr);

@@ -451,6 +451,8 @@ pub fn init_damage_vars_sfx(
             crate::sound::play_fgm(a.damage_sfx);
         }
     }
+    // `ftcommondamage.c:641`.
+    f.is_hitstun = true;
 }
 
 /// A status's figatree length as its timing.
@@ -487,6 +489,7 @@ pub fn update_damage_e(f: &mut Fighter) {
     if f.status.status == Status::DamageFlyRoll {
         crate::model_pitch::fly_roll(f);
     }
+    f.is_hitstun = true;
     if f.reaction.is_knockback_over {
         f.reaction.is_knockback_over = false;
         crate::reaction::set_timed_invincible(f, 1);

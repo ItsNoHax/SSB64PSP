@@ -62,6 +62,45 @@ fn combo_stats_count_accepted_hits_before_the_log_limit_and_reset_outside_hitlag
     assert_eq!((f.combo_damage_foe, f.combo_count_foe), (0, 0));
 }
 
+/// `ftmain.c:1507` reads `is_hitstun`, not the hitstun timer: any status
+/// change (`ftMainSetStatus`, `ftmain.c:4488`) ends the combo even while
+/// hitstun is still counting.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_status_change_out_of_damage_ends_the_combo_before_hitstun_does() {
+    use crate::{
+        attack, combat,
+        fighter::{Fighter, FighterKind},
+    };
+    use ssb_engine::math::Vec3;
+    let mut f = Fighter::new(FighterKind::Mario, 1, -1);
+    combat::direct_hit(
+        &mut f,
+        attack::mario_jab1_hitbox(),
+        Vec3::ZERO,
+        1.0,
+        9,
+        combat::DamageBy::Player(0),
+    );
+    combat::process_hit_collision(&mut f);
+    combat::proc_params(&mut f);
+    assert!(f.is_hitstun);
+    let no_floor = || core::iter::empty::<crate::weapon::MapSurface>();
+    f.hitlag = 0;
+    f.hitstun = 30;
+    f.tick_interrupt(&no_floor);
+    assert_eq!(f.combo_count_foe, 1);
+    crate::status::set_status(
+        &mut f,
+        crate::status::Status::Fall,
+        0.0,
+        crate::status::StatusTiming::default(),
+    );
+    assert!(f.hitstun > 0);
+    f.tick_interrupt(&no_floor);
+    assert_eq!((f.combo_damage_foe, f.combo_count_foe), (0, 0));
+}
+
 #[test]
 fn held_damage_and_throws_contribute_actual_damage_and_invincible_hits_do_not() {
     use crate::{

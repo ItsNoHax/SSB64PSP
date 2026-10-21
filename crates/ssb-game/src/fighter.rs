@@ -320,6 +320,11 @@ pub struct Fighter {
     /// `SCBattlePlayer.combo_damage_foe` / `combo_count_foe`.
     pub combo_damage_foe: u32,
     pub combo_count_foe: u32,
+    /// `FTStruct::is_hitstun`: raised with a damage status
+    /// (`ftcommondamage.c:154`, `:641`), dropped by `ftMainSetStatus` and by
+    /// the damage statuses' `proc_interrupt` once their hitstun runs out.
+    /// While it is down, `ftMainProcUpdateInterrupt` ends the foe combo.
+    pub is_hitstun: bool,
     pub stocks: i8,
     /// Frames of hitlag remaining; the fighter is frozen while nonzero.
     pub hitlag: u16,
@@ -622,6 +627,7 @@ impl Fighter {
             damage: 0,
             combo_damage_foe: 0,
             combo_count_foe: 0,
+            is_hitstun: false,
             stocks,
             hitlag: 0,
             hitstun: 0,
@@ -863,9 +869,6 @@ impl Fighter {
                 }
             }
         }
-        if self.cliffcatch_wait > 0 {
-            self.cliffcatch_wait -= 1;
-        }
         lag_ended
     }
 
@@ -877,28 +880,43 @@ impl Fighter {
         self.pos = crate::physics::integrated_position(self.pos, &self.physics, self.is_grounded());
     }
 
-    /// Leaves the ground, carrying momentum into the air vector.
+    /// `if (fp->ga == nMPKineticsGround) mpCommonSetFighterAir(fp)`: the
+    /// guarded form most setters and every `...SwitchStatusAir` use. Leaving
+    /// the ground spends the ground jump ([`Fighter::set_fighter_air`]); a
+    /// fighter already airborne is untouched.
     pub fn become_airborne(&mut self) {
         if self.situation == Situation::Air {
             return;
         }
-        self.situation = Situation::Air;
-        // `mpCommonSetFighterAir`: `vel_air` already holds the last ground
-        // step (`ftPhysicsSetGroundVelTransferAir`); only its depth stops,
-        // and TopN's depth returns to 0 (RE-511: a jostled Captain Falcon
-        // jumps from z 60 to z 0).
-        self.physics.vel_ground = Vec3::ZERO;
-        self.physics.vel_air.z = 0.0;
-        self.pos.z = 0.0;
+        self.set_fighter_air();
     }
 
-    /// `mpCommonSetFighterAir`: [`Fighter::become_airborne`], and the
-    /// ground jump counts as spent (`jumps_used = 1`) however the fighter
-    /// left the ground (RE-524: Fox dropping through a platform has one
-    /// aerial jump, not two).
+    /// `mpCommonSetFighterAir` @ `mpcommon.c:894`, unconditional: `ga`
+    /// turns to air, `vel_air.z` and TopN's depth return to 0 (RE-511: a
+    /// jostled Captain Falcon jumps from z 60 to z 0), and the ground jump
+    /// counts as spent (`jumps_used = 1`) however the fighter left the ground
+    /// and even when it was already airborne (RE-524: Fox dropping through a
+    /// platform has one aerial jump, not two; a ledge catch or a capture
+    /// gives an airborne fighter its aerial jump back).
     pub fn set_fighter_air(&mut self) {
-        self.become_airborne();
+        self.set_ga_air();
+        self.physics.vel_air.z = 0.0;
+        self.pos.z = 0.0;
         self.physics.jumps_used = 1;
+    }
+
+    /// `fp->ga = nMPKineticsAir` alone, with no jump or depth write: the
+    /// `SetAirJump*` motion events (which set the jump count themselves),
+    /// `ftKirbySpecialHiProcMap` and `ftCommonYoshiEggProcMap` leaving an
+    /// edge. `vel_air` already holds the last ground step
+    /// (`ftPhysicsSetGroundVelTransferAir`); the port also stops
+    /// `vel_ground` on the way up (the port's long-standing convention).
+    pub fn set_ga_air(&mut self) {
+        if self.situation == Situation::Air {
+            return;
+        }
+        self.situation = Situation::Air;
+        self.physics.vel_ground = Vec3::ZERO;
     }
 
     /// Lands (`mpCommonSetFighterGround` @ `mpcommon.c:882`): `vel_air`
@@ -1346,8 +1364,9 @@ impl Fighter {
         crate::dokan::run_pending(self, surfaces);
         self.resolve_cliff_release(surfaces);
         // `ftMainProcUpdateInterrupt`, after proc_update/proc_interrupt,
-        // outside hitlag. Hit searches later in the frame start a new combo.
-        if self.hitstun == 0 {
+        // outside hitlag (`ftmain.c:1507`). Hit searches later in the frame
+        // start a new combo.
+        if !self.is_hitstun {
             self.combo_damage_foe = 0;
             self.combo_count_foe = 0;
         }
@@ -1601,6 +1620,12 @@ impl Fighter {
         }
         // `ftMainProcPhysicsMap` (`ftmain.c:1747`): `coll_data.pos_prev`.
         let mut pos_prev = self.pos;
+        // `ftmain.c:1757`, outside hitlag and ahead of `proc_physics`: a
+        // wait set in this frame's interrupt pass already counts here, and
+        // `proc_map`'s cliff check (`mpcommon.c:549`) reads the result.
+        if !in_hitlag && self.cliffcatch_wait > 0 {
+            self.cliffcatch_wait -= 1;
+        }
         let (step, want) = if let Some(step) = self.own_physics_step(in_hitlag) {
             step
         } else if in_hitlag {
@@ -1621,15 +1646,16 @@ impl Fighter {
     /// The statuses whose callbacks replace the common ones: the dead,
     /// sleep and rebirth statuses, Master Hand's, and the battle entry.
     /// `ftMainProcPhysicsMap` runs for them as for any other: `proc_physics`
-    /// and `translate += vel_air` outside hitlag, then the dead check, the
+    /// and the velocity step outside hitlag, then the dead check, the
     /// altitude whistle and their `proc_map`, if any. Master Hand in hitlag
-    /// takes the common hitlag step.
+    /// has no `proc_lagupdate` (only the damage statuses set one) and runs
+    /// his status's own `proc_map` (`ftbossstatus.h`).
     fn own_physics_step(&mut self, in_hitlag: bool) -> Option<(MapStep, Vec3)> {
-        let step = |f: &Fighter| {
+        let step = |f: &mut Fighter| {
             if in_hitlag {
                 f.pos
             } else {
-                f.pos + f.physics.vel_air
+                f.velocity_step()
             }
         };
         if let Some(map) = crate::dead::own_map(self) {
@@ -1640,6 +1666,9 @@ impl Fighter {
             return Some((map, step(self)));
         }
         if in_hitlag {
+            if matches!(self.status.status, crate::status::AnyStatus::Boss(_)) {
+                return Some((MapStep::Boss, self.pos));
+            }
             return None;
         }
         if crate::boss::proc_physics(self) {
@@ -1650,6 +1679,38 @@ impl Fighter {
             crate::appear::EntryMap::ProjectFloor => MapStep::ProjectFloor,
         };
         Some((map, step(self)))
+    }
+
+    /// `ftMainProcPhysicsMap` after `proc_physics`, outside hitlag
+    /// (`ftmain.c:1767-1801`), for a status whose `proc_physics` is its own
+    /// or none: the damage velocity decays (airborne along its angle;
+    /// grounded through `vel_damage_ground` on `floor_angle`), then
+    /// `syVectorAdd3D(translate, &vel_air)` and the damage velocity's X and
+    /// Y. Returns that TopN; `self.pos` stays where the map sweeps from.
+    fn velocity_step(&mut self) -> Vec3 {
+        let grounded = self.situation == Situation::Ground;
+        // No line: the rebirth halo's `-2` floor, whose `floor_angle` is
+        // flat and whose `floor_flags` (`MAP_VERTEX_COLL_PASS`) mask to
+        // material 0 (`ftCommonRebirthDownSetStatus`).
+        let (normal, flags) = match self.floor {
+            Some(s) => (s.normal, s.flags),
+            None => (
+                ssb_engine::math::Vec2::new(0.0, 1.0),
+                collision::flags::PASS,
+            ),
+        };
+        crate::physics::update_damage_velocity(
+            &mut self.physics,
+            grounded,
+            normal,
+            collision::material_friction(flags),
+            self.attributes.traction,
+        );
+        Vec3::new(
+            (self.pos.x + self.physics.vel_air.x) + self.physics.vel_knockback.x,
+            (self.pos.y + self.physics.vel_air.y) + self.physics.vel_knockback.y,
+            self.pos.z + self.physics.vel_air.z,
+        )
     }
 
     /// `ftMainProcPhysicsMap` up to `ftmain.c:1799` outside hitlag: each
@@ -1693,8 +1754,11 @@ impl Fighter {
             return (MapStep::Held(held), self.pos);
         }
         if crate::dokan::places_itself(self) {
+            // No `proc_physics`; the velocity step still runs
+            // (`ftmain.c:1797`) and `DokanWait`'s `proc_map` then overwrites
+            // X and Y.
             self.root_motion = RootMotion::default();
-            return (MapStep::Dokan, self.pos);
+            return (MapStep::Dokan, self.velocity_step());
         }
         if let Some(target) = crate::hazard::physics(self) {
             self.root_motion = RootMotion::default();
@@ -2164,13 +2228,22 @@ impl Fighter {
     /// The grounded `proc_physics` and the velocity step: the step's
     /// target for [`Self::ground_map`].
     fn ground_physics(&mut self) -> (MapStep, Vec3) {
-        let Some(standing) = self.floor else {
-            // Grounded on no line: the rebirth halo's fake floor (`-2`,
-            // `ftCommonRebirthDownSetStatus`). The first ground status after
-            // the rebirth statuses finds no floor in its `proc_map` and falls
-            // (RE-468: Luigi's down tap on the halo squats and falls on the
-            // same frame).
-            return (MapStep::GroundBreak, self.pos);
+        // Grounded on no line: the rebirth halo's fake floor (`-2`,
+        // `ftCommonRebirthDownSetStatus`: `floor_flags` PASS, so material
+        // 0, and a flat `floor_angle`). The status's `proc_physics` and the
+        // velocity step run on it as on any floor; its `proc_map` then
+        // finds no floor and falls (RE-468: Luigi's down tap on the halo
+        // squats and falls on the same frame).
+        let (standing, ground_break) = match self.floor {
+            Some(standing) => (standing, false),
+            None => (
+                Standing {
+                    line: u16::MAX,
+                    flags: collision::flags::PASS,
+                    normal: ssb_engine::math::Vec2::new(0.0, 1.0),
+                },
+                true,
+            ),
         };
 
         // `proc_physics`: each grounded status drives the along-floor velocity
@@ -2203,9 +2276,12 @@ impl Fighter {
         };
         // No `proc_physics` this frame: TopN steps by the `vel_air` left
         // (the teeters; Quick Attack's grounded end before motion flag 1,
-        // `ftPikachuSpecialHiEndProcPhysics`).
-        let no_physics =
-            crate::status::is_ottotto(self.status.status) || crate::pikachu::ground_end_holds(self);
+        // `ftPikachuSpecialHiEndProcPhysics`; Stone's and PSI Magnet's
+        // grounded starts).
+        let no_physics = crate::status::is_ottotto(self.status.status)
+            || crate::pikachu::ground_end_holds(self)
+            || crate::kirby::keeps_vel_air(self)
+            || crate::ness::keeps_vel_air(self);
         if crate::dokan::apply_ground_physics(self)
             || crate::item_use::apply_ground_physics(self)
             || crate::captain::apply_ground_physics(self)
@@ -2213,6 +2289,7 @@ impl Fighter {
             || crate::pikachu::apply_ground_physics(self)
             || crate::purin::apply_ground_physics(self)
             || crate::ness::apply_ground_physics(self)
+            || crate::samus::apply_ground_physics(self)
             || crate::reaction::apply_ground_physics(self)
         {
         } else if no_physics {
@@ -2247,9 +2324,13 @@ impl Fighter {
         } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
         {
-            if crate::status::apply_mario_special_lw_ground_physics(self) {
+            if crate::status::apply_mario_special_lw_ground_physics(self, standing.normal) {
+                // `ftMarioSpecialLwSwitchStatusAir` from `proc_physics`:
+                // the velocity step adds the transferred ground speed and
+                // the tap, and `proc_map` is now `SpecialAirLw`'s
+                // (`mpCommonProcFighterLanding`).
                 self.floor = None;
-                return (MapStep::None, self.pos);
+                return (MapStep::Air, self.velocity_step());
             }
         } else if matches!(
             self.status.status,
@@ -2310,14 +2391,15 @@ impl Fighter {
         // `vel_air`, jostle included; leaving the ground
         // (`mpCommonSetFighterAir`) carries it on (RE-468: Mario's Tornado
         // out of a jostle keeps its -6.75).
+        let step_scale = crate::captain::ground_step_scale(self);
         if self.status.status
             != crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialHi)
             && !no_physics
         {
             self.physics.vel_air = Vec3::new(
-                ground_x + self.physics.vel_jostle_x,
-                -standing.normal.x * self.physics.vel_ground.x,
-                ground_vel_z(self.pos.z, self.physics.vel_jostle_z, 0.0),
+                (ground_x + self.physics.vel_jostle_x) * step_scale,
+                -standing.normal.x * self.physics.vel_ground.x * step_scale,
+                ground_vel_z(self.pos.z, self.physics.vel_jostle_z, 0.0) * step_scale,
             );
         }
         // The status's pitch from the `vel_air` the transfer left.
@@ -2331,7 +2413,8 @@ impl Fighter {
                 // transfers the jostle.
                 self.pos.x + self.physics.vel_air.x + self.physics.vel_knockback.x
             } else {
-                (self.pos.x + (ground_x + self.physics.vel_jostle_x)) + self.physics.vel_knockback.x
+                (self.pos.x + (ground_x + self.physics.vel_jostle_x) * step_scale)
+                    + self.physics.vel_knockback.x
             },
             self.pos.y,
             if no_physics {
@@ -2342,9 +2425,12 @@ impl Fighter {
                         self.pos.z,
                         self.physics.vel_jostle_z,
                         self.physics.vel_ground.z,
-                    )
+                    ) * step_scale
             },
         );
+        if ground_break {
+            return (MapStep::GroundBreak, want);
+        }
         (MapStep::Ground(standing), want)
     }
 
@@ -2456,6 +2542,7 @@ impl Fighter {
         );
         let donkey_special_hi = self.status.status
             == crate::status::AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi);
+        let generic_air_vel = crate::status::generic_air_vel(self.status.status);
         // `StopCeil` has no `proc_physics`: the bonk holds its velocity.
         let stop_ceil = self.status.status == crate::status::Status::StopCeil;
         // `ftCommonDamageCommonProcPhysics`: until hitstun runs out a hit
@@ -2491,6 +2578,8 @@ impl Fighter {
             && !crate::kirby::skips_fast_fall(self.status.status)
             && !crate::purin::skips_fast_fall(self.status.status)
             && !crate::ness::skips_fast_fall(self)
+            && !crate::pikachu::skips_fast_fall(self.status.status)
+            && generic_air_vel.is_none()
             && !crate::capture_kirby::is_star(self.status.status)
             && !damage_hitstun
             && !stop_ceil
@@ -2527,6 +2616,17 @@ impl Fighter {
             || crate::ness::apply_air_physics(self)
             || crate::capture_kirby::apply_air_physics(self)
         {
+        } else if let Some(kind) = generic_air_vel {
+            match kind {
+                crate::status::AirVel::Friction => {
+                    crate::physics::apply_air_vel_friction(&mut self.physics, &self.attributes)
+                }
+                crate::status::AirVel::Drift => crate::physics::apply_air_vel_drift(
+                    &mut self.physics,
+                    &self.attributes,
+                    self.input.stick_x,
+                ),
+            }
         } else if damage_hitstun {
             if self.physics.is_fastfall {
                 crate::physics::apply_fast_fall(&mut self.physics, &self.attributes);
@@ -2765,8 +2865,7 @@ enum MapStep {
     /// No `proc_map` at all (the dead statuses, `Sleep`, `Entry`): no
     /// mask roll, no map stars.
     NoProc,
-    /// No map step: the status placed TopN itself (the cliff hold, Mario's
-    /// grounded Tornado lifting off).
+    /// No map step: the status placed TopN itself (the cliff hold).
     None,
     /// `mpCommonUpdateFighterProjectFloor` (the appear statuses): the
     /// floor under TopN for the shadow only.
@@ -2920,6 +3019,10 @@ fn ground_vel_z(z: f32, jostle_z: f32, ground_z: f32) -> f32 {
 #[cfg(test)]
 #[path = "physics_map_tests.rs"]
 mod physics_map_tests;
+
+#[cfg(test)]
+#[path = "proc_physics_tests.rs"]
+mod proc_physics_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3427,6 +3530,35 @@ mod tests {
         assert_eq!(f.status.status, Status::Fall);
     }
 
+    /// `LandingAir{N,F,B,Hi,Lw,Null}`'s `proc_map` is
+    /// `mpCommonProcFighterOnCliffEdge` (`ftcommonstatus.h` 214-219): an
+    /// aerial's landing lag sliding to the floor's end teeters there.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn an_aerial_landing_sliding_to_the_end_teeters() {
+        use crate::status::Status;
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(2290.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        crate::status::set_status(
+            &mut f,
+            Status::LandingAirN,
+            0.0,
+            crate::status::StatusTiming::unknown(),
+        );
+        f.physics.vel_ground.x = 40.0;
+        for _ in 0..4 {
+            step(&mut f, 0, 0);
+            if f.status.status != Status::LandingAirN {
+                break;
+            }
+        }
+        assert_eq!(f.status.status, Status::Ottotto);
+        assert!(f.is_grounded());
+        assert_eq!(f.pos.x, 2318.0 - 40.0);
+    }
+
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_slow_walk_teeters_40_units_in_from_the_end() {
@@ -3485,6 +3617,39 @@ mod tests {
             assert_eq!(f.status.status, status);
             // Dream Land's main platform ends at x = 2318.
             assert_eq!(f.pos.x, 2318.0, "{status:?}");
+        }
+    }
+
+    /// `ftMarioSpecialHiProcMap` and `ftSamusSpecialHiProcMap`: still on
+    /// the ground, the up special runs `mpCommonSetFighterFallOnEdgeBreak`
+    /// (`ftmariospecialhi.c:130`, `ftsamusspecialhi.c:68`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_grounded_up_special_stops_at_the_floors_end() {
+        use crate::status::{AnyStatus, MarioStatus, SamusStatus, StatusTiming};
+
+        for (kind, status) in [
+            (FighterKind::Samus, AnyStatus::Samus(SamusStatus::SpecialHi)),
+            (FighterKind::Mario, AnyStatus::Mario(MarioStatus::SpecialHi)),
+            (FighterKind::Luigi, AnyStatus::Mario(MarioStatus::SpecialHi)),
+        ] {
+            let mut f = Fighter::new(kind, 0, 3);
+            f.pos = Vec3::new(2300.0, 4.0, 0.0);
+            assert!(f.place_on_stage(dream_land()));
+            f.facing = Facing::Right;
+            crate::status::set_any_status(&mut f, status, 0.0, StatusTiming::unknown());
+            // Mario's ground phase moves by TransN, Samus's by friction.
+            for _ in 0..3 {
+                f.physics.vel_ground.x = 30.0;
+                f.set_root_motion(crate::physics::RootMotion {
+                    delta: Vec3::new(0.0, 0.0, 30.0),
+                    ..Default::default()
+                });
+                step(&mut f, 0, 0);
+            }
+            assert!(f.is_grounded(), "{kind:?}");
+            assert_eq!(f.status.status, status, "{kind:?}");
+            assert_eq!(f.pos.x, 2318.0, "{kind:?}");
         }
     }
 

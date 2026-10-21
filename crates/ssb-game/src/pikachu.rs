@@ -508,6 +508,13 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
     }
     true
 }
+/// No Pikachu status's `proc_physics` reads the fast-fall input
+/// (`ftpikachustatus.h`: `ftPhysicsApplyAirVelFriction` and Pikachu's own
+/// callbacks, none of which calls `ftPhysicsCheckSetFastFall`).
+pub fn skips_fast_fall(status: AnyStatus) -> bool {
+    matches!(status, AnyStatus::Pikachu(_))
+}
+
 pub fn apply_air_physics(f: &mut Fighter) -> bool {
     match f.status.status {
         AnyStatus::Pikachu(

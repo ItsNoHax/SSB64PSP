@@ -1792,6 +1792,12 @@ pub(crate) fn teeters_at_edge(f: &Fighter) -> bool {
                 | Status::LandingHeavy
                 | Status::LandingFallSpecial
                 | Status::Appeal
+                | Status::LandingAirN
+                | Status::LandingAirF
+                | Status::LandingAirB
+                | Status::LandingAirHi
+                | Status::LandingAirLw
+                | Status::LandingAirNull
         ),
         _ => false,
     }
@@ -1879,8 +1885,11 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
                 | Status::DownAttackD
                 | Status::DownAttackU
         ),
-        // Luigi shares Mario's table.
-        AnyStatus::Mario(s) => matches!(s, M::Attack13 | M::SpecialN),
+        // Luigi shares Mario's table. The grounded Super Jump and Screw
+        // Attack: `ftMarioSpecialHiProcMap` (`ftmariospecialhi.c:130`) and
+        // `ftSamusSpecialHiProcMap` (`ftsamusspecialhi.c:68`) run
+        // `mpCommonSetFighterFallOnEdgeBreak` on the ground.
+        AnyStatus::Mario(s) => matches!(s, M::Attack13 | M::SpecialN | M::SpecialHi),
         AnyStatus::Fox(s) => matches!(
             s,
             FoxStatus::Attack100Start
@@ -1906,7 +1915,7 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
         AnyStatus::Samus(s) => {
             matches!(
                 s,
-                S::SpecialNStart | S::SpecialNLoop | S::SpecialNEnd | S::SpecialLw
+                S::SpecialNStart | S::SpecialNLoop | S::SpecialNEnd | S::SpecialLw | S::SpecialHi
             )
         }
         AnyStatus::Link(s) => matches!(

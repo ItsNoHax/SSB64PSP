@@ -387,3 +387,54 @@ fn the_finger_gun_reads_the_play_its_maker_sees() {
     }
     assert_eq!(made, 2, "the set's shot and the follow-up");
 }
+
+/// Master Hand frozen by a hit: `ftMainProcPhysicsMap` skips the velocity
+/// and runs no `proc_lagupdate` (only the damage statuses set one), then his
+/// status's own `proc_map`: Wait's `mpCommonUpdateFighterProjectFloor`
+/// refreshes the floor under him and moves nothing (`ftbossstatus.h`).
+#[test]
+fn hitlag_runs_the_status_floor_probe() {
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    f.pos = Vec3::new(100.0, 400.0, 0.0);
+    f.physics.vel_air = Vec3::new(7.0, 3.0, 0.0);
+    f.boss.floor_line = None;
+    f.hitlag = 3;
+    let at = f.pos;
+    f.tick_physics_map(&floor);
+    assert_eq!(f.status.status, AnyStatus::Boss(B::Wait));
+    assert_eq!(f.pos, at);
+    assert_eq!(f.boss.floor_line, Some(0));
+    assert_eq!(f.boss.floor_dist, -400.0);
+}
+
+/// `ftBossMoveProcMap` in hitlag: a finished flight still sets the queued
+/// status.
+#[test]
+fn a_finished_move_in_hitlag_sets_the_next_status() {
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    f.pos = Vec3::new(0.0, 400.0, 0.0);
+    let dest = f.pos;
+    set_move(&mut f, Next::Tsutsuku1, dest);
+    f.boss.magnitude = 0.0;
+    f.hitlag = 3;
+    f.tick_physics_map(&floor);
+    assert_eq!(f.status.status, AnyStatus::Boss(B::Tsutsuku1));
+}
+
+/// `Walk` has no `proc_map`: in hitlag, as outside it, the collision masks
+/// keep their last roll.
+#[test]
+fn walk_in_hitlag_keeps_its_masks() {
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    f.pos = Vec3::new(0.0, 400.0, 0.0);
+    set(&mut f, B::Walk);
+    f.map_contacts.floor = true;
+    let prev = f.map_contacts_prev;
+    f.hitlag = 3;
+    f.tick_physics_map(&floor);
+    assert!(f.map_contacts.floor);
+    assert_eq!(f.map_contacts_prev, prev);
+}

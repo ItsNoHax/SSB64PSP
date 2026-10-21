@@ -586,6 +586,50 @@ mod tests {
         );
     }
 
+    /// `ftMainProcParams` (`ftmain.c:3862-3865`): a hit with knockback on a
+    /// fighter in the Twister only flashes it (`nFTDamageKindColAnim`); the
+    /// damage counts and the Twister keeps it.
+    /// `ftCommonTwisterSetStatus` (`ftcommontwister.c:73-76`): a grounded
+    /// fighter leaves through `mpCommonSetFighterAir` and spends its ground
+    /// jump; an airborne one keeps its count.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_twister_spends_a_grounded_fighters_ground_jump() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.situation = crate::fighter::Situation::Ground;
+        f.physics.jumps_used = 0;
+        set_twister(&mut f);
+        assert_eq!(f.physics.jumps_used, 1);
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.situation = crate::fighter::Situation::Air;
+        f.physics.jumps_used = 2;
+        set_twister(&mut f);
+        assert_eq!(f.physics.jumps_used, 2);
+    }
+
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn a_hit_in_the_twister_only_flashes() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        set_twister(&mut f);
+        let hit = crate::attack::Hitbox {
+            damage: 12,
+            offset: Vec3::ZERO,
+            radius: 80.0,
+            angle: 361,
+            kb_scale: 100,
+            kb_weight: 0,
+            kb_base: 60,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
+        };
+        let outcome = crate::attack::apply_hitbox_at(&hit, f.pos, 9, &mut f);
+        assert_eq!(outcome, crate::attack::HitOutcome::Damaged);
+        assert_eq!(f.damage, 12);
+        assert_eq!(f.status.status, AnyStatus::Common(Status::Twister));
+    }
+
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
     fn twister_launch_replaces_the_last_player_hit_even_when_intangible() {

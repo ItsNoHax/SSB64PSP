@@ -202,6 +202,39 @@ pub fn apply_clamp_ground_vel_stick_range(
     }
 }
 
+/// `ftPhysicsSetGroundVelStickRange` (`ftphysics.c:113`) on the port's
+/// world-space ground speed: the facing-relative speed moves to
+/// `stick_x * vel` toward the stick, at once when that is faster in its
+/// direction, else by `friction` a frame. `lr` is the facing sign.
+pub fn set_ground_vel_stick_range(
+    p: &mut PhysicsState,
+    stick_x: i8,
+    lr: f32,
+    vel: f32,
+    friction: f32,
+) {
+    let v = stick_x as f32 * vel * lr;
+    let mut x = p.vel_ground.x * lr;
+    if x >= 0.0 {
+        if x < v {
+            x = v;
+        } else {
+            x -= friction;
+            if x < v {
+                x = v;
+            }
+        }
+    } else if x > v {
+        x = v;
+    } else {
+        x += friction;
+        if v < x {
+            x = v;
+        }
+    }
+    p.vel_ground.x = x * lr;
+}
+
 /// `ftPhysicsSetGroundVelFriction` @ 0x800D8978.
 ///
 /// Decays X toward zero by `friction`, stopping exactly at zero rather than
@@ -364,6 +397,31 @@ pub fn apply_air_drift(p: &mut PhysicsState, attr: &PhysicsAttributes, stick_x: 
         attr.air_speed_max_x,
     );
     apply_air_friction(p, attr);
+}
+
+/// `ftPhysicsApplyAirVelFriction` (`ftphysics.c:379`): gravity, or the
+/// fast fall already under way, then air friction. No stick drift and no
+/// fast-fall input.
+pub fn apply_air_vel_friction(p: &mut PhysicsState, attr: &PhysicsAttributes) {
+    if p.is_fastfall {
+        apply_fast_fall(p, attr);
+    } else {
+        apply_gravity_default(p, attr);
+    }
+    if !check_clamp_air_vel_x_dec(p, attr.air_speed_max_x) {
+        apply_air_friction(p, attr);
+    }
+}
+
+/// `ftPhysicsApplyAirVelDrift` (`ftphysics.c:347`): as
+/// [`apply_air_vel_friction`] with the stick's drift. No fast-fall input.
+pub fn apply_air_vel_drift(p: &mut PhysicsState, attr: &PhysicsAttributes, stick_x: i8) {
+    if p.is_fastfall {
+        apply_fast_fall(p, attr);
+    } else {
+        apply_gravity_default(p, attr);
+    }
+    apply_air_drift(p, attr, stick_x);
 }
 
 /// `ftPhysicsApplyGroundVelTransferAir` @ 0x800D8B78.

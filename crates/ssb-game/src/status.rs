@@ -3637,7 +3637,8 @@ pub fn switch_mario_tornado_ground(f: &mut Fighter) {
 /// `ftMarioSpecialLwSwitchStatusAir` @ 0x80156808.
 pub fn switch_mario_tornado_air(f: &mut Fighter) {
     f.mario_special_lw.rise_enabled = false;
-    f.become_airborne();
+    // `mpCommonSetFighterAir`: the ground jump counts as spent.
+    f.set_fighter_air();
     set_any_status(
         f,
         AnyStatus::Mario(MarioStatus::SpecialAirLw),
@@ -3732,7 +3733,10 @@ fn mario_tornado_clamp(f: &mut Fighter) -> f32 {
 
 /// `ftMarioSpecialLwProcPhysics` @ 0x80156630. Returns true when a sourced
 /// B-tap transitions from the ground phase to the aerial phase this tick.
-pub fn apply_mario_special_lw_ground_physics(f: &mut Fighter) -> bool {
+pub fn apply_mario_special_lw_ground_physics(
+    f: &mut Fighter,
+    floor_normal: ssb_engine::math::Vec2,
+) -> bool {
     let clamp = mario_tornado_clamp(f);
     physics::apply_clamp_ground_vel_stick_range(
         &mut f.physics,
@@ -3742,6 +3746,11 @@ pub fn apply_mario_special_lw_ground_physics(f: &mut Fighter) -> bool {
         clamp,
     );
     if f.mario_special_lw.rise_enabled && f.button_tap().contains(N64Buttons::B) {
+        // `ftPhysicsSetGroundVelTransferAir` runs before the tap; staying
+        // grounded, the caller's common transfer does the same. Depth is
+        // moot: `mpCommonSetFighterAir` zeroes it.
+        f.physics.vel_air.x = f.physics.vel_ground.x * floor_normal.y + f.physics.vel_jostle_x;
+        f.physics.vel_air.y = -floor_normal.x * f.physics.vel_ground.x;
         f.physics.vel_air.y += MARIO_TORNADO_VEL_Y_TAP;
         switch_mario_tornado_air(f);
         true
@@ -3915,6 +3924,10 @@ pub fn set_cliff_catch(f: &mut Fighter, line: u16, corner: Vec2) {
         guard_timing(f, Status::CliffCatch),
     );
     play_anim_events(f);
+    // `mpCommonSetFighterGround` then, after the status, `mpCommonSetFighterAir`
+    // (`ftcommoncliffcatchwait.c:44-47`): the hanger has its aerial jump back
+    // (`jumps_used` 0 then 1) and TopN's depth returns to 0.
+    f.set_fighter_air();
     // `efManagerFlashMiddleMakeEffect` at the floor's edge.
     f.effects.push(crate::fteffect::FighterEffect::At {
         kind: crate::fteffect::kind::FLASH_MIDDLE,
@@ -4207,6 +4220,7 @@ pub fn set_any_status_preserve(
         crate::fighter_sound::stop_loop_sfx(f);
     }
     f.damage_knockback_stack = 0.0;
+    f.is_hitstun = false;
 
     f.damage_mul = 1.0;
     f.damage_e_status = None;
@@ -7296,6 +7310,34 @@ pub fn uses_ground_friction_or_transn(s: AnyStatus) -> bool {
     )
 }
 
+/// A character status whose table gives it a generic aerial `proc_physics`
+/// other than the default step (drift with the fast-fall input).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AirVel {
+    /// `ftPhysicsApplyAirVelFriction`
+    Friction,
+    /// `ftPhysicsApplyAirVelDrift`
+    Drift,
+}
+
+/// The [`AirVel`] of the statuses no fighter module handles itself
+/// (`ftdonkeystatus.h`, `ftmariostatus.h`, `ftluigistatus.h`,
+/// `ftfoxstatus.h`).
+pub fn generic_air_vel(s: AnyStatus) -> Option<AirVel> {
+    match s {
+        AnyStatus::Donkey(
+            DonkeyStatus::SpecialAirNStart
+            | DonkeyStatus::SpecialAirNLoop
+            | DonkeyStatus::SpecialAirNEnd
+            | DonkeyStatus::SpecialAirNFull,
+        ) => Some(AirVel::Friction),
+        AnyStatus::Donkey(DonkeyStatus::ThrowAirFF)
+        | AnyStatus::Mario(MarioStatus::SpecialAirN)
+        | AnyStatus::Fox(FoxStatus::SpecialAirN) => Some(AirVel::Drift),
+        _ => None,
+    }
+}
+
 /// `ftAnimEndSetWait` from a `proc_update`: Wait's own interrupt
 /// (`ftCommonWaitProcInterrupt`) then runs in the same frame, since
 /// `ftMainProcUpdateInterrupt` reads `proc_interrupt` after `proc_update`.
@@ -9560,6 +9602,35 @@ mod tests {
 
         finish_cliff_clip(&mut f, Status::CliffCatch);
         assert_eq!(f.status.status, Status::CliffWait);
+    }
+
+    /// `ftMarioSpecialNSwitchStatusAir`: `mpCommonSetFighterAir` spends the
+    /// ground jump of a fireball thrown off a ledge (one aerial jump left).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_ground_special_switching_to_the_air_spends_the_ground_jump() {
+        let mut f = mario();
+        f.status.status = AnyStatus::Mario(MarioStatus::SpecialN);
+        f.physics.jumps_used = 0;
+        switch_mario_fireball_air(&mut f);
+        assert_eq!(f.situation, Situation::Air);
+        assert_eq!(f.physics.jumps_used, 1);
+    }
+
+    /// `ftCommonCliffCatchSetStatus` (`ftcommoncliffcatchwait.c:44-47`):
+    /// `mpCommonSetFighterGround` then `mpCommonSetFighterAir`, so a fighter
+    /// that spent its aerial jump hangs with it back (`jumps_used` 1), and
+    /// TopN's depth returns to 0.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_ledge_catch_gives_the_aerial_jump_back() {
+        let mut f = mario();
+        f.situation = Situation::Air;
+        f.physics.jumps_used = 2;
+        f.pos.z = 12.0;
+        set_cliff_catch(&mut f, 3, Vec2::new(2318.0, 0.0));
+        assert_eq!(f.physics.jumps_used, 1);
+        assert_eq!(f.pos.z, 0.0);
     }
 
     /// Fox's `CliffCatch` figatree loops (4 frames): `ftCommonCliffCatchProcUpdate`'s

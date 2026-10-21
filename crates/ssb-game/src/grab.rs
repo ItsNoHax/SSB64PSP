@@ -1174,7 +1174,8 @@ fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.captain_no_update = f.is_grounded();
     f.grab.is_catch_or_capture = f.is_grounded();
     f.facing = holder.facing.flipped();
-    f.become_airborne();
+    // `mpCommonSetFighterAir`, unconditional (`ftcommoncapturecaptain.c:85`).
+    f.set_fighter_air();
     // `ftCommonCaptureCaptainProcCapture`: `FTCOMMON_CAPTURECAPTAIN_FRAME_BEGIN`
     // (4) at `..._ANIM_SPEED` (0), then a play; the N64 holds `anim_frame`
     // 4 through the catch (RE-474).
@@ -1493,10 +1494,7 @@ fn release_with(
         // (`ftCommonThrownSetStatusDamageRelease`): it also zeroes TopN's
         // depth, which the hand's placement above may have left non-zero
         // (RE-511), and spends the first jump.
-        f.become_airborne();
-        f.pos.z = 0.0;
-        f.physics.vel_air.z = 0.0;
-        f.physics.jumps_used = 1;
+        f.set_fighter_air();
     }
     let knockback = attack::knockback(
         f.damage,
@@ -2284,9 +2282,12 @@ where
         HeldMap::Pulled(holder) => holder,
     };
     // `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap`.
+    // A holder with no floor (`floor_line_id == -1`): the common-floor probe
+    // fails, so the edge branch's `ga = Air`, `jumps_used = 1`.
     let Some(line) = holder.floor_line else {
         f.situation = Situation::Air;
         f.floor = None;
+        f.physics.jumps_used = 1;
         return;
     };
     let on_line = || floors().into_iter().filter(move |(l, _)| *l == line);
@@ -2753,6 +2754,46 @@ mod tests {
         capture_captain(&mut airborne, catcher.port, holder);
         update_capture_captain(&mut airborne, holder);
         assert!(airborne.pos.x < 500.0 && airborne.pos.x >= 320.0);
+    }
+
+    /// `ftCommonCapture{Kirby,Captain,Yoshi}ProcCapture` call
+    /// `mpCommonSetFighterAir` unconditionally: an airborne victim that spent
+    /// its aerial jump is caught with `jumps_used` 1 and TopN's depth 0.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_capture_gives_an_airborne_victim_its_aerial_jump_back() {
+        type Capture = fn(&mut Fighter, u8, Holder);
+        let cases: [(FighterKind, Capture); 3] = [
+            (FighterKind::Kirby, crate::capture_kirby::capture),
+            (FighterKind::Captain, capture_captain),
+            (FighterKind::Yoshi, crate::capture_yoshi::capture),
+        ];
+        for (kind, capture) in cases {
+            let catcher = Fighter::new(kind, 0, 4);
+            let mut victim = Fighter::new(FighterKind::Mario, 1, 4);
+            victim.situation = Situation::Air;
+            victim.physics.jumps_used = 2;
+            victim.pos = Vec3::new(200.0, 300.0, 9.0);
+            capture(&mut victim, catcher.port, holder_of(&catcher));
+            assert_eq!(victim.physics.jumps_used, 1, "{kind:?}");
+            assert_eq!(victim.pos.z, 0.0, "{kind:?}");
+        }
+    }
+
+    /// `ftCommonCapturePulledProcMap` with an airborne catcher
+    /// (`floor_line_id` -1): the common-floor probe fails, so the edge
+    /// branch sets `ga` air and `jumps_used` 1.
+    #[test]
+    fn a_pulled_victim_of_an_airborne_catcher_has_one_jump_spent() {
+        let catcher = Fighter::new(FighterKind::Mario, 0, 4);
+        let mut holder = holder_of(&catcher);
+        holder.floor_line = None;
+        let mut victim = Fighter::new(FighterKind::Mario, 1, 4);
+        victim.situation = Situation::Ground;
+        victim.physics.jumps_used = 0;
+        held_map(&mut victim, HeldMap::Pulled(holder), std::iter::empty);
+        assert_eq!(victim.situation, Situation::Air);
+        assert_eq!(victim.physics.jumps_used, 1);
     }
 
     /// `ftCommonCaptureShoulderedSetStatus`: the lift's damage flashes

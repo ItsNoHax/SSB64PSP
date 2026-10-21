@@ -764,9 +764,10 @@ fn make_cutter(f: &mut Fighter) {
 
 /// `SetAirJumpMax`: airborne without a status change.
 fn air_jump_max(f: &mut Fighter) {
-    f.become_airborne();
+    f.set_ga_air();
     f.floor = None;
     f.physics.vel_air.z = 0.0;
+    f.pos.z = 0.0;
     f.physics.jumps_used = f.attributes.jumps_max;
 }
 
@@ -797,7 +798,10 @@ pub fn set_special_lw(f: &mut Fighter) {
         status::play_anim_events(f);
         f.kirby.stone_flag1 = false;
         f.kirby.stone_flag2 = false;
-        f.physics.vel_ground = Vec3::ZERO;
+        // `ftkirbyspeciallw.c:306`: `vel_ground` is kept for the hold's
+        // slide ([`keeps_vel_air`]).
+        f.physics.vel_air.x = 0.0;
+        f.physics.vel_air.y = 0.0;
     } else {
         // `ftKirbySpecialAirLwStartSetStatus` keeps `is_damage_resist`.
         let resist = f.kirby.is_damage_resist;
@@ -1327,9 +1331,10 @@ pub fn update(f: &mut Fighter) {
             }
             if crossed(f, THROWF_AIR_JUMP_ADD_FRAME) {
                 // `SetAirJumpAdd`.
-                f.become_airborne();
+                f.set_ga_air();
                 f.floor = None;
                 f.physics.vel_air.z = 0.0;
+                f.pos.z = 0.0;
                 f.physics.jumps_used += 1;
             }
             if f.status.animation_ended() {
@@ -1529,8 +1534,6 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
                 f.attributes.size,
             );
         }
-        // `proc_physics` is NULL and the setter zeroed `vel_air`.
-        K::SpecialLwStart => f.physics.vel_ground.x = 0.0,
         K::SpecialLwHold | K::SpecialAirLwLanding => {
             // `ftKirbySpecialLwHoldProcPhysics`: slide down slopes.
             let (normal, flags) = f
@@ -1557,6 +1560,14 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
         _ => return crate::kirby_copy::apply_ground_physics(f),
     }
     true
+}
+
+/// Grounded Stone's start has no `proc_physics` (`ftkirbystatus.h`): no
+/// `ftPhysicsSetGroundVelTransferAir`, so TopN steps by the `vel_air` the
+/// setter zeroed (or the landing kept), and `vel_ground` waits untouched
+/// for `ftKirbySpecialLwHoldProcPhysics`.
+pub fn keeps_vel_air(f: &Fighter) -> bool {
+    f.status.status == AnyStatus::Kirby(K::SpecialLwStart)
 }
 
 /// Kirby's airborne `proc_physics`. Every Kirby air status has its own.
@@ -1741,8 +1752,9 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             f.become_airborne();
             crate::grab::release_on_edge(f);
         }
-        // `SetAirJumpMax` has not run yet; the status carries on in the air.
-        K::SpecialHi => f.become_airborne(),
+        // `ftKirbySpecialHiProcMap`: `SetAirJumpMax` has not run yet; only
+        // `ga` turns (`ftkirbyspecialhi.c:207`), the jump count stays.
+        K::SpecialHi => f.set_ga_air(),
         // `mpCommonSetFighterFallOnEdgeBreak` / `...OnGroundBreak`.
         K::Attack100Start | K::Attack100Loop | K::Attack100End | K::SpecialHiLanding => {
             f.become_airborne();
@@ -1824,6 +1836,21 @@ mod tests {
     use super::*;
     use crate::fighter::Situation;
     use ssb_engine::input::ControllerState;
+
+    /// `ftKirbySpecialHiProcMap` (`ftkirbyspecialhi.c:207`): a grounded
+    /// Final Cutter leaving the edge before `SetAirJumpMax` turns only `ga`;
+    /// it does not spend the ground jump (`mpCommonSetFighterAir` would).
+    #[test]
+    fn a_final_cutter_leaving_the_edge_keeps_its_jump_count() {
+        let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+        f.situation = Situation::Ground;
+        f.status.status = AnyStatus::Kirby(K::SpecialHi);
+        f.physics.jumps_used = 0;
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(f.situation, Situation::Air);
+        assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialHi));
+        assert_eq!(f.physics.jumps_used, 0);
+    }
 
     fn kirby() -> Fighter {
         let mut f = Fighter::new(FighterKind::Kirby, 0, 4);

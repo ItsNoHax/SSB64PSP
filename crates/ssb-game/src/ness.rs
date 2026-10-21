@@ -630,24 +630,28 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             );
             true
         }
+        // `ftNessSpecialLwProcPhysics`: the delay alone; with no ground
+        // transfer TopN steps by the `vel_air` left ([`keeps_vel_air`]).
+        N::SpecialLwStart => {
+            f.ness.gravity_delay = f.ness.gravity_delay.saturating_sub(1);
+            true
+        }
+        // `ftNessSpecialHiProcPhysics` (the delay, then friction) and the
+        // generic `ftPhysicsApplyGroundVelFriction` of the hold, hit and
+        // end statuses (`ftnessstatus.h`), which leave the delay alone.
         N::SpecialHiStart
         | N::SpecialHiHold
         | N::SpecialHiEnd
-        | N::SpecialLwStart
         | N::SpecialLwHold
         | N::SpecialLwHit
         | N::SpecialLwEnd => {
-            f.ness.gravity_delay = f.ness.gravity_delay.saturating_sub(1);
-            if matches!(s, N::SpecialHiStart | N::SpecialHiHold | N::SpecialHiEnd) {
-                let material = f.floor.map_or(1.0, |floor| {
-                    crate::collision::material_friction(floor.flags)
-                });
-                physics::apply_ground_friction_with_material(
-                    &mut f.physics,
-                    &f.attributes,
-                    material,
-                );
+            if s == N::SpecialHiStart {
+                f.ness.gravity_delay = f.ness.gravity_delay.saturating_sub(1);
             }
+            let material = f.floor.map_or(1.0, |floor| {
+                crate::collision::material_friction(floor.flags)
+            });
+            physics::apply_ground_friction_with_material(&mut f.physics, &f.attributes, material);
             true
         }
         _ => false,
@@ -704,15 +708,19 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                 f.physics.vel_air.y = old.y;
             }
         }
-        _ => {
-            physics::apply_gravity_default(&mut f.physics, &f.attributes);
-            if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x) {
-                physics::apply_air_friction(&mut f.physics, &f.attributes);
-            }
-        }
+        // `SpecialAirN` and `SpecialAirHiBound`: `ftPhysicsApplyAirVelFriction`,
+        // which keeps a fast fall already under way.
+        _ => physics::apply_air_vel_friction(&mut f.physics, &f.attributes),
     }
     true
 }
+/// Grounded PSI Magnet's start: `ftNessSpecialLwProcPhysics` does no
+/// `ftPhysicsSetGroundVelTransferAir`, so TopN steps by the `vel_air` the
+/// last transfer (or the landing) left.
+pub fn keeps_vel_air(f: &Fighter) -> bool {
+    f.status.status == AnyStatus::Ness(N::SpecialLwStart)
+}
+
 pub fn skips_fast_fall(f: &Fighter) -> bool {
     matches!(f.status.status, AnyStatus::Ness(_))
         || is_ness(f.kind)

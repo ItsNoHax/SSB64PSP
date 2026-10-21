@@ -162,3 +162,109 @@ fn kirby_smash_di_into_the_floor_in_hitlag_makes_a_map_star() {
         f.effects
     );
 }
+
+/// `ftmain.c:1767-1801` runs for every status outside hitlag, whatever its
+/// `proc_physics`: an airborne `Sleep` with damage velocity left decays it
+/// by 1.7 along its angle and adds it to TopN after `vel_air`.
+#[test]
+fn a_status_with_no_physics_still_decays_and_adds_the_damage_velocity() {
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.situation = Situation::Air;
+    f.status.status = AnyStatus::Common(Status::Sleep);
+    f.pos = Vec3::new(0.0, 500.0, 0.0);
+    f.physics.vel_air = Vec3::new(2.0, 0.0, 0.0);
+    f.physics.vel_knockback = Vec3::new(30.0, 40.0, 0.0);
+    let mut expect = f.physics;
+    crate::physics::update_damage_velocity(
+        &mut expect,
+        false,
+        ssb_engine::math::Vec2::new(0.0, 1.0),
+        0.0,
+        0.0,
+    );
+    assert!(expect.vel_knockback.x < 30.0);
+    f.tick_physics_map(&|| [floor_at(0)]);
+    assert_eq!(f.physics.vel_knockback, expect.vel_knockback);
+    assert_eq!(f.pos.x, (0.0 + 2.0) + expect.vel_knockback.x);
+    assert_eq!(f.pos.y, 500.0 + expect.vel_knockback.y);
+}
+
+/// The rebirth halo's `-2` floor (`ftCommonRebirthDownSetStatus`): the
+/// first ground status after it runs its `proc_physics` and the velocity
+/// step on that flat, material-0 floor, then its `proc_map` finds no floor
+/// and falls from the stepped TopN (`ftmain.c:1755-1801`).
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn a_grounded_status_on_the_halo_floor_steps_before_it_falls() {
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    crate::status::set_status(&mut f, Status::Wait, 0.0, StatusTiming::unknown());
+    f.situation = Situation::Ground;
+    f.floor = None;
+    f.pos = Vec3::new(0.0, 1000.0, 0.0);
+    f.physics.vel_ground.x = 10.0;
+    f.tick_physics_map(&|| [floor_at(0)]);
+    assert!(matches!(
+        f.status.status,
+        AnyStatus::Common(Status::Fall | Status::FallAerial)
+    ));
+    // Wait's friction on material 0, then the step.
+    assert!(f.pos.x > 0.0 && f.pos.x < 10.0, "{}", f.pos.x);
+    assert_eq!(f.pos.x, f.physics.vel_air.x);
+    assert_eq!(f.pos.y, 1000.0);
+}
+
+/// `ftMarioSpecialLwProcPhysics` (`ftmariospeciallw.c:64-77`): the ground
+/// speed transfers into `vel_air`, the B tap adds its rise, and
+/// `ftMarioSpecialLwSwitchStatusAir` lifts Mario off; the same frame's
+/// velocity step moves TopN by both and the aerial `proc_map` runs.
+/// `mpCommonSetFighterAir` spends the ground jump.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn the_grounded_tornado_lifts_off_with_this_frames_step() {
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.situation = Situation::Ground;
+    f.floor = Some(crate::ground::Standing {
+        line: 0,
+        flags: 0,
+        normal: ssb_engine::math::Vec2::new(0.0, 1.0),
+    });
+    crate::status::switch_mario_tornado_ground(&mut f);
+    f.mario_special_lw.rise_enabled = true;
+    f.physics.vel_ground.x = 10.0;
+    f.physics.jumps_used = 0;
+    f.prev_input.buttons = N64Buttons::default();
+    f.input.buttons = N64Buttons(N64Buttons::B);
+    f.tick_physics_map(&|| [floor_at(0)]);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Mario(crate::status::MarioStatus::SpecialAirLw)
+    );
+    assert_eq!(f.situation, Situation::Air);
+    assert_eq!(f.physics.jumps_used, 1);
+    assert_eq!(f.physics.vel_air.y, crate::status::MARIO_TORNADO_VEL_Y_TAP);
+    assert!(f.physics.vel_air.x > 0.0);
+    assert_eq!(f.pos.x, f.physics.vel_air.x);
+    assert_eq!(f.pos.y, crate::status::MARIO_TORNADO_VEL_Y_TAP);
+}
+
+/// `cliffcatch_wait` counts down in `ftMainProcPhysicsMap`, outside hitlag
+/// and ahead of `proc_physics` (`ftmain.c:1755-1760`), not in the
+/// interrupt pass: a wait set by a status's `proc_interrupt` (letting go,
+/// `ftcommoncliffclimb.c:102`) is already 29 when that frame's `proc_map`
+/// reads it (`mpcommon.c:549`).
+#[test]
+fn the_cliff_catch_wait_counts_in_the_physics_pass_outside_hitlag() {
+    let surfaces = || [floor_at(0)];
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    crate::status::set_status(&mut f, Status::Fall, 0.0, StatusTiming::unknown());
+    f.situation = Situation::Air;
+    f.pos = Vec3::new(0.0, 1000.0, 0.0);
+    f.cliffcatch_wait = crate::status::CLIFF_CATCH_WAIT;
+    f.tick_interrupt(&surfaces);
+    assert_eq!(f.cliffcatch_wait, crate::status::CLIFF_CATCH_WAIT);
+    f.tick_physics_map(&surfaces);
+    assert_eq!(f.cliffcatch_wait, crate::status::CLIFF_CATCH_WAIT - 1);
+    f.hitlag = 2;
+    f.tick_physics_map(&surfaces);
+    assert_eq!(f.cliffcatch_wait, crate::status::CLIFF_CATCH_WAIT - 1);
+}

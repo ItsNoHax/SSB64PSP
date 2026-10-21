@@ -366,8 +366,10 @@ where
     }
 }
 
-/// `DokanWait` and `DokanWalk`: no `proc_physics`; their `proc_map`
-/// ([`tick_status`]) places the fighter.
+/// `DokanWait` and `DokanWalk`: no `proc_physics`, so TopN steps by the
+/// velocity alone (zero from every setter: `DokanStart`'s
+/// `ftPhysicsStopVelAll`, then `mpCommonSetFighterAir`); `DokanWait`'s
+/// `proc_map` ([`tick_status`]) then places the fighter.
 pub fn places_itself(f: &Fighter) -> bool {
     matches!(
         f.status.status,
@@ -375,10 +377,11 @@ pub fn places_itself(f: &Fighter) -> bool {
     )
 }
 
-/// The physics and map steps the pipe statuses replace. `DokanStart`'s and
+/// The map steps the pipe statuses replace. `DokanStart`'s and
 /// `DokanEnd`'s map step is the common ground one, so they return `false`
-/// and leave their physics to [`apply_ground_physics`]; `DokanWait` and
-/// `DokanWalk` place the fighter themselves and skip the map.
+/// and leave their physics to [`apply_ground_physics`]; `DokanWait`'s
+/// places the fighter on the cubic, `DokanWalk`'s only probes the floor
+/// for the shadow (`mpCommonUpdateFighterProjectFloor`).
 pub fn tick_status(f: &mut Fighter) -> bool {
     match f.status.status {
         // `ftCommonDokanWaitProcMap`.
@@ -666,6 +669,26 @@ mod tests {
             }
         }
         assert_eq!(f.status.status, Status::Fall);
+    }
+
+    /// `DokanWalk` has no `proc_physics`, but `ftMainProcPhysicsMap` still
+    /// adds `vel_air` and the damage velocity to TopN (`ftmain.c:1797`);
+    /// only its setters' zeroing keeps the walk in place.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_wall_walk_still_takes_the_velocity_step() {
+        let s = course();
+        let mut f = enter_and_wait(FighterKind::Fox, &s, true);
+        for _ in 0..POS_ADJUST_WAIT {
+            frame(&mut f, &s);
+        }
+        assert_eq!(f.status.status, Status::DokanWalk);
+        f.physics.vel_air = Vec3::new(5.0, 0.0, 0.0);
+        let at = f.pos;
+        frame(&mut f, &s);
+        assert_eq!(f.status.status, Status::DokanWalk);
+        assert_eq!(f.pos.x, at.x + 5.0);
+        assert_eq!(f.pos.y, at.y);
     }
 
     #[test]

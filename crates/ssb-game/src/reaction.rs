@@ -395,6 +395,7 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
                     _ => {}
                 }
             } else if f.hitstun == 0 {
+                f.is_hitstun = false;
                 if f.is_grounded() {
                     status::ground_interrupt(f);
                 } else {
@@ -427,6 +428,7 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
                     damage_fall_interrupt(f);
                 }
             } else if f.hitstun == 0 {
+                f.is_hitstun = false;
                 air_interrupt(f);
             }
         }

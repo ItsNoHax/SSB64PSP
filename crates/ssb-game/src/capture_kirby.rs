@@ -112,7 +112,9 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.grab.is_catchstatus = false;
     f.facing = holder.facing.flipped();
     let floor_flags = f.floor.map_or(0, |s| s.flags);
-    f.become_airborne();
+    // `mpCommonSetFighterAir`, unconditional: an airborne victim gets its
+    // aerial jump back.
+    f.set_fighter_air();
     status::set_status(f, Status::CaptureKirby, 0.0, StatusTiming::unknown());
     // `ftCommonCaptureKirbyProcCapture` plays the first frame (RE-474).
     status::play_anim_events(f);

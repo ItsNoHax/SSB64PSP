@@ -332,7 +332,8 @@ fn dive_throw(f: &mut Fighter) {
 
 /// `ftCaptainSpecialLwProcHit`: each of the first six contact callbacks halves
 /// the air velocity multiplier. The source scales `vel_air` even on ground,
-/// so grounded `vel_ground` is deliberately unaffected.
+/// after the transfer: the grounded step slows ([`ground_step_scale`]) while
+/// `vel_ground` itself is unaffected.
 pub fn on_kick_hit(f: &mut Fighter) {
     if matches!(
         f.status.status,
@@ -510,8 +511,39 @@ pub fn update(f: &mut Fighter) {
     }
 }
 
+/// The scale on the grounded step: `ftCaptainSpecialLwProcPhysics` runs
+/// `syVectorScale3D(&vel_air, vel_scale)` after `ftPhysicsApplyGroundVelTransN`'s
+/// transfer as well (`ftcaptainspeciallw.c:97`), so each kick hit slows the
+/// grounded Falcon Kick too.
+pub fn ground_step_scale(f: &Fighter) -> f32 {
+    if matches!(
+        f.status.status,
+        AnyStatus::Captain(CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir)
+    ) {
+        f.captain.kick_scale
+    } else {
+        1.0
+    }
+}
+
 pub fn apply_ground_physics(f: &mut Fighter) -> bool {
     match f.status.status {
+        // `ftcaptainstatus.h`: the jab's third hit and the rapid jab are
+        // `ftPhysicsApplyGroundVelTransN`.
+        AnyStatus::Captain(
+            CaptainStatus::Attack13
+            | CaptainStatus::Attack100Start
+            | CaptainStatus::Attack100Loop
+            | CaptainStatus::Attack100End,
+        ) => {
+            physics::apply_ground_vel_transn(
+                &mut f.physics,
+                f.root_motion,
+                f.topn_lr,
+                f.attributes.size,
+            );
+            true
+        }
         AnyStatus::Captain(
             CaptainStatus::SpecialN
             | CaptainStatus::SpecialLw
@@ -617,8 +649,10 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
                 current,
                 CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir
             ) {
+                // `syVectorScale3D(&vel_air, vel_scale)`.
                 f.physics.vel_air.x *= f.captain.kick_scale;
                 f.physics.vel_air.y *= f.captain.kick_scale;
+                f.physics.vel_air.z *= f.captain.kick_scale;
             }
             // `ftCaptainSpecialLwProcPhysics` updates the flame last,
             // `ftCaptainSpecialAirLwProcPhysics` first; nothing between
@@ -898,6 +932,21 @@ mod tests {
             let z = if air { -60.0f32.to_radians() } else { 0.0 };
             assert_eq!(kick_effect_rotate(&f), [0.0, 90.0f32.to_radians(), z]);
         }
+    }
+
+    /// `ftCaptainSpecialLwSetStatus` sets `proc_shield` to the same
+    /// `ftCaptainSpecialLwProcHit` as `proc_hit`; `ftMainProcParams` calls it
+    /// on a shield push (`ftmain.c:3935-3939`): a kick into a shield slows
+    /// it too.
+    #[test]
+    fn a_kick_into_a_shield_halves_its_scale() {
+        let mut f = captain();
+        set_special_lw(&mut f);
+        let scale = f.captain.kick_scale;
+        f.hits.attack_shield_push = 4;
+        crate::combat::proc_params(&mut f);
+        assert_eq!(f.captain.kick_hit_count, 1);
+        assert_eq!(f.captain.kick_scale, scale / 2.0);
     }
 
     #[test]

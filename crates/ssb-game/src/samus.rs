@@ -325,9 +325,10 @@ fn make_bomb(f: &mut Fighter) {
 
 /// `SetAirJumpMax`: the fighter becomes airborne without a status change.
 fn air_jump_max(f: &mut Fighter) {
-    f.become_airborne();
+    f.set_ga_air();
     f.floor = None;
     f.physics.vel_air.z = 0.0;
+    f.pos.z = 0.0;
     f.physics.jumps_used = f.attributes.jumps_max;
 }
 
@@ -464,6 +465,24 @@ fn interrupt(f: &mut Fighter) {
         }
         _ => {}
     }
+}
+
+/// `ftSamusSpecialLwProcPhysics` (`ftsamusspeciallw.c:53`): once the
+/// script raises flag 3 (the landed ball, anim frames 10 to 42), the stick
+/// rolls it at up to `walk_speed_mul * BOMB_DRIFT`; before, ground friction.
+pub fn apply_ground_physics(f: &mut Fighter) -> bool {
+    if f.status.status != AnyStatus::Samus(SamusStatus::SpecialLw) || f.motion_script.flags[3] == 0
+    {
+        return false;
+    }
+    physics::set_ground_vel_stick_range(
+        &mut f.physics,
+        f.input.stick_x,
+        f.facing.sign(),
+        f.attributes.walk_speed_mul * BOMB_DRIFT,
+        f.attributes.traction,
+    );
+    true
 }
 
 /// Aerial `proc_physics` for every Samus status that can be airborne,

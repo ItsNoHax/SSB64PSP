@@ -859,14 +859,15 @@ fn execute(
             f.afterimage.is_itemswing = (w >> 18) & 0xFF != 0;
             f.afterimage.drawstatus = sign(w & 0x3FFFF, 18) as i8;
         }
+        // `ftmain.c:400-418`: `ga` alone, not `mpCommonSetFighterAir`.
         op::SET_AIR_JUMP_ADD => {
-            f.become_airborne();
+            f.set_ga_air();
             f.physics.vel_air.z = 0.0;
             f.pos.z = 0.0;
             f.physics.jumps_used = f.physics.jumps_used.saturating_add(1);
         }
         op::SET_AIR_JUMP_MAX => {
-            f.become_airborne();
+            f.set_ga_air();
             f.physics.vel_air.z = 0.0;
             f.pos.z = 0.0;
             f.physics.jumps_used = f.attributes.jumps_max;
@@ -1303,6 +1304,41 @@ mod tests {
         let mut f = Fighter::new(kind, 0, 3);
         f.situation = crate::fighter::Situation::Ground;
         f
+    }
+
+    /// `nFTMotionEventSetAirJumpAdd` / `...Max` (`ftmain.c:400-418`) write
+    /// `ga` themselves rather than call `mpCommonSetFighterAir`: from the
+    /// ground, Add spends exactly one jump (0 -> 1), Max spends them all,
+    /// and both zero TopN's depth.
+    #[test]
+    fn the_air_jump_events_count_from_the_ground_jump() {
+        static ADD: [u32; 1] = [op::SET_AIR_JUMP_ADD << 26];
+        static MAX: [u32; 1] = [op::SET_AIR_JUMP_MAX << 26];
+        for (words, opcode) in [(&ADD, op::SET_AIR_JUMP_ADD), (&MAX, op::SET_AIR_JUMP_MAX)] {
+            let mut f = fighter(FighterKind::Fox);
+            f.physics.jumps_used = 0;
+            f.pos.z = 8.0;
+            execute(
+                &mut f,
+                Pass::All,
+                0,
+                words,
+                0,
+                0,
+                words[0],
+                opcode,
+                0.0,
+                1.0,
+            );
+            assert_eq!(f.situation, crate::fighter::Situation::Air);
+            assert_eq!(f.pos.z, 0.0);
+            let want = if opcode == op::SET_AIR_JUMP_ADD {
+                1
+            } else {
+                f.attributes.jumps_max
+            };
+            assert_eq!(f.physics.jumps_used, want, "opcode {opcode}");
+        }
     }
 
     fn live(f: &Fighter) -> usize {
