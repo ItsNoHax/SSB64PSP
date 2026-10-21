@@ -346,6 +346,10 @@ pub trait StageItems {
     fn set_item_x(&mut self, _handle: u32, _x: f32) {}
     /// `itPakkunCommonSetWaitFighter`.
     fn pakkun_set_wait_fighter(&mut self, _handle: u32) {}
+    /// `dITManagerForceMonsterKind`: a debug word, 0 in retail.
+    fn force_monster_kind(&self) -> u8 {
+        0
+    }
 }
 
 /// No item pool: nothing is made.
@@ -700,6 +704,23 @@ impl Stage {
             for h in c.pakkun.into_iter().flatten() {
                 items.pakkun_set_wait_fighter(h);
             }
+        }
+    }
+
+    /// Saffron's gate controller (`gGRCommonStruct.yamabuki`).
+    pub fn yamabuki(&self) -> Option<&yamabuki::Yamabuki> {
+        match &self.controller {
+            Controller::Yamabuki(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// [`Self::yamabuki`], to write it as a debugger would (the replays'
+    /// RDRAM pokes).
+    pub fn yamabuki_mut(&mut self) -> Option<&mut yamabuki::Yamabuki> {
+        match &mut self.controller {
+            Controller::Yamabuki(c) => Some(c),
+            _ => None,
         }
     }
 

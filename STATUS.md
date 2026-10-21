@@ -16,9 +16,9 @@
 
 ## Current work
 
-- Landed: setter first frames against N64 traces; DK cargo, Barrel, Guard clocks; item-throw `1/mag` gravity clamp and Fireball 2D clamp (RE-565). 2 goldens rebaselined (379 and 489 native px).
-- Landed: battle draw order (RE-563); fireball DL entry under TEX_EDGE (RE-564).
-- Open: magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
+- Landed: item/weapon N64 parity: Egg joint timing, deferred weapon reactions, hit order, Saffron monsters, Barrel clip (RE-566). 5 goldens rebaselined (72283, 88374, 78119, 9678, 1114 native px).
+- Landed: setter first frames (RE-565); battle draw order (RE-563); fireball DL entry (RE-564).
+- Open: CPU item tracking N64 trace (RE-566); magnifier and FlyRoll measurement re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Shield poke at `vsshield` t=610 awaits an N64 trace (RE-418). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 30 (RE-565); deepest game stack 366952 B.
+Baseline: batch 31 (RE-566); deepest game stack 366992 B.
 
 | Check | Result |
 |---|---|

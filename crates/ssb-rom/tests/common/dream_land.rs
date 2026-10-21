@@ -169,6 +169,23 @@ pub fn dream_land_map(
     out
 }
 
+/// Each [`dream_land_map`] surface's moving group, in the same order.
+pub fn map_groups(pack: &ssb_rom::pack::Pack<'_>, stage: &ssb_rom::pack::StageDesc) -> Vec<u16> {
+    use ssb_rom::pack::line_kind;
+    let mut out = Vec::new();
+    for line in pack.stage_lines(stage) {
+        if !matches!(
+            line.kind,
+            line_kind::FLOOR | line_kind::CEILING | line_kind::RIGHT_WALL | line_kind::LEFT_WALL
+        ) {
+            continue;
+        }
+        let segments = pack.line_vertices(&line).count().saturating_sub(1);
+        out.extend(core::iter::repeat_n(line.yakumono, segments));
+    }
+    out
+}
+
 /// Whispy's eyes and mouth, then the back and front flowers: the order of
 /// `gGRCommonStruct.pupupu.map_gobj`.
 pub fn whispy_index(obj: StageObj) -> usize {
@@ -211,5 +228,50 @@ impl StageObjects for PackWhispy<'_, '_> {
 
     fn anim_frame(&self, obj: StageObj) -> f32 {
         self.objects.get(whispy_index(obj) as u8).unwrap().frame
+    }
+}
+
+/// A stage's `map_bound_top`, camera extents and rebirth point
+/// (`nMPMapObjKindRebirth`), as `FighterScene` gives each fighter them.
+pub fn stage_bounds(
+    pack: &ssb_rom::pack::Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+) -> ssb_game::dead::StageBounds {
+    let zone = |e: &ssb_rom::pack::Extent| ssb_game::status::BlastZone {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    let rebirth = pack
+        .stage_points(stage)
+        .find(|p| p.kind == 0x20)
+        .map(|p| ssb_engine::math::Vec2::new(f32::from(p.x), f32::from(p.y)))
+        .expect("the stage has a rebirth point");
+    ssb_game::dead::StageBounds {
+        map: zone(&stage.bounds),
+        camera: zone(&stage.camera),
+        rebirth,
+        fog_color: stage.fog_color,
+    }
+}
+
+/// The battle camera's view of a stage (`gmCameraMakeDefaultCamera`'s
+/// bounds; `nGMCameraStatusDefault`), as `FighterScene` builds it.
+pub fn camera_stage(stage: &ssb_rom::pack::StageDesc) -> ssb_game::camera::CameraStage {
+    use ssb_game::camera::{BonusFollow, Bounds, CameraStage, StageCamera};
+    let bounds = |e: &ssb_rom::pack::Extent| Bounds {
+        top: f32::from(e.top),
+        bottom: f32::from(e.bottom),
+        left: f32::from(e.left),
+        right: f32::from(e.right),
+    };
+    CameraStage {
+        camera: bounds(&stage.camera),
+        team_camera: bounds(&stage.team_camera),
+        map_top: f32::from(stage.bounds.top),
+        light_angle_z: stage.camera_light_angle_z,
+        stage_camera: StageCamera::Default,
+        follow: BonusFollow::Other,
     }
 }

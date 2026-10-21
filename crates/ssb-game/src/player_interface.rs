@@ -270,9 +270,11 @@ mod tests {
     #[test]
     fn tags_use_wait_or_far_camera_and_status_gates() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
-        let mut c = Camera::default();
-        c.eye = Vec3::new(0.0, 0.0, 5000.0);
-        c.at = Vec3::ZERO;
+        let c = Camera {
+            eye: Vec3::new(0.0, 0.0, 5000.0),
+            at: Vec3::ZERO,
+            ..Default::default()
+        };
         assert!(tag_position(&f, &c, 800.0, [24, 24]).is_none());
         f.interface.tag_wait = 1;
         assert!(tag_position(&f, &c, 800.0, [24, 24]).is_some());

@@ -149,10 +149,10 @@ impl ThunderJolt {
             (JOLT_AIR, self.position)
         }
     }
-    pub(super) fn reflect(&mut self, f: &Fighter) {
+    pub(super) fn reflect(&mut self, f: &Reflector) {
         self.owner_port = f.port;
         self.lifetime = 100;
-        if self.velocity.x * f.facing.sign() < 0.0 {
+        if self.velocity.x * f.lr < 0.0 {
             self.velocity.x = -self.velocity.x;
         }
         if self.grounded() {
@@ -819,7 +819,11 @@ mod tests {
         assert_eq!(j.position.y, -55.0);
         // Reflector's wpMainVelSetLR stores ±1 even on walls. Update treats
         // every value other than 2 as downward; it does not invent direction 3.
-        j.reflect(&Fighter::new(FighterKind::Fox, 2, 3));
+        j.reflect(&crate::weapon::Reflector::of(&Fighter::new(
+            FighterKind::Fox,
+            2,
+            3,
+        )));
         assert_eq!(j.direction, 1);
         assert!(j.tick(|| [floor, wall], &mut crate::wpeffect::Emit::default()));
         assert_eq!(j.position.y, -110.0);

@@ -284,6 +284,14 @@ pub fn held_egg_position(f: &Fighter) -> Option<Vec3> {
     (is_yoshi(f.kind) && f.yoshi.egg_held).then_some(f.yoshi.egg_pos)
 }
 
+/// Whether this frame's `proc_physics` reads the Egg Throw joint
+/// (`ftYoshiSpecialHiUpdateEggVectors`): `gmCollisionGetFighterPartsWorldPosition`
+/// composes the pose the frame's play left, so the host samples the joints
+/// before the physics step.
+pub fn physics_queries_joints(f: &Fighter) -> bool {
+    is_yoshi(f.kind) && f.yoshi.egg_held && !f.is_in_hitlag()
+}
+
 /// `ftYoshiSpecialHiUpdateEggVectors`, the head of both Egg Throw
 /// statuses' `proc_physics`: the held egg follows the Egg Throw joint
 /// (`ftYoshiSpecialHiGetEggPosition`).

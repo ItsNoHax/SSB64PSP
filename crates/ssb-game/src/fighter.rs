@@ -457,6 +457,11 @@ pub struct Fighter {
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
+    /// `fp->joints[4]->rotate.vec.f.x` as the skeleton held it when
+    /// [`Self::joint_transforms`] were posed: the raw Euler value, unwrapped,
+    /// that `ftCommonDownBounceCheckUpOrDown` reads. `None` without a
+    /// skeleton.
+    pub joint4_rotate_x: Option<f32>,
     /// `FTParts::transform_update_mode == 1` per joint (bit `j` is
     /// `fp->joints[j]`): the parts a collision query has read since their
     /// last reset. `gmCollisionGetFighterPartsWorldPosition` and its kin
@@ -689,6 +694,7 @@ impl Fighter {
             weapon_spawn_pose: None,
             physics_pass: false,
             joint_transforms: [None; FIGHTER_JOINTS],
+            joint4_rotate_x: None,
             queried_joints: core::cell::Cell::new(0),
             world_joints: core::cell::Cell::new(0),
             joint_parents: DEFAULT_JOINT_PARENTS,
@@ -1321,10 +1327,6 @@ impl Fighter {
         }
         self.tick_timers();
         self.resolve_cliff_release(surfaces);
-        // `proc_passive`: an electric hit's `DamageE` hands over to the
-        // real damage status once hitlag is over.
-        crate::attack::update_damage_e(self);
-        crate::reaction::check_set_invincible(self);
         // The previous frame's push is spent; the stage sets a new one.
         self.hazard.vel_push = Vec3::ZERO;
         // `is_events_forward = TRUE`, before `ftMainPlayAnimEventsAll`: the

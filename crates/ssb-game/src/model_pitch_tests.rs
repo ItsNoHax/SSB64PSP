@@ -213,3 +213,23 @@ fn the_falcon_kick_keeps_its_roll_into_the_air() {
     assert_eq!(f.pose_writes.transn_rotate_z, Some(roll));
     assert_eq!(f.pose_writes.joint4, None);
 }
+
+/// `ftCommonDamageCommonProcPhysics` (`ftcommondamage.c:228-230`) writes
+/// the tumble's pitch onto joint 4 in `proc_physics`, before the same
+/// `ftMainProcPhysicsMap`'s `proc_map` lands it, so the landing's
+/// `ftCommonDownBounceCheckUpOrDown` reads the written pitch, not the
+/// pose the frame's play left.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_tumble_lands_on_the_pitch_its_physics_wrote() {
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    // Face up as played (-90 degrees), face down as written (+90).
+    f.joint4_rotate_x = Some(-f_cst_dtor32(90.0));
+    f.pose_writes.joint4 = Some(ModelPitch {
+        rotate_x: f_cst_dtor32(90.0),
+        scale: None,
+    });
+    assert!(crate::reaction::is_face_down(&f));
+    f.pose_writes = PoseWrites::NONE;
+    assert!(!crate::reaction::is_face_down(&f));
+}

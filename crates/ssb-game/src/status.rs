@@ -645,8 +645,6 @@ impl Status {
             Status::LandingHeavy => 0.5,
             // `FTCOMMON_CAPTURECAPTAIN_ANIM_SPEED`: the pose holds frame 4.
             Status::CaptureCaptain => 0.0,
-            // `ftCommonTaruCannSetStatus` passes 0: the pose holds frame 0.
-            Status::TaruCann => 0.0,
             _ => 1.0,
         }
     }
@@ -1368,6 +1366,7 @@ impl AnyStatus {
                     | Status::DownWaitD
                     | Status::DownWaitU
                     | Status::ReboundWait
+                    | Status::TaruCann
             ) | AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
                 | AnyStatus::Pikachu(
                     PikachuStatus::SpecialHiStart | PikachuStatus::SpecialAirHiStart
@@ -4983,13 +4982,15 @@ pub fn clip_speed(f: &Fighter) -> f32 {
     // charge change the figatree's own rate, which the status clock
     // mirrors (RE-472).
     // `ftCommonLandingFallSpecialSetStatus` passes the move's landing lag
-    // as the figatree's rate too (RE-503).
+    // as the figatree's rate too (RE-503). The Barrel has no motion: it
+    // keeps the previous clip's rate (`hazard::set_tarucann`).
     if f.status.status == Status::LandingAirNull
         || f.status.status == Status::LandingFallSpecial
         || matches!(
             f.status.status,
-            AnyStatus::Common(Status::FireFlowerShoot | Status::FireFlowerShootAir)
-                | AnyStatus::Donkey(DonkeyStatus::SpecialNLoop | DonkeyStatus::SpecialAirNLoop)
+            AnyStatus::Common(
+                Status::FireFlowerShoot | Status::FireFlowerShootAir | Status::TaruCann
+            ) | AnyStatus::Donkey(DonkeyStatus::SpecialNLoop | DonkeyStatus::SpecialAirNLoop)
         )
     {
         f.status.timing.anim_speed
@@ -6116,6 +6117,11 @@ pub fn update(f: &mut Fighter) {
     crate::motion::advance(f);
     // `ftMainRunUpdateColAnim`, then the hit-status timers' end.
     crate::colanim::run_update_interrupt(f);
+    // `proc_passive` (`ftmain.c:1489`), after the frame's play: an electric
+    // hit's `DamageE` hands over to the real damage status once hitlag is
+    // over, and that status's first frame is the setter's own play.
+    crate::attack::update_damage_e(f);
+    crate::reaction::check_set_invincible(f);
 
     // Every extended (`AnyStatus::Mario`-style) status is handled
     // separately, in `update_extended` — unwrapping to a bare `Status` here

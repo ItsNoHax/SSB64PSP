@@ -367,9 +367,13 @@ pub fn set_twister(f: &mut Fighter) {
 pub fn set_tarucann(f: &mut Fighter) {
     // `ftParamStopVoiceRunProcDamage`.
     crate::fighter_sound::stop_voice(f);
-    // `ftMainSetStatus(..., 0.0F, 0.0F, ...)`: speed 0, so the play leaves
-    // `anim_frame` 0 and the barrel's pose holds.
-    enter(f, Status::TaruCann, 0.0);
+    // `ftMainSetStatus(..., 0.0F, 0.0F, ...)`: the status has no motion
+    // (Script ID -1), so neither the frame nor the speed is applied
+    // (`gcSetAnimSpeed` is inside the motion branch): the previous clip
+    // plays on at its own rate, and the setter's play advances it once
+    // more (N64 trace `b30set/jg3`, frame 226).
+    let speed = status::clip_speed(f);
+    enter(f, Status::TaruCann, speed);
     crate::hurtbox::set_hit_status_all(f, HitStatus::Intangible);
     f.is_invisible = true;
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMJungleTaruCannEnter);
@@ -620,21 +624,30 @@ mod tests {
         assert_eq!(f.physics.jumps_used, 2);
     }
 
-    /// `ftCommonTaruCannSetStatus` sets the barrel at an animation speed of
-    /// 0 before its `ftMainPlayAnimEventsAll`: `anim_frame` stays 0 while
-    /// the release clock counts. `ftCommonTwisterSetStatus` passes 1: the
-    /// play leaves 1, and the clock runs on.
+    /// `ftCommonTaruCannSetStatus` passes frame 0 and speed 0, but the
+    /// status has no motion (Script ID -1): `ftMainSetStatus` applies
+    /// neither, so the Fall clip plays on at 1 and the setter's
+    /// `ftMainPlayAnimEventsAll` advances it once more (9 -> 0 on Mario's
+    /// ten-frame loop; N64 trace `b30set/jg3` frames 225-228).
+    /// `ftCommonTwisterSetStatus` has a motion and passes 1: the play leaves
+    /// 1, and the clock runs on.
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
-    fn the_barrel_holds_anim_frame_and_the_twister_plays() {
+    fn the_barrel_plays_the_previous_clip_on_and_the_twister_restarts() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.situation = crate::fighter::Situation::Air;
+        status::set_status(&mut f, Status::Fall, 0.0, status::StatusTiming::unknown());
+        for _ in 0..9 {
+            status::play_anim(&mut f);
+        }
+        assert_eq!(f.status.anim_frame, 9.0);
         set_tarucann(&mut f);
         assert_eq!(f.status.anim_frame, 0.0);
         for _ in 0..5 {
             status::update(&mut f);
         }
         assert_eq!(f.status.status, AnyStatus::Common(Status::TaruCann));
-        assert_eq!(f.status.anim_frame, 0.0);
+        assert_eq!(f.status.anim_frame, 5.0);
         assert_eq!(f.hazard.release_wait, 5);
 
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);

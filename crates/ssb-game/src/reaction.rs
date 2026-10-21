@@ -191,9 +191,24 @@ fn vel_damage_transfer_ground(f: &mut Fighter) {
 }
 
 /// `ftCommonDownBounceCheckUpOrDown`: whether the fighter lands face down,
-/// from the pitch of the model's first joint (`joints[4]->rotate.x`). The
-/// runtime supplies the posed joint; without one the fighter lands face up.
+/// from the pitch of the model's first joint (`joints[4]->rotate.x`,
+/// [`Fighter::joint4_rotate_x`]). Without a posed joint the fighter lands
+/// face up.
 pub fn is_face_down(f: &Fighter) -> bool {
+    // A pitch a status wrote this frame (`ftCommonDamageFlyRoll`) is on the
+    // DObj already; the runtime puts it on the pose later.
+    let rot_x = f
+        .pose_writes
+        .joint4
+        .map(|p| p.rotate_x)
+        .or(f.joint4_rotate_x);
+    if let Some(rot_x) = rot_x {
+        let mut r = rot_x / ssb_engine::math::f_cst_dtor32(360.0);
+        r -= r as i32 as f32;
+        return r < -0.5 || (r > 0.0 && r < 0.5);
+    }
+    // Without a skeleton: joint 4's pitch as its posed axes show it, which
+    // folds a turn about another axis into it.
     let Some(t) = f.joint_transforms[4] else {
         return false;
     };

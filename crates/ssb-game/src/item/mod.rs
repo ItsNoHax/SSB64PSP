@@ -1320,6 +1320,11 @@ pub struct ItemPool {
     /// Mew can come out of a Poké Ball. Default backup data unlocks
     /// nothing.
     pub unlock_newcomers: bool,
+    /// `dITManagerForceMonsterKind`: non-zero makes every Poké Ball release
+    /// Pokémon `MBALL_MONSTER_START - 1 +` this, and 1..=5 every Saffron
+    /// gate monster `this - 1` (`gryamabuki.c:89`), with no draw. A debug word,
+    /// 0 in the shipped data; the N64 replays write it as their traces did.
+    pub force_monster_kind: u8,
     mew_caught: [bool; 4],
     monster_shots: [Option<crate::monster_weapon::MonsterShot>; ITEM_ALLOC_MAX],
     /// Free weapon structs, from [`Self::observe_weapons`]: an item's weapon
@@ -1358,6 +1363,7 @@ impl Default for ItemPool {
             monster_attack_prev: 4,
             monster_data: MonsterData::default(),
             unlock_newcomers: false,
+            force_monster_kind: 0,
             mew_caught: [false; 4],
             monster_shots: [None; ITEM_ALLOC_MAX],
             weapon_free: crate::weapon::MAX_WEAPONS as u8,
@@ -1531,23 +1537,38 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if self.free_len == 0 {
-            return None;
-        }
-        let owners = self.owners;
-        let vel = Vec3::new(0.0, 16.0, 0.0);
-        let mut monster = mmonster::make(&self.counts, kind, ball, vel, &owners, surfaces);
-        monster.owner = ball.owner;
-        monster.team = ball.team;
-        monster.player = ball.player;
-        monster.handicap = ball.handicap;
-        let slot = self.alloc(monster)?;
+        let slot = self.make_mmonster_at(kind, ball, Vec3::new(0.0, 16.0, 0.0), surfaces)?;
         if kind == mmonster::Kind::Mew {
             if let Some(player) = ball.player.filter(|&p| p < 4) {
                 self.mew_caught[player as usize] = true;
             }
         }
         Some(slot)
+    }
+
+    /// `itManagerMakeItemKind` of a Pokémon from the open ball `ball` at
+    /// `vel`, with the ball's owner, team, player and handicap.
+    fn make_mmonster_at<I, F>(
+        &mut self,
+        kind: mmonster::Kind,
+        ball: &Item,
+        vel: Vec3,
+        surfaces: &F,
+    ) -> Option<u8>
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.free_len == 0 {
+            return None;
+        }
+        let owners = self.owners;
+        let mut monster = mmonster::make(&self.counts, kind, ball, vel, &owners, surfaces);
+        monster.owner = ball.owner;
+        monster.team = ball.team;
+        monster.player = ball.player;
+        monster.handicap = ball.handicap;
+        self.alloc(monster)
     }
 
     /// A Pokémon from a Poké Ball resting at `pos` that `owner` (with
@@ -2267,6 +2288,10 @@ fn push_event(events: &mut [Option<StageItemEvent>; STAGE_EVENTS_MAX], e: StageI
 }
 
 impl crate::stage::StageItems for ItemPool {
+    fn force_monster_kind(&self) -> u8 {
+        self.force_monster_kind
+    }
+
     /// `itManagerMakeItemSetupCommon` with `ITEM_FLAG_PARENT_GROUND`. A
     /// stage item has no owner, so its `motion_count` never reaches a stale
     /// queue. Ground Pokémon use the same allocation and handle rules.
@@ -2811,6 +2836,17 @@ where
         true
     }
     fn make_monster(&mut self, parent: &Item) {
+        // `itMBallCommonProcUpdate` (`itmball.c:320`): a forced kind skips
+        // `itMainMakeMonster`'s draw and bookkeeping, makes the Pokémon at
+        // rest and records no Mew.
+        let force = self.pool.force_monster_kind;
+        if force != 0 {
+            if let Some(kind) = mmonster::Kind::from_item_kind(force + MBALL_MONSTER_START - 1) {
+                self.pool
+                    .make_mmonster_at(kind, parent, Vec3::ZERO, self.surfaces);
+            }
+            return;
+        }
         // `itMainMakeMonster`: the draw and its bookkeeping, then the maker,
         // then the ball's owner, team, player, handicap and Mew record.
         let index = self.pool.monster_data.choose(self.pool.unlock_newcomers);

@@ -30,7 +30,7 @@ use posed::{tick_pair, Pair, Posed};
 
 #[path = "common/dream_land.rs"]
 mod dream_land;
-use dream_land::{dream_land, dream_land_map, stage_floors, training_fighter};
+use dream_land::{dream_land, dream_land_map, stage_bounds, stage_floors, training_fighter};
 
 /// The pack stage a scene's Training runs on (`capture_stage_gkind` in
 /// `psp-game`): Dream Land but for the slope scenes.
@@ -786,31 +786,6 @@ fn vs_magnify_shows_kirby_below_the_camera() {
             camera2.eye.y
         )
     );
-}
-
-/// Dream Land's `map_bound_top`, camera extents and rebirth point
-/// (`nMPMapObjKindRebirth`), as `FighterScene` gives each fighter them.
-fn stage_bounds(
-    pack: &ssb_rom::pack::Pack<'_>,
-    stage: &ssb_rom::pack::StageDesc,
-) -> ssb_game::dead::StageBounds {
-    let zone = |e: &ssb_rom::pack::Extent| ssb_game::status::BlastZone {
-        top: f32::from(e.top),
-        bottom: f32::from(e.bottom),
-        left: f32::from(e.left),
-        right: f32::from(e.right),
-    };
-    let rebirth = pack
-        .stage_points(stage)
-        .find(|p| p.kind == 0x20)
-        .map(|p| ssb_engine::math::Vec2::new(f32::from(p.x), f32::from(p.y)))
-        .expect("Dream Land has a rebirth point");
-    ssb_game::dead::StageBounds {
-        map: zone(&stage.bounds),
-        camera: zone(&stage.camera),
-        rebirth,
-        fog_color: stage.fog_color,
-    }
 }
 
 /// The rebirth scenes' Mario (port 0) on their pad, with Training's

@@ -338,6 +338,43 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
     pool.sync_owner(&mut f);
     assert!(f.ness.thunder_destroyed);
 }
+/// `ftMainUpdateAbsorbStatWeapon` heals at once but only sets the weapon's
+/// `absorb_gobj`: `proc_absorb` waits for `wpProcessProcHitCollisions`,
+/// after every fighter's search, so a fighter searched after Ness the same
+/// frame still takes the shot, whose `proc_hit` ends it first.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_shot_the_magnet_takes_still_meets_a_later_fighter_that_frame() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    f.damage = 70;
+    input(&mut f, N64Buttons::B, 0, -80);
+    set_special_lw(&mut f);
+    steps(&mut f, 14);
+    assert!(absorbing(&f));
+    let center = f.joint_world(0, Vec3::new(300.0, 195.0, 0.0));
+    let owner = fighter(FighterKind::Mario, 1, true);
+    let spawn = request(&owner, WeaponKind::MarioFireball, center);
+    let healed = spawn.stale.damage(7) * 2;
+    let mut later = fighter(FighterKind::Mario, 2, true);
+    later.pos = center - Vec3::new(0.0, 100.0, 0.0);
+    let mut alone = later.clone();
+    let mut pool = WeaponPool::default();
+    pool.spawn(spawn);
+    pool.apply_hits(&mut alone);
+    crate::combat::resolve(&mut alone);
+    assert!(alone.damage > 0);
+    let mut pool = WeaponPool::default();
+    pool.spawn(spawn);
+    pool.search_hits(&mut f);
+    pool.search_hits(&mut later);
+    pool.react_to_fighter_hits();
+    crate::combat::resolve(&mut f);
+    crate::combat::resolve(&mut later);
+    assert_eq!(f.damage, 70 - healed as u16);
+    assert_eq!(later.damage, alone.damage);
+    assert_eq!(pool.active_count(), 0);
+}
+
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn magnet_absorbs_staled_energy_heals_and_retains_timers_through_hit() {

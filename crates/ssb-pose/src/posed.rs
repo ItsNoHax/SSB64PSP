@@ -58,6 +58,7 @@ pub struct Snapshot {
     shield_yrotn: ssb_rom::figatree::JointPose,
     joint_transforms:
         [Option<ssb_game::fighter::JointTransform>; ssb_game::fighter::FIGHTER_JOINTS],
+    joint4_rotate_x: Option<f32>,
     joint_parents: [u8; ssb_game::fighter::FIGHTER_JOINTS],
     is_use_animlocks: bool,
     thrown_part4: Option<ssb_engine::math::Vec3>,
@@ -209,6 +210,7 @@ impl PosedFighter {
             root_motion_before_tick: self.root_motion_before_tick,
             shield_yrotn: self.shield_yrotn,
             joint_transforms: self.fighter.joint_transforms,
+            joint4_rotate_x: self.fighter.joint4_rotate_x,
             joint_parents: self.fighter.joint_parents,
             is_use_animlocks: self.fighter.is_use_animlocks,
             thrown_part4: self.fighter.grab.thrown_part4,
@@ -223,6 +225,7 @@ impl PosedFighter {
         self.root_motion_before_tick = s.root_motion_before_tick;
         self.shield_yrotn = s.shield_yrotn;
         self.fighter.joint_transforms = s.joint_transforms;
+        self.fighter.joint4_rotate_x = s.joint4_rotate_x;
         self.fighter.joint_parents = s.joint_parents;
         self.fighter.is_use_animlocks = s.is_use_animlocks;
         self.fighter.grab.thrown_part4 = s.thrown_part4;
@@ -305,6 +308,10 @@ impl PosedFighter {
             // No TransN motion accrues while frozen.
             self.root_motion_before_tick = self.skeleton.pose(0).copied();
         }
+        // `ftCommonCapturePulledRotateScale` reads TransN as this frame's
+        // play left it, so the `proc_map` floor probe below runs at the
+        // hand's new X.
+        self.sample_held_child_offset();
         // A `proc_update` maker (Fox's Blaster, RE-473) reads the joints
         // this frame's play posed, before the physics step; so does a
         // `proc_physics` maker (the boss's finger gun).
@@ -312,6 +319,9 @@ impl PosedFighter {
             self.sample_gameplay_joints(pack);
             ssb_game::spawn_pose::place_update(&mut self.fighter);
         }
+        // A landing's `ftCommonDownBounceCheckUpOrDown` reads joint 4 as
+        // this frame's play left it.
+        self.refresh_joint4_rotate_x(pack);
         hooks.span(PhysicsSpan::Map, || {
             self.fighter.tick_physics_map_before_slope(surfaces)
         });
@@ -675,6 +685,15 @@ impl PosedFighter {
         self.sample_gameplay_joints_from(pack, None);
     }
 
+    /// [`Fighter::joint4_rotate_x`](ssb_game::fighter::Fighter) from the
+    /// skeleton as it stands.
+    fn refresh_joint4_rotate_x(&mut self, pack: &Pack<'_>) {
+        self.fighter.joint4_rotate_x = pack
+            .object(self.object)
+            .and_then(|o| self.skeleton.node_pose(o.first_node))
+            .map(|p| p.rotate[0]);
+    }
+
     /// [`Self::sample_gameplay_joints`], its matrices built from `kept`
     /// when given: the locals a [`Self::slope_contour`] composed on the
     /// skeleton as it still stands.
@@ -698,6 +717,7 @@ impl PosedFighter {
         self.fighter.joint_transforms[0] = Some(root);
         // `fp->is_use_animlocks` picks which parts a query marks (RE-509).
         self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
+        self.refresh_joint4_rotate_x(pack);
         let Some(object) = pack.object(self.object) else {
             return;
         };

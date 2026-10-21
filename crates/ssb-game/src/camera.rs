@@ -126,7 +126,9 @@ pub struct Camera {
     pub eye: Vec3,
     pub at: Vec3,
     pub fovy_degrees: f32,
-    target_dist: f32,
+    /// `gGMCameraStruct.target_dist`: the eye's distance from `at`, eased
+    /// toward the framing's.
+    pub target_dist: f32,
     /// `gGMCameraPauseCameraEyeX`, `gGMCameraPauseCameraEyeY`: radians the
     /// pause menu turns the view by.
     pub pause_eye: (f32, f32),

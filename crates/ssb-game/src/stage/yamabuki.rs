@@ -97,19 +97,25 @@ impl Yamabuki {
     }
 
     /// `grYamabukiGateMakeMonster` @ 0x8010AD70 (`dITManagerForceMonsterKind`
-    /// is 0 in retail).
+    /// is 0 in retail; 1..=5 forces a kind without a draw).
     fn make_monster(&mut self, items: &mut dyn StageItems) {
         self.status = GateStatus::Open;
         self.no_entry = false;
-        let mut id = rng::rand_int_range(MONSTER_KINDS) as u8;
-        if id == self.monster_prev {
-            id = if i32::from(id) == MONSTER_KINDS - 1 {
-                0
-            } else {
-                id + 1
-            };
-        }
-        self.monster_prev = id;
+        let force = items.force_monster_kind();
+        let id = if force == 0 || i32::from(force) > MONSTER_KINDS {
+            let mut id = rng::rand_int_range(MONSTER_KINDS) as u8;
+            if id == self.monster_prev {
+                id = if i32::from(id) == MONSTER_KINDS - 1 {
+                    0
+                } else {
+                    id + 1
+                };
+            }
+            self.monster_prev = id;
+            id
+        } else {
+            force - 1
+        };
         self.monster = items.make_item(StageItem::Monster(id), self.monster_pos);
     }
 

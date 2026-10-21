@@ -129,14 +129,14 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Tongue and Egg Lay timeline matched (RE-552); remaining: grab vs N64, effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552 |
-| Setter traces | No N64 trace: Barrel capture (Jungle), Bomb/Egg/Jolt/rock gravity clamp, GuardSetOff frames 4150-4164 (optional PSP `explain@4460`) | RE-565 |
+| Setter traces | No N64 trace: GuardSetOff frames 4150-4164 (optional PSP `explain@4460`) | RE-565 |
 | Fighter entry | vs N64: Fox cockpit, Poké Ball near-camera edge at tick 224, Luigi pipe, Kirby star | RE-402, RE-403, RE-425 |
-| Items | Event-aligned N64 damage, hit order, trajectories; unobserved: Saffron/Hyrule monsters, weapon damage/hit order/throws, CPU item tracking; Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444 |
+| Items | Unobserved: Hyrule monsters, Saffron unforced pick and Poké Ball bonus, PK weapons and reflector hit order, two-fighter weapon clank; Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
 | Stages | N64 captures: pipes, plant notification, cloud vapor, scale sparkles, plant KO, Sector Z Arwing, Board the Platforms blocks | RE-428, RE-429, RE-442, RE-446, RE-455 |
 | Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |
 | Window matanim blobs | Script packs whole source file; command 22 rejected, skippable | RE-010, RE-378, RE-381 |
 | Results wipe | N64 view | RE-464 |
-| CPU | N64 trace of CPU tracking an item; VS entry focus, 1P traits vs N64 | RE-437, RE-447, RE-450 |
+| CPU | N64 trace of CPU tracking an item (deferred: needs an item landing on the CPU's floor, CPU kept off P0, FTComputer logger fields, host CPU seat); VS entry focus, 1P traits vs N64 | RE-437, RE-447, RE-450, RE-566 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)

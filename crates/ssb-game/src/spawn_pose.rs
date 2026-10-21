@@ -167,7 +167,9 @@ pub fn update_pending(f: &Fighter) -> bool {
 /// an [`update_pending`] weapon to re-place, or a `proc_physics` maker
 /// whose query reads that play ([`crate::boss::physics_queries_joints`]).
 pub fn sample_before_physics(f: &Fighter) -> bool {
-    update_pending(f) || crate::boss::physics_queries_joints(f)
+    update_pending(f)
+        || crate::boss::physics_queries_joints(f)
+        || crate::yoshi::physics_queries_joints(f)
 }
 
 /// The status whose play this frame the queued weapon's maker read, when a

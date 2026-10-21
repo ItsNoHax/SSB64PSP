@@ -14,6 +14,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+pub mod ground;
 pub mod joints;
 pub mod posed;
 pub mod quake;

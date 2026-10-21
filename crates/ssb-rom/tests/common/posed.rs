@@ -33,6 +33,16 @@ pub struct Pair {
     pub weapons: Box<ssb_game::weapon::WeaponPool>,
     pub items: Box<ssb_game::item::ItemPool>,
     pub stage: ssb_game::stage::Stage,
+    /// The stage's moving groups and each map surface's group, as the
+    /// PSP's `StageMap` runs them; `None` keeps every line where the pack
+    /// put it (group lines at their group's origin).
+    pub groups: Option<(ssb_pose::ground::StageGroups, Vec<u16>)>,
+    /// The stage's ground objects, for the stage Pokémon's trees (their
+    /// root scripts walk them; [`HostProps`]); `None` plays no item tree.
+    pub objects: Option<Box<ssb_rom::ground_obj::GroundObjects>>,
+    /// Jungle's Barrel root translation this tick, fed from an N64 trace
+    /// (the host plays no ground animation); `None` puts it out of reach.
+    pub barrel: Option<ssb_engine::math::Vec3>,
 }
 
 impl Default for Pair {
@@ -42,6 +52,9 @@ impl Default for Pair {
             weapons: Box::default(),
             items: Box::default(),
             stage: ssb_game::stage::Stage::none(),
+            groups: None,
+            objects: None,
+            barrel: None,
         }
     }
 }
@@ -61,25 +74,68 @@ pub fn tick_pair(
     tick_pair_pads(pack, map, fighters, pad0, &|_| (0, 0, 0), tick, pair)
 }
 
-/// The host's map: the replay's static surfaces, no moving groups.
+/// The host's map: the replay's surfaces, and the stage's moving groups
+/// when the replay runs them ([`Pair::groups`]).
 pub struct HostGround<'a, 'p> {
     pub pack: &'a ssb_rom::pack::Pack<'p>,
     pub map: &'a [ssb_game::weapon::MapSurface],
     pub blast_zone: ssb_game::status::BlastZone,
+    /// The groups and each surface's group.
+    pub groups: Option<(&'a mut ssb_pose::ground::StageGroups, &'a [u16])>,
+}
+
+/// The surfaces whose group exists, each with its group's motion
+/// (`psp_runtime::scene::MapSegments`).
+pub struct GroupedSurfaces<'s> {
+    map: &'s [ssb_game::weapon::MapSurface],
+    yakumono: &'s [u16],
+    groups: &'s [ssb_game::map::MapGroup],
+    next: usize,
+}
+
+impl Iterator for GroupedSurfaces<'_> {
+    type Item = ssb_game::weapon::MapSurface;
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(&surface) = self.map.get(self.next) {
+            let group = self
+                .yakumono
+                .get(self.next)
+                .and_then(|&y| self.groups.get(usize::from(y)));
+            self.next += 1;
+            if group.is_none_or(|g| g.exists()) {
+                return Some(ssb_game::weapon::MapSurface {
+                    motion: group.and_then(|g| g.motion()),
+                    ..surface
+                });
+            }
+        }
+        None
+    }
 }
 
 impl ssb_game::matchtick::Ground for HostGround<'_, '_> {
     type Surfaces<'s>
-        = core::iter::Copied<core::slice::Iter<'s, ssb_game::weapon::MapSurface>>
+        = GroupedSurfaces<'s>
     where
         Self: 's;
 
     fn surfaces(&self) -> Self::Surfaces<'_> {
-        self.map.iter().copied()
+        let (yakumono, groups) = match &self.groups {
+            Some((g, y)) => (*y, g.groups.as_slice()),
+            None => (&[][..], &[][..]),
+        };
+        GroupedSurfaces {
+            map: self.map,
+            yakumono,
+            groups,
+            next: 0,
+        }
     }
 
     fn groups(&self) -> &[ssb_game::map::MapGroup] {
-        &[]
+        self.groups
+            .as_ref()
+            .map_or(&[], |(g, _)| g.groups.as_slice())
     }
 
     fn blast_zone(&self) -> ssb_game::status::BlastZone {
@@ -96,12 +152,85 @@ pub struct NoProps;
 impl ssb_game::stage::StageObjects for NoProps {}
 impl ssb_game::item::ItemAnims for NoProps {}
 
-/// The host's stage: [`HostGround`] and no objects.
-pub struct HostArena<'a, 'p>(pub HostGround<'a, 'p>, pub NoProps);
+/// The stage items' trees on the host: Saffron's Pokémon play their
+/// root scripts through [`ssb_rom::ground_obj::GroundObjects`], as
+/// `psp_runtime::scene::ItemAnimsPort` does; no stage object animates.
+pub struct HostProps<'a, 'p> {
+    pub pack: &'a ssb_rom::pack::Pack<'p>,
+    pub objects: Option<&'a mut ssb_rom::ground_obj::GroundObjects>,
+    /// [`Pair::barrel`].
+    pub barrel: Option<ssb_engine::math::Vec3>,
+}
+
+impl HostProps<'_, '_> {
+    /// `psp_runtime::scene::item_tree` for the stage Pokémon only.
+    fn tree(target: ssb_game::item::ItemAnimTarget) -> Option<(u8, u8)> {
+        match target {
+            ssb_game::item::ItemAnimTarget::Monster(k) => {
+                Some((ssb_rom::ground_obj::MONSTER_FIRST + k as u8, 0))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Only Jungle's Barrel has a translation: the trace's ([`Pair::barrel`]).
+impl ssb_game::stage::StageObjects for HostProps<'_, '_> {
+    fn translate(&self, obj: ssb_game::stage::StageObj) -> ssb_engine::math::Vec3 {
+        match (obj, self.barrel) {
+            (ssb_game::stage::StageObj::TaruCann, Some(p)) => p,
+            (ssb_game::stage::StageObj::TaruCann, None) => {
+                ssb_engine::math::Vec3::new(1e9, 1e9, 0.0)
+            }
+            _ => ssb_engine::math::Vec3::ZERO,
+        }
+    }
+}
+
+impl ssb_game::item::ItemAnims for HostProps<'_, '_> {
+    fn root_frame(&self, target: ssb_game::item::ItemAnimTarget) -> f32 {
+        match (Self::tree(target), &self.objects) {
+            (Some((a, i)), Some(o)) => o.item_root_frame(a, i),
+            _ => 0.0,
+        }
+    }
+    fn make(&mut self, target: ssb_game::item::ItemAnimTarget) {
+        if let (Some((a, i)), Some(o)) = (Self::tree(target), self.objects.as_mut()) {
+            o.item_make(self.pack, a, i);
+        }
+    }
+    fn play(&mut self, target: ssb_game::item::ItemAnimTarget) -> ssb_game::item::RootWrite {
+        match (Self::tree(target), self.objects.as_mut()) {
+            (Some((a, i)), Some(o)) => ssb_game::item::RootWrite {
+                translate: o.item_play(self.pack, a, i),
+            },
+            _ => ssb_game::item::RootWrite::default(),
+        }
+    }
+    fn root_idle(&self, target: ssb_game::item::ItemAnimTarget) -> bool {
+        match (Self::tree(target), &self.objects) {
+            (Some((a, i)), Some(o)) => o.item_root_idle(a, i),
+            _ => true,
+        }
+    }
+    fn stop_root(&mut self, target: ssb_game::item::ItemAnimTarget) {
+        if let (Some((a, i)), Some(o)) = (Self::tree(target), self.objects.as_mut()) {
+            o.item_stop_root(a, i);
+        }
+    }
+    fn stop_material(&mut self, target: ssb_game::item::ItemAnimTarget) {
+        if let (Some((a, i)), Some(o)) = (Self::tree(target), self.objects.as_mut()) {
+            o.item_stop_material(a, i);
+        }
+    }
+}
+
+/// The host's stage: [`HostGround`] and [`HostProps`].
+pub struct HostArena<'a, 'p>(pub HostGround<'a, 'p>, pub HostProps<'a, 'p>);
 
 impl<'a, 'p> ssb_game::matchtick::Arena for HostArena<'a, 'p> {
     type Ground = HostGround<'a, 'p>;
-    type Props = NoProps;
+    type Props = HostProps<'a, 'p>;
 
     fn ground(&self) -> &Self::Ground {
         &self.0
@@ -111,9 +240,27 @@ impl<'a, 'p> ssb_game::matchtick::Arena for HostArena<'a, 'p> {
         (&self.0, &mut self.1)
     }
 
-    /// The stage controller on the replay's static map
-    /// (`psp_runtime::arena`'s `tick_stage` without moving groups): a
-    /// replay with a stage hazard (Hyrule's Twister) sets [`Pair::stage`].
+    fn play_anim(&mut self) {
+        if let Some((groups, _)) = self.0.groups.as_mut() {
+            groups.tick(self.0.pack).unwrap();
+        }
+    }
+
+    fn floor_group(&self, line: u16) -> Option<u16> {
+        let (_, yakumono) = self.0.groups.as_ref()?;
+        self.0
+            .map
+            .iter()
+            .zip(yakumono.iter())
+            .find(|(s, _)| s.topology.is_some_and(|t| t.line == line))
+            .map(|(_, &y)| y)
+    }
+
+    /// The stage controller (`psp_runtime::arena`'s `tick_stage`): a
+    /// replay with a stage hazard (Hyrule's Twister, Saffron's gate) sets
+    /// [`Pair::stage`]. With [`Pair::groups`] the controller writes the
+    /// moving groups (the gate's group 3) and reads each line's group;
+    /// it still queries the static map.
     fn tick_stage(
         &mut self,
         stage: &mut ssb_game::stage::Stage,
@@ -121,7 +268,32 @@ impl<'a, 'p> ssb_game::matchtick::Arena for HostArena<'a, 'p> {
         items: &mut dyn ssb_game::stage::StageItems,
         started: bool,
     ) {
-        tick_stage(stage, self.0.map, fighters, items, started);
+        let map = self.0.map;
+        let Some((groups, yakumono)) = self.0.groups.as_mut() else {
+            tick_stage_with(stage, map, fighters, items, started, &mut self.1);
+            return;
+        };
+        let yakumono: &[u16] = yakumono;
+        // `mpCollisionSetDObjNoID`: a floor's line id to its group.
+        let line_group = |line: u16| {
+            map.iter()
+                .zip(yakumono)
+                .find(|(s, _)| s.topology.is_some_and(|t| t.line == line))
+                .map(|(_, &y)| y as u8)
+        };
+        stage.tick(
+            fighters,
+            ssb_game::stage::TickInput {
+                groups: &mut groups.groups,
+                objects: &mut self.1,
+                items,
+                map: ssb_game::stage::MapQuery {
+                    surfaces: || map.iter().copied(),
+                    line_group: &line_group,
+                },
+                started,
+            },
+        );
     }
 }
 
@@ -134,12 +306,24 @@ pub fn tick_stage(
     items: &mut dyn ssb_game::stage::StageItems,
     started: bool,
 ) {
+    tick_stage_with(stage, map, fighters, items, started, &mut NoProps);
+}
+
+/// [`tick_stage`] with the stage's objects.
+fn tick_stage_with(
+    stage: &mut ssb_game::stage::Stage,
+    map: &[ssb_game::weapon::MapSurface],
+    fighters: &mut [&mut ssb_game::fighter::Fighter],
+    items: &mut dyn ssb_game::stage::StageItems,
+    started: bool,
+    objects: &mut dyn ssb_game::stage::StageObjects,
+) {
     let line_group = |_: u16| None;
     stage.tick(
         fighters,
         ssb_game::stage::TickInput {
             groups: &mut [],
-            objects: &mut NoProps,
+            objects,
             items,
             map: ssb_game::stage::MapQuery {
                 surfaces: || map.iter().copied(),
@@ -298,13 +482,19 @@ fn tick_seats(
         },
         |b| b.map,
     );
+    let groups = pair.groups.as_mut().map(|(g, y)| (g, y.as_slice()));
     let mut arena = HostArena(
         HostGround {
             pack,
             map,
             blast_zone,
+            groups,
         },
-        NoProps,
+        HostProps {
+            pack,
+            objects: pair.objects.as_deref_mut(),
+            barrel: pair.barrel,
+        },
     );
     let [a, b] = fighters else { unreachable!() };
     let mut sink = Collect {

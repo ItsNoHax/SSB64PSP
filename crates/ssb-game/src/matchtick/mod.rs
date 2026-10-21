@@ -718,7 +718,7 @@ where
             hooks.phase(Phase::Hits(seat));
             crate::combat::search_fighter_row(&mut fs, k, rules);
             world.items.search_fighter(fs[k]);
-            world.weapons.apply_hits(fs[k]);
+            world.weapons.search_hits(fs[k]);
             for a in 0..fs.len() {
                 if a != k {
                     let (attacker, defender) = crate::combat::pair_mut(&mut fs, a, k);
@@ -729,6 +729,12 @@ where
             crate::combat::process_hits(fs[k], world.effects);
         }
     }
+    // `wpProcessProcHitCollisions` for the fighters' searches (`proc_hit`,
+    // shield, set-off, reflector, absorb): after every fighter's (priority 0
+    // after 1), so two fighters can meet one shot in a frame. PSP deviation:
+    // on the N64 they also follow the items' and the weapons' own searches;
+    // those read the weapons from the clash view taken before any search.
+    world.weapons.react_to_fighter_hits();
     // The items' searches' set-offs and sparks (RE-473).
     hooks.phase(Phase::ItemHits);
     world
