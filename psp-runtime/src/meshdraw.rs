@@ -197,13 +197,21 @@ pub struct DrawState {
     /// blends over what is drawn by that alpha, depth-tested without
     /// writing depth.
     fade_alpha: Option<u8>,
-    /// Master Hand's `ENV` grey while `is_use_fogcolor` is set
-    /// (`ftBossCommonUpdateFogColor`, `ftDisplayMainDrawAll`): its lit
-    /// primitives end in `COMBINED * ENV`, so their shade is scaled by it.
-    /// The pack has no free flag bit for "the combiner reads `ENV`"; every
-    /// lit primitive of the boss model reads it and its one unlit primitive
-    /// does not (RE-457), so the lit shade carries it.
-    pub fog_env: Option<u8>,
+    /// Master Hand's `ENV` (`ftDisplayMainDrawDefault`): `colanim.color2`
+    /// while `is_use_color2`, else the `fog_color` grey while
+    /// `is_use_fogcolor` (`ftBossCommonUpdateFogColor`). Its lit primitives
+    /// end in `COMBINED * ENV`, so their shade is scaled per channel. The
+    /// pack has no free flag bit for "the combiner reads `ENV`"; every lit
+    /// primitive of the boss model reads it and its one unlit primitive
+    /// does not (RE-457), so the lit shade carries it. Alpha is the sky-fog
+    /// alpha that picks OPA or XLU; the caller handles it.
+    pub fog_env: Option<[u8; 4]>,
+    /// Set while a fighter draws under its fog (`G_RM_FOG_PRIM_A`, the
+    /// caller's constant GE fog): a joint showing a model part flagged
+    /// `FTPARTS_FLAG_NOFOG` draws its list without it
+    /// (`ftDisplayMainDecideFogDraw`'s `G_RM_PASS`, RE-453). The toggle sits
+    /// on the joint's own matrix load, so it adds no flush point.
+    pub fighter_fog: bool,
     /// The bound texture and the [`Pack::mat_anim_palette`] entry its CLUT
     /// holds ([`TextureDesc::NO_ANIM`] for the baked one): primitives
     /// sharing a texture can each cycle their own `MObj`'s palettes
@@ -587,6 +595,7 @@ impl DrawState {
     pub unsafe fn finish_fighter_light(&mut self) {
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
+        self.fighter_fog = false;
         self.last_flags = None;
         sys::sceGuDisable(GuState::Lighting);
         sys::sceGuDisable(GuState::Light0);
@@ -2578,12 +2587,12 @@ struct LitPrim {
     /// `FLAT_COLOR`/`TEXTURE_BLEND` read no shade: the packed colour is the
     /// combiner's constant and stays.
     keep_rgb: bool,
-    /// [`DrawState::fog_env`]'s grey, the second cycle's `COMBINED * ENV`.
-    env: Option<u8>,
+    /// [`DrawState::fog_env`]'s RGB, the second cycle's `COMBINED * ENV`.
+    env: Option<[u8; 3]>,
 }
 
 impl LitPrim {
-    fn new(p: &PrimDesc, dir: [i8; 3], registers: [[u8; 3]; 2], env: Option<u8>) -> Self {
+    fn new(p: &PrimDesc, dir: [i8; 3], registers: [[u8; 3]; 2], env: Option<[u8; 4]>) -> Self {
         let prim = (p.prim_color != 0).then(|| {
             let c = p.prim_color;
             [c as u8, (c >> 8) as u8, (c >> 16) as u8]
@@ -2592,7 +2601,7 @@ impl LitPrim {
             dir,
             shade: ssb_engine::rsp_light::LitShade::new(registers[0], registers[1], prim),
             keep_rgb: p.flags & (flags::FLAT_COLOR | flags::TEXTURE_BLEND) != 0,
-            env,
+            env: env.map(|[r, g, b, _]| [r, g, b]),
         }
     }
 
@@ -2610,8 +2619,8 @@ impl LitPrim {
             ssb_engine::rsp_light::dot16([v.nx, v.ny, v.nz], self.dir)
         };
         let mut rgb = self.shade.rgb(dot);
-        if let Some(g) = self.env {
-            rgb = rgb.map(|c| ((u32::from(c) * u32::from(g) + 0x80) >> 8) as u8);
+        if let Some(env) = self.env {
+            rgb = ssb_engine::rsp_light::combined_times_env(rgb, env);
         }
         (v.color & 0xFF00_0000)
             | u32::from(rgb[2]) << 16
@@ -3277,6 +3286,7 @@ unsafe fn draw_object_posed_nodes(
         });
         // `ftDisplayMainDrawAccessory` (RE-425), in the joint's matrix.
         let (mesh_index, accessory) = node_meshes(pack, global_node, node.mesh, costume, part);
+        let node_mesh = mesh_index;
         let meshes = if look.accessory_before {
             [accessory, Some(mesh_index)]
         } else {
@@ -3353,19 +3363,38 @@ unsafe fn draw_object_posed_nodes(
             }
         }
         crate::profile::stop_fine(crate::profile::Span::NodeMatrix, matrix_t);
+        // `parts->flags` of the joint's model part; the accessory draws
+        // under its own parts' flags.
+        let nofog = st.fighter_fog && part.is_some_and(|p| part_skips_fog(pack, global_node, p));
         for mesh_index in meshes.into_iter().flatten() {
             let Some(mesh) = pack.mesh(mesh_index) else {
                 continue;
             };
+            let own_list = nofog && mesh_index == node_mesh;
+            if own_list {
+                sys::sceGuDisable(GuState::Fog);
+            }
             st.texture_part_ids = look.textures;
             st.texture_part_mesh = (look.textures.iter().any(|&id| id > 0)
                 && pack.mesh_has_texture_part(mesh_index))
             .then_some(mesh_index);
             tris += draw_node_mesh(pack, object, &node, &mesh, posed, st, mat_anim, effect_mat_anim);
             st.texture_part_mesh = None;
+            if own_list {
+                sys::sceGuEnable(GuState::Fog);
+            }
         }
     }
     tris
+}
+
+/// Whether a joint showing model part `part` draws without the fighter's
+/// fog (`FTPARTS_FLAG_NOFOG`, RE-453).
+fn part_skips_fog(pack: &Pack<'_>, global_node: u32, part: i8) -> bool {
+    part >= 0
+        && pack.modelpart_flags_in(pack.costume_rows(global_node), global_node, part as u32)
+            & ssb_rom::pack::PART_FLAG_NOFOG
+            != 0
 }
 
 /// `base * local` for the GE's column-major model matrix, with the VFPU's

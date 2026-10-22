@@ -138,14 +138,11 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 |---|---|---|
 | Select CPU colour animation | VS select CPU colour animation; locked shadows' noise | RE-411, RE-448 |
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
-| Battle-stage lights | Fixed-direction light bake (RE-065 deviation) → display-list lights as movies use; A/B battle rows vs N64, PSP CPU cost | RE-065, RE-529 |
+| Battle-stage lights | Stage light colour/ambient registers: N64 RDRAM/DMEM evidence needed; Hyrule floor 10-19 luma darker, bricks +14; Meta Crystal colours | RE-065, RE-529 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
-| Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; `colanim.color2` ENV; a hit-landing defeat fixture | RE-457 |
-| Special fighters | Unobserved: 30-Polygon clear | RE-458 |
-| Metal Mario darkness | Fighter 6-9 levels darker than N64; re-measure with an exactly aligned frame | RE-458 |
-| 1P shade | Ness NOFOG parts (all parts fogged) | RE-453 |
-| Battle texgen LookAt | psp-game never sets `texgen_basis` in battle; N64 uses the camera basis → goldens move, needs N64 compare + D-051 classification | RE-458 |
+| Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; a hit-landing defeat fixture | RE-457 |
+| Special fighters | Unobserved: 30-Polygon clear; 1P intro Metal Mario darkness (cameras 7/15); movie camera kinds 3+8 texgen basis | RE-458 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 
 ### Architecture

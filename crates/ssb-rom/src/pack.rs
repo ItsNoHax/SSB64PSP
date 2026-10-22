@@ -475,7 +475,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 131 widens `FighterDesc` to 240 bytes with `FTAttributes::shade_color[3]`
 // and `fog_color` (the team and Yoshi Team shade fog,
 // `ftDisplayMainDecideFogColor`).
-pub const VERSION: u32 = 131;
+// 132 adds each set model part's `FTModelPart::flags` above the list kind
+// as `modelpart_flags_key(part)` costume overrides whose `mesh` is the flags
+// (Ness's joint 12 part 1 `FTPARTS_FLAG_NOFOG`, RE-453). No layout change.
+pub const VERSION: u32 = 132;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1620,6 +1623,22 @@ pub const ACCESSORY_COSTUME_BASE: u32 = 0x2000;
 /// The [`CostumeOverride`] key of the accessory in `costume`.
 pub const fn accessory_costume(costume: u32) -> u32 {
     ACCESSORY_COSTUME_BASE + costume
+}
+
+/// A [`CostumeOverride`] whose `costume` is [`modelpart_flags_key`]`(part)`
+/// holds, in its `mesh` field, the node's `FTModelPart::flags` while it
+/// shows model part `part` (`parts->flags`, `ftParamSetModelPartID`), stored
+/// only where a bit above the list kind (`& 0xF`) is set. Both detail
+/// levels' graphs carry their own level's flags.
+pub const MODELPART_FLAGS_BASE: u32 = 0x3000;
+
+/// `FTPARTS_FLAG_NOFOG` (`ftdef.h`): `ftDisplayMainDecideFogDraw` draws the
+/// part under `G_RM_PASS`, without the fighter's fog.
+pub const PART_FLAG_NOFOG: u8 = 0x40;
+
+/// The [`CostumeOverride`] key of model part `part`'s flags.
+pub const fn modelpart_flags_key(part: u32) -> u32 {
+    MODELPART_FLAGS_BASE + part
 }
 
 /// Costumes per model part in [`modelpart_costume`]'s keys.
@@ -4946,6 +4965,14 @@ impl<'a> Pack<'a> {
     /// `sceGuClutLoad`.
     pub fn mat_anim_palette_data(&self, p: &MatAnimPalette) -> Option<&'a [u8]> {
         self.blob(p.palette_offset, p.palette_len as usize * 4)
+    }
+
+    /// [`MODELPART_FLAGS_BASE`]: global node `node`'s flags while it shows
+    /// model part `part`, 0 where none were stored. `rows` is the node's
+    /// [`Pack::costume_rows`].
+    pub fn modelpart_flags_in(&self, rows: core::ops::Range<u32>, node: u32, part: u32) -> u8 {
+        self.costume_mesh_in(rows, node, modelpart_flags_key(part))
+            .map_or(0, |f| f as u8)
     }
 
     /// One costume-override entry, by index (RE-098).

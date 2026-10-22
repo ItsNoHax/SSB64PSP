@@ -1944,6 +1944,44 @@ mod tests {
         ));
     }
 
+    /// RE-458: the battle camera's `LookAt` (`gmCameraLookAtFuncMatrix`'s
+    /// `syMatrixLookAtReflectF`, `matrix.c:286`) is `camera_basis`'s right
+    /// and up, for a pitched and yawed camera as much as the default one.
+    #[test]
+    fn camera_basis_is_sy_matrix_look_at_reflect_f() {
+        fn reflect(eye: [f32; 3], at: [f32; 3], up: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+            let mut look = [at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]];
+            let len = -1.0 / sqrt(look[0] * look[0] + look[1] * look[1] + look[2] * look[2]);
+            look = look.map(|c| c * len);
+            let mut right = [
+                up[1] * look[2] - up[2] * look[1],
+                up[2] * look[0] - up[0] * look[2],
+                up[0] * look[1] - up[1] * look[0],
+            ];
+            let len = 1.0 / sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+            right = right.map(|c| c * len);
+            let mut up = [
+                look[1] * right[2] - look[2] * right[1],
+                look[2] * right[0] - look[0] * right[2],
+                look[0] * right[1] - look[1] * right[0],
+            ];
+            let len = 1.0 / sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+            up = up.map(|c| c * len);
+            (right, up)
+        }
+        let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+        for (eye, at) in [
+            ([0.0, 300.0, 6000.0], [0.0, 300.0, 0.0]),
+            ([-850.0, 1900.0, 5200.0], [340.0, 620.0, -120.0]),
+            ([2400.0, -300.0, 900.0], [-60.0, 40.0, 10.0]),
+        ] {
+            let basis = camera_basis(eye, at, [0.0, 1.0, 0.0]);
+            let (right, up) = reflect(eye, at, [0.0, 1.0, 0.0]);
+            assert!(close(basis[0], right), "{right:?} {:?}", basis[0]);
+            assert!(close(basis[1], up), "{up:?} {:?}", basis[1]);
+        }
+    }
+
     /// The RSP's `model · view`: the identity model gives the view's rows,
     /// and a world direction dotted with those rows lands in eye space.
     #[test]

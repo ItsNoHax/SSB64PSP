@@ -512,6 +512,7 @@ unsafe fn draw_fighters(
             // The view looks down -z from `CAMERA.eye`.
             gpu.set_constant_fog(cam.eye.z - shown.position[2], rgba);
         }
+        draw_state.fighter_fog = shown.tint.is_some();
         // A demo fighter's model and texture parts (RE-426) and accessory
         // (RE-425).
         let parts = m.demo.parts().draw_parts();

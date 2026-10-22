@@ -39,6 +39,19 @@ pub fn fog_color(
     (rgba[3] != 0).then_some(rgba)
 }
 
+/// `ftDisplayMainDrawDefault`'s `ENV` (`ftdisplaymain.c:1178-1190`):
+/// `colanim.color2` while `is_use_color2`, else `fog_color` while
+/// `is_use_fogcolor` (Master Hand's grey, alpha 0xFF), else `None` for the
+/// stage light colour. The alpha is `sFTDisplayMainSkyFogAlpha`, 0xFF for
+/// `G_RM_AA_ZB_OPA_SURF2`.
+///
+/// `color2` is the colour animation's `color2` while set; `fog_grey`
+/// `BossState::fog`. The only script that sets `color2`,
+/// `dGMColScriptsFighterBossYubideppou3`, sets it opaque white.
+pub fn env_color(color2: Option<[u8; 4]>, fog_grey: Option<u8>) -> Option<[u8; 4]> {
+    color2.or_else(|| fog_grey.map(|g| [g, g, g, 0xFF]))
+}
+
 /// `ftDisplayMainCalcFogColor` (`ftdisplaymain.c:600-663`).
 fn calc(ck: [u8; 4], attr: Option<[u8; 4]>, fog_color: [u8; 4]) -> [u8; 4] {
     let c = ck.map(i32::from);
@@ -75,6 +88,17 @@ mod tests {
     /// Every playable fighter's `relocData` literals (`247_YoshiMain.c:342`).
     const SHADES: [[u8; 4]; 3] = [[0xFF, 0xFF, 0xFF, 0x50], [0, 0, 0, 0x50], [0; 4]];
     const FOG: [u8; 4] = [0xFF, 0, 0, 0];
+
+    /// `color2` takes `ENV` over Master Hand's fog grey; the grey is
+    /// opaque; neither leaves the stage light colour.
+    #[test]
+    fn env_color_prefers_color2_then_fog_grey() {
+        let white = [0xFF; 4];
+        assert_eq!(env_color(Some(white), Some(0x40)), Some(white));
+        assert_eq!(env_color(None, Some(0x40)), Some([0x40, 0x40, 0x40, 0xFF]));
+        assert_eq!(env_color(Some([1, 2, 3, 4]), None), Some([1, 2, 3, 4]));
+        assert_eq!(env_color(None, None), None);
+    }
 
     #[test]
     fn shade_zero_without_a_colour_animation_draws_no_fog() {

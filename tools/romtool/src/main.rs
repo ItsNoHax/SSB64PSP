@@ -4345,6 +4345,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let (mut skeleton_parts_added, mut skeleton_parts_dropped) = (0usize, 0usize);
     let mut skeleton_fighters = std::collections::BTreeSet::new();
     let mut model_parts_added = 0usize;
+    let mut model_part_flags_added = 0usize;
     let mut model_parts_empty = 0usize;
     let mut accessories_added = 0usize;
     // A stage names its render layers by the `DObjDesc` address they start at,
@@ -5753,6 +5754,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     .collect();
                 for (joint, part, mp) in parts {
                     let node = (joint - ssb_rom::fighter::JOINT_COMMON_START) as usize;
+                    // RE-453: `parts->flags = modelpart->flags`; the fog
+                    // bits (`FTPARTS_FLAG_NOFOG`) the draw reads per joint.
+                    if mp.flags & !0xF != 0 {
+                        writer.add_costume_override(
+                            first_node + node as u32,
+                            ssb_rom::pack::modelpart_flags_key(part),
+                            u32::from(mp.flags),
+                        );
+                        model_part_flags_added += 1;
+                    }
                     let Some(part_file) =
                         loaded.files.get(mp.dl.0 as usize).and_then(Option::as_ref)
                     else {
@@ -5869,7 +5880,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     );
     println!(
         "  model parts {model_parts_added} fighter model-part meshes \
-         ({model_parts_empty} costumes with no triangles), {accessories_added} accessory meshes"
+         ({model_parts_empty} costumes with no triangles), {accessories_added} accessory meshes, \
+         {model_part_flags_added} part flag rows"
     );
     TEXTURE_PART_STATS.with(|s| {
         let s = s.borrow();

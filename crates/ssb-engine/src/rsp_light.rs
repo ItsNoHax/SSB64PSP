@@ -257,6 +257,13 @@ pub fn prim_times_shade(prim: u8, shade: u8) -> u8 {
     ((u32::from(prim) * u32::from(shade) + 0x80) >> 8) as u8
 }
 
+/// The RDP colour combiner's second-cycle `COMBINED * ENV`, per channel
+/// with [`prim_times_shade`]'s rounding (Master Hand's `ENV`, RE-457).
+#[inline]
+pub fn combined_times_env(rgb: [u8; 3], env: [u8; 3]) -> [u8; 3] {
+    [0, 1, 2].map(|i| prim_times_shade(env[i], rgb[i]))
+}
+
 /// A lit vertex's RGB: [`shade`] per channel from `light` (`LIGHT_1`) and
 /// `ambient` (`LIGHT_2`), scaled by the combiner's `PRIM` when it has one.
 #[inline]
@@ -321,6 +328,18 @@ impl LitShade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `COMBINED * ENV` scales each channel by its own `ENV` channel: a
+    /// white `color2` keeps the shade (to the RDP's rounding), a grey
+    /// scales all three alike, a coloured one tints.
+    #[test]
+    fn combined_times_env_scales_each_channel() {
+        let rgb = [200, 100, 0];
+        assert_eq!(combined_times_env(rgb, [0xFF; 3]), [199, 100, 0]);
+        assert_eq!(combined_times_env(rgb, [0x80; 3]), [100, 50, 0]);
+        assert_eq!(combined_times_env(rgb, [0xFF, 0, 0x80]), [199, 0, 0]);
+        assert_eq!(combined_times_env([0xFF, 0, 1], [0, 0xFF, 0xFF]), [0, 0, 1]);
+    }
 
     /// Wraps to the vector unit's 48-bit accumulator.
     fn acc48(a: i64) -> i64 {

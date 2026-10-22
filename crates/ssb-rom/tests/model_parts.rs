@@ -305,3 +305,55 @@ fn the_entry_vehicles_animations_are_packed() {
         );
     }
 }
+
+/// RE-453: a set model part's fog bits (`FTModelPart::flags & !0xF`) are
+/// packed on its joint's node, as `ftParamSetModelPartID` copies them to
+/// `parts->flags`; the one part the scripts set that carries any is Ness's
+/// joint 12 part 1, `FTPARTS_FLAG_NOFOG`.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn model_part_fog_flags_are_the_roms() {
+    let (Some(rom), Some(bytes)) = (rom(), pack_bytes()) else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    let mut flagged = Vec::new();
+    for (entry, kind) in playable() {
+        let object = pack
+            .object(ssb_rom::scene_deps::fighter_object(&pack, kind as u32).unwrap())
+            .unwrap();
+        let main = archive.load(entry.file).unwrap();
+        for (joint, part) in ssb_game::motion::model_part_events(kind) {
+            let (Ok(joint), Ok(part)) = (u32::try_from(joint), u32::try_from(part)) else {
+                continue;
+            };
+            let n = joint - JOINT_COMMON_START;
+            if n >= object.node_count {
+                continue;
+            }
+            let node = object.first_node + n;
+            let rom_flags =
+                fighter::model_part(&main, entry, joint, part, 0).map_or(0, |mp| mp.flags & !0xF);
+            let packed = pack.modelpart_flags_in(pack.costume_rows(node), node, part);
+            assert_eq!(
+                packed, rom_flags,
+                "{} joint {joint} part {part}",
+                entry.name
+            );
+            if packed != 0 {
+                flagged.push((kind, joint, part, packed));
+            }
+        }
+    }
+    assert_eq!(
+        flagged,
+        [(
+            ssb_game::fighter::FighterKind::Ness,
+            12,
+            1,
+            ssb_rom::pack::PART_FLAG_NOFOG
+        )]
+    );
+}

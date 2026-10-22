@@ -8501,6 +8501,8 @@ unsafe fn draw_training(
         return;
     };
 
+    // Restored after the magnifiers: the battle camera's `LookAt`.
+    let texgen_basis = draw_state.texgen_basis;
     // The opening's default camera fills black (RE-467).
     gpu.begin_frame(Some(if damage_hud.movie { BG_RESULTS } else { BG_TRAINING }));
     draw_state.kind48_flat = damage_hud.movie_flat48;
@@ -8562,6 +8564,17 @@ unsafe fn draw_training(
             pl.camera.at,
             ssb_engine::math::Vec3::Y,
         ));
+        // `gmCameraMakeBattleCamera`'s kind 0x4C is `gmCameraLookAtFuncMatrix`
+        // (`syMatrixLookAtReflectF`, `cobj->vec.up` (0, 1, 0)): the view
+        // multiplies the projection and `gmCameraPrepLookAtFuncMatrix` loads
+        // the camera's world right and up as the texgen `LookAt`. The
+        // magnifier camera loads none and keeps it (RE-458).
+        let basis = ssb_engine::math::camera_basis(
+            pl.camera.eye.to_array(),
+            pl.camera.at.to_array(),
+            [0.0, 1.0, 0.0],
+        );
+        draw_state.texgen_basis = Some((basis[0], basis[1]));
     }
     gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
     let base = gpu.model_matrix();
@@ -8891,6 +8904,7 @@ unsafe fn draw_training(
         );
         profile::stop(profile::Span::DrawMagnifiers, t);
     }
+    draw_state.texgen_basis = texgen_basis;
     gpu.set_viewport_pillarboxed();
     // The interface's link 25, under `gmCameraMakeEffectCamera`'s camera:
     // the stock snaps and steals and the scores (RE-464).
@@ -9142,15 +9156,23 @@ unsafe fn draw_fighter_model(
     // `G_RM_FOG_PRIM_A` blends the fighter towards `color1` mixed with its
     // shade, or the shade alone, by the fog alpha.
     let fog = fighter_fog(p, &f.fighter);
-    // `ENV` (`ftDisplayMainDrawAll`): `colanim.color2` first, else Master
-    // Hand's `fog_color` while `is_use_fogcolor` is set, else the white
-    // light colour (RE-457).
-    draw_state.fog_env = f.fighter.boss.fog.filter(|_| !f.fighter.colanim.is_use_color2);
+    // `ENV` (`ftDisplayMainDrawDefault`): `colanim.color2` first, else
+    // Master Hand's `fog_color` while `is_use_fogcolor` is set, else the
+    // white light colour. Only the boss model's combiners read it
+    // (RE-457); `color2`'s one script is opaque, so OPA stays.
+    let colanim = &f.fighter.colanim;
+    draw_state.fog_env = (f.fighter.kind == ssb_game::fighter::FighterKind::Boss)
+        .then(|| {
+            let color2 = colanim.is_use_color2.then_some(colanim.color2.rgba);
+            ssb_game::shade::env_color(color2, f.fighter.boss.fog)
+        })
+        .flatten();
     if let Some(rgba) = fog {
         let (eye, at) = (camera.eye, camera.at);
         let view = (at - eye).normalized();
         gpu.set_constant_fog((f.fighter.pos - eye).dot(view), rgba);
     }
+    draw_state.fighter_fog = fog.is_some();
     // Its model parts and headgear accessory (RE-425).
     let parts = f.fighter.model_parts.draw_parts();
     let look = meshdraw::Look {

@@ -25,6 +25,14 @@ Part of [rendering.md](../rendering.md).
 - N64 RDRAM traces match the packer on every traced vertex load (RE-424).
   - Covered: fighters, specials, entries, items, VS stages, opening room, Training select.
 
+## Battle camera texgen
+
+- Battle camera = LookAtReflect: texgen basis = `camera_basis(eye, at, Y)` (RE-458).
+- Movie camera (kinds 3 and 8) keeps the prior basis: open.
+- Fighter ENV: fog grey, or `colanim.color2` RGBA (RE-457). NOFOG joint parts skip fog (RE-453).
+- D-051: lighting/material state; reviewed rebaseline against N64 A/B.
+- Open: NOFOG under demo fade, 1P intro Metal Mario darkness (RE-458).
+
 ## Animated lights
 
 - Costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks preserved (RE-261; [D-024](../decisions/D-024.md)).
