@@ -61,6 +61,9 @@ fn the_roll_reaches_its_last_name_with_the_rom_tables() {
         assert!(ticks < 20_000);
     }
     assert_eq!(s.name_id, 84);
+    // N64 staff-roll warp (no input): the Startup scene is set on update
+    // 5068 and the roll's last draw is update 5127 (`ROLL_END_WAIT` 60).
+    assert_eq!(ticks + 1, 5127);
 }
 
 #[test]
@@ -81,4 +84,73 @@ fn the_letter_images_fit_before_the_next_and_the_camera_bakes() {
     let cam = archive.load(ending::ENDING_FILE).unwrap();
     let frames = ssb_rom::campaign::camera_frames(&cam.data, ending::ENDING_CAMERA).unwrap();
     assert!(frames.len() >= 540, "{} plays", frames.len());
+}
+
+fn pack_bytes() -> Option<Vec<u8>> {
+    ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    std::fs::read(path).ok()
+}
+
+/// `mvEndingMakeRoomBackground` adds `llMVCommonRoomBackgroundMatAnimJoint`
+/// (0x8788) over `llMVCommonRoomBackgroundMObjSub` (0x42F8): the packed
+/// background's primitives carry one `mat_anim` per scripted `MObjSub`, as
+/// many as the table names scripts (two readings: the pack's bindings and
+/// the file's table).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_room_background_carries_its_material_animation() {
+    use ssb_rom::pack::{Pack, TextureDesc};
+    let (Some(bytes), Some(pack)) = (rom_bytes(), pack_bytes()) else {
+        return;
+    };
+    let pack = Pack::open(&pack).unwrap();
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|o| o.source_file == ending::ROOM_FILE && o.source_offset == ending::ROOM_BACKGROUND)
+        .expect("the room background is packed");
+    let mut bound = std::collections::BTreeSet::new();
+    for n in 0..object.node_count {
+        let node = pack.node(object.first_node + n).unwrap();
+        let Some(mesh) = pack.mesh(node.mesh) else {
+            continue;
+        };
+        for j in 0..mesh.prim_count {
+            let prim = pack.prim(mesh.first_prim + j).unwrap();
+            if prim.mat_anim != TextureDesc::NO_ANIM {
+                bound.insert(prim.mat_anim);
+            }
+        }
+    }
+    let info = rom::identify(&bytes).unwrap();
+    let archive = Archive::open(&bytes, info.region).unwrap();
+    let file = archive.load(ending::ROOM_FILE).unwrap();
+    let word = |at: usize| u32::from_be_bytes(file.data[at..at + 4].try_into().unwrap());
+    let subs = ssb_rom::opening::room::BACKGROUND_MOBJSUB as usize;
+    let mut scripted = 0;
+    for node in 0..object.node_count as usize {
+        let chain = word(subs + node * 4) as usize;
+        if chain == 0 {
+            continue;
+        }
+        let mut m = 0;
+        while word(chain + m * 4) != 0 {
+            let sub = word(chain + m * 4);
+            scripted += usize::from(
+                ssb_rom::matanim::mobj_script(
+                    &file.data,
+                    ending::ROOM_BACKGROUND_MAT_ANIM_JOINT,
+                    subs as u32,
+                    node,
+                    sub,
+                )
+                .is_some(),
+            );
+            m += 1;
+        }
+    }
+    assert!(scripted > 0, "the table names scripts");
+    assert!(!bound.is_empty(), "the packed prims are bound");
+    assert_eq!(bound.len(), scripted, "one binding per scripted MObj");
 }

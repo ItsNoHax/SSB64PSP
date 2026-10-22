@@ -248,7 +248,14 @@ pub unsafe fn draw_all(
             fighter,
             position: layer::Fighter::position(i),
             costume: select.slots[i].costume,
-            tint: None,
+            // `mnPlayersVSMakeFighter`'s `desc.shade`: a team's second
+            // fighter of a kind draws under its shade's fog.
+            tint: select.slots[i]
+                .fkind
+                .and_then(|kind| p.fighter_shade(kind as u32))
+                .and_then(|[s0, s1, s2, fog]| {
+                    ssb_game::shade::fog_color(select.slots[i].shade, None, &[s0, s1, s2], fog)
+                }),
         })
     });
     let spots = select.spotlights();

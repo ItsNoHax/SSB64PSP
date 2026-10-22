@@ -649,3 +649,24 @@ fn continue_plays_the_choice_then_game_over() {
     );
     crate::sound::uninstall();
 }
+
+/// N64 loss trace (Continue tic t on frame 965 + t): A tapped on tics
+/// 2, 10, 18, ... reaches the Intro on frame 1359 (tic 394); no input
+/// reaches the Startup scene on frame 5165 (tic 4200).
+#[test]
+fn continue_matches_the_n64_loss_trace() {
+    let mut c = continue_scene::Continue::new(0);
+    let mut accepted = None;
+    let result = (1..=500u32).find_map(|t| {
+        let f = tick_continue(&mut c, if t % 8 == 2 { N64Buttons::A } else { 0 });
+        if f.event == Some(continue_scene::Event::Accepted) {
+            accepted = Some(t);
+        }
+        f.result.map(|r| (t, r))
+    });
+    assert_eq!(accepted, Some(154));
+    assert_eq!(result, Some((394, true)));
+    let mut c = continue_scene::Continue::new(0);
+    let result = (1..=5000u32).find_map(|t| tick_continue(&mut c, 0).result.map(|r| (t, r)));
+    assert_eq!(result, Some((4200, false)));
+}

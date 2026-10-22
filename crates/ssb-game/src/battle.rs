@@ -143,6 +143,12 @@ pub struct Battle {
     /// `sIFCommonBattlePlace`: the place the next team to go out takes.
     place: i32,
     restore_wait: u16,
+    /// START left the pause menu this frame: `ifCommonBattlePauseUpdateInterface`
+    /// returns after setting Unpause, so the restore starts next frame.
+    unpause_frame: bool,
+    /// This frame's [`Battle::begin_frame`] ran a restore tick of
+    /// `ifCommonBattlePauseRestoreInterfaceAll` (the camera eases back).
+    restore_tick: bool,
     /// Ticks since the scene started, for the countdown threads.
     clock: u32,
     /// The frame "Go" lands on.
@@ -247,6 +253,8 @@ impl Battle {
             timer_started: false,
             place: 0,
             restore_wait: 0,
+            unpause_frame: false,
+            restore_tick: false,
             clock: 0,
             go_tick: Self::GO_TICK,
             go_lands: false,
@@ -447,6 +455,7 @@ impl Battle {
     /// frame's `gcRunAll` runs: the countdown and the timer.
     pub fn begin_frame(&mut self) -> Frame {
         self.set_zoom_began = false;
+        self.restore_tick = false;
         self.go_lands = false;
         if self.status != GameStatus::Go {
             self.timer_started = false;
@@ -477,7 +486,12 @@ impl Battle {
             // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases
             // back, then Go resumes and the world runs that same frame.
             GameStatus::Unpause => {
+                // The START frame itself runs nothing (RE-456 N64 trace).
+                if core::mem::take(&mut self.unpause_frame) {
+                    return Frame::Frozen;
+                }
                 if self.restore_wait != 0 {
+                    self.restore_tick = true;
                     self.restore_wait -= 1;
                     Frame::Frozen
                 } else {
@@ -657,12 +671,21 @@ impl Battle {
     }
 
     /// START in the pause menu: `restore` is whether the camera had zoomed
-    /// on the player and eases back (20 ticks) or snaps (0).
+    /// on the player and eases back (20 ticks) or snaps (0). The frame of
+    /// the press stays frozen; the restore runs from the next
+    /// ([`Battle::restore_tick`]).
     pub fn unpause(&mut self, restore: bool) {
         if self.status == GameStatus::Pause {
             self.status = GameStatus::Unpause;
             self.restore_wait = if restore { UNPAUSE_RESTORE_WAIT } else { 0 };
+            self.unpause_frame = true;
         }
+    }
+
+    /// This frame ran one of `ifCommonBattlePauseRestoreInterfaceAll`'s
+    /// restore ticks: the camera eases back while the world stays frozen.
+    pub fn restore_tick(&self) -> bool {
+        self.restore_tick
     }
 
     /// `ifCommonBattlePauseRestoreInterfaceAll`'s audio, as Go resumes:

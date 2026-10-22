@@ -240,6 +240,10 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         roster[i] = Some(Entrant {
             kind: b.fkind,
             costume: b.costume,
+            shade: b.shade,
+            // `sc1PGameSetupEnemyPlayer`'s CP, an ally's heart
+            // (`sc1pgame.c:965,1075`), the player's port.
+            tag: Some(b.tag as u8),
             level: b.level,
             handicap: b.handicap,
             spawn: setup.mapobj_kind,
@@ -277,7 +281,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         Stage::Zako => crate::scene_load::fighter_roots(p, 14..=25),
         _ => alloc::vec::Vec::new(),
     });
-    s.enter(pack, gkind, roster, Some(rules));
+    s.enter(pack, gkind, &roster, Some(rules));
     s.scene_gkind = gkind;
     // `itManagerInitItems` with the 1P stage's switches.
     s.items.normal_switches = switches;
@@ -591,12 +595,12 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
         } else { alloc::vec::Vec::new() }
     } else { alloc::vec::Vec::new() };
     let mut roster: Roster = [None; 4];
-    roster[0] = Some(Entrant { kind: data.fkind, costume: data.costume, level: 1,
+    roster[0] = Some(Entrant { kind: data.fkind, costume: data.costume, shade: 0, tag: None, level: 1,
         handicap: ssb_game::stale::HANDICAP_DEFAULT, spawn: spgame::setup::mapobj::PLAYER,
         team: 0, color: 0, human: true });
     let gkind = bonus.state.gkind;
     crate::scene_load::set_base(alloc::vec::Vec::new());
-    s.enter(pack, gkind, roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
+    s.enter(pack, gkind, &roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
         time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
         skip_entry: true,
         ..VsRules::DEFAULT }));
@@ -947,6 +951,7 @@ pub(crate) fn replace_enemies(
                 );
                 n.fighter.facing = e.facing;
                 n.fighter.team = d.fighter.team;
+                n.fighter.shade = e.shade;
                 let detail = if e.detail_high {
                     ssb_game::modelpart::Detail::High
                 } else {
@@ -1137,11 +1142,24 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Boss as u8;
             sp.manager.scene = Scene::Intro;
         }
-        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako => {
+        GameScene::OnePMetal
+        | GameScene::OnePGiant
+        | GameScene::OnePZako
+        | GameScene::OnePYoshi => {
+            if scene == GameScene::OnePYoshi {
+                // Yoshi in costume 0, so the Yoshi Team's costume-0 Yoshi
+                // takes shade 1 (`sc1pgame.c:1347`).
+                let kind = ssb_game::fighter::FighterKind::Yoshi;
+                let costume = ssb_game::costume::costume_common_id(kind, 0);
+                (sp.data.fkind, sp.data.costume) = (kind, costume);
+                let player = &mut sp.state.players[sp.data.player as usize];
+                (player.fkind, player.costume) = (kind, costume);
+            }
             // A `onepstage=` line (hardware runs) picks any other stage.
             sp.data.stage = crate::capture::onep_stage_override().unwrap_or(match scene {
                 GameScene::OnePMetal => Stage::MMario,
                 GameScene::OnePGiant => Stage::Donkey,
+                GameScene::OnePYoshi => Stage::Yoshi,
                 _ => Stage::Zako,
             } as u8);
             // The stage's own setup (Giant Donkey Kong's random allies),
@@ -1213,10 +1231,15 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     let Some(pack) = pack else { return };
     // From battle clock 1000, every 150 ticks: each enemy placed below the
     // stage's bottom bound, so the real blast check KOs it and the
-    // campaign replaces it (the Polygon Team) or ends the stage. The
-    // fixture writes no stocks, falls or results.
-    if matches!(scene, GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako)
-        && s.vs_battle.as_ref().is_some_and(|b| b.clock() >= 1000 && b.clock() % 150 == 100)
+    // campaign replaces it (the Polygon and Yoshi Teams) or ends the stage.
+    // The fixture writes no stocks, falls or results.
+    if matches!(
+        scene,
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi
+    ) && s
+        .vs_battle
+        .as_ref()
+        .is_some_and(|b| b.clock() >= 1000 && b.clock() % 150 == 100)
     {
         if let (Some(pl), Some(stage)) = (s.play_state.as_ref(), pack.stage(s.training_stage)) {
             let team = pl.fighter.team;

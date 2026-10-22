@@ -494,3 +494,15 @@ fn the_classic_mario_message_follows_a_newcomers_when_due() {
         Unlock::Purin.mask() | Unlock::Inishie.mask()
     );
 }
+
+/// N64 trace (Congra warp, tic t on frame t - 1): A tapped on tics 2, 10,
+/// 18, ... sets the Title scene on frame 104 (tic 105); with no input the
+/// scene still waits at frame 4000.
+#[test]
+fn congra_matches_the_n64_skip_trace() {
+    let mut c = Congra::new(FighterKind::Mario, 0);
+    let end = (1..=400u32).find(|t| c.tick(N64Buttons(if t % 8 == 2 { N64Buttons::A } else { 0 })));
+    assert_eq!(end, Some(105));
+    let mut c = Congra::new(FighterKind::Mario, 0);
+    assert!(!(1..=4001u32).any(|_| c.tick(N64Buttons(0))));
+}

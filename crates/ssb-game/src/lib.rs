@@ -130,6 +130,7 @@ pub mod rng;
 pub mod samus;
 #[cfg(test)]
 mod setter_tests;
+pub mod shade;
 pub mod shadow;
 pub mod slope_contour;
 pub mod sound;

@@ -191,7 +191,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePRaceHazards => 660,
         GameScene::OnePBoss => 1500,
         GameScene::OnePBossDefeat => 1500,
-        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako => 1200,
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi => 1200,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -244,6 +244,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::BonusSelect => 70,
         // The course from tick 51; its timer has run some 200 tics.
         GameScene::BonusPractice => 300,
+        GameScene::BonusPause => 501,
         GameScene::OnePFinale => 2200,
         // A at tick 60 picks the Beam Sword up and A at 100 swings it:
         // `SwordSwing1`'s trail runs from frame 2 to frame 9.
@@ -561,22 +562,24 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         (GameScene::ItemSwitch, 22) => return N64Buttons(N64Buttons::A),
         // The bonus select: the held puck dropped on the portrait the
         // hand reached.
-        (GameScene::BonusSelect | GameScene::BonusPractice, 40) => return N64Buttons(N64Buttons::A),
-        (GameScene::BonusPractice, 50) => return N64Buttons(N64Buttons::START),
-        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::SoundTest | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::Explain | GameScene::AutoDemo | GameScene::Opening, _) => {
+        (GameScene::BonusSelect | GameScene::BonusPractice | GameScene::BonusPause, 40) => return N64Buttons(N64Buttons::A),
+        (GameScene::BonusPractice | GameScene::BonusPause, 50) => return N64Buttons(N64Buttons::START),
+        // `bonuspause`: the pause's map zoom, then its restore (RE-456).
+        (GameScene::BonusPause, 400 | 490) => return N64Buttons(N64Buttons::START),
+        (GameScene::Option | GameScene::ScreenAdjust | GameScene::BackupClear | GameScene::DataMenu | GameScene::VsRecord | GameScene::Characters | GameScene::SoundTest | GameScene::Title | GameScene::ModeSelect | GameScene::OnePMode | GameScene::VsOptions | GameScene::ItemSwitch | GameScene::BonusSelect | GameScene::BonusPractice | GameScene::BonusPause | GameScene::Explain | GameScene::AutoDemo | GameScene::Opening, _) => {
             return N64Buttons(0)
         }
         (g, _) if opening_capture_kind(g).is_some() || g == GameScene::OpeningTitle => return N64Buttons(0),
         _ => {}
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
             270 if scene == GameScene::OnePRetry => N64Buttons(N64Buttons::A),
             // Past its capture, A every 30 ticks takes a stage the fixture
             // clears through its results into the next stage (RE-478).
-            t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePBossDefeat)
+            t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePBossDefeat)
                 && t > capture_ticks(scene) && t % 30 == 0 => N64Buttons(N64Buttons::A),
             t if scene == GameScene::OnePStaffroll && t >= 400 && t % 20 == 0 => N64Buttons(N64Buttons::A),
             930 if scene == GameScene::OnePFinale => N64Buttons(N64Buttons::START),
@@ -834,7 +837,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if capture_menu(scene).is_some() {
         return 0;
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::TrainingInterface {
@@ -950,13 +953,13 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
         return pad.stick_y;
     }
     // `bonusselect`: the hand and its puck up onto the portraits.
-    if matches!(scene, GameScene::BonusSelect | GameScene::BonusPractice) {
+    if matches!(scene, GameScene::BonusSelect | GameScene::BonusPractice | GameScene::BonusPause) {
         return if (12..=32).contains(&tick) { 80 } else { 0 };
     }
     if capture_menu(scene).is_some() {
         return 0;
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -2310,7 +2313,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -2585,7 +2588,7 @@ unsafe fn training_frame(
     // `ifCommonBattlePauseRestoreInterfaceAll`: the camera eases back while
     // the pause menu stays, then the turn is restored and the world runs.
     if let (Some(pause), Some((f, status))) = (damage_hud.pause, frame) {
-        if status == GameStatus::Unpause && f == Frame::Frozen {
+        if status == GameStatus::Unpause && f == Frame::Frozen && battle.as_ref().is_some_and(|b| b.restore_tick()) {
             ssb_game::pause::ease_back(&mut pl.camera.pause_eye, pause.origin);
             if let Some(stage) = p.stage(stage_index) {
                 ssb_game::matchtick::camera_pass(
@@ -3143,7 +3146,7 @@ fn start_sudden_death(
         .dummies
         .each_ref()
         .map(|d| d.as_ref().map(|d| (d.computer.behavior, d.computer.trait_kind)));
-    let index = enter_training(pack, gkind, tied, Some(rules), battle, world);
+    let index = enter_training(pack, gkind, &tied, Some(rules), battle, world);
     // `is_skip_entry`: sudden death's fighters stand at once.
     if let Some(pl) = world.play_state.as_mut() {
         pl.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
@@ -3396,6 +3399,12 @@ struct TrainingWorld<'w> {
 struct Entrant {
     kind: ssb_game::fighter::FighterKind,
     costume: u8,
+    /// `FTDesc::shade`: `players[].shade` (`ssb_game::shade`).
+    shade: u8,
+    /// `players[].tag` (`nIFPlayerTagKind*`) where the scene sets it apart
+    /// from the port: the 1P Game's CP and ally heart. `None` tags a CPU
+    /// "CP" and a human by its port.
+    tag: Option<u8>,
     level: u8,
     handicap: u8,
     spawn: u16,
@@ -3414,6 +3423,8 @@ fn training_roster(scene: ssb_game::fighter_select::SceneData) -> Roster {
     let entrant = |kind: Option<ssb_game::fighter::FighterKind>, costume, port: u8| Entrant {
         kind: kind.unwrap_or(ssb_game::fighter::FighterKind::Mario),
         costume,
+        shade: 0,
+        tag: None,
         level: play::TRAINING_CPU_LEVEL,
         handicap: ssb_game::stale::HANDICAP_DEFAULT,
         spawn: u16::from(port),
@@ -3445,6 +3456,8 @@ fn vs_roster(state: &ssb_game::players_vs::BattleState) -> Roster {
         *entrant = Some(Entrant {
             kind,
             costume: p.costume,
+            shade: p.shade,
+            tag: None,
             level: p.level,
             handicap: p.handicap,
             spawn: i as u16,
@@ -3529,6 +3542,10 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
         Some(Entrant {
             kind: kinds[port],
             costume,
+            // No capture puts one fighter twice on a team, so every
+            // `mnVSModeGetShade` is 0.
+            shade: 0,
+            tag: None,
             level: capture::level_override().unwrap_or(3),
             handicap: ssb_game::stale::HANDICAP_DEFAULT,
             spawn: port as u16,
@@ -3545,6 +3562,8 @@ fn vs_pair_roster(kinds: [ssb_game::fighter::FighterKind; 2]) -> Roster {
     core::array::from_fn(|port| {
         kinds.get(port).map(|&kind| Entrant {
             kind,
+            shade: 0,
+            tag: None,
             costume: ssb_game::costume::costume_common_id(kind, 0),
             level: 3,
             handicap: ssb_game::stale::HANDICAP_DEFAULT,
@@ -3567,6 +3586,8 @@ fn vs_results_roster(winner: ssb_game::fighter::FighterKind) -> Roster {
     core::array::from_fn(|port| {
         kinds.get(port).map(|&kind| Entrant {
             kind,
+            shade: 0,
+            tag: None,
             costume: ssb_game::costume::costume_common_id(kind, 0),
             level: 3,
             handicap: ssb_game::stale::HANDICAP_DEFAULT,
@@ -3585,7 +3606,7 @@ fn vs_results_roster(winner: ssb_game::fighter::FighterKind) -> Roster {
 fn enter_training(
     pack: Option<&Pack<'_>>,
     gkind: u8,
-    roster: Roster,
+    roster: &Roster,
     vs: Option<VsRules>,
     battle: &mut Option<ssb_game::battle::Battle>,
     world: &mut TrainingWorld<'_>,
@@ -3669,6 +3690,7 @@ fn enter_training(
     scene.fighter.port = 0;
     scene.fighter.team = lead.team;
     scene.fighter.costume = lead.costume;
+    scene.fighter.shade = lead.shade;
     scene.fighter.handicap = lead.handicap;
     *world.play_state = Some(scene);
     *world.dummies = core::array::from_fn(|i| {
@@ -3680,6 +3702,7 @@ fn enter_training(
         )?;
         d.fighter.team = e.team;
         d.fighter.handicap = e.handicap;
+        d.fighter.shade = e.shade;
         Some(alloc::boxed::Box::new(d))
     });
     // `ifCommonPlayerDamageInitInterface`; Training shows it at once
@@ -3927,9 +3950,13 @@ unsafe fn draw_frame(
                 s.training_menu.as_ref().is_none_or(|m| m.magnify_display)
                     && s.demo.as_ref().is_none_or(demo_screen::magnify_display)
                     && !magnify_hidden,
-                // The demos tag each player by its number (`players[].tag
-                // = player`).
-                if s.demo.is_some() { [false; 4] } else { s.roster.map(|x| x.is_some_and(|x| !x.human)) },
+                // `ifCommonPlayerTagMakeInterface`'s `players[].tag`: the
+                // demos tag each player by its number (`players[].tag =
+                // player`).
+                core::array::from_fn(|port| match s.roster[port] {
+                    Some(e) if s.demo.is_none() => e.tag.unwrap_or(if e.human { port as u8 } else { 4 }),
+                    _ => port as u8,
+                }),
                 s.campaign
                     .as_ref()
                     .and_then(|c| c.boss.as_deref())
@@ -4046,9 +4073,9 @@ unsafe fn session_frame(
                         let gkind = capture_stage_gkind(capture_scene);
                         // The capture skips the menus' music.
                         if let Some(rules) = rules {
-                            s.enter_vs_battle(pack.as_ref(), gkind, roster, rules);
+                            s.enter_vs_battle(pack.as_ref(), gkind, &roster, rules);
                         } else {
-                            s.enter(pack.as_ref(), gkind, roster, None);
+                            s.enter(pack.as_ref(), gkind, &roster, None);
                             s.scene_gkind = gkind;
                         }
                         prepare_monster_capture(capture_scene, pack.as_ref(), s);
@@ -4145,10 +4172,10 @@ unsafe fn session_frame(
                     }
                     if s.vs {
                         let (roster, rules) = (vs_roster(&s.vs_state), s.vs_menu_rules);
-                        s.start_vs_battle(pack.as_ref(), saved.gkind, roster, rules);
+                        s.start_vs_battle(pack.as_ref(), saved.gkind, &roster, rules);
                     } else {
                         s.scene_gkind = saved.gkind;
-                        s.enter(pack.as_ref(), saved.gkind, training_roster(s.training_scene), None);
+                        s.enter(pack.as_ref(), saved.gkind, &training_roster(s.training_scene), None);
                         // `sc1PTrainingModeFuncStart`.
                         ssb_game::music::start_training();
                         s.screen = Screen::Training;
@@ -4485,7 +4512,7 @@ fn training_menu_frame(
         ssb_game::music::leave_battle();
         if menu.exit_or_reset {
             let roster = s.roster;
-            s.enter(pack, s.scene_gkind, roster, None);
+            s.enter(pack, s.scene_gkind, &roster, None);
             ssb_game::music::start_training();
         } else {
             s.play_state = None;
@@ -4623,11 +4650,11 @@ const STAGE_DWELL_TICS: u32 = 20;
 impl Session {
     /// [`enter_training`] into this session's world with `roster`,
     /// remembering it for a sudden death.
-    fn enter(&mut self, pack: Option<&Pack<'_>>, gkind: u8, roster: Roster, rules: Option<VsRules>) {
+    fn enter(&mut self, pack: Option<&Pack<'_>>, gkind: u8, roster: &Roster, rules: Option<VsRules>) {
         // A battle scene's load: a Training reset or the next 1P battle
         // keeps the screen.
         self.scene_epoch = self.scene_epoch.wrapping_add(1);
-        self.roster = roster;
+        self.roster = *roster;
         // The battle's files (RE-475): `*SetupFiles`, the map, the fighters.
         if let Some(p) = pack {
             let kinds: alloc::vec::Vec<u32> = roster.iter().flatten().map(|e| e.kind as u32).collect();
@@ -4640,7 +4667,7 @@ impl Session {
         self.training_stage = enter_training(
             pack,
             gkind,
-            roster,
+            &self.roster,
             rules,
             &mut self.vs_battle,
             &mut TrainingWorld {
@@ -4666,7 +4693,7 @@ impl Session {
     /// [`ssb_game::battle::vs_battle_gkind`] of it, Castle on a tampered
     /// save (RE-460). Returns the battle's stage.
     #[inline(never)]
-    fn enter_vs_battle(&mut self, pack: Option<&Pack<'_>>, scene_gkind: u8, roster: Roster, rules: VsRules) -> u8 {
+    fn enter_vs_battle(&mut self, pack: Option<&Pack<'_>>, scene_gkind: u8, roster: &Roster, rules: VsRules) -> u8 {
         self.scene_gkind = scene_gkind;
         let gkind = ssb_game::battle::vs_battle_gkind(scene_gkind, self.backup.error_flags);
         self.enter(pack, gkind, roster, Some(rules));
@@ -4677,7 +4704,7 @@ impl Session {
     /// stage): [`Self::enter_vs_battle`], then `scVSBattleStartBattle`'s
     /// music on the battle's stage.
     #[inline(never)]
-    fn start_vs_battle(&mut self, pack: Option<&Pack<'_>>, scene_gkind: u8, roster: Roster, rules: VsRules) {
+    fn start_vs_battle(&mut self, pack: Option<&Pack<'_>>, scene_gkind: u8, roster: &Roster, rules: VsRules) {
         let gkind = self.enter_vs_battle(pack, scene_gkind, roster, rules);
         if let Some(bgm_id) = stage_bgm_id(pack, gkind) {
             ssb_game::music::start_battle(bgm_id);
@@ -5133,7 +5160,7 @@ unsafe fn run() -> ! {
             gpu.wait_presented();
             emit_headless_screenshot();
             log_stack_peak(sim_frame_index);
-            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack
@@ -5221,7 +5248,7 @@ fn capture_menu(scene: GameScene) -> Option<(ssb_game::menu::Scene, ssb_game::me
         GameScene::OnePMode => (Scene::OnePMode, Scene::ModeSelect),
         GameScene::VsOptions => (Scene::VsOptions, Scene::VsMode),
         GameScene::ItemSwitch => (Scene::VsItemSwitch, Scene::VsOptions),
-        GameScene::BonusSelect | GameScene::BonusPractice => (Scene::Players1PBonus1, Scene::OnePMode),
+        GameScene::BonusSelect | GameScene::BonusPractice | GameScene::BonusPause => (Scene::Players1PBonus1, Scene::OnePMode),
         g => match opening_capture_kind(g) {
             Some(kind) => (Scene::Opening(kind), Scene::Startup),
             None => return None,
@@ -5748,7 +5775,7 @@ fn players_vs_frame(
         // `nSCKindVSBattle` on the random stage.
         Some(gkind) => {
             let rules = s.vs_menu_rules;
-            s.start_vs_battle(pack.as_ref(), gkind, vs_roster(&state), rules);
+            s.start_vs_battle(pack.as_ref(), gkind, &vs_roster(&state), rules);
         }
     }
 }
@@ -8460,7 +8487,7 @@ unsafe fn draw_training(
     wallpaper: Option<(&ssb_rom::pack::SpriteDesc, &ssb_game::wallpaper::Wallpaper)>,
     training_paused: bool,
     magnify_display: bool,
-    cpu_ports: [bool; 4],
+    tags: [u8; 4],
     // Final Destination's boss wallpaper effects and their controller.
     boss: Option<(&ssb_psp_runtime::boss::BossEffects, &ssb_game::spgame::boss::BossWallpaper)>,
 ) {
@@ -8912,7 +8939,7 @@ unsafe fn draw_training(
         fighters,
         &pl.camera,
         damage_hud.colors,
-        cpu_ports,
+        tags,
     );
     // `gmCameraMakeInterfaceCamera`'s scissor is the battle viewport.
     if viewport != ssb_game::camera::BATTLE_VIEWPORT {
@@ -9111,9 +9138,10 @@ unsafe fn draw_fighter_model(
     // the fighter (`lr * light_angle_x`).
     let light = f.fighter.colanim.light.map_or(stage.light_angle_xy, |(x, y)| [f.fighter.facing.sign() * x, y]);
     draw_state.configure_fighter_light(light);
-    // `ftDisplayMainCalcFogColor` with no shade: `G_RM_FOG_PRIM_A` blends
-    // the fighter towards `color1` by its alpha.
-    let fog = f.fighter.colanim.color();
+    // `ftDisplayMainCalcFogColor` or `ftDisplayMainDecideFogColor`:
+    // `G_RM_FOG_PRIM_A` blends the fighter towards `color1` mixed with its
+    // shade, or the shade alone, by the fog alpha.
+    let fog = fighter_fog(p, &f.fighter);
     // `ENV` (`ftDisplayMainDrawAll`): `colanim.color2` first, else Master
     // Hand's `fog_color` while `is_use_fogcolor` is set, else the white
     // light colour (RE-457).
@@ -9146,6 +9174,16 @@ unsafe fn draw_fighter_model(
     }
     draw_state.fog_env = None;
     draw_state.finish_fighter_light();
+}
+
+/// The fog colour `ftDisplayMainDrawAll` sets for `f` (`ssb_game::shade`),
+/// from its colour animation, shade and `FTAttributes` colours.
+fn fighter_fog(p: &Pack<'_>, f: &ssb_game::fighter::Fighter) -> Option<[u8; 4]> {
+    let color1 = f.colanim.color();
+    match p.fighter_shade(f.kind as u32) {
+        Some([s0, s1, s2, fog]) => ssb_game::shade::fog_color(f.shade, color1, &[s0, s1, s2], fog),
+        None => color1,
+    }
 }
 
 /// `ftDisplayMainDrawAll`'s sword trail (`ftDisplayMainDrawAfterImage`):

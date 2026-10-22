@@ -439,6 +439,10 @@ pub struct Fighter {
     pub handicap: u8,
     /// `FTStruct::costume` ([`crate::costume`]); display only.
     pub costume: u8,
+    /// `FTStruct::shade` (`ftManagerMakeFighter`: `desc->shade`): 0, or
+    /// the 1-based `FTAttributes::shade_color` entry the fighter is fogged
+    /// with ([`crate::shade`]); display only.
+    pub shade: u8,
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
@@ -697,6 +701,7 @@ impl Fighter {
             stale: crate::stale::StaleQueue::default(),
             handicap: crate::stale::HANDICAP_DEFAULT,
             costume: 0,
+            shade: 0,
             weapon_spawn: None,
             weapon_spawn_parent: crate::weapon::SpawnParent::default(),
             weapon_spawn_pose: None,

@@ -472,7 +472,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // Fox SpecialLwLoop/AirLwLoop (212/216), Captain SpecialLwBound/AirHi
 // (209/213); the old ids played another motion's clip (the reflector loop
 // played LwEnd, RE-566). No layout change.
-pub const VERSION: u32 = 130;
+// 131 widens `FighterDesc` to 240 bytes with `FTAttributes::shade_color[3]`
+// and `fog_color` (the team and Yoshi Team shade fog,
+// `ftDisplayMainDecideFogColor`).
+pub const VERSION: u32 = 131;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1913,18 +1916,27 @@ pub struct FighterDesc {
     pub cliff_air_mask: u32,
 }
 
+/// `FTAttributes::shade_color[3]` then `fog_color`, RGBA, words 56-59 of a
+/// [`FighterDesc`] record. The fog colour of `shade` n is `shade_color`
+/// entry n - 1 (`ftDisplayMainDecideFogColor`); `fog_color`'s red scales a
+/// colour animation's fog alpha (`ftDisplayMainCalcFogColor`).
+pub type FighterShade = [[u8; 4]; 4];
+
 /// Float fields carried per fighter: 43 from `FTAttributes` plus the seven
 /// figatree animation lengths.
 const SCALARS: usize = 50;
 
 impl FighterDesc {
-    /// 56 words: 5 integers, then the 50 floats [`fighter_scalars`] lists,
-    /// then the cliff kinetics mask in the former padding word; stride stays 16-byte aligned.
+    /// 60 words: 5 integers, then the 50 floats [`fighter_scalars`] lists,
+    /// then the cliff kinetics mask in the former padding word, then the
+    /// [`FighterShade`] colours as RGBA bytes; stride stays 16-byte aligned.
+    /// The colours stay out of the struct: [`Pack::fighter_shade`] reads
+    /// them alone, so a fighter draw does not hold the whole record.
     ///
     /// The floats are the 43 scalars of the original `FTAttributes` head
     /// (`jumps_max` and `is_metallic` moved up into the integer group so no
     /// consumer has to bit-cast) followed by the seven figatree lengths.
-    pub const SIZE: usize = 224;
+    pub const SIZE: usize = 240;
 }
 
 /// The float fields of a [`FighterDesc`], in the order they are stored.
@@ -2189,6 +2201,8 @@ pub struct PackWriter {
     coll_vertices: Vec<CollisionVertex>,
     points: Vec<MapPoint>,
     fighters: Vec<FighterDesc>,
+    /// Each of [`Self::fighters`]' colours, written after its record.
+    fighter_shades: Vec<FighterShade>,
     mat_anims: Vec<MatAnimDesc>,
     mat_anim_palettes: Vec<MatAnimPalette>,
     /// Source files already in the blob for [`Self::add_mat_anim`], the same
@@ -3275,6 +3289,8 @@ impl PackWriter {
         use crate::anim;
         let a = &f.attributes;
         let frames = |slot: usize| anims.frames[slot] as f32;
+        let [s0, s1, s2] = a.shade_color;
+        self.fighter_shades.push([s0, s1, s2, a.fog_color]);
         self.fighters.push(FighterDesc {
             kind: f.file.kind as u32,
             source_file: f.file.file,
@@ -3792,7 +3808,7 @@ impl PackWriter {
             out.extend_from_slice(&p.y.to_le_bytes());
             out.extend_from_slice(&p._pad.to_le_bytes());
         }
-        for d in &self.fighters {
+        for (d, shade) in self.fighters.iter().zip(&self.fighter_shades) {
             for v in [d.kind, d.source_file, d.source_offset] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -3802,6 +3818,9 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
             out.extend_from_slice(&d.cliff_air_mask.to_le_bytes());
+            for c in shade {
+                out.extend_from_slice(c);
+            }
         }
 
         for a in &self.anims {
@@ -4637,6 +4656,24 @@ impl<'a> Pack<'a> {
             u32_at(self.data, at + 220),
             s,
         ))
+    }
+
+    /// Fighter `i`'s colours, read alone: a draw needs 16 bytes, not the
+    /// whole [`FighterDesc`] on its stack.
+    pub fn fighter_shade(&self, i: u32) -> Option<FighterShade> {
+        if i >= self.fighter_count {
+            return None;
+        }
+        let at = self.fighter_table() + i as usize * FighterDesc::SIZE + 224;
+        Some(core::array::from_fn(|c| {
+            let o = at + c * 4;
+            [
+                self.data[o],
+                self.data[o + 1],
+                self.data[o + 2],
+                self.data[o + 3],
+            ]
+        }))
     }
 
     /// One animation, by index into the animation table.
@@ -7473,6 +7510,8 @@ mod tests {
                 },
                 cliffcatch_coll: (400.0, 360.0),
                 cliff_air_mask: 2,
+                shade_color: [[0xFF, 0xFF, 0xFF, 0x50], [0, 0, 0, 0x50], [0; 4]],
+                fog_color: [0xFF, 0, 0, 0],
             },
         }
     }
@@ -7502,6 +7541,13 @@ mod tests {
         assert_eq!(f.dash_anim_length, 23.0);
         assert_eq!(f.turn_anim_length, 12.0);
         assert_eq!(f.pass_anim_length, 25.0);
+        // The colours trail the cliff mask.
+        assert_eq!(f.cliff_air_mask, 2);
+        let shade = pack.fighter_shade(0).unwrap();
+        assert_eq!(shade[0], [0xFF, 0xFF, 0xFF, 0x50]);
+        assert_eq!(shade[1], [0, 0, 0, 0x50]);
+        assert_eq!(shade[3], [0xFF, 0, 0, 0]);
+        assert_eq!(pack.fighter_shade(1), None);
     }
 
     #[test]

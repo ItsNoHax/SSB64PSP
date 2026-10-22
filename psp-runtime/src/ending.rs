@@ -4,8 +4,10 @@
 //!
 //! The ending's props are posed once: each `mvEndingMakeRoom*` adds its
 //! joint animation 300 frames in and plays it once (`gcPlayAnimAll`), and
-//! no process plays it again. The background's material animation is
-//! likewise played once from frame 0; its materials draw as packed.
+//! no process plays it again. The background's material animation
+//! (`llMVCommonRoomBackgroundMatAnimJoint`, the opening room's binding) is
+//! likewise added at frame 0 and played once, so its materials hold the
+//! scripts' first values.
 
 use alloc::{boxed::Box, vec::Vec};
 use ssb_game::spgame::{frontend::StaffrollAssets, staffroll};
@@ -14,6 +16,7 @@ use ssb_rom::figatree::JointPose;
 use ssb_rom::objanim::StageJoint;
 use ssb_rom::pack::{ObjectDesc, Pack, MODEL_SCALE};
 use ssb_rom::scene::Mat4;
+use ssb_rom::skeleton::EffectMaterialAnimator;
 
 /// The most nodes a room prop has (the background: 53).
 const MAX_NODES: usize = 64;
@@ -72,6 +75,8 @@ struct Prop {
     count: usize,
     /// Ejected at tick 540 (all but the desk).
     ejected_at_540: bool,
+    /// The background's material animation, played once.
+    mats: Option<Box<EffectMaterialAnimator>>,
 }
 
 /// How a prop's joint animation is attached.
@@ -105,6 +110,14 @@ impl Room {
         let mut props = Vec::new();
         for (graph, anim, ejected_at_540) in plan {
             let object = object(pack, asset::ROOM_FILE, graph)?;
+            // `mvEndingMakeRoomBackground`: `gcAddMatAnimJointAll(.., 0.0F)`
+            // then one `gcPlayAnimAll`.
+            let mats = (graph == asset::ROOM_BACKGROUND).then(|| {
+                let mut mats = Box::new(EffectMaterialAnimator::new());
+                mats.start(pack, object_mat_anims(pack, &object));
+                mats.tick(pack);
+                mats
+            });
             let mut poses = rest_poses(pack, &object);
             let scripts: Vec<Option<u32>> = match anim {
                 Anim::None => Vec::new(),
@@ -127,6 +140,7 @@ impl Room {
                 posed,
                 count,
                 ejected_at_540,
+                mats,
             });
         }
         Some(Room { props })
@@ -159,11 +173,22 @@ impl Room {
                 None,
                 st,
                 None,
-                None,
+                prop.mats.as_deref(),
                 0,
             );
         }
     }
+}
+
+/// Every primitive's `mat_anim` index across `object`'s nodes.
+fn object_mat_anims<'a>(pack: &'a Pack<'_>, object: &ObjectDesc) -> impl Iterator<Item = u32> + 'a {
+    let object = *object;
+    (0..object.node_count)
+        .filter_map(move |n| pack.node(object.first_node + n))
+        .filter_map(|node| pack.mesh(node.mesh))
+        .flat_map(|mesh| (0..mesh.prim_count).map(move |j| mesh.first_prim + j))
+        .filter_map(|i| pack.prim(i))
+        .map(|prim| prim.mat_anim)
 }
 
 /// `llMVEndingOperatorCamAnimJoint`'s plays, baked

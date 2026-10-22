@@ -350,6 +350,14 @@ pub struct DrawState {
     /// texture matrix. `None` means no node has been placed yet, in which
     /// case object and world space coincide.
     texgen_model: Option<ScePspFMatrix4>,
+    /// [`ssb_engine::math::camera_basis`] of a camera whose matrix kind loads
+    /// its view into the RSP's *modelview* rather than its projection (the
+    /// 1P intro's kinds 7 and 15, `gcPrepCameraMatrix`), or `None` for the
+    /// usual view-in-projection camera. The RSP transforms light and
+    /// look-at directions by its whole modelview, so under such a camera
+    /// they act in eye space: [`Self::rsp_rows`] folds the view into every
+    /// node matrix those transforms read. Cleared by [`Self::begin_frame`].
+    pub modelview_camera: Option<[[f32; 3]; 3]>,
     /// The camera's `projection * view` (column-major) while a caller wants
     /// triangles the GE would discard clipped on the CPU first
     /// ([`ssb_engine::guard_clip`]). `None` draws every primitive as packed.
@@ -414,6 +422,7 @@ impl DrawState {
         self.last_texture_func = None;
         self.last_texture_mapping = None;
         self.texgen_model = None;
+        self.modelview_camera = None;
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
         self.stage_light = None;
@@ -512,11 +521,23 @@ impl DrawState {
             }
         }
         let object = ssb_engine::rsp_light::object_light_dir(
-            self.texgen_model.map_or(IDENTITY_ROWS, |m| light_rows(matrix_rows(&m))),
+            self.rsp_rows(
+                self.texgen_model
+                    .map_or(IDENTITY_ROWS, |m| light_rows(matrix_rows(&m))),
+            ),
             world,
         );
         self.node_light = Some((world, object));
         Some(object)
+    }
+
+    /// `rows` (a node matrix's object-axis images) as the RSP's modelview
+    /// holds them: with [`Self::modelview_camera`]'s view folded in.
+    fn rsp_rows(&self, rows: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+        match self.modelview_camera {
+            Some(basis) => ssb_engine::math::modelview_rows(rows, basis),
+            None => rows,
+        }
     }
 }
 
@@ -667,14 +688,11 @@ impl DrawState {
         let (right, up) = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
         let right = ssb_engine::math::quantize_lookat_basis(right);
         let up = ssb_engine::math::quantize_lookat_basis(up);
-        let Some(m) = self.texgen_model else {
-            return (right, up);
+        let columns = match self.texgen_model {
+            Some(m) => self.rsp_rows(matrix_rows(&m)),
+            None if self.modelview_camera.is_some() => self.rsp_rows(IDENTITY_ROWS),
+            None => return (right, up),
         };
-        let columns = [
-            [m.x.x, m.x.y, m.x.z],
-            [m.y.x, m.y.y, m.y.z],
-            [m.z.x, m.z.y, m.z.z],
-        ];
         (
             ssb_engine::math::transform_lookat_basis(columns, right),
             ssb_engine::math::transform_lookat_basis(columns, up),
@@ -3412,7 +3430,10 @@ unsafe fn light_prepass(
             w: ScePspFVector4 { x: world_m[12], y: world_m[13], z: world_m[14], w: world_m[15] },
         };
         let model = compose_model_matrix(base, &local);
-        prepass.1[i as usize] = ssb_engine::rsp_light::object_light_dir(light_rows(matrix_rows(&model)), world);
+        prepass.1[i as usize] = ssb_engine::rsp_light::object_light_dir(
+            st.rsp_rows(light_rows(matrix_rows(&model))),
+            world,
+        );
         prepass.0 |= 1 << i;
     }
     Some(world)
@@ -3614,11 +3635,11 @@ unsafe fn draw_node_mesh(
                                 let source_light = light.map_or([0; 3], |world| {
                                     let world_source = model.mul(&inverse.mul(&source));
                                     ssb_engine::rsp_light::object_light_dir(
-                                        if scaled_model {
+                                        st.rsp_rows(if scaled_model {
                                             light_rows(mat4_rows(&world_source))
                                         } else {
                                             mat4_rows(&world_source)
-                                        },
+                                        }),
                                         world,
                                     )
                                 });

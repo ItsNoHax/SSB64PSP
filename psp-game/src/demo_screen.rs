@@ -180,6 +180,8 @@ fn entrant(kind: FighterKind, spawn: u16, level: u8, port: u8) -> Entrant {
         kind,
         // `players[].costume`: `dSCManagerDefaultBattleState`'s 0.
         costume: 0,
+        shade: 0,
+        tag: None,
         level,
         handicap: ssb_game::stale::HANDICAP_DEFAULT,
         spawn,
@@ -230,7 +232,7 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
         roster[port] = Some(entrant(kind, port as u16, 3, port as u8));
     }
     ssb_game::item::set_explain(true);
-    s.enter(pack, explain::GKIND, roster, Some(RULES));
+    s.enter(pack, explain::GKIND, &roster, Some(RULES));
     s.scene_gkind = explain::GKIND;
     let Some(pl) = s.play_state.as_mut() else {
         ssb_game::item::set_explain(false);
@@ -419,7 +421,7 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
             port as u8,
         ));
     }
-    s.enter(pack, setup.gkind, roster, Some(RULES));
+    s.enter(pack, setup.gkind, &roster, Some(RULES));
     s.scene_gkind = setup.gkind;
     let Some(stage) = p.stage(s.training_stage) else {
         return false;
@@ -842,7 +844,7 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
         // `dSCManagerDefaultBattleState`'s players: costume 0, level 3.
         roster[port] = Some(entrant(pl.kind, pl.spawn, 3, port as u8));
     }
-    s.enter(Some(p), b.gkind, roster, Some(RULES));
+    s.enter(Some(p), b.gkind, &roster, Some(RULES));
     s.scene_gkind = b.gkind;
     s.damage_hud.movie = true;
     // `mvOpeningSamusMakeMotionWindow`: Zebes' layer-1 kind-48 matrices

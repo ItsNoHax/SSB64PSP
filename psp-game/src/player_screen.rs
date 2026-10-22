@@ -22,12 +22,15 @@ pub fn tags(
     fighters: [Option<&crate::play::FighterScene>; 4],
     camera: &ssb_game::camera::Camera,
     colors: [u8; 4],
-    cp: [bool; 4],
+    tags: [u8; 4],
 ) {
     gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
     for f in fighters.into_iter().flatten() {
         let port = usize::from(f.fighter.port).min(3);
-        let key = ssb_rom::sprite::PLAYER_TAGS.offsets[if cp[port] { 4 } else { port }];
+        // `dIFCommonPlayerTagSpriteOffsets[players[].tag]`: 1P..4P, CP and
+        // the ally heart.
+        let tags_offsets = &ssb_rom::sprite::PLAYER_TAGS.offsets;
+        let key = tags_offsets[usize::from(tags[port]).min(tags_offsets.len() - 1)];
         let Some(sprite) = p.sprite(38, key) else {
             continue;
         };

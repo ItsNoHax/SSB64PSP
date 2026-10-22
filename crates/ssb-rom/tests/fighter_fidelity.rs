@@ -197,3 +197,30 @@ fn special_slots_play_their_status_descs_motion() {
         );
     }
 }
+
+/// `FTAttributes::shade_color[3]` and `fog_color` (`fttypes.h:922-923`,
+/// right after `halo_size`) decode to the decomp's `relocData` literals:
+/// every fighter but Giant Donkey Kong and Master Hand has white then black
+/// at alpha 0x50 and a fog red of 0xFF (`247_YoshiMain.c:342-343`); Giant
+/// Donkey Kong's fog red is 0x80 (`215_GDonkeyMain.c:279`) and Master Hand's
+/// shades are white at alpha 0 with fog red 0x59 (`250_BossMain.c:116-117`).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn shade_and_fog_colours_match_the_decomp_literals() {
+    let Some(rom) = rom() else {
+        return;
+    };
+    let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
+    let common = [[0xFF, 0xFF, 0xFF, 0x50], [0, 0, 0, 0x50], [0; 4]];
+    for f in ssb_rom::fighter::decode_all(&archive) {
+        let f = f.unwrap();
+        let (shade, fog_red) = match f.file.name {
+            "GDonkey" => (common, 0x80),
+            "Boss" => ([[0xFF, 0xFF, 0xFF, 0]; 3], 0x59),
+            _ => (common, 0xFF),
+        };
+        let a = f.attributes;
+        assert_eq!(a.shade_color, shade, "{}", f.file.name);
+        assert_eq!(a.fog_color, [fog_red, 0, 0, 0], "{}", f.file.name);
+    }
+}

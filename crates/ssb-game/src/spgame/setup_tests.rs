@@ -21,6 +21,64 @@ fn stage_setup(stage: Stage, kind: FighterKind) -> (Game, BattleState, SceneData
     (game, state, scene)
 }
 
+/// `ifCommonPlayerTagMakeInterface` reads `players[].tag` and `.color`:
+/// the player's own port (`sc1pmanager.c:282-283`), an enemy's CP tag and
+/// grey (`sc1pgame.c:964-965`), an ally's heart in the player's colour
+/// (`sc1pgame.c:1074-1075`).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn campaign_tags_and_colours_are_the_players_cp_and_heart() {
+    let (_, s, scene) = stage_setup(Stage::Link, K::Mario);
+    let me = usize::from(scene.player);
+    assert_eq!((s.players[me].tag, s.players[me].color), (Tag::P1, 0));
+    let enemy = (0..PLAYERS_MAX)
+        .find(|&p| p != me && s.players[p].pkind != PlayerKind::Not)
+        .unwrap();
+    assert_eq!((s.players[enemy].tag, s.players[enemy].color), (Tag::Cp, 4));
+    let (_, s, scene) = stage_setup(Stage::Mario, K::Mario);
+    let ally = usize::from(scene.ally_players[0]);
+    assert_eq!(
+        (s.players[ally].tag, s.players[ally].color),
+        (Tag::Heart, scene.player)
+    );
+    for p in [2, 3] {
+        assert_eq!((s.players[p].tag, s.players[p].color), (Tag::Cp, 4));
+    }
+}
+
+/// `sc1pgame.c:1347`: on the Yoshi Team stage, the enemies wearing the
+/// player Yoshi's costume take shade 1; every other enemy shade 0.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn yoshi_team_enemies_in_the_players_costume_take_shade_one() {
+    let mut shaded = 0;
+    for costume in 0..6 {
+        let mut state = BattleState::default();
+        let mut scene = SceneData {
+            stage: Stage::Yoshi as u8,
+            fkind: K::Yoshi,
+            costume,
+            ..Default::default()
+        };
+        Manager::new(&mut scene, &mut state, &Backup::default());
+        scene.costume = costume;
+        Game::setup_stage_all(&mut state, &mut scene, Difficulty::Normal, 0, K::Ness);
+        for (p, b) in state.players.iter().enumerate() {
+            if p == usize::from(scene.player) || b.pkind == PlayerKind::Not {
+                continue;
+            }
+            assert_eq!(
+                b.shade,
+                u8::from(b.costume == costume),
+                "costume {costume} port {p}"
+            );
+            shaded += usize::from(b.shade);
+        }
+    }
+    // Some player costume meets its twin in the first wave.
+    assert!(shaded > 0, "some costume meets its twin");
+}
+
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn mario_bros_and_giant_donkey_setup_ports_traits_teams_and_handicaps() {

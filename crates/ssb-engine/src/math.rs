@@ -1227,6 +1227,40 @@ pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     }
 }
 
+/// A camera's world-space `[right, up, back]`, the three columns of
+/// `syMatrixLookAtF`/`syMatrixModLookAtReflectF`'s view (roll 0): `back` is
+/// the negated look direction, `right = up × back`, `up = back × right`,
+/// each normalised. `right` and `up` are also the `LookAt` the reflect
+/// variants store (`l[0]`, `l[1]`).
+pub fn camera_basis(eye: [f32; 3], at: [f32; 3], up: [f32; 3]) -> [[f32; 3]; 3] {
+    let unit = |v: [f32; 3]| {
+        let len = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        v.map(|c| div_nonzero(c, len))
+    };
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let back = unit([eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]);
+    let right = unit(cross(up, back));
+    let up = unit(cross(back, right));
+    [right, up, back]
+}
+
+/// The 3x3 rows (object-axis images) of `model · view`, for a camera whose
+/// matrix kind loads its view into the RSP's *modelview* (kinds 7, 9, 11,
+/// 13, 15, 17 in `gcPrepCameraMatrix`): the RSP transforms light and
+/// look-at directions by that whole matrix, so they act in eye space.
+/// `basis` is [`camera_basis`]; the view's row `k` is
+/// `[right[k], up[k], back[k]]`, so entry `(i, j)` is `model[i] · basis[j]`.
+pub fn modelview_rows(model: [[f32; 3]; 3], basis: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    model.map(|row| basis.map(|axis| dot(row, axis)))
+}
+
 /// A billboard node's model matrix (`psp-runtime`'s billboard arm):
 /// `T(pos) · B · Rz · S(sx, sy, sx)`, the chain that arm once built with
 /// `sceGumTranslate`, `sceGumMultMatrix`, `sceGumRotateZ` and
@@ -1886,6 +1920,40 @@ mod tests {
         let singular = [[0.0; 3]; 3];
         let r = transform_lookat_basis(singular, [1.0, 0.0, 0.0]);
         assert_eq!(r, [0.0; 3]);
+    }
+
+    /// `syMatrixLookAtF` from +Z onto the origin is the identity view; a
+    /// camera from +X turns `right` to -Z and `back` to +X.
+    #[test]
+    fn camera_basis_follows_sy_matrix_look_at() {
+        let close = |a: [[f32; 3]; 3], b: [[f32; 3]; 3]| {
+            a.iter()
+                .flatten()
+                .zip(b.iter().flatten())
+                .all(|(x, y)| (x - y).abs() < 1e-6)
+        };
+        let id = camera_basis([0.0, 0.0, 1500.0], [0.0; 3], [0.0, 1.0, 0.0]);
+        assert!(close(
+            id,
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        ));
+        let side = camera_basis([800.0, 0.0, 0.0], [0.0; 3], [0.0, 1.0, 0.0]);
+        assert!(close(
+            side,
+            [[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
+        ));
+    }
+
+    /// The RSP's `model · view`: the identity model gives the view's rows,
+    /// and a world direction dotted with those rows lands in eye space.
+    #[test]
+    fn modelview_rows_put_directions_in_eye_space() {
+        let side = camera_basis([800.0, 0.0, 0.0], [0.0; 3], [0.0, 1.0, 0.0]);
+        let rows = modelview_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], side);
+        // World +X (towards the eye) is eye-space +Z (`back`).
+        assert_eq!(rows[0], [0.0, 0.0, 1.0]);
+        // World +Z is the camera's left (eye -X).
+        assert_eq!(rows[2], [-1.0, 0.0, 0.0]);
     }
 
     /// RE-498: [`billboard_matrix`] equals the `sceGum*` chain it replaced,

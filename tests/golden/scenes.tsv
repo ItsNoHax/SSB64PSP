@@ -238,6 +238,8 @@ f1-training-sword	psp-game	trainingsword	pass	RE-512
 f1-training-pikachu-smash	psp-game	pikachusmash	pass	RE-512
 f1-training-kirby-jab	psp-game	kirbyjab	pass	RE-513
 f1-onep-platforms-ride	psp-game	onepplatformsride	pass	RE-521 RE-524
+f1-onep-yoshi-shade	psp-game	onepyoshi	pass	RE-453
+f1-bonus-pause	psp-game	bonuspause	pass	RE-456
 f1-cpufx-down	psp-game	cpufx-d@459	pass	
 f1-cpufx-up	psp-game	cpufx-u@465	pass	
 f1-cpufx-special	psp-game	cpufx-n@473	pass	RE-373

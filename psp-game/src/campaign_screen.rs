@@ -34,6 +34,8 @@ pub struct Presentation {
 struct Model {
     kind: FighterKind,
     costume: u8,
+    /// `FTDesc::shade` ([`ssb_game::shade`]).
+    shade: u8,
     slot: u32,
     object: u32,
     skeleton: Skeleton,
@@ -114,13 +116,15 @@ impl Presentation {
                     spgame::intro::Entrance::ally(card),
                 );
                 model.priority = if card == 5 { 70 } else { 60 };
+                // `sc1PIntroFuncStart`: `sSC1PIntroAlly*FighterDemoDesc.shade`.
+                model.shade = ally.shade;
                 self.models.push(model);
             }
             let mut camera = a::packed_camera(p, data.fkind as usize).expect("packed intro camera");
             let override_camera = a::ALLY_CAMERAS[data.fkind as usize][player_card];
             camera[..3].copy_from_slice(&override_camera[..3]);
             camera[4..7].copy_from_slice(&override_camera[3..]);
-            self.models.push(make_model(
+            let mut model = make_model(
                 p,
                 data.fkind,
                 data.costume,
@@ -130,7 +134,10 @@ impl Presentation {
                 false,
                 camera,
                 spgame::intro::Entrance::ally(player_card),
-            ));
+            );
+            // `sSC1PIntroPlayerFighterDemoDesc.shade`.
+            model.shade = session.state.players[usize::from(data.player)].shade;
+            self.models.push(model);
             let (kind, index, count) = match intro.stage {
                 Stage::Link => (FighterKind::Link, 12, 1),
                 Stage::Yoshi => (FighterKind::Yoshi, 13, 18),
@@ -213,6 +220,11 @@ impl Presentation {
                     spgame::intro::Entrance::opponent(intro.stage, kind, card),
                 );
                 if intro.stage == Stage::Yoshi {
+                    // `ftParamInitAllParts(.., i % 6, shade)`: the Yoshi
+                    // in the player's own colour wears shade 1
+                    // (`sc1pintro.c:1276-1280`).
+                    model.shade =
+                        u8::from(data.fkind == FighterKind::Yoshi && data.costume == costume);
                     model
                         .demo
                         .fighter
@@ -448,7 +460,17 @@ impl Presentation {
                 for m in &self.models {
                     let mut pos = m.pos;
                     pos[1] += s.fighter_y_offset;
-                    draw_model(gpu, p, st, m, pos, scale, (100.0, 15000.0), [45.0, 45.0]);
+                    draw_model(
+                        gpu,
+                        p,
+                        st,
+                        m,
+                        pos,
+                        scale,
+                        (100.0, 15000.0),
+                        [45.0, 45.0],
+                        RspCamera::Projection,
+                    );
                 }
                 fade(st, s.room_fade_out);
                 if s.prompt_shown {
@@ -554,6 +576,14 @@ impl Presentation {
                     1.0,
                     (128.0, 16384.0),
                     m.light,
+                    // `sc1PIntroMakeStageCamera` (kind 15) draws the frozen
+                    // opponents; `sc1PIntroMakeFighterCamera` (kind 7) the
+                    // player and allies.
+                    if m.frozen {
+                        RspCamera::ModelViewReflect
+                    } else {
+                        RspCamera::ModelView
+                    },
                 );
             }
         }
@@ -575,6 +605,7 @@ fn make_model(
     let mut m = Box::new(Model {
         kind,
         costume,
+        shade: 0,
         slot: slot as u32,
         object: ssb_psp_runtime::scene::fighter_object(p, kind as u32)
             .expect("campaign fighter object"),
@@ -627,6 +658,7 @@ unsafe fn draw_model(
     scale: f32,
     planes: (f32, f32),
     light: [f32; 2],
+    rsp: RspCamera,
 ) {
     draw_model_ex(
         gpu,
@@ -642,6 +674,7 @@ unsafe fn draw_model(
             aspect: 300.0 / 220.0,
             yaw: 0.0,
             fog: None,
+            rsp,
         },
     );
 }
@@ -658,6 +691,26 @@ pub(crate) struct ModelView {
     /// `ftDisplayMainCalcFogColor`'s blend towards a colour animation's
     /// `color1`.
     pub fog: Option<[u8; 4]>,
+    /// Where the camera's matrix kind puts the view on the RSP.
+    pub rsp: RspCamera,
+}
+
+/// The RSP state a camera's matrix kind leaves for a fighter it draws
+/// (`gcPrepCameraMatrix`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RspCamera {
+    /// Kinds 6 and 8: the view multiplies the projection; lights and the
+    /// look-at stay in world space, as in battle.
+    Projection,
+    /// Kind 7 (the 1P intro's fighter cameras): the view loads the
+    /// modelview, so lights act in eye space, and no `LookAt` is loaded:
+    /// texgen reads F3DEX2's zeroed default, one texel (N64 ParaLLEl trace,
+    /// batch 40).
+    ModelView,
+    /// Kind 15 (the intro's stage camera, which draws the opponents): as
+    /// [`Self::ModelView`], plus `syMatrixModLookAtReflect`'s `LookAt`, the
+    /// camera's world right and up with world up (0, 1, 0) and no roll.
+    ModelViewReflect,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -683,11 +736,29 @@ unsafe fn draw_model_ex(
     st.begin_frame();
     let (eye, at) = (Vec3::new(c[0], c[1], c[2]), Vec3::new(c[4], c[5], c[6]));
     gpu.set_view(&Mat4::look_at(eye, at, Vec3::new(0.0, 1.0, 0.0)));
+    let texgen_basis = st.texgen_basis;
+    if view.rsp != RspCamera::Projection {
+        let basis =
+            ssb_engine::math::camera_basis([c[0], c[1], c[2]], [c[4], c[5], c[6]], [0.0, 1.0, 0.0]);
+        st.modelview_camera = Some(basis);
+        st.texgen_basis = Some(if view.rsp == RspCamera::ModelViewReflect {
+            (basis[0], basis[1])
+        } else {
+            ([0.0; 3], [0.0; 3])
+        });
+    }
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = m.skeleton.compose(p, &object, &mut posed);
     let base = crate::topn_base(pos, view.yaw, m.scale * scale, m.skeleton.locks.flagged);
     st.configure_fighter_light(light);
-    if let Some(rgba) = view.fog {
+    // `ftDisplayMainDrawAll`'s fog: the colour animation's mixed with the
+    // shade, or the shade's own.
+    let fog = p
+        .fighter_shade(m.kind as u32)
+        .map_or(view.fog, |[s0, s1, s2, fog]| {
+            ssb_game::shade::fog_color(m.shade, view.fog, &[s0, s1, s2], fog)
+        });
+    if let Some(rgba) = fog {
         let forward = (at - eye).normalized();
         gpu.set_constant_fog((Vec3::new(pos[0], pos[1], pos[2]) - eye).dot(forward), rgba);
     }
@@ -705,10 +776,12 @@ unsafe fn draw_model_ex(
             accessory_before: m.kind == FighterKind::Purin,
         },
     );
-    if view.fog.is_some() {
+    if fog.is_some() {
         gpu.clear_fog();
     }
     st.finish_fighter_light();
+    st.texgen_basis = texgen_basis;
+    st.modelview_camera = None;
 }
 #[allow(clippy::too_many_arguments)]
 unsafe fn sprite(

@@ -63,7 +63,7 @@ fn a_pause_holds_the_fgms_then_chimes_and_halves_the_music() {
     assert!(r.take().is_empty());
     // The held FGMs and the volume return as Go does, after the camera.
     b.unpause(true);
-    for _ in 0..20 {
+    for _ in 0..21 {
         b.begin_frame();
         assert!(r.take().is_empty());
     }

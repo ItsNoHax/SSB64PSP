@@ -737,4 +737,52 @@ mod tests {
         let mask = evaluate(Stage::Bonus3, 0, 0, |_, s, _, _| s.time_remain = 0);
         assert_eq!(mask, [0; 3]);
     }
+
+    /// `sc1PGameInitBonusStats` (`sc1pgame.c:2768-2801`): the DK stage pays
+    /// Perfect when neither ally fell nor took damage, Defender when both
+    /// survived but one was hit, and nothing once either fell; the Mario
+    /// stage pays True Friend or Good Friend on the ally's falls and damage,
+    /// and Bros. Calamity on its own flag.
+    #[test]
+    fn ally_bonuses_follow_the_allies_falls_and_damage() {
+        let dk = |falls: [u16; 2], damage: [u32; 2]| {
+            evaluate(Stage::Donkey, 0, 0, |_, s, scene, _| {
+                for (i, &port) in scene.ally_players.iter().take(2).enumerate() {
+                    s.players[port as usize].falls = falls[i];
+                    s.players[port as usize].total_damage_all = damage[i];
+                }
+            })
+        };
+        let pays = |mask: [u32; 3]| {
+            (
+                Bonus::DKPerfect.contains(&mask),
+                Bonus::DKDefender.contains(&mask),
+            )
+        };
+        assert_eq!(pays(dk([0, 0], [0, 0])), (true, false));
+        assert_eq!(pays(dk([0, 0], [0, 7])), (false, true));
+        assert_eq!(pays(dk([0, 0], [3, 0])), (false, true));
+        assert_eq!(pays(dk([1, 0], [0, 0])), (false, false));
+        assert_eq!(pays(dk([0, 1], [5, 5])), (false, false));
+
+        let mario = |falls: u16, damage: u32, calamity: bool| {
+            evaluate(Stage::Mario, 0, 0, |g, s, scene, _| {
+                let port = scene.ally_players[0] as usize;
+                s.players[port].falls = falls;
+                s.players[port].total_damage_all = damage;
+                g.bonus.bros_calamity = calamity;
+            })
+        };
+        let pays = |mask: [u32; 3]| {
+            (
+                Bonus::TrueFriend.contains(&mask),
+                Bonus::GoodFriend.contains(&mask),
+                Bonus::BrosCalamity.contains(&mask),
+            )
+        };
+        assert_eq!(pays(mario(0, 0, false)), (true, false, false));
+        assert_eq!(pays(mario(0, 12, false)), (false, true, false));
+        assert_eq!(pays(mario(1, 0, true)), (false, false, true));
+        assert_eq!(pays(mario(1, 12, false)), (false, false, false));
+    }
 }

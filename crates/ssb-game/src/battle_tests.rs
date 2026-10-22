@@ -173,10 +173,15 @@ fn a_pause_freezes_the_clock_and_eases_back() {
     }
     assert_eq!(b.time_remain, remain);
     b.unpause(true);
-    // Twenty frozen frames while the camera eases back, then Go on the
-    // 21st, which runs the world but reads no time.
+    // The START frame stays frozen with no restore (RE-456 N64 trace:
+    // `ifCommonBattlePauseUpdateInterface` returns), then twenty frozen
+    // frames while the camera eases back, then Go on the 21st, which runs
+    // the world but reads no time.
+    assert_eq!(b.begin_frame(), Frame::Frozen);
+    assert!(!b.restore_tick());
     for _ in 0..20 {
         assert_eq!(b.begin_frame(), Frame::Frozen);
+        assert!(b.restore_tick());
     }
     assert_eq!(b.begin_frame(), Frame::Run);
     assert_eq!(b.status, GameStatus::Go);
@@ -367,7 +372,11 @@ fn arrows_and_magnifiers_stay_hidden_until_go() {
     assert!(!b.is_magnify_display());
     b.unpause(false);
     assert!(!b.is_magnify_display());
-    b.begin_frame();
+    // The START frame, then the restore's Go.
+    assert_eq!(b.begin_frame(), Frame::Frozen);
+    assert_eq!(b.status, GameStatus::Unpause);
+    assert_eq!(b.begin_frame(), Frame::Run);
+    assert!(!b.restore_tick());
     assert_eq!(b.status, GameStatus::Go);
     assert!(b.is_magnify_display());
     // The demos' battles start at Go.
@@ -470,4 +479,42 @@ fn a_pause_quit_needs_the_whole_combo_and_hides_the_menu() {
     ));
     run_to_go(&mut next);
     assert_eq!((next.status, next.is_reset), (GameStatus::Go, false));
+}
+
+/// N64 trace (1P stage 0, `time_remain` poked to 120 after the Go
+/// transition frame 750): 120 on 751, 119 on 752, End on 871,
+/// BossDefeat on 872, Set on 962, and the Continue scene on 966.
+#[test]
+fn a_1p_time_up_follows_the_n64_frames_to_the_continue_scene() {
+    let mut b = Battle::new(Rule::Time, 1, 2, two_players());
+    run_to_go(&mut b);
+    b.time_remain = 120;
+    let mut seen = alloc::vec::Vec::new();
+    let mut last = (b.status, b.time_remain);
+    for f in 751..=970u32 {
+        let frame = b.begin_frame();
+        if f == 751 {
+            assert_eq!(b.time_remain, 120);
+        }
+        if f == 752 {
+            assert_eq!(b.time_remain, 119);
+        }
+        if b.status != last.0 {
+            seen.push((f, b.status));
+        }
+        last = (b.status, b.time_remain);
+        if frame == Frame::Done {
+            seen.push((f, b.status));
+            break;
+        }
+    }
+    assert_eq!(
+        seen,
+        [
+            (871, GameStatus::End),
+            (872, GameStatus::BossDefeat),
+            (962, GameStatus::Set),
+            (966, GameStatus::Set),
+        ]
+    );
 }

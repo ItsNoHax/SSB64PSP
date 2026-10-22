@@ -59,6 +59,15 @@ pub const SCALAR_BYTES: u32 = SCALAR_COUNT as u32 * 4;
 /// and three `u16` sound and scale fields): the respawn halo's scale.
 pub const HALO_SIZE_OFFSET: u32 = 0xEC;
 
+/// Byte offset of `FTAttributes::shade_color[3]`, the `SYColorRGBA` words
+/// right after `halo_size` (`fttypes.h:922`): the fog colour a fighter with
+/// `shade` 1..=3 draws under (`ftDisplayMainDecideFogColor`).
+pub const SHADE_COLOR_OFFSET: u32 = HALO_SIZE_OFFSET + 4;
+
+/// Byte offset of `FTAttributes::fog_color` (`fttypes.h:923`): its red
+/// scales a colour animation's fog alpha (`ftDisplayMainCalcFogColor`).
+pub const FOG_COLOR_OFFSET: u32 = SHADE_COLOR_OFFSET + 12;
+
 /// `FTAttributes::halo_size` of the attributes at `offset`.
 pub fn halo_size(data: &[u8], offset: u32) -> Option<f32> {
     let at = (offset + HALO_SIZE_OFFSET) as usize;
@@ -167,6 +176,10 @@ pub struct FighterAttributes {
     /// Six cliff recovery kinetics words at 0x2B8, including the zero word
     /// named `unused_0x2CC` which EscapeSlow indexes as entry five.
     pub cliff_air_mask: u32,
+    /// `shade_color[3]` as RGBA: `shade` n's fog colour is entry n - 1.
+    pub shade_color: [[u8; 4]; 3],
+    /// `fog_color` as RGBA.
+    pub fog_color: [u8; 4],
 }
 
 /// What went wrong decoding a fighter.
@@ -192,6 +205,13 @@ impl core::fmt::Display for FighterError {
 
 fn f32_be(d: &[u8], at: usize) -> f32 {
     f32::from_bits(u32::from_be_bytes([d[at], d[at + 1], d[at + 2], d[at + 3]]))
+}
+
+/// The `SYColorRGBA` at `at`, or zero past the end of a truncated file
+/// (as [`FighterAttributes::cliff_air_mask`] reads its words).
+fn rgba(d: &[u8], at: usize) -> [u8; 4] {
+    d.get(at..at + 4)
+        .map_or([0; 4], |c| [c[0], c[1], c[2], c[3]])
 }
 
 fn i32_be(d: &[u8], at: usize) -> i32 {
@@ -272,6 +292,10 @@ impl FighterAttributes {
                     0
                 }
             }),
+            shade_color: core::array::from_fn(|i| {
+                rgba(data, at + SHADE_COLOR_OFFSET as usize + i * 4)
+            }),
+            fog_color: rgba(data, at + FOG_COLOR_OFFSET as usize),
         })
     }
 

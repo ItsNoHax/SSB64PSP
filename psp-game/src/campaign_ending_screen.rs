@@ -10,7 +10,7 @@
 //! its 2D positions are halved onto the 320 x 240 grid, and its sprites at
 //! half their size.
 use super::{
-    draw_model_ex, make_model, sprite, DrawState, Gpu, ModelView, Pack, Presentation,
+    draw_model_ex, make_model, sprite, DrawState, Gpu, ModelView, Pack, Presentation, RspCamera,
 };
 use alloc::boxed::Box;
 use ssb_game::spgame::{
@@ -51,6 +51,8 @@ pub(super) fn make(pres: &mut Presentation, p: &Pack<'_>, screen: &Screen) -> bo
                 ssb_game::spgame::intro::Entrance::ally(0),
             );
             model.pos = movie::FIGHTER_POSITION;
+            // `sMVEndingFighterDemoDesc.shade` (`mvending.c:249`).
+            model.shade = e.shade;
             pres.models.push(model);
             pres.last.room = visual::Room::new(p).map(Box::new);
             pres.last.camera = visual::ending_camera(p);
@@ -162,6 +164,7 @@ unsafe fn draw_ending(
                     aspect: ASPECT,
                     yaw: 0.0,
                     fog: None,
+                    rsp: RspCamera::Projection,
                 },
             );
         }
@@ -341,6 +344,7 @@ unsafe fn draw_challenger(
                 yaw: c.rotate_y,
                 // `dGMColScriptsFighterChallenger`: black at full alpha.
                 fog: Some([0, 0, 0, 0xFF]),
+                rsp: RspCamera::Projection,
             },
         );
     }

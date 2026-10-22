@@ -130,7 +130,7 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 - Other `onep*` specs: run the same real select, then seed their scene at a fixed global tick.
   - `onepintro`, `onepbonus`, `onepcontinue`, `onepretry`, `onepclear`
   - Break the Targets, Board the Platforms, Race to the Finish fixtures
-  - `onepboss*`, `onepmetal`, `onepgiant`, `onepzako`
+  - `onepboss*`, `onepmetal`, `onepgiant`, `onepzako`, `onepyoshi`
   - `onepending`, `onepstaffroll`, `onepcongra`, `onepchallenger`, `onepmessage`, `onepfinale`
 - Fixtures simulate no preceding campaign wins and write no results.
 - Objective, result and handoff logic after the seed: the port's own.

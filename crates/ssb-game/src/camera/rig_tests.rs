@@ -379,3 +379,95 @@ fn a_reborn_fighter_pulls_a_four_player_camera_in() {
     let dist = |c: &Camera| (c.eye - c.at).length();
     assert!(dist(&b) < dist(&a) - 100.0, "{} vs {}", dist(&b), dist(&a));
 }
+
+/// Bonus 1 Practice (Mario, `bonus1` warp, RE-456): the N64's camera per
+/// frame around a pause. START during Go freezes the camera that frame;
+/// `gmCameraMapZoomFuncCamera` then eases `at` to `zoom_start` (0, -500, 0),
+/// the eye to `zoom_end` (0, -500, 15000) and the FOV to 38 each pause
+/// frame; START again freezes one frame, then `gmCameraSetStatusPrev`'s
+/// follow camera (`-9`° pitch, 9000, 0.3, 31.5) runs the 20 restore frames
+/// and once more in the Go frame's `gcRunAll`. Mario stands at
+/// (0, -2550, 0) with `cam_offset_y` 250.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[allow(clippy::excessive_precision)] // the N64 trace's printed f32 values
+fn bonus_pause_zoom_and_restore_follow_the_n64_frames() {
+    let close = |c: &Camera, eye: [f32; 3], at: [f32; 3], fovy: f32, frame: u32| {
+        let near = |a: Vec3, b: [f32; 3]| (a - Vec3::new(b[0], b[1], b[2])).length() < 0.05;
+        assert!(
+            near(c.eye, eye) && near(c.at, at) && (c.fovy_degrees - fovy).abs() < 1e-3,
+            "frame {frame}: eye {:?} at {:?} fovy {}",
+            c.eye,
+            c.at,
+            c.fovy_degrees
+        );
+    };
+    let s = CameraStage {
+        camera: bounds(20000.0),
+        ..stage(BonusFollow::Other)
+    };
+    let mut rig = CameraRig {
+        camera: Camera {
+            eye: Vec3::new(0.0, -911.1759, 8887.9004),
+            at: Vec3::new(0.0, -2299.9998, 0.0),
+            fovy_degrees: 31.5,
+            target_dist: 9000.0,
+            ..Camera::default()
+        },
+        bonus_follow: true,
+        ..CameraRig::default()
+    };
+    let (origin, target) = (Vec3::new(0.0, -500.0, 0.0), Vec3::new(0.0, -500.0, 15000.0));
+    // Frame 60: START; the pause sets the map zoom, nothing runs.
+    rig.camera.begin_map_zoom(origin, target);
+    assert_eq!(rig.target_dist, 15000.0);
+    for frame in 61..=149 {
+        rig.camera.tick_map_zoom(origin, target);
+        match frame {
+            61 => close(
+                &rig,
+                [0.0, -870.0583, 9499.1104],
+                [0.0, -2209.9998, 0.0],
+                32.15,
+                frame,
+            ),
+            149 => close(
+                &rig,
+                [0.0, -500.0348, 14999.4844],
+                [0.0, -518.7357, 0.0],
+                37.9995,
+                frame,
+            ),
+            _ => {}
+        }
+    }
+    // Frame 150: START again; frames 151-170 restore, 171 is Go.
+    let pos = Vec3::new(0.0, -2550.0, 0.0);
+    for frame in 151..=171 {
+        rig.tick(pos, 250.0, &[], None, &s);
+        match frame {
+            151 => close(
+                &rig,
+                [0.0, -416.4611, 14388.3252],
+                [0.0, -1053.1150, 0.0],
+                37.3495,
+                frame,
+            ),
+            170 => close(
+                &rig,
+                [0.0, -785.8984, 9630.9229],
+                [0.0, -2298.5786, 0.0],
+                32.2902,
+                frame,
+            ),
+            171 => close(
+                &rig,
+                [0.0, -798.3274, 9556.6201],
+                [0.0, -2299.0051, 0.0],
+                32.2112,
+                frame,
+            ),
+            _ => {}
+        }
+    }
+}

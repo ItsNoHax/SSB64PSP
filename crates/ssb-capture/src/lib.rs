@@ -313,6 +313,9 @@ pub enum GameScene {
     OnePGiant,
     /// `onepzako`: Duel Zone with the Fighting Polygon Team (RE-458).
     OnePZako,
+    /// `onepyoshi`: Yoshi costume 0 against the Yoshi Team, whose
+    /// same-costume Yoshi takes shade 1 (`sc1pgame.c:1347`, RE-453).
+    OnePYoshi,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -658,6 +661,9 @@ pub enum GameScene {
     /// `bonuspractice`: START on that select: Yoshi's Break the Targets
     /// practice with its time-passed timer.
     BonusPractice,
+    /// `bonuspause`: `bonuspractice` paused at 400 (the map zoom) and
+    /// unpaused at 490, ten restore ticks in (RE-456).
+    BonusPause,
     /// `vsteamsteal`: `vsteam` with two lives each; the player runs off
     /// twice and, asleep, steals a stock from the CPU on its team with
     /// START (RE-464).
@@ -821,7 +827,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 202] = [
+    pub const ALL: [GameScene; 204] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -840,6 +846,7 @@ impl GameScene {
         GameScene::OnePMetal,
         GameScene::OnePGiant,
         GameScene::OnePZako,
+        GameScene::OnePYoshi,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -982,6 +989,7 @@ impl GameScene {
         GameScene::ItemSwitch,
         GameScene::BonusSelect,
         GameScene::BonusPractice,
+        GameScene::BonusPause,
         GameScene::VsTeamSteal,
         GameScene::VsPush,
         GameScene::VsKnock,
@@ -1046,6 +1054,7 @@ impl GameScene {
             GameScene::OnePMetal => "onepmetal",
             GameScene::OnePGiant => "onepgiant",
             GameScene::OnePZako => "onepzako",
+            GameScene::OnePYoshi => "onepyoshi",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",
@@ -1189,6 +1198,7 @@ impl GameScene {
             GameScene::ItemSwitch => "itemswitch",
             GameScene::BonusSelect => "bonusselect",
             GameScene::BonusPractice => "bonuspractice",
+            GameScene::BonusPause => "bonuspause",
             GameScene::VsTeamSteal => "vsteamsteal",
             GameScene::VsPush => "vspush",
             GameScene::VsKnock => "vsknock",
