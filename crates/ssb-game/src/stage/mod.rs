@@ -715,6 +715,22 @@ impl Stage {
         }
     }
 
+    /// Mushroom Kingdom's controller, when this is that stage.
+    pub fn inishie(&self) -> Option<&inishie::Inishie> {
+        match &self.controller {
+            Controller::Inishie(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// Yoshi's Island's controller, when this is that stage.
+    pub fn yoster(&self) -> Option<&yoster::Yoster> {
+        match &self.controller {
+            Controller::Yoster(c) => Some(c),
+            _ => None,
+        }
+    }
+
     /// [`Self::yamabuki`], to write it as a debugger would (the replays'
     /// RDRAM pokes).
     pub fn yamabuki_mut(&mut self) -> Option<&mut yamabuki::Yamabuki> {

@@ -118,6 +118,10 @@ crates/ssb-rom/tests/explain_movement.rs	N64_GRABS	test fixture: N64 measurement
 crates/ssb-rom/tests/explain_movement.rs	N64_HITS	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64_SEEDS	test fixture: N64 measurements (RE-468, RE-472)
 crates/ssb-rom/tests/fighter_fidelity.rs	DESCS	layout: ROM offsets of each fighter's special status descs and motion descs
+crates/ssb-rom/tests/inishie_replays.rs	FB_PADS	test fixture: N64 measurements (pad and RNG-seed changes of the traced run)
+crates/ssb-rom/tests/inishie_replays.rs	FB_SEEDS	test fixture: N64 measurements (pad and RNG-seed changes of the traced run)
+crates/ssb-rom/tests/inishie_replays.rs	PIPE_PADS	test fixture: N64 measurements (pad and RNG-seed changes of the traced run)
+crates/ssb-rom/tests/inishie_replays.rs	PIPE_SEEDS	test fixture: N64 measurements (pad and RNG-seed changes of the traced run)
 crates/ssb-rom/tests/special_hi_pitch.rs	BOUND	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	FOX	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
@@ -126,6 +130,8 @@ crates/ssb-rom/tests/special_n64_rows.rs	CAPTAIN	test fixture: N64 measurements 
 crates/ssb-rom/tests/special_n64_rows.rs	KIRBY	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_n64_rows.rs	NESS	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_n64_rows.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/yoster_clouds.rs	YOSTER_PADS	test fixture: N64 measurements (pad and RNG-seed changes of the traced run)
+crates/ssb-rom/tests/yoster_clouds.rs	YOSTER_SEEDS	test fixture: N64 measurements (pad and RNG-seed changes of the traced run)
 psp-asset-viewer/src/addr_diag.rs	PROBES	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/main.rs	TRIANGLE	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/normal_diag.rs	CASES	tooling: render-validation probe fixtures, no ROM data

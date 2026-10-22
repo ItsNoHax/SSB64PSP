@@ -235,6 +235,7 @@ pub fn uv_writes_hold(
                 }
                 OP_WAIT | OP_SET_FLAGS | OP_ADD_LENGTH => {}
                 OP_SET_INTERP => pc += 4,
+                OP_CMD_22 => pc += 4 * (flags & CMD_22_FLAGS).count_ones() as usize,
                 _ => {
                     let per = tick_values_per_track(opcode)
                         .ok_or(MatAnimError::UnknownOpcode { opcode, at: pc - 4 })?;
@@ -532,6 +533,10 @@ const OP_ADD_LENGTH: u32 = 12;
 const OP_SET_INTERP: u32 = 13;
 const OP_SET_ANIM: u32 = 14;
 const OP_SET_FLAGS: u32 = 15;
+/// `ANIM_CMD_22`: sets `anim_wait` outright and fills five `MObjSub` fields
+/// nothing reads (RE-010), one word per flag bit `0x01..=0x10`.
+const OP_CMD_22: u32 = 22;
+const CMD_22_FLAGS: u32 = 0x1F;
 
 /// How many value words a command reads per set track, for every opcode
 /// [`MaterialJoint`] models (a superset of [`values_per_track`]: also the
@@ -602,6 +607,12 @@ impl MaterialJoint {
     /// Whether the script has looped back to where it began.
     pub fn looped(&self) -> bool {
         self.pc == self.start
+    }
+
+    /// The next command's byte offset in the file. Jumps are unconditional,
+    /// so a value seen twice means the script has entered its cycle.
+    pub fn pc(&self) -> usize {
+        self.pc
     }
 
     /// The current value of one of the 15 unified tracks, or `None` if the
@@ -729,6 +740,10 @@ impl MaterialJoint {
                     }
                 }
                 OP_SET_FLAGS => self.anim_wait += payload,
+                OP_CMD_22 => {
+                    self.anim_wait = payload;
+                    self.pc += 4 * (flags & CMD_22_FLAGS).count_ones() as usize;
+                }
                 OP_ADD_LENGTH => {
                     for i in 0..TICK_TRACK_COUNT.min(10) {
                         if flags & (1 << i) != 0 {
@@ -871,6 +886,32 @@ mod tests {
 
     const fn cmd(opcode: u32, flags: u32, payload: u32) -> u32 {
         (opcode << 25) | (flags << 15) | payload
+    }
+
+    /// `ANIM_CMD_22` replaces the wait (here -2 after a 3-frame tick
+    /// over a 1-frame `Wait`) rather than adding to it, and steps over one
+    /// word per flag bit; the words would not parse as commands.
+    #[test]
+    fn command_22_sets_the_wait_and_skips_its_words() {
+        let data = script(&[
+            cmd(OP_WAIT, 0, 1),
+            cmd(OP_CMD_22, 0x15, 5),
+            u32::MAX,
+            u32::MAX,
+            u32::MAX,
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&data, 1.0).unwrap();
+        j.tick(&data, 3.0).unwrap();
+        assert_eq!(j.pc(), 20);
+        for _ in 0..4 {
+            j.tick(&data, 1.0).unwrap();
+            assert!(!j.ended());
+        }
+        j.tick(&data, 1.0).unwrap();
+        assert!(j.ended());
+        assert_eq!(uv_writes_hold(&data, 0, [0.0; 4]), Ok(Some([false; 4])));
     }
 
     /// Mario's upper arm, verbatim from file 296 at `0x2744`.

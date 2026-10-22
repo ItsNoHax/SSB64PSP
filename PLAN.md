@@ -103,10 +103,9 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Slope contour | `explain_movement` does not replay the slope step | RE-510 |
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
-| Fox ledge freeze | Host sweep green (map_tests `every_ledge_catch_leaves_its_cliff_statuses_in_time`); needs a playtest repro | RE-553 |
+| Fox ledge freeze | Host sweep green (`ledge_sweep.rs`, release full sweep); input recorder only if a playtest repro appears | RE-553 |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
 
 ### Audio and rumble (`MS7`)
@@ -126,9 +125,9 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
-| Stages | N64 captures: pipes, plant notification, cloud vapor, scale sparkles, plant KO, Sector Z Arwing, Board the Platforms blocks | RE-428, RE-429, RE-442, RE-446, RE-455 |
+| Stages | Sector Z Arwing laser/reflect N64 capture | RE-428 |
 | Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |
-| Window matanim blobs | Script packs whole source file; command 22 rejected, skippable | RE-010, RE-378, RE-381 |
+| Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | Results wipe | N64 view | RE-464 |
 | CPU | Countdown seed on Dream Land (Whispy +2 draws, N64 untraced); real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |

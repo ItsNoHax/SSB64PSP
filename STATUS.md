@@ -16,11 +16,10 @@
 
 ## Current work
 
+- Landed (batch 41): N64 hazard replays with embedded checkpoints (Mushroom Kingdom pipes/scales/plants, Yoshi's Island clouds, Bonus 2 platforms), real-ledge sweep (no Fox freeze), matanim command 22 port and census; no golden moved (RE-010, RE-364, RE-428, RE-429, RE-442, RE-446, RE-510, RE-553).
 - Landed (batch 40): 1P fighter shade/fog (pack v131), ending room matanim, CP/heart tags, bonus pause (N64-traced), intro RSP camera and modelview lights, loss/win host traces; new goldens `f1-bonus-pause`, `f1-onep-yoshi-shade`, none moved (RE-453, RE-456, RE-458, RE-459).
 - Landed (batch 39): 1P stage 6 and 8 CPU replays bit-exact; facing-velocity audit (`set_lr`), same-frame interrupts after `proc_update` status sets, dead-chain order, Kirby-copy escape; red silhouette confirmed N64 (colanim 39); rebaselined `f1-vs-four` (98583), `f1-vs-team` (96145), `f1-vs-shield-damage` (92245 native px, set-off tick 1274) (RE-413, RE-418, RE-464, RE-568).
 - Landed (batch 38): 1P/CPU traces: stage-4 CPU replay bit-exact, Link Hyrule wake, wall arithmetic, friction sign, CPU over-stage/detect-size/try_roll fixes (RE-503, RE-510, RE-512, RE-566, RE-568).
-- Landed (batch 37): VS two-pad harness and traces; PK reflect fixes, link-order weapon search (RE-566).
-- Landed (batch 36): PK Fire/Thunder on deferred procs; CPU cliff scan on live groups (RE-566, RE-568).
 - Open: Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
 
 ## Next
@@ -34,7 +33,7 @@
 
 ## Verification
 
-Baseline: batch 40; deepest game stack 392400 B of 524288.
+Baseline: batch 41; deepest game stack 392400 B of 524288.
 
 | Check | Result |
 |---|---|

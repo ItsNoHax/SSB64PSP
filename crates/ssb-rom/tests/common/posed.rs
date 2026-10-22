@@ -52,6 +52,11 @@ pub struct Pair {
     /// The effects made as the runtime makes them (`ftParamMakeEffect`'s
     /// scatter draws the RNG); `None` only collects each fighter's queue.
     pub effects: Option<HostEffects>,
+    /// `World::started`: the battle has left its countdown's Wait
+    /// (`gSCManagerBattleState->game_status`).
+    pub started: bool,
+    /// `World::go`: "Go" lands this tick.
+    pub go: bool,
 }
 
 /// A particle runtime and effect manager, run on the packed particle
@@ -290,6 +295,8 @@ impl Default for Pair {
             cpu: None,
             locked: false,
             effects: None,
+            started: true,
+            go: false,
         }
     }
 }
@@ -389,7 +396,8 @@ impl ssb_game::item::ItemAnims for NoProps {}
 
 /// The stage items' trees on the host: Saffron's Pokémon play their
 /// root scripts through [`ssb_rom::ground_obj::GroundObjects`], as
-/// `psp_runtime::scene::ItemAnimsPort` does; no stage object animates.
+/// `psp_runtime::scene::ItemAnimsPort` does (so do Inishie's POW Block
+/// and Piranha Plants); no stage object animates.
 pub struct HostProps<'a, 'p> {
     pub pack: &'a ssb_rom::pack::Pack<'p>,
     pub objects: Option<&'a mut ssb_rom::ground_obj::GroundObjects>,
@@ -404,6 +412,10 @@ impl HostProps<'_, '_> {
             ssb_game::item::ItemAnimTarget::Monster(k) => {
                 Some((ssb_rom::ground_obj::MONSTER_FIRST + k as u8, 0))
             }
+            ssb_game::item::ItemAnimTarget::PowerBlock => {
+                Some((ssb_rom::ground_obj::POWER_BLOCK, 0))
+            }
+            ssb_game::item::ItemAnimTarget::Pakkun(i) => Some((ssb_rom::ground_obj::PAKKUN, i)),
             _ => None,
         }
     }
@@ -451,11 +463,30 @@ fn pupupu_object(obj: ssb_game::stage::StageObj) -> Option<(u8, u8)> {
 /// Jungle's Barrel has the trace's translation ([`Pair::barrel`]); with
 /// [`Pair::objects`], Dream Land's Whispy and flowers play their clips (as
 /// `psp_runtime::scene::StageObjectsPort` does) so the controller reads
-/// when they end.
+/// when they end, and Yoshi's Island's clouds play their material scripts.
 impl ssb_game::stage::StageObjects for HostProps<'_, '_> {
     fn play(&mut self, anim: ssb_game::stage::StageAnim) {
-        if let (Some(o), Some(a)) = (self.objects.as_deref_mut(), pupupu_anim(anim)) {
-            o.play_on(self.pack, a, 0).unwrap();
+        use ssb_game::stage::StageAnim;
+        use ssb_rom::ground_obj as g;
+        let Some(o) = self.objects.as_deref_mut() else {
+            return;
+        };
+        match anim {
+            StageAnim::CloudSolid(i) => o.play_cloud(self.pack, i as usize, g::CLOUD_SOLID_MAT),
+            StageAnim::CloudEvaporate(i) => {
+                o.play_cloud(self.pack, i as usize, g::CLOUD_EVAPORATE_MAT)
+            }
+            _ => {
+                if let Some(a) = pupupu_anim(anim) {
+                    o.play_on(self.pack, a, 0).unwrap();
+                }
+            }
+        }
+    }
+    fn mat_anim_idle(&self, obj: ssb_game::stage::StageObj) -> bool {
+        match (obj, self.objects.as_deref()) {
+            (ssb_game::stage::StageObj::Cloud(i), Some(o)) => o.cloud_idle(self.pack, i as usize),
+            _ => true,
         }
     }
     fn anim_frame(&self, obj: ssb_game::stage::StageObj) -> f32 {
@@ -496,6 +527,26 @@ impl ssb_game::item::ItemAnims for HostProps<'_, '_> {
                 translate: o.item_play(self.pack, a, i),
             },
             _ => ssb_game::item::RootWrite::default(),
+        }
+    }
+    /// `psp_runtime::scene::ItemAnimsPort::add_play`.
+    fn add_play(
+        &mut self,
+        target: ssb_game::item::ItemAnimTarget,
+        anim: ssb_game::item::ItemAnim,
+    ) -> ssb_game::item::RootWrite {
+        use ssb_game::item::ItemAnim;
+        use ssb_rom::ground_obj as g;
+        let (Some((asset, instance)), Some(o)) = (Self::tree(target), self.objects.as_mut()) else {
+            return ssb_game::item::RootWrite::default();
+        };
+        let (joint, mat) = match anim {
+            ItemAnim::PowerBlockDamage => (Some(g::POWER_BLOCK_DAMAGE), None),
+            ItemAnim::PakkunAppear => (Some(g::PAKKUN_APPEAR), Some(g::PAKKUN_APPEAR_MAT)),
+            ItemAnim::PakkunDamaged => (None, Some(g::PAKKUN_DAMAGED_MAT)),
+        };
+        ssb_game::item::RootWrite {
+            translate: o.item_add_play(self.pack, joint, mat, asset, instance),
         }
     }
     fn root_idle(&self, target: ssb_game::item::ItemAnimTarget) -> bool {
@@ -672,6 +723,10 @@ impl ssb_game::matchtick::Seat<HostGround<'_, '_>> for HostSeat<'_, '_> {
                 cpu.computer.process(&self.posed.fighter, &world);
                 self.input = cpu.computer.controller();
             }
+        } else if view.locked {
+            // A locked player reads no pad (`psp-game`'s `play.rs`).
+            self.input = ssb_engine::input::ControllerState::default();
+            (self.tapped, self.released) = (false, false);
         }
         self.posed.tick_interrupt(
             self.pack,
@@ -956,9 +1011,9 @@ fn tick_n(
         effects: &mut sink,
         bonus: None,
         battle: None,
-        started: true,
+        started: pair.started,
         locked: pair.locked,
-        go: false,
+        go: pair.go,
     };
     ssb_game::matchtick::step(&mut arena, &mut seats, &mut world, &mut ());
     sink.queued
