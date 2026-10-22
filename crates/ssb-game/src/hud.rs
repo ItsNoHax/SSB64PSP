@@ -9,6 +9,7 @@
 //! emblem at [`emblem_origin`].
 
 use crate::rng;
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// `GMCOMMON_PLAYERS_MAX`, also the white flash colour's index.
 pub const PLAYERS_MAX: usize = 4;
@@ -39,6 +40,122 @@ pub fn stock_snap_position(pos_x: i32) -> (f32, f32) {
 /// [`stock_snap_position`] at interface height `pos_y`.
 pub fn stock_snap_position_at(pos_x: i32, pos_y: i32) -> (f32, f32) {
     (pos_x as f32, pos_y as f32)
+}
+
+/// What `ftCommonDeadUpdateScore` reads of the interface when a fighter
+/// falls, inside its own process: `gIFCommonPlayerInterface`'s positions,
+/// each damage display's `char_display_count` (its break's draws) and
+/// `gSCManagerBattleState->is_show_score`. The host publishes it from its
+/// displays ([`FallInterface::of`], [`set_fall_interface`]) before the
+/// fighters' processes; a port without a display has no position (no stock
+/// snap, no score).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FallInterface {
+    pub pos: [Option<(i32, i32)>; 4],
+    pub char_display_count: [u8; 4],
+    pub show_score: bool,
+}
+
+impl FallInterface {
+    /// The interface as `displays` show it.
+    pub fn of(displays: &[DamageDisplay; 4], show_score: bool) -> FallInterface {
+        FallInterface {
+            pos: displays.each_ref().map(|d| Some((d.pos_x, d.pos_y))),
+            char_display_count: displays.each_ref().map(|d| d.char_display_count as u8),
+            show_score,
+        }
+    }
+}
+
+// Globals, like the original's interface structs: published by the host,
+// read inside a fighter's process. Kept out of `Effects` and `Fighter`,
+// whose by-value temporaries sit on the game's deepest stack path.
+game_static! {
+    /// Each port's `(x, y)` as two `i16`s.
+    static FALL_POS: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
+}
+game_static! {
+    /// Bit `port`: the port has a position; bit 7: `is_show_score`.
+    static FALL_FLAGS: AtomicU8 = AtomicU8::new(0);
+}
+game_static! {
+    /// Each port's `char_display_count`, one byte each.
+    static FALL_CHARS: AtomicU32 = AtomicU32::new(0);
+}
+game_static! {
+    /// `ifCommonPlayerDamageStartBreakAnim`'s draws per port and glyph,
+    /// `f32` bits, for the host's display to take.
+    static BREAK_VEL_X: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];
+}
+game_static! {
+    /// Bit `port`: a break's draws wait in [`BREAK_VEL_X`].
+    static BREAK_PENDING: AtomicU8 = AtomicU8::new(0);
+}
+
+/// Publishes the interface a fall reads ([`FallInterface`]).
+pub fn set_fall_interface(ui: &FallInterface) {
+    let mut flags = u8::from(ui.show_score) << 7;
+    FALL_POS.with(|pos| {
+        for (port, p) in ui.pos.iter().enumerate() {
+            if let Some((x, y)) = *p {
+                flags |= 1 << port;
+                pos[port].store(
+                    (u32::from(x as i16 as u16) << 16) | u32::from(y as i16 as u16),
+                    Ordering::Relaxed,
+                );
+            }
+        }
+    });
+    FALL_FLAGS.with(|f| f.store(flags, Ordering::Relaxed));
+    FALL_CHARS.with(|c| c.store(u32::from_le_bytes(ui.char_display_count), Ordering::Relaxed));
+}
+
+/// Withdraws the published interface: a fall outside the battle frame
+/// (the demos' own frames) reads no positions and no glyphs.
+pub fn clear_fall_interface() {
+    FALL_FLAGS.with(|f| f.store(0, Ordering::Relaxed));
+    FALL_CHARS.with(|c| c.store(0, Ordering::Relaxed));
+}
+
+/// The interface [`set_fall_interface`] last published.
+pub fn fall_interface() -> FallInterface {
+    let flags = FALL_FLAGS.with(|f| f.load(Ordering::Relaxed));
+    let pos = FALL_POS.with(|pos| {
+        core::array::from_fn(|port| {
+            let v = pos[port].load(Ordering::Relaxed);
+            (flags & (1 << port) != 0).then_some((
+                i32::from((v >> 16) as u16 as i16),
+                i32::from(v as u16 as i16),
+            ))
+        })
+    });
+    FallInterface {
+        pos,
+        char_display_count: FALL_CHARS.with(|c| c.load(Ordering::Relaxed)).to_le_bytes(),
+        show_score: flags & 0x80 != 0,
+    }
+}
+
+/// Leaves a fall's break draws for `port`'s display.
+pub(crate) fn put_break_vel_x(port: usize, vel_x: [f32; 4]) {
+    BREAK_VEL_X.with(|v| {
+        for (i, x) in vel_x.iter().enumerate() {
+            v[(port & 3) * 4 + i].store(x.to_bits(), Ordering::Relaxed);
+        }
+    });
+    BREAK_PENDING.with(|b| b.fetch_or(1 << (port & 3), Ordering::Relaxed));
+}
+
+/// Takes the break draws a fall left for `port`'s display
+/// ([`DamageDisplay::start_break_anim_from`]).
+pub fn take_break_vel_x(port: usize) -> Option<[f32; 4]> {
+    let bit = 1 << (port & 3);
+    if BREAK_PENDING.with(|b| b.fetch_and(!bit, Ordering::Relaxed)) & bit == 0 {
+        return None;
+    }
+    Some(BREAK_VEL_X.with(|v| {
+        core::array::from_fn(|i| f32::from_bits(v[(port & 3) * 4 + i].load(Ordering::Relaxed)))
+    }))
 }
 
 /// `ifCommonPlayerScoreMakeEffect`: the "+1" or "-1" at the player's
@@ -541,6 +658,17 @@ impl DamageDisplay {
     pub fn start_break_anim(&mut self) {
         for c in self.chars[..self.char_display_count].iter_mut() {
             c.vel = (rng::rand_float() * 2.0 - 1.0, -10.0);
+            c.is_lock_movement = false;
+        }
+        self.break_anim_frame = 0;
+        self.is_update_anim = true;
+    }
+
+    /// [`Self::start_break_anim`] with the glyphs' `vel.x` already drawn,
+    /// in the falling fighter's process ([`crate::ko::make_dead_particles`]).
+    pub fn start_break_anim_from(&mut self, vel_x: &[f32; 4]) {
+        for (c, &x) in self.chars[..self.char_display_count].iter_mut().zip(vel_x) {
+            c.vel = (x, -10.0);
             c.is_lock_movement = false;
         }
         self.break_anim_frame = 0;

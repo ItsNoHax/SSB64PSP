@@ -85,12 +85,13 @@ const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
 /// sparkle of Link's Win script.
 const VS_RESULTS_LINK_CAPTURE_TICK: u64 = 780;
 /// `vsshield`'s capture tick (RE-418, RE-438). A capture build's per-tick
-/// log shows the CPU's AttackLw3 setting the player's shield off
-/// (`ftCommonGuardSetOffSetStatus`) in tick 1254's update, the only update
+/// log shows the CPU's AttackS3 setting the player's shield off
+/// (`ftCommonGuardSetOffSetStatus`) in tick 1273's update, the only update
 /// of that hit that leaves the grey row selected. A scene freezes before its
-/// capture tick's update, so freezing at 1255 draws that state. The earlier
-/// set-offs, in ticks 574, 990 and 1055, are the CPU's Fireballs.
-const VS_SHIELD_SET_OFF_TICK: u64 = 1255;
+/// capture tick's update, so freezing at 1274 draws that state. The earlier
+/// set-offs: ticks 574, 990 and 1055 the CPU's Fireballs, 1212 its
+/// AttackAirLw.
+const VS_SHIELD_SET_OFF_TICK: u64 = 1274;
 
 /// `saveunlock`'s A: the message's two-second input wait, from its
 /// fixture at tick 105, has passed.
@@ -2696,6 +2697,7 @@ unsafe fn training_frame(
         }
     }
     let mut none = ssb_game::effect::NoEffects;
+    set_fall_interface(damage_hud, battle.as_ref().is_some_and(|b| b.is_show_score()));
     let mut rt = banks.as_ref().map(|b| ssb_game::effect::EffectRuntime {
         particles: &mut damage_hud.particles,
         effects: &mut damage_hud.effects,
@@ -2773,10 +2775,8 @@ unsafe fn training_frame(
         if let Some(hud) = damage_hud.damage.get_mut(usize::from(f.fighter.port)) {
             update_damage_hud(hud, &f.fighter, fell, started);
         }
-        if let (true, Some(rt)) = (fell, rt.as_mut()) {
-            fall_effects(rt, &damage_hud.damage, battle.as_ref(), &f.fighter);
-        }
     }
+    ssb_game::hud::clear_fall_interface();
     if let Some(b) = battle.as_mut() {
         stock_steal_frame(p, &mut scenes(pl, dummies), b, &damage_hud.damage, &mut damage_hud.steals, rt.as_mut());
     }
@@ -3186,32 +3186,6 @@ fn report_falls(battle: Option<&mut ssb_game::battle::Battle>, f: &mut ssb_game:
     fell
 }
 
-/// The interface half of `ftCommonDeadUpdateScore` (RE-464): the lost
-/// stock's snap (`ifCommonPlayerStockMakeStockSnap`), then where the battle
-/// shows scores, "-1" over the fallen player and "+1" over the player
-/// credited with the fall (`ifCommonPlayerScoreMakeEffect`).
-fn fall_effects(
-    rt: &mut ssb_game::effect::EffectRuntime<'_>,
-    displays: &[ssb_game::hud::DamageDisplay; 4],
-    battle: Option<&ssb_game::battle::Battle>,
-    f: &ssb_game::fighter::Fighter,
-) {
-    let Some(own) = displays.get(usize::from(f.port)) else {
-        return;
-    };
-    let (x, y) = ssb_game::hud::stock_snap_position_at(own.pos_x, own.pos_y);
-    rt.effects.stock_snap(rt.particles, rt.banks, x, y);
-    if !battle.is_some_and(|b| b.is_show_score()) {
-        return;
-    }
-    rt.effects
-        .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position_at(own.pos_x, own.pos_y), -1);
-    if let Some(scorer) = f.damage_player.and_then(|k| displays.get(usize::from(k))) {
-        rt.effects
-            .battle_score(rt.particles, rt.banks, ssb_game::hud::score_position_at(scorer.pos_x, scorer.pos_y), 1);
-    }
-}
-
 /// `ftCommonSleepProcUpdate`'s battle half and the steals' interface
 /// (RE-464): a sleeping thief's START steals a teammate's stock
 /// (`ifCommonPlayerStockStealMakeInterface` and its start burst); a landed
@@ -3301,13 +3275,25 @@ fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
     world.damage_hud.damage = core::array::from_fn(|port| ssb_game::hud::DamageDisplay::new(port, damage[port]));
 }
 
+/// What a fall reads of the interface in its fighter's process
+/// (`ftCommonDeadUpdateScore`): the displays as last frame left them. Out
+/// of line: the battle frame is on the deepest stack path.
+#[inline(never)]
+fn set_fall_interface(damage_hud: &Hud, show_score: bool) {
+    ssb_game::hud::set_fall_interface(&ssb_game::hud::FallInterface::of(&damage_hud.damage, show_score));
+}
+
 /// One frame of `ifCommonPlayerDamageProcUpdate` for a fighter: the break
 /// on a fall (`ftCommonDeadUpdateScore`), its end at the rebirth
 /// (`ftCommonRebirthDownSetStatus`), then the update.
 fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fighter::Fighter, fell: bool, shown: bool) {
     use ssb_game::status::{AnyStatus, Status};
-    if fell {
-        hud.start_break_anim();
+    // The break's draws were made in the fighter's process when the
+    // effect runtime ran it (`ssb_game::ko::make_dead_particles`).
+    match (fell, ssb_game::hud::take_break_vel_x(usize::from(f.port))) {
+        (true, Some(vel_x)) => hud.start_break_anim_from(&vel_x),
+        (true, None) => hud.start_break_anim(),
+        _ => {}
     }
     if hud.is_update_anim && f.status.status == AnyStatus::Common(Status::RebirthDown) {
         hud.stop_break_anim();

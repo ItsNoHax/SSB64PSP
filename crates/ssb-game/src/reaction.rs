@@ -483,7 +483,8 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
         Status::Rebound => {
             f.reaction.rebound_timer -= 1.0;
             if f.reaction.rebound_timer <= 0.0 {
-                status::set_wait(f);
+                // `proc_update`: Wait's interrupt runs on the same frame.
+                status::anim_end_set_wait(f);
             }
         }
         Status::EscapeF | Status::EscapeB => update_escape(f),
@@ -1001,7 +1002,8 @@ fn update_furafura(f: &mut Fighter) {
     crate::grab::update_breakout(f);
     f.grab.breakout_wait += (f.grab.breakout_wait - before) * 3;
     if f.grab.breakout_wait <= 0 {
-        status::set_wait(f);
+        // `proc_update`: Wait's interrupt runs on the same frame.
+        status::anim_end_set_wait(f);
     }
 }
 

@@ -409,8 +409,64 @@ impl HostProps<'_, '_> {
     }
 }
 
-/// Only Jungle's Barrel has a translation: the trace's ([`Pair::barrel`]).
+/// `psp_runtime::scene::ground_anim` for Dream Land's Whispy and flowers.
+fn pupupu_anim(anim: ssb_game::stage::StageAnim) -> Option<usize> {
+    use ssb_game::stage::pupupu::{EyesAnim, MouthAnim};
+    use ssb_game::stage::StageAnim;
+    use ssb_rom::ground_obj as g;
+    let lr = |lr: u8| (lr <= 1).then_some(lr);
+    let phase = |phase: u8| (phase <= 2).then_some(phase);
+    Some(match anim {
+        StageAnim::WhispyEyes { lr: l, status } => {
+            g::whispy_eyes(lr(l)?, status == EyesAnim::Blink)
+        }
+        StageAnim::WhispyMouth { lr: l, status } => g::whispy_mouth(
+            lr(l)?,
+            match status {
+                MouthAnim::Stretch => 0,
+                MouthAnim::Turn => 1,
+                MouthAnim::Open => 2,
+                MouthAnim::Close => 3,
+            },
+        ),
+        StageAnim::FlowersBack { lr: l, phase: p } => g::flowers_back(lr(l)?, phase(p)?),
+        StageAnim::FlowersFront { lr: l, phase: p } => g::flowers_front(lr(l)?, phase(p)?),
+        _ => return None,
+    })
+}
+
+/// `psp_runtime::scene::ground_object` for Dream Land's objects.
+fn pupupu_object(obj: ssb_game::stage::StageObj) -> Option<(u8, u8)> {
+    use ssb_game::stage::StageObj;
+    use ssb_rom::ground_obj as g;
+    Some(match obj {
+        StageObj::WhispyEyes => (g::WHISPY_EYES, 0),
+        StageObj::WhispyMouth => (g::WHISPY_MOUTH, 0),
+        StageObj::FlowersBack => (g::FLOWERS_BACK, 0),
+        StageObj::FlowersFront => (g::FLOWERS_FRONT, 0),
+        _ => return None,
+    })
+}
+
+/// Jungle's Barrel has the trace's translation ([`Pair::barrel`]); with
+/// [`Pair::objects`], Dream Land's Whispy and flowers play their clips (as
+/// `psp_runtime::scene::StageObjectsPort` does) so the controller reads
+/// when they end.
 impl ssb_game::stage::StageObjects for HostProps<'_, '_> {
+    fn play(&mut self, anim: ssb_game::stage::StageAnim) {
+        if let (Some(o), Some(a)) = (self.objects.as_deref_mut(), pupupu_anim(anim)) {
+            o.play_on(self.pack, a, 0).unwrap();
+        }
+    }
+    fn anim_frame(&self, obj: ssb_game::stage::StageObj) -> f32 {
+        let Some((asset, instance)) = pupupu_object(obj) else {
+            return 0.0;
+        };
+        self.objects
+            .as_deref()
+            .and_then(|o| o.instance(asset, instance))
+            .map_or(0.0, |o| o.frame)
+    }
     fn translate(&self, obj: ssb_game::stage::StageObj) -> ssb_engine::math::Vec3 {
         match (obj, self.barrel) {
             (ssb_game::stage::StageObj::TaruCann, Some(p)) => p,
@@ -473,6 +529,12 @@ impl<'a, 'p> ssb_game::matchtick::Arena for HostArena<'a, 'p> {
 
     fn split(&mut self) -> (&Self::Ground, &mut Self::Props) {
         (&self.0, &mut self.1)
+    }
+
+    fn play_anim(&mut self) {
+        if let Some(o) = self.1.objects.as_deref_mut() {
+            o.advance(self.1.pack).unwrap();
+        }
     }
 
     fn play_yakumono_anim(&mut self) {

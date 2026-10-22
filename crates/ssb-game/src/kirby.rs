@@ -1469,8 +1469,8 @@ pub fn update(f: &mut Fighter) {
         K::SpecialNWait | K::SpecialAirNWait => update_inhale_wait(f),
         K::SpecialNTurn | K::SpecialAirNTurn => {
             if f.status.animation_ended() {
-                // `ftKirbySpecialNWaitUpdateLR`.
-                f.facing = f.facing.flipped();
+                // `ftKirbySpecialNWaitUpdateLR` flips `lr` alone.
+                status::set_lr(f, f.facing.flipped());
                 let s = if current == K::SpecialNTurn {
                     K::SpecialNWait
                 } else {

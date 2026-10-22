@@ -253,3 +253,46 @@ fn metal_mario_only_targets_grounded_opponents() {
     let w = world(&opponents);
     assert!(com.find_target(&metal, &w));
 }
+
+#[test]
+fn a_hurt_team_cpu_draws_to_leave_the_objective_to_its_behaviour() {
+    // `ftComputerGetObjectiveStatus`: a damaged Kirby Team CPU at level 3
+    // keeps (level - 3) * 0.03 = 0 <= any draw, so it always returns -1
+    // after one draw; the Yoshi Team's own draw ((level - 4) * 0.01 < 0)
+    // returns first.
+    let opponents = [player_at(600.0)];
+    let w = world(&opponents);
+    for (behavior, draws) in [
+        (Behavior::KirbyTeam, 1),
+        (Behavior::YoshiTeam, 1),
+        (Behavior::PolyTeam, 1),
+    ] {
+        let mut f = standing_mario(0.0);
+        f.damage = 10;
+        let mut com = cpu(&f, behavior);
+        crate::rng::set_seed(11);
+        let status = com.objective_status(&f, &w);
+        let mut want = 11;
+        for _ in 0..draws {
+            crate::rng::set_seed(want);
+            crate::rng::rand_float();
+            want = crate::rng::seed();
+        }
+        crate::rng::set_seed(11);
+        com = cpu(&f, behavior);
+        let _ = com.objective_status(&f, &w);
+        assert_eq!(crate::rng::seed(), want, "{behavior:?}");
+        if behavior != Behavior::PolyTeam {
+            assert_eq!(status, -1, "{behavior:?}");
+        }
+    }
+    // Unhurt, or another behaviour: no draw.
+    for (behavior, damage) in [(Behavior::KirbyTeam, 0), (Behavior::Default, 10)] {
+        let mut f = standing_mario(0.0);
+        f.damage = damage;
+        let mut com = cpu(&f, behavior);
+        crate::rng::set_seed(11);
+        let _ = com.objective_status(&f, &w);
+        assert_eq!(crate::rng::seed(), 11, "{behavior:?} {damage}");
+    }
+}

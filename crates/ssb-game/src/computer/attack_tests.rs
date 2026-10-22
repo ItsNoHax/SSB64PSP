@@ -870,3 +870,31 @@ fn giant_donkey_never_rolls() {
         .count();
     assert!(rolled > 0);
 }
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_1p_link_holds_back_an_attack_until_hurt() {
+    // `ftComputerCheckDetectTarget`: with an attack in reach, 1P Link
+    // draws once against his damage and stops following while it is
+    // under the draw (`fighter_follow_since = 0`).
+    let mut f = standing_mario(0.0);
+    let opponents = [player_at(250.0)];
+    let w = world(&opponents, &[]);
+    for (damage, attacks) in [(0, false), (101, true)] {
+        f.damage = damage;
+        crate::rng::set_seed(5);
+        let mut com = vs_cpu(&f, 9);
+        com.trait_kind = Trait::Link;
+        assert!(com.find_target(&f, &w));
+        com.follow_since = 9;
+        // Seed 5 draws the size multiplier, then the hold-back draw.
+        assert_eq!(com.detect_target(&f, &w, 0.0), attacks, "damage {damage}");
+        assert_eq!(com.follow_since == 0, !attacks, "damage {damage}");
+    }
+    // Any other trait skips that draw: the same seed attacks unhurt.
+    f.damage = 0;
+    crate::rng::set_seed(5);
+    let mut com = vs_cpu(&f, 9);
+    assert!(com.find_target(&f, &w));
+    assert!(com.detect_target(&f, &w, 0.0));
+}

@@ -1820,12 +1820,14 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         crate::reaction::set_shield_break_fly(f);
     } else if f.hits.reflect_lr != 0.0 {
         if base_kind(f.kind) == FighterKind::Fox {
-            // `ftFoxSpecialLwHitSetStatus`: `lr = reflect_lr`.
-            f.facing = if f.hits.reflect_lr > 0.0 {
+            // `ftFoxSpecialLwHitSetStatus`: `lr = reflect_lr` alone, so a
+            // grounded reflector's world ground velocity turns with it.
+            let facing = if f.hits.reflect_lr > 0.0 {
                 crate::fighter::Facing::Right
             } else {
                 crate::fighter::Facing::Left
             };
+            status::set_lr(f, facing);
             status::set_fox_special_lw_hit(f);
         } else if base_kind(f.kind) == FighterKind::Ness {
             // `nFTSpecialCollKindNessReflector`: the bat's reflect.

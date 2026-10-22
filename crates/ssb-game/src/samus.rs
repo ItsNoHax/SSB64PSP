@@ -376,7 +376,9 @@ pub fn update(f: &mut Fighter) {
                         );
                         destroy_charge_shot(f);
                         f.samus.damage_resets_charge = false;
-                        status::set_wait(f);
+                        // `proc_update`: Wait's interrupt runs on the same
+                        // frame.
+                        status::anim_end_set_wait(f);
                     }
                 }
             }
@@ -414,7 +416,9 @@ pub fn update(f: &mut Fighter) {
                 f.physics.vel_air.y = BOMB_VEL_Y_BASE;
                 f.physics.jumps_used = f.attributes.jumps_max;
             } else if f.status.animation_ended() {
-                status::set_wait(f);
+                // `ftAnimEndSetWait` from `proc_update`: Wait's interrupt
+                // runs on this frame.
+                status::anim_end_set_wait(f);
             }
         }
         SamusStatus::SpecialAirLw => {

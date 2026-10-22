@@ -1233,3 +1233,25 @@ fn pk_trails_come_two_frames_apart_and_the_effect_ten_after_the_head() {
     assert_eq!(first, [Some(3), Some(5), Some(7), Some(9)]);
     assert_eq!(made, Some(11));
 }
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn blast_down_bounce_keeps_facing_and_ground_velocity() {
+    // `ftNessSpecialHiJibakuSetStatus` (`ftnessspecialhi.c:750-773`): past
+    // 155 degrees from the floor normal, `goto setdown` skips the `lr`
+    // write, and `ftCommonDownBounceSetStatus` keeps the ground velocity.
+    let mut f = fighter(FighterKind::Ness, 0, true);
+    f.floor = Some(crate::ground::Standing {
+        line: 0,
+        flags: 0,
+        normal: Vec2::new(0.0, 1.0),
+    });
+    f.facing = Facing::Right;
+    f.physics.vel_ground.x = 12.0;
+    let thunder = f.pos + Vec3::new(10.0, 350.0, 0.0);
+    set_blast(&mut f, thunder);
+    assert!(matches!(
+        f.status.status,
+        AnyStatus::Common(crate::status::Status::DownBounceD | crate::status::Status::DownBounceU)
+    ));
+    assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Right, 12.0));
+}

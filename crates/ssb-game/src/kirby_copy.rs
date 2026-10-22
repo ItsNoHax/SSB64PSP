@@ -21,8 +21,6 @@
 //!   inhales.
 //! * **Giant Punch intangibility.** The full punch's `SetHitStatusAll(3)`
 //!   window waits on hit-status intangibility, which is not ported.
-//! * **Escape.** Charge Shot's and Giant Punch's shield-roll interrupts wait
-//!   on the unported `ftCommonEscape` statuses, as in the fighters' own ports.
 //! * **Ledges.** Falcon Punch's and Egg Lay's aerial statuses catch ledges
 //!   in the source; fighter map collision resolves floors only.
 
@@ -737,7 +735,9 @@ fn giant_punch_loop_wrap(f: &mut Fighter, s: K) {
         }
     }
     if f.kirby.copy.donkey_is_cancel {
-        status::set_wait_or_fall(f);
+        // From `proc_update`: Wait's or Fall's `proc_interrupt` runs on this
+        // frame.
+        status::anim_end_set_wait_or_fall(f);
     } else if f.kirby.copy.donkey_is_release {
         set_giant_punch_end(f);
     } else {
@@ -1088,7 +1088,9 @@ pub fn update(f: &mut Fighter) {
                             crate::colanim::ColAnimId::FIGHTER_COMMON_SPECIAL_N_CHARGE,
                             0,
                         );
-                        status::set_wait(f);
+                        // `proc_update`: Wait's interrupt runs on the same
+                        // frame.
+                        status::anim_end_set_wait(f);
                     }
                 }
             }
@@ -1210,9 +1212,13 @@ fn interrupt(f: &mut Fighter) {
                 f.kirby.copy.samus_is_release = true;
             }
         }
+        // `ftKirbyCopySamusSpecialNLoopProcInterrupt`.
         K::CopySamusSpecialNLoop => {
             if taps.contains(N64Buttons::B) || taps.contains(N64Buttons::A) {
                 set_charge_end(f);
+            } else if let Some(escape) = crate::reaction::escape_status(f) {
+                f.kirby.copy.samus_charge_shot = false;
+                crate::reaction::set_escape(f, escape);
             } else if taps.contains(N64Buttons::Z) {
                 f.kirby.copy.samus_charge_shot = false;
                 status::set_wait(f);
@@ -1223,7 +1229,15 @@ fn interrupt(f: &mut Fighter) {
                 f.kirby.copy.donkey_is_release = true;
             }
         }
+        // `ftKirbyCopyDonkeySpecialNLoopProcInterrupt`: a grounded roll
+        // (`ftCommonEscapeCheckInterruptSpecialNDonkey`) comes first.
         K::CopyDonkeySpecialNLoop | K::CopyDonkeySpecialAirNLoop => {
+            if f.is_grounded() {
+                if let Some(escape) = crate::reaction::escape_status(f) {
+                    crate::reaction::set_escape(f, escape);
+                    return;
+                }
+            }
             if taps.contains(N64Buttons::B) || taps.contains(N64Buttons::A) {
                 f.kirby.copy.donkey_is_release = true;
             }

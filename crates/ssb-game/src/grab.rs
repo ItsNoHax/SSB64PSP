@@ -412,7 +412,7 @@ fn catch_pull_flags(kind: FighterKind) -> Option<(f32, f32, f32)> {
 }
 /// `CapturePulled`'s figatree (3 frames) holds its last pose.
 const CAPTURE_PULLED_LENGTH: f32 = 3.0;
-/// `ThrowFTurn`'s figatree, and the frame its script sets flag1.
+/// `ThrowFTurn`'s figatree length.
 const DONKEY_THROWF_TURN_LENGTH: f32 = 12.0;
 /// Cargo throw figatree; `SetFlag2(1)` fires at `WaitAsync(18)`.
 const DONKEY_THROWFF_LENGTH: f32 = 40.0;
@@ -1036,8 +1036,9 @@ fn update_throw(f: &mut Fighter) {
     let frame = f.status.anim_frame;
     let crossed = |at: f32| frame >= at && frame - f.status.timing.anim_speed < at;
     if script.flag1.is_some_and(crossed) {
+        // `lr` and the facing-relative `vel_ground` negate together
+        // (`ftcommonthrow.c:20-22`): the port's world velocity stays.
         f.facing = f.facing.flipped();
-        f.physics.vel_ground.x = -f.physics.vel_ground.x;
     }
     if let Some((at, which)) = script.flag2 {
         if crossed(at) && f.grab.catch.is_some() {
@@ -1662,6 +1663,7 @@ fn check_donkey_pass(f: &mut Fighter) -> bool {
 /// `ftDonkeyThrowFTurnCheckInterruptThrowFCommon` @ 0x8014D810.
 fn check_donkey_turn(f: &mut Fighter) -> bool {
     if f.stick.forward(f.facing) <= status::TURN_STICK_MIN {
+        f.motion_script.flags[1] = 0;
         set_donkey(
             f,
             DonkeyStatus::ThrowFTurn,
@@ -1948,10 +1950,13 @@ pub fn update(f: &mut Fighter) -> bool {
         }
         // `ftDonkeyThrowFTurnProcUpdate` / `...ProcInterrupt`.
         AnyStatus::Donkey(DonkeyStatus::ThrowFTurn) => {
-            let frame = f.status.anim_frame;
-            if frame >= 1.0 && frame - f.status.timing.anim_speed < 1.0 {
+            // The script sets flag 1 on the setter's own play, so the turn
+            // lands on the next `proc_update`. `lr` and the facing-relative
+            // `vel_ground` negate together (`ftdonkeythrowfturn.c:24-31`):
+            // the world velocity stays.
+            if f.motion_script.flags[1] != 0 {
+                f.motion_script.flags[1] = 0;
                 f.facing = f.facing.flipped();
-                f.physics.vel_ground.x = -f.physics.vel_ground.x;
             }
             if f.status.animation_ended() {
                 set_donkey_throwf_wait(f);
@@ -3954,33 +3959,70 @@ mod tests {
         assert_eq!(dummy.damage, 16);
     }
 
+    /// Donkey Kong in the cargo wait (`ThrowFWait`), a Mario held.
+    fn donkey_cargo() -> (Fighter, Fighter) {
+        let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut dk, &mut dummy);
+        to_catch_wait(&mut dk, &mut dummy);
+        press(&mut dk, N64Buttons::A, 0);
+        frame(&mut dk, &mut dummy);
+        for _ in 0..30 {
+            press(&mut dk, 0, 0);
+            frame(&mut dk, &mut dummy);
+            if dk.status.status == AnyStatus::Donkey(DonkeyStatus::ThrowFWait) {
+                break;
+            }
+        }
+        assert_eq!(dk.status.anim_frame, 0.0, "the wait does not play");
+        for _ in 0..3 {
+            press(&mut dk, 0, 0);
+            frame(&mut dk, &mut dummy);
+        }
+        (dk, dummy)
+    }
+
+    /// `ftCommonThrowProcUpdate` and `ftDonkeyThrowFTurnProcUpdate` negate
+    /// `lr` and the facing-relative `vel_ground` together: the turn keeps
+    /// the port's world velocity.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn throw_turns_keep_the_world_ground_velocity() {
+        let mut f = grounded(FighterKind::Donkey, 0, 0.0);
+        f.facing = Facing::Right;
+        status::set_status(&mut f, Status::ThrowB, 0.0, StatusTiming::frames(22.0));
+        // Donkey Kong's back throw sets flag 1 at frame 4.
+        f.status.anim_frame = 4.0;
+        f.status.timing.anim_speed = 1.0;
+        f.physics.vel_ground.x = 30.0;
+        update_throw(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, 30.0));
+
+        let (mut dk, mut dummy) = donkey_cargo();
+        assert_eq!(dk.facing, Facing::Right);
+        press(&mut dk, 0, -100);
+        frame(&mut dk, &mut dummy);
+        let turn = AnyStatus::Donkey(DonkeyStatus::ThrowFTurn);
+        assert_eq!(dk.status.status, turn);
+        dk.physics.vel_ground.x = 30.0;
+        while dk.status.status == turn {
+            press(&mut dk, 0, 0);
+            frame(&mut dk, &mut dummy);
+            assert!(
+                dk.physics.vel_ground.x >= 0.0,
+                "{}",
+                dk.physics.vel_ground.x
+            );
+        }
+        assert_eq!(dk.facing, Facing::Left);
+    }
+
     /// RE-474's N64 Training trace of the cargo: the walk, the turn and
     /// the throw each start on `anim_frame` 1; the turn lasts 11 frames
     /// and the grounded throw 39, while the wait does not play.
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn donkey_cargo_setters_play_their_first_frame_as_the_n64s() {
-        fn cargo() -> (Fighter, Fighter) {
-            let mut dk = grounded(FighterKind::Donkey, 0, 0.0);
-            let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
-            grab(&mut dk, &mut dummy);
-            to_catch_wait(&mut dk, &mut dummy);
-            press(&mut dk, N64Buttons::A, 0);
-            frame(&mut dk, &mut dummy);
-            for _ in 0..30 {
-                press(&mut dk, 0, 0);
-                frame(&mut dk, &mut dummy);
-                if dk.status.status == AnyStatus::Donkey(DonkeyStatus::ThrowFWait) {
-                    break;
-                }
-            }
-            assert_eq!(dk.status.anim_frame, 0.0, "the wait does not play");
-            for _ in 0..3 {
-                press(&mut dk, 0, 0);
-                frame(&mut dk, &mut dummy);
-            }
-            (dk, dummy)
-        }
         fn frames_in(dk: &mut Fighter, dummy: &mut Fighter) -> u32 {
             let start = dk.status.status;
             let mut n = 1;
@@ -3994,7 +4036,7 @@ mod tests {
                 assert!(n < 100, "{start:?} never ends");
             }
         }
-        let (mut dk, mut dummy) = cargo();
+        let (mut dk, mut dummy) = donkey_cargo();
         press(&mut dk, 0, 40);
         frame(&mut dk, &mut dummy);
         assert!(matches!(
@@ -4007,7 +4049,7 @@ mod tests {
         ));
         assert_eq!(dk.status.anim_frame, 1.0, "the walk");
 
-        let (mut dk, mut dummy) = cargo();
+        let (mut dk, mut dummy) = donkey_cargo();
         press(&mut dk, 0, -100);
         frame(&mut dk, &mut dummy);
         assert_eq!(
@@ -4017,7 +4059,7 @@ mod tests {
         assert_eq!(dk.status.anim_frame, 1.0, "the turn");
         assert_eq!(frames_in(&mut dk, &mut dummy), 11);
 
-        let (mut dk, mut dummy) = cargo();
+        let (mut dk, mut dummy) = donkey_cargo();
         press(&mut dk, N64Buttons::A, 0);
         frame(&mut dk, &mut dummy);
         assert_eq!(dk.status.status, AnyStatus::Donkey(DonkeyStatus::ThrowFF));

@@ -3403,7 +3403,11 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         return false;
     }
     if f.stick.forward(f.facing) < SPECIALN_TURN_STICK_MIN {
+        // `ftParamSetStickLR` writes `lr` alone: the original's
+        // facing-relative `vel_ground` now points the other way in the
+        // world, so the port's world one turns with it.
         f.facing = f.facing.flipped();
+        f.physics.vel_ground.x = -f.physics.vel_ground.x;
     }
     match f.kind.character() {
         // Luigi runs Mario's special statuses (`dFTLuigiSpecialStatusDescs`).
@@ -4066,12 +4070,10 @@ pub fn cliff_release_position(f: &mut Fighter) {
     ));
 }
 
+/// `ftCommonCliffCommon2ProcUpdate`: `ftAnimEndCheckSetStatus` with
+/// `mpCommonSetFighterWaitOrFall`, from `proc_update`.
 fn end_cliff_recovery(f: &mut Fighter) {
-    if f.is_grounded() {
-        set_wait(f);
-    } else {
-        set_fall(f);
-    }
+    anim_end_set_wait_or_fall(f);
 }
 
 // ---------------------------------------------------------------------------
@@ -6220,7 +6222,8 @@ pub fn update(f: &mut Fighter) {
             crate::grab::update_breakout(f);
             f.grab.breakout_wait += (f.grab.breakout_wait - before) * 3;
             if f.grab.breakout_wait <= 0 {
-                set_wait(f);
+                // `proc_update`: Wait's interrupt runs on the same frame.
+                anim_end_set_wait(f);
             }
         }
         // `ftAnimEndSetWait`: the whole update function is the animation-end
@@ -6613,7 +6616,9 @@ fn update_extended(f: &mut Fighter) {
                     }
                 }
                 if f.donkey_special_n.cancel {
-                    set_wait_or_fall(f);
+                    // `mpCommonSetFighterWaitOrFall` from `proc_update`:
+                    // Wait's or Fall's `proc_interrupt` runs on this frame.
+                    anim_end_set_wait_or_fall(f);
                     return;
                 } else if f.donkey_special_n.release {
                     donkey_charge_release(f);
@@ -6856,15 +6861,15 @@ fn update_extended(f: &mut Fighter) {
             } else {
                 15.0
             };
-            if f.status.clock >= repeat_frame && f.button_tap().contains(N64Buttons::B) {
+            // `ftFoxSpecialNProcUpdate` ends it with
+            // `mpCommonSetFighterWaitOrFall`, whose status's `proc_interrupt`
+            // then runs on this frame instead of the repeat check
+            // (`ftFoxSpecialNProcInterrupt`).
+            if f.status.animation_ended() {
+                anim_end_set_wait_or_fall(f);
+            } else if f.status.clock >= repeat_frame && f.button_tap().contains(N64Buttons::B) {
                 set_fox_special_n(f);
                 f.stats.restart();
-            } else if f.status.animation_ended() {
-                if f.situation == Situation::Ground {
-                    set_wait(f);
-                } else {
-                    set_fall(f);
-                }
             }
         }
         AnyStatus::Fox(FoxStatus::SpecialHiStart | FoxStatus::SpecialAirHiStart) => {
@@ -6939,7 +6944,8 @@ fn update_extended(f: &mut Fighter) {
             f.fox_special_lw.release_lag = f.fox_special_lw.release_lag.saturating_sub(1);
             f.fox_special_lw.turn_frames = f.fox_special_lw.turn_frames.saturating_sub(1);
             if !f.fox_special_lw.turned {
-                f.facing = f.facing.flipped();
+                // `ftFoxSpecialLwTurnDecTurnFrames` flips `lr` alone.
+                set_lr(f, f.facing.flipped());
                 f.fox_special_lw.turned = true;
             }
             if f.fox_special_lw.turn_frames == 0 {
@@ -7285,11 +7291,25 @@ fn check_fsmash_turn(f: &mut Fighter) -> bool {
 /// `ftParamSetStickLR`: face the way the stick points; a centred stick
 /// faces right (`stick_range.x >= 0`).
 fn set_stick_lr(f: &mut Fighter) {
-    f.facing = if f.stick.x >= 0 {
+    let facing = if f.stick.x >= 0 {
         Facing::Right
     } else {
         Facing::Left
     };
+    set_lr(f, facing);
+}
+
+/// An original `lr` write that leaves `vel_ground` alone
+/// (`ftParamSetStickLR`, and the turns that flip `lr` alone): the original's
+/// facing-relative `vel_ground` then points the other way in the world, so
+/// the port's world one turns with the fighter. A turn that negates
+/// `vel_ground` too (`ftCommonTurnProcUpdate`) keeps the world velocity and
+/// flips `facing` alone.
+pub(crate) fn set_lr(f: &mut Fighter, facing: Facing) {
+    if facing != f.facing {
+        f.physics.vel_ground.x = -f.physics.vel_ground.x;
+    }
+    f.facing = facing;
 }
 
 /// `ftCommonAppealCheckInterruptCommon` @ 0x8014E764: L taunts.
@@ -7404,7 +7424,8 @@ pub fn generic_air_vel(s: AnyStatus) -> Option<AirVel> {
     }
 }
 
-/// `ftAnimEndSetWait` from a `proc_update`: Wait's own interrupt
+/// `ftAnimEndSetWait`, or any `mpCommonSetFighterWaitOrFall` grounded
+/// Wait, from a `proc_update`: Wait's own interrupt
 /// (`ftCommonWaitProcInterrupt`) then runs in the same frame, since
 /// `ftMainProcUpdateInterrupt` reads `proc_interrupt` after `proc_update`.
 pub(crate) fn anim_end_set_wait(f: &mut Fighter) {
@@ -9803,6 +9824,11 @@ mod tests {
         assert_eq!(f.status.status, Status::CliffAttackQuick2);
         assert_eq!(f.situation, Situation::Air); // Mario quick attack uses air kinetics
         assert!(f.cliff.place_phase2);
+        // Release A: Fall's interrupt runs on the frame phase 2 ends
+        // (`ftCommonCliffCommon2ProcUpdate`), and a fresh tap would start
+        // the aerial there.
+        f.input.buttons = N64Buttons(0);
+        f.prev_input = f.input;
         finish_cliff_clip(&mut f, Status::CliffAttackQuick2);
         assert_eq!(f.status.status, Status::Fall);
     }
@@ -10281,5 +10307,286 @@ mod tests {
             f.status.anim_frame_begin,
             crate::dead::REBIRTH_DOWN_FRAME_BEGIN
         );
+    }
+
+    /// `ftParamSetStickLR` turns a reversed Special N's `lr` alone: the
+    /// original's facing-relative `vel_ground` keeps its value, so the
+    /// port's world one turns with the fighter.
+    #[test]
+    fn a_reversed_special_n_turns_the_ground_velocity_with_the_fighter() {
+        use ssb_engine::input::N64Buttons;
+        let mut f = mario();
+        f.physics.vel_ground.x = 12.0;
+        hold_stale(&mut f, -80, 0);
+        f.prev_input.buttons = N64Buttons::default();
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        assert!(check_special_n(&mut f));
+        assert_eq!(f.facing, crate::fighter::Facing::Left);
+        assert_eq!(f.physics.vel_ground.x, -12.0);
+    }
+
+    /// `ftDonkeySpecialNLoopProcUpdate`'s cancel sets Wait from
+    /// `proc_update`: Wait's `proc_interrupt` runs on the same frame, so a
+    /// held stick walks at once.
+    #[test]
+    fn a_cancelled_giant_punch_runs_waits_interrupt_on_the_same_frame() {
+        let mut f = Fighter::new(FighterKind::Donkey, 0, 3);
+        f.situation = Situation::Ground;
+        set_any_status(
+            &mut f,
+            AnyStatus::Donkey(DonkeyStatus::SpecialNLoop),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        f.status.anim_frame = 0.0;
+        f.status.timing.anim_speed = 1.0;
+        f.donkey_special_n.cancel = true;
+        hold_stale(&mut f, 80, 0);
+        update_extended(&mut f);
+        assert!(
+            matches!(
+                f.status.status,
+                AnyStatus::Common(Status::WalkSlow | Status::WalkMiddle | Status::WalkFast)
+            ),
+            "{:?}",
+            f.status.status
+        );
+    }
+
+    /// The animation-end setters `ftFoxSpecialNProcUpdate`,
+    /// `ftSamusSpecialLwProcUpdate`, `ftCommonAttack13ProcUpdate` (Captain's)
+    /// and `ftCaptainSpecialLwProcUpdate` call from `proc_update`: Wait's
+    /// `proc_interrupt` runs on the same frame, so a held stick walks at
+    /// once.
+    #[test]
+    fn grounded_animation_ends_run_waits_interrupt_on_the_same_frame() {
+        for (kind, status) in [
+            (FighterKind::Fox, AnyStatus::Fox(FoxStatus::SpecialN)),
+            (FighterKind::Samus, AnyStatus::Samus(SamusStatus::SpecialLw)),
+            (
+                FighterKind::Captain,
+                AnyStatus::Captain(CaptainStatus::Attack13),
+            ),
+            (
+                FighterKind::Captain,
+                AnyStatus::Captain(CaptainStatus::SpecialLw),
+            ),
+        ] {
+            let mut f = Fighter::new(kind, 0, 3);
+            f.situation = Situation::Ground;
+            set_any_status(&mut f, status, 0.0, StatusTiming::unknown());
+            f.status.timing.anim_length = Some(10.0);
+            f.status.clock = 10.0;
+            hold_stale(&mut f, 80, 0);
+            update_extended(&mut f);
+            assert!(
+                matches!(
+                    f.status.status,
+                    AnyStatus::Common(Status::WalkSlow | Status::WalkMiddle | Status::WalkFast)
+                ),
+                "{status:?} -> {:?}",
+                f.status.status
+            );
+        }
+    }
+
+    /// `ftParamSetStickLR`, `ftFoxSpecialLwTurnDecTurnFrames` and
+    /// `ftKirbySpecialNWaitUpdateLR` write `lr` alone: the port's world
+    /// ground velocity turns with the fighter.
+    #[test]
+    fn lr_writes_alone_reverse_the_ground_velocity() {
+        let mut f = mario();
+        f.facing = Facing::Right;
+        f.physics.vel_ground.x = 12.0;
+        hold_stale(&mut f, -80, 0);
+        set_stick_lr(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, -12.0));
+
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        f.situation = Situation::Ground;
+        set_any_status(
+            &mut f,
+            AnyStatus::Fox(FoxStatus::SpecialLwTurn),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        f.facing = Facing::Right;
+        f.fox_special_lw.turned = false;
+        f.fox_special_lw.turn_frames = 3;
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        f.physics.vel_ground.x = 12.0;
+        update_extended(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, -12.0));
+
+        let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+        f.situation = Situation::Ground;
+        set_any_status(
+            &mut f,
+            AnyStatus::Kirby(KirbyStatus::SpecialNTurn),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        f.status.timing.anim_length = Some(10.0);
+        f.status.clock = 10.0;
+        f.facing = Facing::Right;
+        f.physics.vel_ground.x = 12.0;
+        update_extended(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, -12.0));
+    }
+
+    /// `ftFoxSpecialLwHitSetStatus` and `ftNessSpecialLwProcAbsorb` write
+    /// `lr` alone; their ground statuses keep the friction-decayed
+    /// `vel_ground`, which the port holds in world space.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn reflect_and_absorb_turns_reverse_the_ground_velocity() {
+        let mut fox = Fighter::new(FighterKind::Fox, 0, 3);
+        set_wait(&mut fox);
+        fox.facing = Facing::Right;
+        fox.physics.vel_ground.x = 12.0;
+        fox.hits.reflect_lr = -1.0;
+        crate::combat::proc_params(&mut fox);
+        assert_eq!(fox.status.status, AnyStatus::Fox(FoxStatus::SpecialLwHit));
+        assert_eq!(
+            (fox.facing, fox.physics.vel_ground.x),
+            (Facing::Left, -12.0)
+        );
+
+        let mut ness = Fighter::new(FighterKind::Ness, 0, 3);
+        set_wait(&mut ness);
+        ness.facing = Facing::Right;
+        ness.physics.vel_ground.x = 12.0;
+        crate::ness::proc_absorb(&mut ness, -1.0);
+        assert_eq!(
+            ness.status.status,
+            AnyStatus::Ness(NessStatus::SpecialLwHit)
+        );
+        assert_eq!(
+            (ness.facing, ness.physics.vel_ground.x),
+            (Facing::Left, -12.0)
+        );
+    }
+
+    fn walks(f: &Fighter) -> bool {
+        matches!(
+            f.status.status,
+            AnyStatus::Common(Status::WalkSlow | Status::WalkMiddle | Status::WalkFast)
+        )
+    }
+
+    /// Timer-driven Waits set from a `proc_update` (`ftCommonReboundProcUpdate`,
+    /// `ftCommonFuraFuraProcUpdate`, `ftCommonFuraSleepProcUpdate`,
+    /// `ftCommonCliffCommon2ProcUpdate`, `ftSamusSpecialNLoopProcUpdate`,
+    /// `ftKirbyCopySamusSpecialNLoopProcUpdate`): Wait's `proc_interrupt` runs
+    /// on the same frame, so a held stick walks at once.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn timer_driven_waits_run_waits_interrupt_on_the_same_frame() {
+        let mut f = mario();
+        set_status(&mut f, Status::Rebound, 0.0, StatusTiming::unknown());
+        f.reaction.rebound_timer = 1.0;
+        hold_stale(&mut f, 80, 0);
+        update(&mut f);
+        assert!(walks(&f), "Rebound -> {:?}", f.status.status);
+
+        for status in [Status::FuraFura, Status::FuraSleep] {
+            let mut f = mario();
+            set_status(&mut f, status, 0.0, StatusTiming::unknown());
+            f.grab.breakout_wait = 1;
+            hold_stale(&mut f, 80, 0);
+            update(&mut f);
+            assert!(walks(&f), "{status:?} -> {:?}", f.status.status);
+        }
+
+        let mut f = mario();
+        set_status(
+            &mut f,
+            Status::CliffClimbQuick2,
+            0.0,
+            StatusTiming::unknown(),
+        );
+        f.status.timing.anim_length = Some(10.0);
+        f.status.clock = 10.0;
+        hold_stale(&mut f, 80, 0);
+        update(&mut f);
+        assert!(walks(&f), "CliffClimbQuick2 -> {:?}", f.status.status);
+
+        let mut f = Fighter::new(FighterKind::Samus, 0, 3);
+        f.situation = Situation::Ground;
+        set_any_status(
+            &mut f,
+            AnyStatus::Samus(SamusStatus::SpecialNLoop),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        f.samus.charge_int = 1;
+        f.samus.charge_level = crate::samus::CHARGE_MAX - 1;
+        hold_stale(&mut f, 80, 0);
+        update(&mut f);
+        assert!(walks(&f), "Samus charge -> {:?}", f.status.status);
+
+        let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+        f.situation = Situation::Ground;
+        set_any_status(
+            &mut f,
+            AnyStatus::Kirby(KirbyStatus::CopySamusSpecialNLoop),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        f.kirby.copy.samus_charge_int = 1;
+        f.kirby.copy.samus_charge_level = crate::kirby_copy::CHARGE_MAX - 1;
+        hold_stale(&mut f, 80, 0);
+        update(&mut f);
+        assert!(walks(&f), "Kirby Samus charge -> {:?}", f.status.status);
+    }
+
+    /// `ftCommonRebirthWaitProcUpdate` sets Fall from `proc_update`:
+    /// `ftCommonFallProcInterrupt` runs on the same frame, so a pressed A
+    /// starts the aerial at once.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn rebirth_fall_runs_falls_interrupt_on_the_same_frame() {
+        let mut f = airborne_mario();
+        set_status(&mut f, Status::RebirthWait, 0.0, StatusTiming::unknown());
+        f.dead.rebirth.halo_despawn_wait = 1;
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Common(Status::AttackAirN));
+    }
+
+    /// `ftKirbyCopySamusSpecialNLoopProcInterrupt` and
+    /// `ftKirbyCopyDonkeySpecialNLoopProcInterrupt` roll on a smashed stick
+    /// (`ftCommonEscapeGetStatus`), as the fighters' own loops do.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn kirby_copy_charge_loops_roll_on_a_smashed_stick() {
+        for loop_status in [
+            KirbyStatus::CopySamusSpecialNLoop,
+            KirbyStatus::CopyDonkeySpecialNLoop,
+        ] {
+            let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+            f.situation = Situation::Ground;
+            f.facing = Facing::Right;
+            set_any_status(
+                &mut f,
+                AnyStatus::Kirby(loop_status),
+                0.0,
+                StatusTiming::unknown(),
+            );
+            f.kirby.copy.samus_charge_int = crate::kirby_copy::CHARGE_INT;
+            f.kirby.copy.samus_charge_shot = true;
+            hold(&mut f, 80, 0);
+            update(&mut f);
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Common(Status::EscapeF),
+                "{loop_status:?}"
+            );
+            // `ftKirbyCopySamusSpecialNDestroyChargeShot` on the Samus roll.
+            assert_eq!(
+                f.kirby.copy.samus_charge_shot,
+                loop_status != KirbyStatus::CopySamusSpecialNLoop
+            );
+        }
     }
 }

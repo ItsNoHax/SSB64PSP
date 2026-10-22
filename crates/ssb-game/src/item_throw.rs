@@ -4,7 +4,7 @@
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{Vec2, Vec3};
 
-use crate::fighter::{Facing, Fighter, FighterKind};
+use crate::fighter::{Fighter, FighterKind};
 use crate::item::{HeldItem, ItemRequest, ItemType, ItemWeight};
 use crate::status::{self, AnyStatus, DonkeyStatus, Status, StatusTiming};
 
@@ -260,10 +260,8 @@ fn update_turn(f: &mut Fighter) {
         if f.item_throw.turn_invert_wait != 0 {
             f.item_throw.turn_invert_wait -= 1;
             if f.item_throw.turn_invert_wait == 0 {
-                f.facing = match f.facing {
-                    Facing::Right => Facing::Left,
-                    Facing::Left => Facing::Right,
-                };
+                // `ftCommonItemThrowUpdateModelYaw` flips `lr` alone.
+                crate::status::set_lr(f, f.facing.flipped());
             }
         }
     }
@@ -408,8 +406,9 @@ fn lift_turn(f: &mut Fighter) {
     f.item_throw.model_yaw =
         Some(f.item_throw.model_yaw.unwrap_or_else(|| facing_yaw(f)) - core::f32::consts::PI / 8.0);
     if f.item_throw.lift_turn_tics == 4 {
+        // `ftCommonLiftTurnUpdateModelYaw` negates `lr` and the
+        // facing-relative `vel_ground` together: the world velocity stays.
         f.facing = f.facing.flipped();
-        f.physics.vel_ground.x = -f.physics.vel_ground.x;
     }
 }
 /// `ftCommonHeavyThrowCheckInterruptCommon`: A or B, before cargo actions.
@@ -639,4 +638,33 @@ pub fn drop_item(f: &mut Fighter) {
         throw_mul: 1.0,
     });
     f.items.held = None;
+}
+
+#[cfg(test)]
+mod lr_tests {
+    use super::*;
+    use crate::fighter::Facing;
+
+    /// `ftCommonItemThrowUpdateModelYaw` flips `lr` alone: the original's
+    /// facing-relative `vel_ground` points the other way, so the port's
+    /// world one turns. `ftCommonLiftTurnUpdateModelYaw` negates both: the
+    /// world velocity stays.
+    #[test]
+    fn a_throw_turn_reverses_the_ground_velocity_and_a_lift_turn_keeps_it() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.facing = Facing::Right;
+        f.physics.vel_ground.x = 10.0;
+        f.item_throw.turn_tics = 2;
+        f.item_throw.turn_step = 2;
+        f.item_throw.turn_invert_wait = 1;
+        update_turn(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, -10.0));
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.facing = Facing::Right;
+        f.physics.vel_ground.x = 10.0;
+        f.item_throw.lift_turn_tics = 5;
+        lift_turn(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, 10.0));
+    }
 }

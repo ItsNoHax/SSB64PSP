@@ -1034,6 +1034,8 @@ impl HitEffectSink for EffectRuntime<'_> {
         // (`crate::effect_order`, RE-542).
         self.effects.stamp_fighter(f);
         crate::fteffect::flush(f, self);
+        // The dead statuses' particles, in the same process.
+        crate::ko::make_dead_particles(f, self);
     }
 
     fn process(&mut self) {

@@ -16,13 +16,11 @@
 
 ## Current work
 
-- Landed (batch 38): 1P/CPU traces: stage-4 CPU replay bit-exact, Link Hyrule wake, Falcon Kick roll, Kirby Stone, Ness jibaku, Pikachu ledge catch; wall arithmetic, friction sign, CPU over-stage/detect-size/try_roll fixes; rebaselined `f1-vs-cpu`, `f1-vs-four`, `f1-vs-team`, `f1-vs-shield-damage` (set-off tick 1255) (RE-503, RE-510, RE-512, RE-566, RE-568, RE-418).
-- Landed (batch 37): VS two-pad harness and traces (PK Fire/Thunder reflect, fireball clank); PK reflect fixes, link-order weapon search, reflector record, Pikachu trail item hits; anim slot motion ids, pack v130; rebaselined `f1-cpufx-down` (297 native px) (RE-566).
-- Landed (batch 36): Poké Ball and Saffron traces; PK Fire/Thunder on deferred procs (5 decomp fixes); yakumono anim at P4 link 2; CPU cliff scan on live groups (RE-566, RE-568). No golden moved.
-- Landed (batch 35): Master Hand struck-joint zoom, stock snap, fog darkening, comet tint, wallpaper matanims (RE-457). No golden moved.
-- Landed (batch 34): CPU item tracking, 1P stage-start level/trait and Link wake, VS entry focus ids 0-2 with 2-4 fighters checked against N64 traces; 2 small decomp fixes (RE-568). No golden moved.
-- Landed (batch 32): entry effect clock, capture entry focus pinned, map-step skeleton, link-10 entry effects (RE-567).
-- Open: countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
+- Landed (batch 39): 1P stage 6 and 8 CPU replays bit-exact; facing-velocity audit (`set_lr`), same-frame interrupts after `proc_update` status sets, dead-chain order, Kirby-copy escape; red silhouette confirmed N64 (colanim 39); rebaselined `f1-vs-four` (98583), `f1-vs-team` (96145), `f1-vs-shield-damage` (92245 native px, set-off tick 1274) (RE-413, RE-418, RE-464, RE-568).
+- Landed (batch 38): 1P/CPU traces: stage-4 CPU replay bit-exact, Link Hyrule wake, wall arithmetic, friction sign, CPU over-stage/detect-size/try_roll fixes (RE-503, RE-510, RE-512, RE-566, RE-568).
+- Landed (batch 37): VS two-pad harness and traces; PK reflect fixes, link-order weapon search, pack v130 (RE-566).
+- Landed (batch 36): PK Fire/Thunder on deferred procs; CPU cliff scan on live groups (RE-566, RE-568).
+- Open: Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -35,7 +33,7 @@
 
 ## Verification
 
-Baseline: batch 38 (RE-568); deepest game stack 392440 B of 524288.
+Baseline: batch 39 (RE-568); deepest game stack 392440 B of 524288.
 
 | Check | Result |
 |---|---|

@@ -393,12 +393,11 @@ fn set_blast(f: &mut Fighter, thunder: Vec3) {
     f.ness.thunder_collide = true;
     let dx = f.pos.x - thunder.x;
     let dy = f.pos.y + 150.0 - thunder.y;
-    f.facing = if dx >= 0.0 {
+    let facing = if dx >= 0.0 {
         Facing::Right
     } else {
         Facing::Left
     };
-    f.ness.blast_angle = sy_arc_tan2(dy, dx * f.facing.sign());
     // `ftNessSpecialHiJibakuSetStatus` (`ftnessspecialhi.c:731`): a solid
     // floor, and the blast at least `F_CST_DTOR32(90)` from its normal, keeps
     // Ness grounded; past `F_CST_DTOR32(155)` he bounces down. A flag and a
@@ -412,11 +411,16 @@ fn set_blast(f: &mut Fighter, thunder: Vec3) {
         && on_floor
         && !floor.passable()
         && angle_diff >= ssb_engine::math::f_cst_dtor32(90.0);
+    if ground && angle_diff > ssb_engine::math::f_cst_dtor32(155.0) {
+        // `goto setdown` comes before the `lr` write, and a grounded Ness
+        // keeps his ground velocity: `ftCommonDownBounceSetStatus` alone.
+        crate::reaction::set_down_bounce(f, f.pos.y);
+        return;
+    }
+    // Both setters write `lr` from the blast's side before the angle.
+    f.facing = facing;
+    f.ness.blast_angle = sy_arc_tan2(dy, dx * f.facing.sign());
     if ground {
-        if angle_diff > ssb_engine::math::f_cst_dtor32(155.0) {
-            down_bounce(f);
-            return;
-        }
         // `ftNessSpecialHiJibakuInitStatusVars` pitches the model before
         // `ftMainSetStatus`, whose figatree reset drops it again.
         crate::model_pitch::special_hi(f);
@@ -490,11 +494,14 @@ pub fn absorbing(f: &Fighter) -> bool {
 /// `ftNessSpecialLwProcAbsorb`, from `ftMainProcParams` after PSI Magnet
 /// took a weapon: face the weapon's side and play the hit.
 pub fn proc_absorb(f: &mut Fighter, absorb_lr: f32) {
-    f.facing = if absorb_lr > 0.0 {
+    // `lr = absorb_lr` alone: a grounded magnet's world ground velocity
+    // (the hold's `ftPhysicsApplyGroundVelFriction`) turns with Ness.
+    let facing = if absorb_lr > 0.0 {
         Facing::Right
     } else {
         Facing::Left
     };
+    status::set_lr(f, facing);
     set(
         f,
         if f.is_grounded() {

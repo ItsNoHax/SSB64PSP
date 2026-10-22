@@ -418,6 +418,10 @@ fn reset_special_stats(f: &mut Fighter) {
 
 /// `ftCommonDeadUpdateScore`: a stock match takes a stock.
 fn update_score(f: &mut Fighter) {
+    // Its interface half (the damage display's break, the stock snap, the
+    // scores), made in the same process as the explosion's particle,
+    // before it ([`crate::ko::make_dead_particles`]).
+    crate::ko::request(usize::from(f.port), crate::ko::Pending::Score);
     f.dead.falls = f.dead.falls.saturating_add(1);
     f.dead.scored = true;
     if f.dead.stock_rule || f.dead.spgame_rule {
@@ -463,6 +467,11 @@ fn explode(f: &mut Fighter, kind: ExplodeKind) {
         ExplodeKind::Right | ExplodeKind::Left => pos.y = pos.y.min(c.top).max(c.bottom),
     }
     f.dead.explode = Some((pos, kind));
+    // Its `LBParticle` half is made in this process, when the effect
+    // runtime flushes the fighter ([`crate::ko::make_dead_particles`]): its
+    // draws fall before the later fighters' (`ftMainProcPhysicsMap` runs
+    // `ftCommonDeadCheckInterruptCommon`).
+    crate::ko::request(usize::from(f.port), crate::ko::Pending::Explode);
     f.dead.flash = true;
 }
 
@@ -621,7 +630,8 @@ pub fn update(f: &mut Fighter, current: Status) -> bool {
             update_halo_wait(f);
             if f.dead.rebirth.halo_despawn_wait == 0 {
                 crate::reaction::set_timed_invincible(f, REBIRTH_INVINCIBLE_FRAMES);
-                status::set_fall(f);
+                // `proc_update`: Fall's interrupt runs on the same frame.
+                status::anim_end_set_fall(f);
             } else if status::ground_interrupt(f) {
                 crate::reaction::set_timed_invincible(f, REBIRTH_INVINCIBLE_FRAMES);
             }

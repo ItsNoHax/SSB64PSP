@@ -1182,6 +1182,13 @@ impl Computer {
         if count == 0 {
             return false;
         }
+        // 1P Link holds back until his damage passes a random 1–101%.
+        if self.trait_kind == Trait::Link
+            && f32::from(f.damage) < crate::rng::rand_float() * 100.0 + 1.0
+        {
+            self.follow_since = 0;
+            return false;
+        }
         if self.level < 3
             && f32::from(f.damage) + 5.0
                 < crate::rng::rand_float() * (200.0 - f32::from(self.level) * 50.0)

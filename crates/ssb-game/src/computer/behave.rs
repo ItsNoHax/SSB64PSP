@@ -613,6 +613,25 @@ impl Computer {
             self.set_command_immediate(input::MOVE_AUTO_STICK_TILT_HI_RELEASE_Z);
             return 0;
         }
+        // A damaged team CPU sometimes leaves the rest to the behaviour; the
+        // Yoshi Team falls through to the Kirby Team's draw.
+        if f.damage != 0 {
+            let level = i32::from(self.level);
+            let team = match self.behavior {
+                Behavior::YoshiTeam => {
+                    if (level - 4) as f32 * 0.01 <= crate::rng::rand_float() {
+                        return -1;
+                    }
+                    Some((level - 3) as f32 * 0.03)
+                }
+                Behavior::KirbyTeam => Some((level - 3) as f32 * 0.03),
+                Behavior::PolyTeam => Some(level as f32 * 0.04),
+                _ => None,
+            };
+            if team.is_some_and(|keep| keep <= crate::rng::rand_float()) {
+                return -1;
+            }
+        }
         let inishie_low_platform = world.gkind == Some(gkind::INISHIE)
             && f.floor.is_some()
             && f.pos.y < -100.0

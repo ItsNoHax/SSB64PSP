@@ -428,7 +428,9 @@ pub fn update(f: &mut Fighter) {
             if f.motion_script.flags[1] != 0 && f.attack1.rapid_requested {
                 set_attack100_start(f);
             } else if f.status.animation_ended() {
-                status::set_wait(f);
+                // `ftCommonAttack13ProcUpdate`'s `ftAnimEndSetWait`: Wait's
+                // interrupt runs on this frame.
+                status::anim_end_set_wait(f);
             }
         }
         CaptainStatus::Attack100Start => {
@@ -479,7 +481,9 @@ pub fn update(f: &mut Fighter) {
         // ([`special_lw_proc_map`]).
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir => {
             if f.status.animation_ended() {
-                status::set_wait_or_fall(f);
+                // `ftCaptainSpecialLwDecideSetEndStatus` from `proc_update`:
+                // Wait's or Fall's interrupt runs on this frame.
+                status::anim_end_set_wait_or_fall(f);
             }
         }
         CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi => {

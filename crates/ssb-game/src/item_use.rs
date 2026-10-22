@@ -613,7 +613,8 @@ fn turn(f: &mut Fighter) {
     if f.item_use.turn_left != 0 {
         f.item_use.turn_left -= 1;
         if f.item_use.turn_left == 6 {
-            f.facing = f.facing.flipped();
+            // `ftCommonHammerTurnUpdateModelYaw` flips `lr` alone.
+            crate::status::set_lr(f, f.facing.flipped());
         }
         f.item_use.yaw = Some(f.item_use.yaw.unwrap_or(0.0) - core::f32::consts::PI / 12.0);
     }
@@ -663,4 +664,22 @@ pub fn on_landing(f: &mut Fighter) -> bool {
     };
     switch_shoot(f, s);
     true
+}
+
+#[cfg(test)]
+mod lr_tests {
+    use super::*;
+    use crate::fighter::{Facing, FighterKind};
+
+    /// `ftCommonHammerTurnUpdateModelYaw` flips `lr` alone: the port's world
+    /// ground velocity turns with the fighter.
+    #[test]
+    fn a_hammer_turn_reverses_the_ground_velocity() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.facing = Facing::Right;
+        f.physics.vel_ground.x = 10.0;
+        f.item_use.turn_left = 7;
+        turn(&mut f);
+        assert_eq!((f.facing, f.physics.vel_ground.x), (Facing::Left, -10.0));
+    }
 }

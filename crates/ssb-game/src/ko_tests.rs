@@ -419,3 +419,53 @@ fn the_public_knockback_clear_reads_the_pre_map_x() {
     f.tick_physics_map(&|| s.iter().copied());
     assert_eq!(f.public_knockback, 0.0);
 }
+
+/// `ftCommonDeadUpdateScore` runs inside the falling fighter's process:
+/// its damage display's break draws, then the stock snap (and the scores
+/// where shown) are made when the runtime flushes that fighter, before the
+/// explosion's particle and before any later fighter's process draws.
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn a_fall_makes_its_interface_effects_in_its_own_process() {
+    use crate::effect::HitEffectSink;
+    let mut f = fighter(1);
+    f.damage_player = Some(0);
+    f.pos = Vec3::new(-4001.0, 0.0, 0.0);
+    assert!(dead::check(&mut f));
+    assert!(is_pending(1, Pending::Score));
+    let (bank, mut p, mut e) = particles();
+    crate::hud::set_fall_interface(&crate::hud::FallInterface {
+        pos: [Some((90, 210)), Some((150, 210)), None, None],
+        char_display_count: [1, 2, 0, 0],
+        show_score: true,
+    });
+    crate::rng::set_seed(0x1234);
+    let want = [
+        crate::rng::rand_float() * 2.0 - 1.0,
+        crate::rng::rand_float() * 2.0 - 1.0,
+    ];
+    crate::rng::set_seed(0x1234);
+    let mut rt = crate::effect::EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    rt.fighter(&mut f);
+    assert!(!is_pending(1, Pending::Score));
+    assert_eq!(
+        crate::hud::take_break_vel_x(1),
+        Some([want[0], want[1], 0.0, 0.0])
+    );
+    assert_eq!(crate::hud::take_break_vel_x(1), None);
+    // The snap and both scores on list 3, the explosion on list 2.
+    assert_eq!(p.list(3).count(), 3);
+    assert_eq!(p.list(2).count(), 1);
+    // Taken once: a second flush makes nothing.
+    rt = crate::effect::EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    rt.fighter(&mut f);
+    assert_eq!(p.list(3).count(), 3);
+}
