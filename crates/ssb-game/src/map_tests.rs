@@ -1866,3 +1866,44 @@ fn every_ledge_catch_leaves_its_cliff_statuses_in_time() {
     eprintln!("ledge sweep: {runs} runs, {caught} catches, {episodes} cliff episodes");
     assert!(caught > runs / 3, "{caught} of {runs}");
 }
+
+/// `mpCollisionGetLineDistanceLR` divides before it multiplies (its object
+/// code: `sub.s`, `div.s`, `mul.s`, `add.s`): at `y = 1` on `(0,0)-(7,3)`
+/// that is `0x40155556`, where multiplying first gives `0x40155555`.
+#[test]
+fn wall_line_distance_divides_before_multiplying() {
+    let s = Segment {
+        x1: 0,
+        y1: 0,
+        x2: 7,
+        y2: 3,
+        flags: 0,
+    };
+    assert_eq!(line_distance_lr(&s, 1.0).to_bits(), 0x4015_5556);
+}
+
+/// `mpCollisionCheckFloorLineCollisionSame` (the CPU's path checks): a
+/// floor only stops a segment that comes down onto it from above; one
+/// rising through it from below crosses nothing (N64 1P stage 4, tick
+/// 885).
+#[test]
+fn the_same_line_check_only_sees_a_floor_from_above() {
+    let surfaces = [surface(Kind::Floor, 3, (-100, 0), (100, 0), 0)];
+    let s = || surfaces.iter().copied();
+    let down = line_crossing_same(&s, Kind::Floor, Vec2::new(0.0, 50.0), Vec2::new(0.0, -50.0));
+    assert_eq!(down.map(|(c, _)| c.line), Some(3));
+    let up = line_crossing_same(&s, Kind::Floor, Vec2::new(0.0, -50.0), Vec2::new(0.0, 50.0));
+    assert!(up.is_none());
+}
+
+/// `func_ovl2_800F8FFC`, the test the CPU's
+/// `over_stage` uses: above a floor within its X span, not past its ends
+/// and not below it.
+#[test]
+fn over_floor_needs_the_point_above_a_floor_within_its_span() {
+    let surfaces = [surface(Kind::Floor, 0, (-100, 0), (100, 0), 0)];
+    let at = |x: f32, y: f32| over_floor(surfaces.iter().copied(), Vec3::new(x, y, 0.0));
+    assert!(at(0.0, 30.0));
+    assert!(!at(150.0, 30.0));
+    assert!(!at(0.0, -30.0));
+}

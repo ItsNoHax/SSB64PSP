@@ -85,12 +85,12 @@ const VS_RESULTS_EMBLEM_CAPTURE_TICK: u64 = 742;
 /// sparkle of Link's Win script.
 const VS_RESULTS_LINK_CAPTURE_TICK: u64 = 780;
 /// `vsshield`'s capture tick (RE-418, RE-438). A capture build's per-tick
-/// log shows the CPU's AttackHi3 setting the player's shield off
-/// (`ftCommonGuardSetOffSetStatus`) in tick 609's update, the only update of
-/// that hit that leaves the grey row selected. A scene freezes before its
-/// capture tick's update, so freezing at 610 draws that state. The one
-/// earlier set-off, in tick 573's update, is the CPU's Fireball.
-const VS_SHIELD_SET_OFF_TICK: u64 = 610;
+/// log shows the CPU's AttackLw3 setting the player's shield off
+/// (`ftCommonGuardSetOffSetStatus`) in tick 1254's update, the only update
+/// of that hit that leaves the grey row selected. A scene freezes before its
+/// capture tick's update, so freezing at 1255 draws that state. The earlier
+/// set-offs, in ticks 574, 990 and 1055, are the CPU's Fireballs.
+const VS_SHIELD_SET_OFF_TICK: u64 = 1255;
 
 /// `saveunlock`'s A: the message's two-second input wait, from its
 /// fixture at tick 105, has passed.
@@ -3677,6 +3677,9 @@ fn enter_training(
     // `ftManagerMakeFighter` for each player in turn.
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
     let mut scene = play::FighterScene::at_spawn(p, &stage, lead.kind, lead.spawn, &counts);
+    // `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`: the
+    // CPUs read the player's hurtbox extent.
+    scene.set_damage_detect_size(p);
     scene.fighter.port = 0;
     scene.fighter.team = lead.team;
     scene.fighter.costume = lead.costume;

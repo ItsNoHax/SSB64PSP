@@ -244,7 +244,13 @@ struct Setup<'a> {
     dummy: Dummy,
     /// A VS two-pad replay instead of Training's.
     vs: Option<&'a Vs<'a>>,
+    /// Given each tick's `(tick, P1, P1's queued effects)` after the tick.
+    effects: Option<&'a EffectHook<'a>>,
 }
+
+/// [`Setup::effects`]: `(tick, P1, P1's queued effects)`.
+type EffectHook<'a> =
+    dyn Fn(u64, &mut ssb_game::fighter::Fighter, Vec<ssb_game::fteffect::FighterEffect>) + 'a;
 
 /// A Training hit replay on the Castle.
 struct Replay<'a> {
@@ -404,6 +410,7 @@ impl Replay<'_> {
             gate,
             dummy,
             vs,
+            effects,
         } = setup;
         let bytes = open_pack()?;
         let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
@@ -540,7 +547,11 @@ impl Replay<'_> {
             }
             pair.locked = route.locked(tick);
             if vs.is_none() || tick > first {
-                let _ = tick_pair_pads(&pack, &map, &mut fighters, &pad, &pad1, tick, &mut pair);
+                let [queued, _] =
+                    tick_pair_pads(&pack, &map, &mut fighters, &pad, &pad1, tick, &mut pair);
+                if let Some(effects) = effects {
+                    effects(tick, &mut fighters[0].fighter, queued);
+                }
             }
             // A VS fighter enters its Wait from its entry on this frame.
             for (port, spawn) in vs.iter().flat_map(|v| v.spawns.iter().enumerate()) {
@@ -6337,4 +6348,155 @@ fn two_fighters_fireballs_clank_as_on_the_n64() {
         return;
     };
     out.check("two Marios' Fireballs clank in VS");
+}
+
+/// `b38r2/ts7` (`vspika.z64`, VS Dream Land, Pikachu P1 vs Mario P2, both
+/// human): Pikachu turns right and smashes forward (st 204); Mario walks
+/// right and throws a Fireball (st 223). Pikachu's Thunder Shock spark,
+/// made at its smash's frame 21 (t460), is the only effect it owns at
+/// t460-461 (`EFStruct::fighter_gobj`). The Fireball hits it at t462 (st
+/// 40, 7%, hitlag 7): that frame's `ftMainSetStatus` ran
+/// `ftParamProcStopEffect`, and the spark is gone. Every 6th frame from
+/// Mario's first Wait frame (330), every frame from 440.
+const VS_THUNDER_SHOCK_HIT: &str = "
+90 e7847115
+261 cae1df84
+330 cae1df84 | 10 60.00 0.00 0.00 0 0 0.000 0.000 | 10 0.00 -1397.00 904.00 0 0 0.000 0.000
+336 cae1df84 | 10 66.00 0.00 0.00 0 0 0.000 0.000 | 10 6.00 -1397.00 904.00 0 0 0.000 0.000
+342 cae1df84 | 10 72.00 0.00 0.00 0 0 0.000 0.000 | 10 12.00 -1397.00 904.00 0 0 0.000 0.000
+348 cae1df84 | 10 78.00 0.00 0.00 0 0 0.000 0.000 | 10 18.00 -1397.00 904.00 0 0 0.000 0.000
+354 cae1df84 | 10 84.00 0.00 0.00 0 0 0.000 0.000 | 10 24.00 -1397.00 904.00 0 0 0.000 0.000
+360 cae1df84 | 10 90.00 0.00 0.00 0 0 0.000 0.000 | 10 30.00 -1397.00 904.00 0 0 0.000 0.000
+366 cae1df84 | 10 96.00 0.00 0.00 0 0 0.000 0.000 | 10 36.00 -1397.00 904.00 0 0 0.000 0.000
+372 cae1df84 | 10 102.00 0.00 0.00 0 0 0.000 0.000 | 10 42.00 -1397.00 904.00 0 0 0.000 0.000
+378 cae1df84 | 10 108.00 0.00 0.00 0 0 0.000 0.000 | 10 48.00 -1397.00 904.00 0 0 0.000 0.000
+384 cae1df84 | 10 114.00 0.00 0.00 0 0 0.000 0.000 | 10 4.00 -1397.00 904.00 0 0 0.000 0.000
+390 cae1df84 | 10 120.00 0.00 0.00 0 0 0.000 0.000 | 10 10.00 -1397.00 904.00 0 0 0.000 0.000
+391 72ae7869
+395 1649b442
+396 1649b442 | 10 126.00 0.00 0.00 0 0 0.000 0.000 | 15 6.00 -1073.00 904.00 0 0 0.000 0.000
+402 1649b442 | 10 132.00 0.00 0.00 0 0 0.000 0.000 | 26 3.00 -838.40 889.60 0 0 0.000 0.000
+408 1649b442 | 10 138.00 0.00 0.00 0 0 0.000 0.000 | 26 9.00 -659.60 796.00 0 0 0.000 0.000
+414 1649b442 | 10 144.00 0.00 0.00 0 0 0.000 0.000 | 26 5.00 -480.80 616.00 0 0 0.000 0.000
+420 1649b442 | 10 150.00 0.00 0.00 0 0 0.000 0.000 | 26 1.00 -302.00 361.60 0 0 0.000 0.000
+426 1649b442 | 10 156.00 0.00 0.00 0 0 0.000 0.000 | 26 7.00 -123.20 97.60 0 0 0.000 0.000
+429 daf1b4cc
+432 daf1b4cc | 10 162.00 20.25 0.00 0 0 0.000 0.000 | 31 3.00 -0.65 0.00 0 0 0.000 0.000
+438 daf1b4cc | 18 3.00 60.75 0.00 0 0 0.000 0.000 | 10 2.00 -35.35 0.00 0 0 0.000 0.000
+440 c1bbb05f | 204 1.00 74.25 0.00 0 0 0.000 0.000 | 10 4.00 -48.85 0.00 0 0 0.000 0.000
+441 c1bbb05f | 204 2.00 81.00 0.00 0 0 0.000 0.000 | 10 5.00 -55.60 0.00 0 0 0.000 0.000
+442 c1bbb05f | 204 3.00 87.75 0.00 0 0 0.000 0.000 | 10 6.00 -62.35 0.00 0 0 0.000 0.000
+443 c1bbb05f | 204 4.00 94.50 0.00 0 0 0.000 0.000 | 10 7.00 -69.10 0.00 0 0 0.000 0.000
+444 c1bbb05f | 204 5.00 101.25 0.00 0 0 0.000 0.000 | 10 8.00 -75.85 0.00 0 0 0.000 0.000
+445 c1bbb05f | 204 6.00 108.00 0.00 0 0 0.000 0.000 | 10 9.00 -82.60 0.00 0 0 0.000 0.000
+446 c1bbb05f | 204 7.00 114.75 0.00 0 0 0.000 0.000 | 10 10.00 -89.35 0.00 0 0 0.000 0.000
+447 12dbce4a | 204 8.00 121.50 0.00 0 0 0.000 0.000 | 223 1.00 -96.10 0.00 0 0 0.000 0.000
+448 12dbce4a | 204 9.00 128.25 0.00 0 0 0.000 0.000 | 223 2.00 -102.85 0.00 0 0 0.000 0.000
+449 12dbce4a | 204 10.00 128.25 0.00 0 0 0.000 0.000 | 223 3.00 -102.85 0.00 0 0 0.000 0.000
+450 12dbce4a | 204 11.00 128.25 0.00 0 0 0.000 0.000 | 223 4.00 -102.85 0.00 0 0 0.000 0.000
+451 12dbce4a | 204 12.00 128.25 0.00 0 0 0.000 0.000 | 223 5.00 -102.85 0.00 0 0 0.000 0.000
+452 12dbce4a | 204 13.00 128.25 0.00 0 0 0.000 0.000 | 223 6.00 -102.85 0.00 0 0 0.000 0.000
+453 12dbce4a | 204 14.00 128.25 0.00 0 0 0.000 0.000 | 223 7.00 -102.85 0.00 0 0 0.000 0.000
+454 00994439 | 204 15.00 128.25 0.00 0 0 0.000 0.000 | 223 8.00 -102.85 0.00 0 0 0.000 0.000
+455 00994439 | 204 16.00 128.25 0.00 0 0 0.000 0.000 | 223 9.00 -102.85 0.00 0 0 0.000 0.000
+456 00994439 | 204 17.00 128.25 0.00 0 0 0.000 0.000 | 223 10.00 -102.85 0.00 0 0 0.000 0.000
+457 00994439 | 204 18.00 128.25 0.00 0 0 0.000 0.000 | 223 11.00 -102.85 0.00 0 0 0.000 0.000
+458 00994439 | 204 19.00 128.25 0.00 0 0 0.000 0.000 | 223 12.00 -102.85 0.00 0 0 0.000 0.000
+459 00994439 | 204 20.00 128.25 0.00 0 0 0.000 0.000 | 223 13.00 -102.85 0.00 0 0 0.000 0.000
+460 8124f618 | 204 21.00 128.25 0.00 0 0 0.000 0.000 | 223 14.00 -102.85 0.00 0 0 0.000 0.000
+461 4db793af | 204 22.00 128.25 0.00 0 0 0.000 0.000 | 223 15.00 -102.85 0.00 0 0 0.000 0.000
+462 2d128b23 | 40 1.00 128.25 0.00 7 7 15.779 0.000 | 223 16.00 -102.85 0.00 0 0 0.000 0.000
+463 2d128b23 | 40 1.00 128.25 0.00 7 6 15.779 0.000 | 223 17.00 -102.85 0.00 0 0 0.000 0.000
+464 e6bb16d7 | 40 1.00 128.25 0.00 7 5 15.779 0.000 | 223 18.00 -102.85 0.00 0 0 0.000 0.000
+465 e6bb16d7 | 40 1.00 128.25 0.00 7 4 15.779 0.000 | 223 19.00 -102.85 0.00 0 0 0.000 0.000
+466 dd038acb | 40 1.00 128.25 0.00 7 3 15.779 0.000 | 223 20.00 -102.85 0.00 0 0 0.000 0.000
+467 dd038acb | 40 1.00 128.25 0.00 7 2 15.779 0.000 | 223 21.00 -102.85 0.00 0 0 0.000 0.000
+468 92387aff | 40 1.00 128.25 0.00 7 1 15.779 0.000 | 223 22.00 -102.85 0.00 0 0 0.000 0.000
+469 92387aff | 40 2.00 142.03 0.00 7 0 13.779 0.000 | 223 23.00 -102.85 0.00 0 0 0.000 0.000
+470 9e1f7971 | 40 3.00 153.81 0.00 7 0 11.779 0.000 | 223 24.00 -102.85 0.00 0 0 0.000 0.000
+471 9e1f7971 | 40 4.00 163.59 0.00 7 0 9.779 0.000 | 223 25.00 -102.85 0.00 0 0 0.000 0.000
+472 9e1f7971 | 40 5.00 171.37 0.00 7 0 7.779 0.000 | 223 26.00 -102.85 0.00 0 0 0.000 0.000
+473 9e1f7971 | 40 6.00 177.14 0.00 7 0 5.779 0.000 | 223 27.00 -102.85 0.00 0 0 0.000 0.000
+474 9ad4bb73 | 40 7.00 180.92 0.00 7 0 3.779 0.000 | 223 28.00 -102.85 0.00 0 0 0.000 0.000
+475 9ad4bb73 | 40 8.00 182.70 0.00 7 0 1.779 0.000 | 223 29.00 -102.85 0.00 0 0 0.000 0.000
+476 9ad4bb73 | 40 9.00 182.70 0.00 7 0 0.000 0.000 | 223 30.00 -102.85 0.00 0 0 0.000 0.000
+477 9ad4bb73 | 40 10.00 182.70 0.00 7 0 0.000 0.000 | 223 31.00 -102.85 0.00 0 0 0.000 0.000
+478 6bfcdd85 | 40 11.00 182.70 0.00 7 0 0.000 0.000 | 223 32.00 -102.85 0.00 0 0 0.000 0.000
+479 6bfcdd85 | 10 0.00 182.70 0.00 7 0 0.000 0.000 | 223 33.00 -102.85 0.00 0 0 0.000 0.000
+480 6bfcdd85 | 10 1.00 182.70 0.00 7 0 0.000 0.000 | 223 34.00 -102.85 0.00 0 0 0.000 0.000
+";
+
+/// `ts7`'s routes: P1 Pikachu's turn and forward smash; P2 Mario's walk
+/// and Fireball.
+const TS7_P1: &str = "436:1:x=80;440:1:x=80+a";
+const TS7_P2: &str = "391:42:x=80;447:1:b";
+
+/// No particle bank: the Thunder Shock spark is a display, no generator.
+struct NoBanks;
+
+impl ssb_game::particle::Banks for NoBanks {
+    fn script_count(&self, _: u8) -> u16 {
+        0
+    }
+    fn script(&self, _: u8, _: u16) -> Option<ssb_game::particle::Script<'_>> {
+        None
+    }
+    fn texture_flags(&self, _: u8, _: u16) -> u32 {
+        0
+    }
+}
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn a_hit_ejects_the_thunder_shock_spark_as_on_the_n64() {
+    use ssb_game::effect::{DisplayKind, EffectRuntime, Effects};
+    let replay = Replay {
+        p1: FighterKind::Pikachu,
+        route: TS7_P1,
+        weapons: &|_| Vec::new(),
+    };
+    let vs = Vs {
+        p2: FighterKind::Mario,
+        route2: TS7_P2,
+        spawns: VS_NESS_FOX,
+    };
+    let runtime = core::cell::RefCell::new((
+        Box::new(ssb_game::particle::Particles::new()),
+        Effects::new(0),
+        Vec::new(),
+    ));
+    let flush = |tick: u64, f: &mut ssb_game::fighter::Fighter, queued| {
+        let (particles, effects, sparks) = &mut *runtime.borrow_mut();
+        for e in queued {
+            f.effects.push(e);
+        }
+        let mut rt = EffectRuntime {
+            particles,
+            effects,
+            banks: &NoBanks,
+        };
+        ssb_game::fteffect::flush(f, &mut rt);
+        let live = rt
+            .effects
+            .displays()
+            .filter(|d| matches!(d.kind, DisplayKind::ThunderShock { .. }))
+            .count();
+        sparks.push((tick, live));
+    };
+    let setup = Setup {
+        vs: Some(&vs),
+        effects: Some(&flush),
+        ..Setup::default()
+    };
+    let Some(out) = replay.run_stage(DREAM_LAND, VS_THUNDER_SHOCK_HIT, setup) else {
+        return;
+    };
+    out.check("Pikachu's forward smash is hit by a Fireball in VS");
+    // The N64's `p0ef` column: one spark at t460-461, none from the hit.
+    // The runtime's displays never age here, so none may end on its own.
+    let (_, _, sparks) = &*runtime.borrow();
+    for &(tick, live) in sparks.iter().filter(|(t, _)| (455..=470).contains(t)) {
+        let want = usize::from((460..=461).contains(&tick));
+        assert_eq!(live, want, "Thunder Shock sparks at t{tick}");
+    }
 }

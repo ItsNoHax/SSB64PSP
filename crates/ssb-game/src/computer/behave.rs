@@ -115,10 +115,50 @@ impl ItemSight {
     }
 }
 
-/// `damage_coll_size`, the hurtboxes' extent. The map body's width and top
-/// stand in for it.
+/// `damage_coll_size`, the hurtboxes' extent ([`damage_detect_size`]). A
+/// fighter never posed (host unit tests) has none: the map body's width
+/// and top stand in for it.
 pub fn damage_size(f: &Fighter) -> Vec2 {
-    Vec2::new(f.coll.width, f.coll.top)
+    f.damage_coll_size
+        .unwrap_or(Vec2::new(f.coll.width, f.coll.top))
+}
+
+/// `ftComputerSetFighterDamageDetectSize`, which `ftManagerMakeFighter`
+/// runs once for a human or CPU fighter on its spawn pose: 0.55 times the
+/// extent of TopN and every normal hurtbox's eight corners, in the posed
+/// joints.
+pub fn damage_detect_size(f: &Fighter) -> Vec2 {
+    use crate::combat::HitStatus;
+    use crate::hurtbox::damage_colls;
+    let (mut left, mut right) = (f.pos.x, f.pos.x);
+    let (mut bottom, mut top) = (f.pos.y, f.pos.y);
+    for (i, d) in damage_colls(f.kind).unwrap_or(&[]).iter().enumerate() {
+        if f.damage_colls.hitstatus.get(i) != Some(&HitStatus::Normal) {
+            continue;
+        }
+        let Some(t) = f
+            .joint_transforms
+            .get(usize::from(d.joint))
+            .copied()
+            .flatten()
+        else {
+            continue;
+        };
+        let (offset, size) = f.damage_colls.overrides[i].unwrap_or((d.offset, d.size));
+        for j in 0..8 {
+            let pick = |bit: u32, o: f32, s: f32| if j & bit != 0 { o + s } else { o - s };
+            let p = t.point(Vec3::new(
+                pick(1, offset.x, size.x),
+                pick(2, offset.y, size.y),
+                pick(4, offset.z, size.z),
+            ));
+            left = left.min(p.x);
+            right = right.max(p.x);
+            bottom = bottom.min(p.y);
+            top = top.max(p.y);
+        }
+    }
+    Vec2::new((right - left) * 0.55, (top - bottom) * 0.55)
 }
 
 /// The world a CPU reads each frame.
@@ -215,11 +255,7 @@ where
 {
     /// `func_ovl2_800F8FFC`: some floor lies below the point.
     pub fn over_stage(&self, pos: Vec3) -> bool {
-        map::lines_of((self.surfaces)(), MapSurfaceKind::Floor).any(|(_, s)| {
-            let [x1, y1, x2, y2] = s.coords();
-            let (lo, hi) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
-            y1.min(y2) <= pos.y + 0.001 && lo <= pos.x && pos.x <= hi
-        })
+        map::over_floor((self.surfaces)(), pos)
     }
 
     /// The item and weapon walks' skip: not the CPU's own, nor, with team
@@ -232,23 +268,12 @@ where
         map::line_edge(&self.surfaces, MapSurfaceKind::Floor, line, right)
     }
 
-    /// `mpCollisionCheck{Ceil,LWall,RWall}LineCollisionSame`: the first line
-    /// of `kind` the segment `from`→`to` crosses.
+    /// `mpCollisionCheck{Floor,Ceil,LWall,RWall}LineCollisionSame`: the
+    /// nearest line of `kind` the segment `from`→`to` crosses from its open
+    /// side.
     pub(super) fn crossing(&self, kind: MapSurfaceKind, from: Vec2, to: Vec2) -> Option<u16> {
-        map::lines_of((self.surfaces)(), kind).find_map(|(line, s)| {
-            let [x1, y1, x2, y2] = s.coords();
-            segments_cross(from, to, Vec2::new(x1, y1), Vec2::new(x2, y2)).then_some(line)
-        })
+        map::line_crossing_same(&self.surfaces, kind, from, to).map(|(c, _)| c.line)
     }
-}
-
-fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
-    let cross = |o: Vec2, p: Vec2, q: Vec2| (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
-    let d1 = cross(c, d, a);
-    let d2 = cross(c, d, b);
-    let d3 = cross(a, b, c);
-    let d4 = cross(a, b, d);
-    ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0))
 }
 
 fn sq(v: f32) -> f32 {
@@ -1367,10 +1392,8 @@ impl Computer {
         }
         if f.situation != Situation::Ground {
             self.target_pos.x = f.pos.x;
-            // The map body's top stands in for `damage_coll_size.y`, the
-            // hurtboxes' height.
             self.target_pos.y =
-                if f.pos.y + f.coll.top < self.target_pos.y && f.physics.vel_air.y <= 0.0 {
+                if f.pos.y + damage_size(f).y < self.target_pos.y && f.physics.vel_air.y <= 0.0 {
                     f.pos.y - 1100.0
                 } else {
                     f.pos.y + 1100.0

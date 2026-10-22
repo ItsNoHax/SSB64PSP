@@ -742,8 +742,9 @@ where
         }
     }
     // `wpProcessProcHitCollisions` for the fighters' searches (`proc_hit`,
-    // shield, set-off, reflector, absorb): after every fighter's (priority 0
-    // after 1), so two fighters can meet one shot in a frame. PSP deviation:
+    // shield, set-off; the reflector and absorb wait for the weapons' turn
+    // below): after every fighter's (priority 0 after 1), so two fighters
+    // can meet one shot in a frame. PSP deviation:
     // on the N64 they also follow the items' and the weapons' own searches;
     // those read the weapons from the clash view taken before any search.
     world.weapons.react_to_fighter_hits();
@@ -788,6 +789,20 @@ where
     // The weapons' hit collisions (priority 0, link 5): after the items'
     // (link 4, RE-556 G6). PK Fire's flame item is made in its weapon's.
     hooks.phase(Phase::WeaponCollisions);
+    {
+        let lr: ArrayVec<(u8, f32), SEATS> = seats
+            .iter()
+            .flatten()
+            .map(|x| (x.fighter().port, x.fighter().facing.sign()))
+            .collect();
+        world
+            .weapons
+            .react_to_reflectors(&|port| lr.iter().find(|&&(p, _)| p == port).map(|&(_, l)| l));
+    }
+    // A reflected or absorbed PK Thunder's `is_thunder_destroy`.
+    for f in seats.iter_mut().flatten() {
+        world.weapons.sync_hit_owner(f.fighter_mut());
+    }
     world.weapons.flush_effects(world.effects);
     let ground = arena.ground();
     let map = || ground.surfaces();

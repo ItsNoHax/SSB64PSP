@@ -651,7 +651,12 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             let material = f.floor.map_or(1.0, |floor| {
                 crate::collision::material_friction(floor.flags)
             });
-            physics::apply_ground_friction_with_material(&mut f.physics, &f.attributes, material);
+            physics::apply_ground_friction_with_material(
+                &mut f.physics,
+                &f.attributes,
+                material,
+                f.facing.sign(),
+            );
             true
         }
         _ => false,

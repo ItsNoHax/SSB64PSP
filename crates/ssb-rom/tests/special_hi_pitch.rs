@@ -297,7 +297,12 @@ fn check(port: &[Row], positions: &[[f32; 2]], measured: &[Row]) {
         let same = psp.status.ends_with(&format!("({})", n64.status))
             && (psp.lr == n64.lr || !n64.status.contains("Air"))
             && (n64.ga == NO_GA || psp.ga == n64.ga)
-            && psp.vel == n64.vel
+            // A grounded `vel_air.y` is `(lr * -floor_angle.x) * vel_ground.x`
+            // (`ftPhysicsSetGroundVelTransferAir`): before the launch, where the
+            // stages face the fighter apart, its zero carries the facing's
+            // sign, so only there the value is compared and not the bits.
+            && (psp.vel == n64.vel
+                || (psp.lr != n64.lr && psp.vel.map(fl) == n64.vel.map(fl)))
             && psp.rotate == n64.rotate
             && psp.scale == n64.scale;
         let line = format!(

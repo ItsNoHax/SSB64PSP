@@ -671,9 +671,16 @@ impl Computer {
         self.walk_stop_wait += 1;
         if self.walk_stop_wait >= 30 {
             if self.walk_stop_wait == 30 {
-                if let Some(s) = f.floor {
-                    self.floor_line = Some(s.line);
-                    self.origin_pos = Vec2::new(f.pos.x, f.pos.y);
+                // `coll_data.floor_line_id` is also the projected floor
+                // below an airborne fighter; home is then on that floor.
+                let floor = if f.situation == Situation::Ground {
+                    f.floor.map(|s| (s.line, 0.0))
+                } else {
+                    map::project_floor_line(&world.surfaces, f.pos)
+                };
+                if let Some((line, dist)) = floor {
+                    self.floor_line = Some(line);
+                    self.origin_pos = Vec2::new(f.pos.x, f.pos.y + dist);
                 }
                 self.edge_pos = self.origin_pos;
             }
@@ -849,15 +856,21 @@ impl Computer {
         let random = crate::rng::rand_float();
         let facing = f.facing.sign();
         let behind_me = (self.target_pos.x - f.pos.x) * facing < 0.0;
-        let near = self.target_dist < random * 450.0 + 350.0
-            && ((self.level >= 4
-                && crate::rng::rand_float() * f32::from(11 - self.level.min(10)) < 1.0)
-                || (self.level >= 3 && behind_me));
-        let behind_them = self.target_dist < 800.0
-            && self.level >= 7
-            && crate::rng::rand_float() * f32::from(10 - self.level.min(9)) < 1.0
-            && target.is_some_and(|t| (self.target_pos.x - f.pos.x) * t.facing.sign() < 0.0);
-        if f.situation != Situation::Ground || !(near || behind_them) {
+        // The decomp's `&&`/`||` chain short-circuits: an airborne fighter
+        // draws nothing more, and `near` skips the `behind_them` draw.
+        let near = || {
+            self.target_dist < random * 450.0 + 350.0
+                && ((self.level >= 4
+                    && crate::rng::rand_float() * f32::from(11 - self.level.min(10)) < 1.0)
+                    || (self.level >= 3 && behind_me))
+        };
+        let behind_them = || {
+            self.target_dist < 800.0
+                && self.level >= 7
+                && crate::rng::rand_float() * f32::from(10 - self.level.min(9)) < 1.0
+                && target.is_some_and(|t| (self.target_pos.x - f.pos.x) * t.facing.sign() < 0.0)
+        };
+        if f.situation != Situation::Ground || !(near() || behind_them()) {
             return false;
         }
         if let Some(s) = f.floor {

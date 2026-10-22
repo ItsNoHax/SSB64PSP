@@ -3,6 +3,10 @@
 
 use ssb_rom::archive::Archive;
 
+#[path = "common/slot_statuses.rs"]
+mod slot_statuses;
+use slot_statuses::SLOT_STATUSES;
+
 fn rom() -> Option<Vec<u8>> {
     Some(std::fs::read(ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?).unwrap())
 }
@@ -115,12 +119,41 @@ fn the_hidden_parts_are_the_roms() {
     }
 }
 
-/// Each fixed special slot plays the clip of the motion its ROM status
-/// descriptor names (`FTStatusDesc.mflags >> 6`, then the fighter's motion
-/// descriptor's `anim_file`). The old slots played the next motion's clip:
-/// Fox's reflector loop played `SpecialLwEnd`, which raised joint 4 and the
-/// reflector by ~58 units and reflected PK Thunder three frames early
-/// (RE-566).
+/// `dFTCommonNullStatusDescs`: ROM offset of status 0's `FTStatusDesc`.
+const COMMON_STATUS_DESCS: usize = 0x0A_45D8;
+/// `nFTCommonStatusSpecialStart`, the first fighter-specific status.
+const SPECIAL_START: usize = 220;
+/// `nFTCommonStatusLandingAirN`, `LandingAirLw` and `LandingAirNull`.
+const LANDING_AIR: std::ops::RangeInclusive<usize> = 214..=218;
+const LANDING_AIR_NULL: usize = 219;
+
+/// ROM offsets of each fighter's `dFT<F>SpecialStatusDescs` and
+/// `dFT<F>MotionDescs` (`ssb-tablegen` `stat_flags.rs`, `fighters.rs`).
+const DESCS: [(&str, usize, usize); 12] = [
+    ("Mario", 0x0A_5708, 0x09_2680),
+    ("Fox", 0x0A_5A14, 0x09_44B0),
+    ("Donkey", 0x0A_57BC, 0x09_5A30),
+    ("Samus", 0x0A_5C1C, 0x09_7AD0),
+    ("Luigi", 0x0A_5CF8, 0x09_8F10),
+    ("Link", 0x0A_5DAC, 0x09_A330),
+    ("Yoshi", 0x0A_66F8, 0x09_B810),
+    ("Captain", 0x0A_657C, 0x09_CC90),
+    ("Kirby", 0x0A_5F00, 0x09_E190),
+    ("Pikachu", 0x0A_6810, 0x09_FB00),
+    ("Purin", 0x0A_6978, 0x0A_0FB0),
+    ("Ness", 0x0A_6AB8, 0x0A_2450),
+];
+
+/// Every fighter-specific slot plays the clip of the motion its status's
+/// ROM descriptor names (`FTStatusDesc.mflags >> 6`, then the fighter's
+/// motion descriptor's `anim_file`), as `ftMainSetStatus` loads it. The old
+/// fixed slots played the next motion's clip: Fox's reflector loop played
+/// `SpecialLwEnd`, which raised joint 4 and the reflector by ~58 units and
+/// reflected PK Thunder three frames early (RE-566).
+///
+/// A `LandingAirX` whose motion has no clip is never entered:
+/// `ftCommonAttackAirProcMap` takes `LandingAirNull` instead, so its slot
+/// holds that clip (Ness's `LandingAirLw`).
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn special_slots_play_their_status_descs_motion() {
@@ -129,31 +162,38 @@ fn special_slots_play_their_status_descs_motion() {
     };
     let be16 = |at: usize| i16::from_be_bytes([rom[at], rom[at + 1]]);
     let be32 = |at: usize| u32::from_be_bytes(rom[at..at + 4].try_into().unwrap());
-    // (fighter, slot, special status index, status descs, motion descs):
-    // `ft{fox,captain,pikachu}.h` order, ROM offsets of
-    // `dFT<F>SpecialStatusDescs` and `dFT<F>MotionDescs`.
-    let cases = [
-        ("Fox", "FoxSpecialLwLoop", 19, 0x0A_5A14, 0x09_44B0),
-        ("Fox", "FoxSpecialAirLwLoop", 24, 0x0A_5A14, 0x09_44B0),
-        ("Captain", "CaptainSpecialLwBound", 14, 0x0A_657C, 0x09_CC90),
-        ("Captain", "CaptainSpecialAirHi", 18, 0x0A_657C, 0x09_CC90),
-        ("Pikachu", "PikachuSpecialLwHit", 6, 0x0A_6810, 0x09_FB00),
-    ];
-    for (name, slot_name, status, descs, motions) in cases {
-        let motion = (be16(descs + status * 0x14) >> 6) as usize;
-        let file = be32(motions + motion * 12);
+    let status_file = |status_descs: usize, motions: usize, status: usize| {
+        let desc = if status < SPECIAL_START {
+            COMMON_STATUS_DESCS + status * 0x14
+        } else {
+            status_descs + (status - SPECIAL_START) * 0x14
+        };
+        let motion = be16(desc) >> 6;
+        assert!(motion >= 0, "status {status} has no motion ({motion})");
+        (motion, be32(motions + motion as usize * 12))
+    };
+    // One row per `Recipe::Special` slot (413), plus Mario's seven for Luigi.
+    let slots: std::collections::BTreeSet<_> = SLOT_STATUSES.iter().map(|r| r.0).collect();
+    assert_eq!(slots.len(), 413);
+    for &(slot_name, name, status) in SLOT_STATUSES.iter() {
+        let (_, status_descs, motions) = DESCS.iter().find(|d| d.0 == name).unwrap();
+        let (mut motion, mut file) = status_file(*status_descs, *motions, status);
+        if file == 0 && LANDING_AIR.contains(&status) {
+            (motion, file) = status_file(*status_descs, *motions, LANDING_AIR_NULL);
+        }
         let slot = ssb_rom::anim::SLOT_NAMES
             .iter()
             .position(|n| *n == slot_name)
-            .unwrap();
+            .unwrap_or_else(|| panic!("{slot_name} is a slot"));
         let fighter = ssb_rom::anim::FIGHTER_ANIMS
             .iter()
             .find(|f| f.name == name)
             .unwrap();
+        assert_ne!(file, 0, "{name} {slot_name}: status {status} has a clip");
         assert_eq!(
             u32::from(fighter.files[slot]),
             file,
-            "{slot_name}: motion {motion}"
+            "{name} {slot_name}: status {status}, motion {motion}"
         );
     }
 }

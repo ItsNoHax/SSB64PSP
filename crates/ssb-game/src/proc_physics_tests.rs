@@ -823,3 +823,69 @@ fn donkey_throwf_damage_keeps_its_status_off_an_edge() {
     assert_eq!(f.physics.jumps_used, 1);
     assert_eq!(f.hitstun, 7);
 }
+
+/// The common table (`ftcommonstatus.h`) as well: only
+/// `ftPhysicsApplyAirVelDriftFastFall` takes a down flick. The aerials, the
+/// air item throws and shooters drift (`ftPhysicsApplyAirVelDrift`) and the
+/// shield-break flight has friction only, so none of them starts a fast
+/// fall; the N64 1P stage-4 trace keeps a CPU Mario's AttackAirLw at its
+/// normal fall speed on the frame it flicks down.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn only_the_common_fast_fall_callbacks_take_a_down_flick() {
+    use crate::status::Status as S;
+    const DRIFT_FAST_FALL: &[S] = &[
+        S::JumpF,
+        S::JumpB,
+        S::JumpAerialF,
+        S::JumpAerialB,
+        S::Fall,
+        S::FallAerial,
+        S::Pass,
+        S::GuardPass,
+        S::DamageFall,
+        S::HammerFall,
+    ];
+    const NO_FAST_FALL: &[S] = &[
+        S::LightThrowAirF,
+        S::LightThrowAirB,
+        S::LightThrowAirHi,
+        S::LightThrowAirLw,
+        S::LightThrowAirF4,
+        S::LightThrowAirB4,
+        S::LightThrowAirHi4,
+        S::LightThrowAirLw4,
+        S::LGunShootAir,
+        S::FireFlowerShootAir,
+        S::AttackAirN,
+        S::AttackAirF,
+        S::AttackAirB,
+        S::AttackAirHi,
+        S::AttackAirLw,
+        S::ShieldBreakFly,
+        S::ShieldBreakFall,
+    ];
+    let mut bad = Vec::new();
+    for (list, want) in [(DRIFT_FAST_FALL, true), (NO_FAST_FALL, false)] {
+        for &s in list {
+            let got = probe(
+                FighterKind::Mario,
+                AnyStatus::Common(s),
+                false,
+                0,
+                Vec3::ZERO,
+            )
+            .physics
+            .is_fastfall;
+            if got != want {
+                bad.push(format!("{s:?}: fast fall {got}, want {want}"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} mismatches:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}

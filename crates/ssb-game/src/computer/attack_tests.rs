@@ -177,6 +177,102 @@ fn the_1p_traits_set_their_behaviours() {
     assert_eq!(com.objective_base, Objective::Ally);
 }
 
+/// N64 1P stage traces (`warp1p_{4,6,8,1}`, RE-568), per CPU: fighter,
+/// trait, level, then the behaviour, `objective_base` and objective after
+/// the first battle tick (tp 0) and `behavior_change_wait` at tp 0, 299
+/// and 1000. None of these traits re-rolls: the behaviour and base hold
+/// through tp 1500, and the wait stops at 0.
+const N64_1P_TRAIT_ROWS: [(FighterKind, Trait, u8, Behavior, Objective, [u16; 3]); 7] = [
+    // Mario Bros: the ally, Mario, Luigi.
+    (
+        FighterKind::Fox,
+        Trait::Ally,
+        5,
+        Behavior::Ally,
+        Objective::Ally,
+        [239, 0, 0],
+    ),
+    (
+        FighterKind::Mario,
+        Trait::MarioBros,
+        3,
+        Behavior::Default,
+        Objective::Attack,
+        [719, 420, 0],
+    ),
+    (
+        FighterKind::Luigi,
+        Trait::MarioBros,
+        3,
+        Behavior::Ally,
+        Objective::Ally,
+        [719, 420, 0],
+    ),
+    // Giant Donkey Kong: an ally, Giant DK.
+    (
+        FighterKind::Kirby,
+        Trait::Ally,
+        4,
+        Behavior::Ally,
+        Objective::Ally,
+        [479, 180, 0],
+    ),
+    (
+        FighterKind::GiantDonkey,
+        Trait::GiantDonkey,
+        4,
+        Behavior::Default,
+        Objective::Attack,
+        [479, 180, 0],
+    ),
+    // Kirby team, Yoshi team.
+    (
+        FighterKind::Kirby,
+        Trait::KirbyTeam,
+        4,
+        Behavior::KirbyTeam,
+        Objective::Patrol,
+        [479, 180, 0],
+    ),
+    (
+        FighterKind::Yoshi,
+        Trait::YoshiTeam,
+        2,
+        Behavior::YoshiTeam,
+        Objective::Ally,
+        [959, 660, 0],
+    ),
+];
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_1p_stage_traits_hold_their_behaviour_as_on_the_n64() {
+    let opponents = [player_at(1900.0)];
+    let w = world(&opponents, &[]);
+    for (kind, t, level, behavior, base, waits) in N64_1P_TRAIT_ROWS {
+        crate::rng::set_seed(1);
+        let mut f = standing_mario(0.0);
+        f.kind = kind;
+        let mut com = vs_cpu(&f, level);
+        com.trait_kind = t;
+        for tp in 0..=1000u16 {
+            com.process(&f, &w);
+            let row = format!("{kind:?} {t:?} tp {tp}");
+            assert_eq!(
+                (com.behavior, com.objective_base),
+                (behavior, base),
+                "{row}"
+            );
+            if tp == 0 {
+                assert_eq!(com.objective, base, "{row}");
+            }
+            if let Some(i) = [0, 299, 1000].iter().position(|&p| p == tp) {
+                assert_eq!(com.behavior_change_wait, waits[i], "{row}");
+            }
+        }
+    }
+}
+
 #[test]
 fn the_link_trait_stands_until_hurt_or_the_wait_runs_out() {
     let mut f = standing_mario(0.0);

@@ -49,6 +49,92 @@ pub struct Pair {
     pub cpu: Option<HostCpu>,
     /// The control lock this tick (`World::locked`): Training's menu.
     pub locked: bool,
+    /// The effects made as the runtime makes them (`ftParamMakeEffect`'s
+    /// scatter draws the RNG); `None` only collects each fighter's queue.
+    pub effects: Option<HostEffects>,
+}
+
+/// A particle runtime and effect manager, run on the packed particle
+/// banks: the effect makers draw the RNG as on the N64 (a dust's spin and
+/// angle are drawn only once its particle is made).
+pub struct HostEffects {
+    pub particles: Box<ssb_game::particle::Particles>,
+    pub effects: ssb_game::effect::Effects,
+}
+
+impl Default for HostEffects {
+    fn default() -> Self {
+        HostEffects {
+            particles: Box::new(ssb_game::particle::Particles::new()),
+            effects: ssb_game::effect::Effects::new(0),
+        }
+    }
+}
+
+/// The packed particle banks as the runtime sees them (as
+/// `psp-runtime`'s `PackBanks`): runtime bank 0 is the common bank.
+pub struct PackBanks<'p, 'a> {
+    pub pack: &'p ssb_rom::pack::Pack<'a>,
+}
+
+impl PackBanks<'_, '_> {
+    fn bank(&self, id: u8) -> Option<ssb_rom::pack::ParticleBankDesc> {
+        use ssb_game::effect;
+        let named = |name: &str| {
+            let i = ssb_rom::particle::BANKS
+                .iter()
+                .position(|b| b.name == name)?;
+            self.pack.particle_bank(i as u32)
+        };
+        match id {
+            0 => self.pack.particle_bank(0),
+            effect::YOSHI_PARTICLE_BANK => self.pack.particle_bank(3),
+            effect::HYRULE_PARTICLE_BANK => named("grhyrule"),
+            effect::PUPUPU_PARTICLE_BANK => named("grpupupu"),
+            effect::KIRBY_PARTICLE_BANK => named("particles_unk0"),
+            _ => None,
+        }
+    }
+}
+
+impl ssb_game::particle::Banks for PackBanks<'_, '_> {
+    fn script_count(&self, bank: u8) -> u16 {
+        self.bank(bank).map_or(0, |b| b.script_count as u16)
+    }
+
+    fn script(&self, bank: u8, id: u16) -> Option<ssb_game::particle::Script<'_>> {
+        let bank = self.bank(bank)?;
+        if u32::from(id) >= bank.script_count {
+            return None;
+        }
+        let s = self
+            .pack
+            .particle_script(bank.first_script + u32::from(id))?;
+        Some(ssb_game::particle::Script {
+            kind: s.kind,
+            texture_id: s.texture_id,
+            generator_lifetime: s.generator_lifetime,
+            particle_lifetime: s.particle_lifetime,
+            flags: s.flags,
+            gravity: s.gravity,
+            friction: s.friction,
+            vel: ssb_engine::math::Vec3::new(s.velocity[0], s.velocity[1], s.velocity[2]),
+            unk_20: s.unknown_20,
+            unk_24: s.unknown_24,
+            update_rate: s.update_rate,
+            size: s.size,
+            bytecode: self.pack.particle_bytecode(&s).unwrap_or(&[]),
+        })
+    }
+
+    fn texture_flags(&self, bank: u8, texture: u16) -> u32 {
+        let Some(bank) = self.bank(bank) else {
+            return 0;
+        };
+        self.pack
+            .particle_texture(bank.first_texture + u32::from(texture))
+            .map_or(0, |t| t.flags)
+    }
 }
 
 /// A CPU seat on the host, as `psp-game`'s `Dummy` runs one: the computer
@@ -58,7 +144,16 @@ pub struct HostCpu {
     pub stage: ssb_game::dead::StageBounds,
     /// `gSCManagerBattleState->gkind`.
     pub gkind: Option<u8>,
+    /// `gSCManagerBattleState->game_type == nSCBattleGameType1PGame`.
+    pub is_1p_game: bool,
 }
+
+/// A CPU's map: the stage's surfaces and, with moving groups, the groups
+/// and each line's group.
+type CpuMap<'a> = (
+    &'a [ssb_game::weapon::MapSurface],
+    Option<(&'a [ssb_game::map::MapGroup], &'a [u16])>,
+);
 
 impl HostCpu {
     /// `ftComputerSetupAll` for Training's dummy `f` on the pack stage
@@ -74,14 +169,51 @@ impl HostCpu {
         map: &[ssb_game::weapon::MapSurface],
         groups: Option<(&[ssb_game::map::MapGroup], &[u16])>,
     ) -> HostCpu {
-        let mut computer = Box::new(ssb_game::computer::Computer::setup(f, 3));
-        computer.behavior = ssb_game::computer::Behavior::Stand;
-        computer.trait_kind = ssb_game::computer::attack::Trait::None;
-        let mut cpu = HostCpu {
-            computer,
+        let mut cpu = HostCpu::setup(f, stage, bounds, 3, false);
+        cpu.computer.behavior = ssb_game::computer::Behavior::Stand;
+        cpu.computer.trait_kind = ssb_game::computer::attack::Trait::None;
+        cpu.setup_world(f, map, groups);
+        cpu
+    }
+
+    /// `ftComputerSetupAll` for a 1P game's CPU `f` at `level` with the
+    /// stage's `trait_kind` (`sc1PGameSetupStageAll`), its behaviour the
+    /// setup's default; `groups` as [`HostCpu::training_dummy`]'s.
+    pub fn one_player(
+        f: &ssb_game::fighter::Fighter,
+        stage: &ssb_rom::pack::StageDesc,
+        bounds: ssb_game::dead::StageBounds,
+        (map, groups): CpuMap<'_>,
+        level: u8,
+        trait_kind: ssb_game::computer::attack::Trait,
+    ) -> HostCpu {
+        let mut cpu = HostCpu::setup(f, stage, bounds, level, true);
+        cpu.computer.trait_kind = trait_kind;
+        cpu.setup_world(f, map, groups);
+        cpu
+    }
+
+    fn setup(
+        f: &ssb_game::fighter::Fighter,
+        stage: &ssb_rom::pack::StageDesc,
+        bounds: ssb_game::dead::StageBounds,
+        level: u8,
+        is_1p_game: bool,
+    ) -> HostCpu {
+        HostCpu {
+            computer: Box::new(ssb_game::computer::Computer::setup(f, level)),
             stage: bounds,
             gkind: ssb_rom::stage::common_ground_kind(stage.source_file),
-        };
+            is_1p_game,
+        }
+    }
+
+    fn setup_world(
+        &mut self,
+        f: &ssb_game::fighter::Fighter,
+        map: &[ssb_game::weapon::MapSurface],
+        groups: Option<(&[ssb_game::map::MapGroup], &[u16])>,
+    ) {
         let sight = ssb_game::computer::CpuSight::default();
         let (groups, yakumono) = groups.unwrap_or((&[], &[]));
         let surfaces = || GroupedSurfaces {
@@ -90,9 +222,8 @@ impl HostCpu {
             groups,
             next: 0,
         };
-        let world = cpu_world(cpu.stage, cpu.gkind, surfaces, &[], &sight);
-        cpu.computer.setup_world(f, &world);
-        cpu
+        let world = self.world(surfaces, &[], &sight);
+        self.computer.setup_world(f, &world);
     }
 
     fn world<'a, F, I>(
@@ -105,7 +236,14 @@ impl HostCpu {
         F: Fn() -> I,
         I: IntoIterator<Item = ssb_game::weapon::MapSurface>,
     {
-        cpu_world(self.stage, self.gkind, surfaces, opponents, sight)
+        cpu_world(
+            self.stage,
+            self.gkind,
+            surfaces,
+            opponents,
+            sight,
+            self.is_1p_game,
+        )
     }
 }
 
@@ -116,6 +254,7 @@ fn cpu_world<'a, F, I>(
     surfaces: F,
     opponents: &'a [ssb_game::computer::behave::Opponent],
     sight: &'a ssb_game::computer::CpuSight,
+    is_1p_game: bool,
 ) -> ssb_game::computer::behave::World<'a, F>
 where
     F: Fn() -> I,
@@ -131,7 +270,7 @@ where
         items: &sight.items,
         weapon_threats: &sight.weapons,
         team_rules: sight.team_rules,
-        is_1p_game: false,
+        is_1p_game,
         pk_thunder_trail: sight.pk_thunder_trail,
         twister: sight.twister,
         acid: sight.acid,
@@ -150,6 +289,7 @@ impl Default for Pair {
             barrel: None,
             cpu: None,
             locked: false,
+            effects: None,
         }
     }
 }
@@ -497,20 +637,73 @@ impl ssb_game::matchtick::Seat<HostGround<'_, '_>> for HostSeat<'_, '_> {
     }
 }
 
-/// No effect runtime: each fighter's queued effects are kept, by seat, as
-/// the process that asked for them ends.
-struct Collect {
-    ports: [u8; 2],
-    queued: [Vec<ssb_game::fteffect::FighterEffect>; 2],
+/// Each fighter's queued effects, kept by seat as the process that asked
+/// for them ends, then made by the effect runtime when the replay has one
+/// ([`Pair::effects`]) or dropped.
+struct Collect<'r> {
+    ports: Vec<u8>,
+    queued: Vec<Vec<ssb_game::fteffect::FighterEffect>>,
+    rt: Option<ssb_game::effect::EffectRuntime<'r>>,
 }
 
-impl ssb_game::effect::HitEffectSink for Collect {
-    fn make(&mut self, _: &ssb_game::effect::HitEffect) {}
+impl ssb_game::effect::HitEffectSink for Collect<'_> {
+    fn container_smash(
+        &mut self,
+        pos: ssb_engine::math::Vec3,
+        piece: ssb_game::effect::SmashPiece,
+    ) {
+        if let Some(rt) = &mut self.rt {
+            rt.container_smash(pos, piece);
+        }
+    }
+    fn mball_rays(&mut self, pos: ssb_engine::math::Vec3) -> Option<u32> {
+        self.rt.as_mut().and_then(|rt| rt.mball_rays(pos))
+    }
+    fn move_display(&mut self, seq: u32, pos: ssb_engine::math::Vec3) {
+        if let Some(rt) = &mut self.rt {
+            rt.move_display(seq, pos);
+        }
+    }
+    fn make(&mut self, e: &ssb_game::effect::HitEffect) {
+        if let Some(rt) = &mut self.rt {
+            rt.make(e);
+        }
+    }
     fn fighter(&mut self, f: &mut ssb_game::fighter::Fighter) {
         if let Some(i) = self.ports.iter().position(|&p| p == f.port) {
             self.queued[i].extend(f.effects.iter().copied());
         }
-        f.effects.clear();
+        match &mut self.rt {
+            Some(rt) => rt.fighter(f),
+            None => f.effects.clear(),
+        }
+    }
+    fn process(&mut self) {
+        if let Some(rt) = &mut self.rt {
+            rt.process();
+        }
+    }
+    fn take_quake(&mut self, slot: ssb_game::effect::QuakeSlot) -> Option<(u8, u16)> {
+        self.rt.as_mut().and_then(|rt| rt.take_quake(slot))
+    }
+    fn weapon(&mut self, e: &ssb_game::wpeffect::WeaponEffect) {
+        match &mut self.rt {
+            Some(rt) => rt.weapon(e),
+            // The trait's default: a thunder trail still draws its texture.
+            None => {
+                if let ssb_game::wpeffect::WeaponEffect::TextureRand(n) = *e {
+                    ssb_game::rng::rand_int_range(i32::from(n));
+                }
+            }
+        }
+    }
+    fn map_bounds(&mut self, bounds: ssb_game::status::BlastZone) {
+        if let Some(rt) = &mut self.rt {
+            rt.map_bounds(bounds);
+        }
+    }
+    fn twister_made(&mut self) -> bool {
+        self.rt.as_mut().is_none_or(|rt| rt.twister_made())
     }
 }
 
@@ -571,6 +764,29 @@ pub fn tick_scripted(
     tick_seats(pack, map, fighters, cp, edges, pair)
 }
 
+/// One match-loop tick of a 1P game replay: fighter 0 plays `pad0(tick)`
+/// (buttons, stick x, stick y), every other fighter `i` is driven by
+/// `cpus[i]` (`None`: a neutral pad). [`Pair::cpu`] is not used. Returns
+/// each fighter's effects queued this tick.
+pub fn tick_cpus(
+    pack: &ssb_rom::pack::Pack<'_>,
+    map: &[ssb_game::weapon::MapSurface],
+    fighters: &mut [Posed],
+    pad0: &dyn Fn(u64) -> (u16, i8, i8),
+    cpus: &mut [Option<HostCpu>],
+    tick: u64,
+    pair: &mut Pair,
+) -> Vec<Vec<ssb_game::fteffect::FighterEffect>> {
+    assert!(pair.cpu.is_none(), "tick_cpus drives every CPU from `cpus`");
+    let n = fighters.len();
+    let mut c = vec![ssb_engine::input::ControllerState::default(); n];
+    let mut edges = vec![(false, false); n];
+    c[0] = pad(pad0(tick));
+    edges[0] = jump_edges(c[0], &mut pair.jump_was_held[0]);
+    let cpus = cpus.iter_mut().map(Option::as_mut).collect();
+    tick_n(pack, map, fighters, &c, &edges, cpus, pair)
+}
+
 /// [`ssb_game::matchtick::step`] over two seats on controllers `c` with
 /// jump `(tapped, released)` edges `edges`.
 fn tick_seats(
@@ -581,6 +797,33 @@ fn tick_seats(
     edges: [(bool, bool); 2],
     pair: &mut Pair,
 ) -> [Vec<ssb_game::fteffect::FighterEffect>; 2] {
+    let mut cpu = pair.cpu.take();
+    let queued = tick_n(
+        pack,
+        map,
+        fighters,
+        &c,
+        &edges,
+        vec![None, cpu.as_mut()],
+        pair,
+    );
+    pair.cpu = cpu;
+    queued.try_into().unwrap()
+}
+
+/// [`ssb_game::matchtick::step`] over up to four seats: seat `i` on
+/// controller `c[i]` with jump `(tapped, released)` edges `edges[i]`, or
+/// driven by `cpus[i]`.
+fn tick_n(
+    pack: &ssb_rom::pack::Pack<'_>,
+    map: &[ssb_game::weapon::MapSurface],
+    fighters: &mut [Posed],
+    c: &[ssb_engine::input::ControllerState],
+    edges: &[(bool, bool)],
+    cpus: Vec<Option<&mut HostCpu>>,
+    pair: &mut Pair,
+) -> Vec<Vec<ssb_game::fteffect::FighterEffect>> {
+    assert!(fighters.len() <= 4 && cpus.len() == fighters.len());
     let blast_zone = fighters[0].fighter.dead.bounds.map_or(
         ssb_game::status::BlastZone {
             top: 1e9,
@@ -604,29 +847,46 @@ fn tick_seats(
             barrel: pair.barrel,
         },
     );
-    let [a, b] = fighters else { unreachable!() };
+    let banks = PackBanks { pack };
+    // Link 0's `func_run`s, before every process: the particles (as
+    // `psp-game`'s battle frame runs them).
+    if let Some(e) = pair.effects.as_mut() {
+        ssb_game::effect::EffectRuntime {
+            particles: &mut e.particles,
+            effects: &mut e.effects,
+            banks: &banks,
+        }
+        .run();
+    }
     let mut sink = Collect {
-        ports: [a.fighter.port, b.fighter.port],
-        queued: [Vec::new(), Vec::new()],
+        ports: fighters.iter().map(|p| p.fighter.port).collect(),
+        queued: vec![Vec::new(); fighters.len()],
+        rt: pair
+            .effects
+            .as_mut()
+            .map(|e| ssb_game::effect::EffectRuntime {
+                particles: &mut e.particles,
+                effects: &mut e.effects,
+                banks: &banks,
+            }),
     };
-    let mut s0 = HostSeat {
-        posed: a,
-        pack,
-        input: c[0],
-        tapped: edges[0].0,
-        released: edges[0].1,
-        cpu: None,
-    };
-    let mut s1 = HostSeat {
-        posed: b,
-        pack,
-        input: c[1],
-        tapped: edges[1].0,
-        released: edges[1].1,
-        cpu: pair.cpu.as_mut(),
-    };
-    let mut seats: ssb_game::matchtick::Seats<'_, HostSeat<'_, '_>> =
-        [Some(&mut s0), Some(&mut s1), None, None];
+    let mut hosts: Vec<HostSeat<'_, '_>> = fighters
+        .iter_mut()
+        .zip(cpus)
+        .enumerate()
+        .map(|(i, (posed, cpu))| HostSeat {
+            posed,
+            pack,
+            input: c[i],
+            tapped: edges[i].0,
+            released: edges[i].1,
+            cpu,
+        })
+        .collect();
+    let mut seats: ssb_game::matchtick::Seats<'_, HostSeat<'_, '_>> = [None, None, None, None];
+    for (seat, host) in seats.iter_mut().zip(hosts.iter_mut()) {
+        *seat = Some(host);
+    }
     let mut world = ssb_game::matchtick::World {
         weapons: &mut pair.weapons,
         items: &mut pair.items,

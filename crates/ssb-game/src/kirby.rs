@@ -1555,7 +1555,7 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
             let friction = crate::collision::material_friction(flags)
                 * f.attributes.traction
                 * STONE_SLIDE_TRACTION_MUL;
-            physics::apply_ground_friction(&mut f.physics, friction);
+            physics::apply_ground_friction(&mut f.physics, friction, lr);
         }
         _ => return crate::kirby_copy::apply_ground_physics(f),
     }

@@ -113,6 +113,8 @@ impl Dummy {
     ) -> Dummy {
         scene.fighter.port = port;
         scene.fighter.costume = costume;
+        // `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`.
+        scene.set_damage_detect_size(pack);
         let mut computer = ssb_game::computer::Computer::setup(&scene.fighter, level);
         // `sc1PTrainingModeUpdateDummyBehavior`: the menu's Stand, no trait.
         computer.behavior = ssb_game::computer::Behavior::Stand;

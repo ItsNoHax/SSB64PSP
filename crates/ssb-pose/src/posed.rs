@@ -231,6 +231,19 @@ impl PosedFighter {
         self.fighter.grab.thrown_part4 = s.thrown_part4;
     }
 
+    /// `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`, for
+    /// a human or CPU fighter: the spawn status's first pose (`Entry` and
+    /// `Wait` both play `Wait` from frame 0), sampled aside, sets
+    /// `damage_coll_size`. Call once, after the spawn status is set.
+    pub fn set_damage_detect_size(&mut self, pack: &Pack<'_>) {
+        let saved = self.snapshot();
+        self.tick_animation(pack);
+        self.sample_gameplay_joints(pack);
+        let size = ssb_game::computer::behave::damage_detect_size(&self.fighter);
+        self.restore(saved);
+        self.fighter.damage_coll_size = Some(size);
+    }
+
     /// A `proc_update` maker whose status a set then replaced (Pikachu's
     /// Thunder, the boss's finger gun) read the play `ftMainPlayAnimEventsAll`
     /// gave that status this frame, before the update; the port plays after

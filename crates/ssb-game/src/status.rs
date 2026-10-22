@@ -2483,8 +2483,9 @@ pub const FASTFALL_BUFFER_TICS_MAX: u8 = 4;
 /// previously never called from anywhere in this codebase: `Fighter::tick_air`
 /// read `physics.is_fastfall` but nothing ever set it from a real input,
 /// so a downward flick while falling did nothing. Now called from
-/// `tick_air` every airborne tick, same as the original calls it from every
-/// airborne status's own `proc_physics`.
+/// `air_physics` for the statuses whose `proc_physics` reaches it
+/// (`ftPhysicsApplyAirVelDriftFastFall` and a few own callbacks); the
+/// `ftPhysicsApplyAirVelDrift`/`Friction` ones go through [`generic_air_vel`].
 pub fn check_set_fast_fall(f: &mut Fighter) {
     if !f.physics.is_fastfall
         && f.physics.vel_air.y < 0.0
@@ -3062,10 +3063,10 @@ pub fn apply_fox_special_hi_ground_physics(f: &mut Fighter) {
     if f.status.status == AnyStatus::Fox(FoxStatus::SpecialHi) {
         f.fox_special_hi.decelerate_wait = f.fox_special_hi.decelerate_wait.saturating_add(1);
         if f.fox_special_hi.decelerate_wait >= 2 {
-            physics::apply_ground_friction(&mut f.physics, 3.035_714_4);
+            physics::apply_ground_friction(&mut f.physics, 3.035_714_4, f.facing.sign());
         }
     } else {
-        physics::apply_ground_friction(&mut f.physics, 1.5);
+        physics::apply_ground_friction(&mut f.physics, 1.5, f.facing.sign());
     }
 }
 
@@ -3582,7 +3583,11 @@ pub fn apply_mario_special_hi_interrupt(f: &mut Fighter) {
             -((stick_x - clamped) as f32 * MARIO_SUPERJUMP_AIR_DRIFT * core::f32::consts::PI
                 / 180.0);
         if f.root_motion.rotate_z.abs() < desired_rotation.abs() {
+            // A DObj write: TransN keeps it on later frames (the clip has
+            // no TransN roll track), so the launch frame's
+            // `ftPhysicsGetAirVelTransN` still turns by it.
             f.root_motion.rotate_z = desired_rotation;
+            f.pose_writes.transn_rotate_z = Some(desired_rotation);
         }
     }
     // Motion flag 2, once: a stick past 20 picks the facing
@@ -7374,6 +7379,27 @@ pub fn generic_air_vel(s: AnyStatus) -> Option<AirVel> {
         )
         | AnyStatus::Mario(MarioStatus::SpecialAirN)
         | AnyStatus::Fox(FoxStatus::SpecialAirN) => Some(AirVel::Drift),
+        // `ftcommonstatus.h`: the aerials and the air item throws drift
+        // without the fast-fall input; the shield-break flight has
+        // friction only.
+        AnyStatus::Common(
+            Status::AttackAirN
+            | Status::AttackAirF
+            | Status::AttackAirB
+            | Status::AttackAirHi
+            | Status::AttackAirLw
+            | Status::LightThrowAirF
+            | Status::LightThrowAirB
+            | Status::LightThrowAirHi
+            | Status::LightThrowAirLw
+            | Status::LightThrowAirF4
+            | Status::LightThrowAirB4
+            | Status::LightThrowAirHi4
+            | Status::LightThrowAirLw4,
+        ) => Some(AirVel::Drift),
+        AnyStatus::Common(Status::ShieldBreakFly | Status::ShieldBreakFall) => {
+            Some(AirVel::Friction)
+        }
         _ => None,
     }
 }
@@ -7451,6 +7477,7 @@ pub fn apply_status_physics(
     anim_frame: f32,
     stick_x: i8,
     material_friction: f32,
+    lr: f32,
 ) {
     match status {
         // `ftCommonWalkProcPhysics` @ 0x8013E548.
@@ -7461,17 +7488,17 @@ pub fn apply_status_physics(
         // seven frames, which is what makes the initial dash burst hold.
         Status::Dash => {
             if anim_frame >= DASH_DECELERATE_BEGIN {
-                physics::apply_ground_friction(p, attr.dash_decel);
+                physics::apply_ground_friction(p, attr.dash_decel, lr);
             }
         }
         // A run holds its speed; nothing decelerates it.
         Status::Run => {}
         // `ftCommonRunBrakeProcPhysics` @ 0x8013F014: 1.25x traction.
         Status::RunBrake => {
-            physics::apply_ground_friction(p, attr.traction * 1.25);
+            physics::apply_ground_friction(p, attr.traction * 1.25, lr);
         }
         _ => {
-            physics::apply_ground_friction(p, attr.traction * material_friction);
+            physics::apply_ground_friction(p, attr.traction * material_friction, lr);
         }
     }
 }
@@ -8142,10 +8169,10 @@ mod tests {
         let mut p = PhysicsState::default();
         p.vel_ground.x = attr.dash_speed;
 
-        apply_status_physics(&mut p, &attr, Status::Dash, 6.0, 80, 4.0);
+        apply_status_physics(&mut p, &attr, Status::Dash, 6.0, 80, 4.0, 1.0);
         assert_eq!(p.vel_ground.x, attr.dash_speed, "still in the burst");
 
-        apply_status_physics(&mut p, &attr, Status::Dash, 7.0, 80, 4.0);
+        apply_status_physics(&mut p, &attr, Status::Dash, 7.0, 80, 4.0, 1.0);
         assert_eq!(p.vel_ground.x, attr.dash_speed - attr.dash_decel);
     }
 
@@ -8155,12 +8182,12 @@ mod tests {
         let attr = PhysicsAttributes::MARIO;
         let mut run = PhysicsState::default();
         run.vel_ground.x = attr.run_speed;
-        apply_status_physics(&mut run, &attr, Status::Run, 5.0, 80, 4.0);
+        apply_status_physics(&mut run, &attr, Status::Run, 5.0, 80, 4.0, 1.0);
         assert_eq!(run.vel_ground.x, attr.run_speed);
 
         let mut brake = PhysicsState::default();
         brake.vel_ground.x = attr.run_speed;
-        apply_status_physics(&mut brake, &attr, Status::RunBrake, 5.0, 0, 4.0);
+        apply_status_physics(&mut brake, &attr, Status::RunBrake, 5.0, 0, 4.0, 1.0);
         assert_eq!(brake.vel_ground.x, attr.run_speed - attr.traction * 1.25);
         assert!(brake.vel_ground.x < run.vel_ground.x);
     }

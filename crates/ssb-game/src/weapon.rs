@@ -4193,6 +4193,8 @@ impl WeaponPool {
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
         self.search_hits(defender);
         self.react_to_fighter_hits();
+        let (port, lr) = (defender.port, defender.facing.sign());
+        self.react_to_reflectors(&|p| (p == port).then_some(lr));
     }
 
     /// `ftMainSearchHitWeapon` for one fighter. A registered hit (and a
@@ -4568,23 +4570,69 @@ impl WeaponPool {
     /// fighter's [`Self::search_hits`] met this frame: `proc_hit`, then the
     /// shield's hop or `proc_shield`, `proc_setoff`, the reflector and
     /// `proc_absorb`, each only while the weapon lives.
+    ///
+    /// The reflector and `proc_absorb` wait for
+    /// [`Self::react_to_reflectors`]: `wpMainReflectorSetLR` reads the
+    /// reflector's `lr` after its `ftMainProcParams` (fighters link 3,
+    /// weapons link 5, both priority 0), where Fox's reflector turns to the
+    /// shot (`ftFoxSpecialLwHitSetStatus`).
     pub fn react_to_fighter_hits(&mut self) {
         let (order, n) = self.link_order();
+        let mut late = [PendingProcs::NONE; MAX_WEAPONS];
         for &i in &order[..n] {
             let hit = core::mem::take(&mut self.proc_hit[i]);
-            let pending = core::mem::replace(&mut self.pending[i], PendingProcs::NONE);
+            let mut pending = core::mem::replace(&mut self.pending[i], PendingProcs::NONE);
+            late[i] = PendingProcs {
+                reflect: pending.reflect.take(),
+                absorb: core::mem::take(&mut pending.absorb),
+                ..PendingProcs::NONE
+            };
+            self.run_procs(i, hit, pending);
+            if self.slots[i].is_none() {
+                late[i] = PendingProcs::NONE;
+            }
+        }
+        self.proc_hit = [false; MAX_WEAPONS];
+        self.pending = late;
+        // `wpNessPKThunderHeadSetDestroyTrails` only marks the trails: they
+        // run this pass's callbacks, stay listed and drawn, and their next
+        // `proc_update` ends them ([`Self::tick_pk_thunder`] drops a trail
+        // whose head group is gone).
+    }
+
+    /// The rest of `wpProcessProcHitCollisions` for the fighters' searches:
+    /// the reflector (`wpMainReflectorSetLR` with the reflector's `lr` as
+    /// `lr_of` gives it now, after `ftMainProcParams`) and `proc_absorb`.
+    pub fn react_to_reflectors(&mut self, lr_of: &dyn Fn(u8) -> Option<f32>) {
+        let (order, n) = self.link_order();
+        for &i in &order[..n] {
+            let mut pending = core::mem::replace(&mut self.pending[i], PendingProcs::NONE);
+            if let Some(r) = pending.reflect.as_mut() {
+                if let Some(lr) = lr_of(r.port) {
+                    r.lr = lr;
+                }
+            }
+            self.run_procs(i, false, pending);
+        }
+        self.pending = [PendingProcs::NONE; MAX_WEAPONS];
+    }
+
+    /// One weapon's `wpProcessProcHitCollisions` callbacks for `hit` and
+    /// `pending`, each only while it lives.
+    fn run_procs(&mut self, i: usize, hit: bool, pending: PendingProcs) {
+        {
             if !hit && pending == PendingProcs::NONE {
-                continue;
+                return;
             }
             if matches!(
                 self.slots[i],
                 Some(Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_))
             ) {
                 self.pk_procs(i, hit, pending);
-                continue;
+                return;
             }
             let Some(weapon) = self.slots[i].as_mut() else {
-                continue;
+                return;
             };
             let mut emit = Emit::default();
             let alive = match weapon {
@@ -4612,12 +4660,6 @@ impl WeaponPool {
                 destroy(&mut self.slots[i]);
             }
         }
-        self.proc_hit = [false; MAX_WEAPONS];
-        self.pending = [PendingProcs::NONE; MAX_WEAPONS];
-        // `wpNessPKThunderHeadSetDestroyTrails` only marks the trails: they
-        // run this pass's callbacks, stay listed and drawn, and their next
-        // `proc_update` ends them ([`Self::tick_pk_thunder`] drops a trail
-        // whose head group is gone).
     }
 
     /// `wpProcessProcHitCollisions` for Ness's weapons: PK Fire's spark
@@ -5501,6 +5543,7 @@ mod tests {
         assert_eq!(h.owner_port, 3);
         pool.react_to_fighter_hits();
         crate::combat::resolve(&mut fox);
+        pool.react_to_reflectors(&|_| Some(fox.facing.sign()));
         let h = pool.pk_thunders().next().unwrap();
         assert!(h.reflected);
         assert_eq!(h.owner_port, 1);
@@ -5516,6 +5559,7 @@ mod tests {
         pool.search_hits(&mut again);
         pool.react_to_fighter_hits();
         crate::combat::resolve(&mut again);
+        pool.react_to_reflectors(&|_| Some(again.facing.sign()));
         let h = pool.pk_thunders().next().unwrap();
         assert_eq!(h.owner_port, 2);
         assert_eq!(h.damage, 11, "6 * 1.8 + 0.99");
@@ -6002,6 +6046,44 @@ mod tests {
             fox.status.status,
             crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwHit)
         );
+    }
+
+    /// `wpMainReflectorSetLR` reads Fox's `lr` in the weapon's priority-0
+    /// pass, after his `ftMainProcParams` turned him to the shot
+    /// (`ftFoxSpecialLwHitSetStatus`: `lr = reflect_lr`). A Fox facing away
+    /// from a Fireball coming from behind still sends it back (N64 1P
+    /// stage 4, tick 1421: the shot then hits its Mario).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_reflector_facing_away_turns_the_shot_with_its_new_facing() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::MarioFireball,
+            owner_port: 0,
+            team: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(-100.0, 60.0, 0.0),
+            facing: 1.0,
+        });
+        let mut fox = Fighter::new(FighterKind::Fox, 1, 3);
+        fox.pos = Vec3::ZERO;
+        fox.facing = crate::fighter::Facing::Right;
+        fox.situation = Situation::Ground;
+        crate::status::set_fox_special_lw_start(&mut fox);
+        crate::status::set_any_status(
+            &mut fox,
+            crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwLoop),
+            0.0,
+            crate::status::StatusTiming::unknown(),
+        );
+        weapons.search_hits(&mut fox);
+        weapons.react_to_fighter_hits();
+        crate::combat::resolve(&mut fox);
+        assert_eq!(fox.facing.sign(), -1.0, "turned to the shot");
+        weapons.react_to_reflectors(&|_| Some(fox.facing.sign()));
+        let fireball = weapons.first_fireball().unwrap();
+        assert_eq!(fireball.owner_port, fox.port);
+        assert!(fireball.velocity.x < 0.0, "{:?}", fireball.velocity);
     }
 
     /// `ftMainUpdateReflectorStatWeapon` records the reflector

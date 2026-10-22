@@ -457,6 +457,9 @@ pub struct Fighter {
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
+    /// `damage_coll_size`: the hurtboxes' extent, set once on the spawn
+    /// pose ([`crate::computer::behave::damage_detect_size`]). `None` until then.
+    pub damage_coll_size: Option<ssb_engine::math::Vec2>,
     /// `fp->joints[4]->rotate.vec.f.x` as the skeleton held it when
     /// [`Self::joint_transforms`] were posed: the raw Euler value, unwrapped,
     /// that `ftCommonDownBounceCheckUpOrDown` reads. `None` without a
@@ -699,6 +702,7 @@ impl Fighter {
             weapon_spawn_pose: None,
             physics_pass: false,
             joint_transforms: [None; FIGHTER_JOINTS],
+            damage_coll_size: None,
             joint4_rotate_x: None,
             queried_joints: core::cell::Cell::new(0),
             world_joints: core::cell::Cell::new(0),
@@ -2343,6 +2347,7 @@ impl Fighter {
                 self.status.anim_frame,
                 self.input.stick_x,
                 friction,
+                self.facing.sign(),
             );
             if relative {
                 self.physics.vel_ground.x *= self.facing.sign();

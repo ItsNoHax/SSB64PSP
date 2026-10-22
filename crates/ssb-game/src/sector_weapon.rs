@@ -203,6 +203,45 @@ mod tests {
         assert!(r.z.abs() < 1e-6);
     }
 
+    /// `func_ovl2_801070A4`'s general branch (`side.z` not +-1): no N64
+    /// scene fires a shot with `dir.x != 0` from a rolled Arwing (RE-503),
+    /// so this checks the angles against the frame they encode. The DObj
+    /// rotation `Rz * Ry * Rx` takes X, Y and Z to `side`, `up` and `dir`.
+    #[test]
+    fn a_rolled_oblique_shot_rebuilds_its_frame() {
+        let rotate = |r: Vec3, v: Vec3| {
+            let (sx, cx) = sin_cos(r.x);
+            let (sy, cy) = sin_cos(r.y);
+            let (sz, cz) = sin_cos(r.z);
+            let v = Vec3::new(v.x, cx * v.y - sx * v.z, sx * v.y + cx * v.z);
+            let v = Vec3::new(cy * v.x + sy * v.z, v.y, -sy * v.x + cy * v.z);
+            Vec3::new(cz * v.x - sz * v.y, sz * v.x + cz * v.y, v.z)
+        };
+        for (dir, roll) in [
+            (Vec3::new(-0.6, 0.3, 0.74), 0.4),
+            (Vec3::new(0.5, -0.5, 0.7), -1.1),
+            (Vec3::new(-0.9, 0.1, -0.42), 2.3),
+        ] {
+            let dir = dir.normalized();
+            let (s, c) = sin_cos(roll + core::f32::consts::FRAC_PI_2);
+            let side = Vec3::new(0.0, s, c).cross(dir).normalized();
+            let up = dir.cross(side).normalized();
+            assert!(side.z.abs() < 0.99, "general branch: {side:?}");
+            let r = laser_rotate(dir, roll);
+            for (axis, want) in [
+                (Vec3::new(1.0, 0.0, 0.0), side),
+                (Vec3::new(0.0, 1.0, 0.0), up),
+                (Vec3::new(0.0, 0.0, 1.0), dir),
+            ] {
+                let got = rotate(r, axis);
+                assert!(
+                    (got - want).length() < 2e-3,
+                    "dir {dir:?} roll {roll}: {axis:?} -> {got:?}, want {want:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_burst_stops_and_counts_down() {
         let mut l = ArwingLaser::new(

@@ -241,6 +241,22 @@ where
     query(surfaces, kind, from, to).map(|(_, point)| point)
 }
 
+/// `mpCollisionCheck[Floor/Ceil/LWall/RWall]LineCollisionSame`: the nearest
+/// line of `kind` the segment `from` to `to` crosses from its open side, the
+/// lines where they are now.
+pub fn line_crossing_same<I, F>(
+    surfaces: &F,
+    kind: Kind,
+    from: Vec2,
+    to: Vec2,
+) -> Option<(Contact, Vec2)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    query(surfaces, kind, from, to)
+}
+
 fn query<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
 where
     F: Fn() -> I,
@@ -488,61 +504,69 @@ where
     let mut best = if side > 0.0 { 65536.0 } else { -65536.0 };
     let mut hit = None;
     for line in lines.into_iter().flatten() {
+        // `mpProcessSetLastWallCollideStats` when `x` beats the best so far
+        // and the line answers at `at` (`mpCollisionGetLRCommon*Wall`).
+        let answers = |at: Vec2| line_common(surfaces, kind, line, Vec3::new(at.x, at.y, 0.0));
+        let consider = |best: &mut f32, hit: &mut Option<Contact>, x: f32, at: Vec2| {
+            if side * x < side * *best {
+                if let Some((_, contact)) = answers(at) {
+                    *best = x;
+                    *hit = Some(contact);
+                }
+            }
+        };
         let (upper, _) = edge(surfaces, kind, line, true)?;
+        if upper.y < pos.y + coll.bottom {
+            consider(&mut best, &mut hit, upper.x, upper);
+            continue;
+        }
         let (lower, _) = edge(surfaces, kind, line, false)?;
+        if pos.y + coll.top < lower.y {
+            consider(&mut best, &mut hit, lower.x, lower);
+            continue;
+        }
+        // Bottom, waist and top samples: `translate.x + dist`.
+        for at in [
+            Vec2::new(pos.x, pos.y + coll.bottom),
+            Vec2::new(pos.x + side * coll.width, pos.y + coll.center),
+            Vec2::new(pos.x, pos.y + coll.top),
+        ] {
+            if let Some((dist, contact)) = answers(at) {
+                let x = pos.x + dist;
+                if side * x < side * best {
+                    best = x;
+                    hit = Some(contact);
+                }
+            }
+        }
+        // Every vertex of the line inside the diamond's flank, in order.
+        let (bottom, center, top) = (pos.y + coll.bottom, pos.y + coll.center, pos.y + coll.top);
+        // The original divides unconditionally; a flat flank gives NaN,
+        // which no comparison accepts.
+        let flank = |n: f32, d: f32| {
+            if d != 0.0 {
+                div_nonzero(n, d)
+            } else {
+                f32::NAN
+            }
+        };
+        let mut first = true;
         for (i, s) in surfaces().into_iter().enumerate() {
             if s.kind != kind || line_id(i, s) != line {
                 continue;
             }
-            let mut consider = |x: f32| {
-                if side * x < side * best {
-                    best = x;
-                    hit = Some(contact(i, s));
-                }
-            };
-            if upper.y < pos.y + coll.bottom {
-                consider(upper.x);
-                continue;
-            }
-            if pos.y + coll.top < lower.y {
-                consider(lower.x);
-                continue;
-            }
             let [x1, y1, x2, y2] = s.coords();
-            for (offset, width) in [
-                (coll.bottom, 0.0),
-                (coll.center, coll.width),
-                (coll.top, 0.0),
-            ] {
-                let y = pos.y + offset;
-                let lo = (y1).min(y2);
-                let hi = (y1).max(y2);
-                if y >= lo - 0.001 && y <= hi + 0.001 && y1 != y2 {
-                    let y = y.clamp(lo, hi);
-                    // `div_nonzero`: LLVM computes a guarded division
-                    // before its guard (RE-469).
-                    let x = x1 + div_nonzero((y - y1) * (x2 - x1), y2 - y1);
-                    consider(x - side * width);
-                }
-            }
-            for (x, y) in [(x1, y1), (x2, y2)] {
-                let y = y - pos.y;
-                let width = if y >= coll.bottom && y <= coll.center && coll.center != coll.bottom {
-                    Some(div_nonzero(
-                        (y - coll.bottom) * coll.width,
-                        coll.center - coll.bottom,
-                    ))
-                } else if y >= coll.center && y <= coll.top && coll.top != coll.center {
-                    Some(div_nonzero(
-                        (coll.top - y) * coll.width,
-                        coll.top - coll.center,
-                    ))
+            let start = first.then_some(Vec2::new(x1, y1));
+            first = false;
+            for v in [start, Some(Vec2::new(x2, y2))].into_iter().flatten() {
+                let width = if bottom <= v.y && v.y <= center {
+                    flank((v.y - bottom) * coll.width, coll.center - coll.bottom)
+                } else if center <= v.y && v.y <= top {
+                    flank((top - v.y) * coll.width, coll.top - coll.center)
                 } else {
-                    None
+                    continue;
                 };
-                if let Some(width) = width {
-                    consider(x - side * width);
-                }
+                consider(&mut best, &mut hit, v.x - side * width, v);
             }
         }
     }
@@ -1049,6 +1073,69 @@ where
     out
 }
 
+/// `func_ovl2_800F8FFC`: some floor line lies below `pos`, in the line's
+/// own frame on its integer vertices. Per line: its lowest vertex
+/// (`coll_pos_prev`) is at or below `pos.y + 0.001`, `pos.x` lies between
+/// its first and last vertices' X, and the height at `pos.x` of its one
+/// segment, or of any of its segments extended (a longer line: the source
+/// never tests a segment's own span), is below `pos.y + 0.001`. A line's
+/// segments are consecutive in `surfaces`.
+pub fn over_floor<I>(surfaces: I, pos: Vec3) -> bool
+where
+    I: IntoIterator<Item = MapSurface>,
+{
+    struct Line {
+        id: u16,
+        local: Vec2,
+        first_x: i32,
+        last_x: i32,
+        near: i32,
+        below: bool,
+    }
+    let hit = |l: &Line| {
+        let (x, y) = (l.local.x, l.local.y + 0.001);
+        let (x1, x2) = (l.first_x as f32, l.last_x as f32);
+        l.below && l.near as f32 <= y && ((x1 <= x && x <= x2) || (x2 <= x && x <= x1))
+    };
+    let mut cur: Option<Line> = None;
+    for (i, s) in surfaces.into_iter().enumerate() {
+        if s.kind != Kind::Floor {
+            continue;
+        }
+        let id = line_id(i, s);
+        if cur.as_ref().is_some_and(|l| l.id != id) {
+            if cur.as_ref().is_some_and(hit) {
+                return true;
+            }
+            cur = None;
+        }
+        let g = s.segment;
+        let l = cur.get_or_insert_with(|| {
+            let o = s.motion.map_or(Vec2::ZERO, |m| m.offset);
+            Line {
+                id,
+                local: Vec2::new(pos.x - o.x, pos.y - o.y),
+                first_x: i32::from(g.x1),
+                last_x: i32::from(g.x1),
+                near: i32::from(g.y1),
+                below: false,
+            }
+        });
+        l.last_x = i32::from(g.x2);
+        l.near = l.near.min(i32::from(g.y1)).min(i32::from(g.y2));
+        // `mpCollisionGetLineDistanceFC`.
+        let (v1x, v1y, v2x, v2y) = (
+            i32::from(g.x1),
+            i32::from(g.y1),
+            i32::from(g.x2),
+            i32::from(g.y2),
+        );
+        let at = v1y as f32 + ((l.local.x - v1x as f32) / (v2x - v1x) as f32) * (v2y - v1y) as f32;
+        l.below |= at < l.local.y + 0.001;
+    }
+    cur.as_ref().is_some_and(hit)
+}
+
 /// `mpCollisionGetFCCommonFloor` (`kind` [`Kind::Floor`]) and
 /// `mpCollisionGetLRCommon[L/R]Wall`: where `pos` projects onto `line`
 /// along its own axis (x for a floor, y for a wall). Returns the signed
@@ -1062,29 +1149,71 @@ where
     if matches!(kind, Kind::Floor | Kind::Ceiling) {
         return height(surfaces, kind, line, pos.x).map(|(y, hit)| (y - pos.y, hit));
     }
-    let (lo, _) = edge(surfaces, kind, line, false)?;
-    let (hi, _) = edge(surfaces, kind, line, true)?;
-    if pos.y <= lo.y - 0.001 || hi.y + 0.001 <= pos.y {
+    // The original works in the line's yakumono frame (a static line's
+    // offset is zero, and `x - 0.0` is exact) on the integer vertices.
+    let o = surfaces()
+        .into_iter()
+        .enumerate()
+        .find(|&(i, s)| s.kind == kind && line_id(i, s) == line)?
+        .1
+        .motion
+        .map_or(Vec2::ZERO, |m| m.offset);
+    let local = Vec2::new(pos.x - o.x, pos.y - o.y);
+    // `vnear`/`vfar`: the first and last vertices' Y.
+    let (v1y, v2y) = line_ends_y(surfaces, kind, line)?;
+    let (near, far) = if v2y < v1y { (v2y, v1y) } else { (v1y, v2y) };
+    if local.y <= near - 0.001 || far + 0.001 <= local.y {
         return None;
     }
-    let y = pos.y.clamp(lo.y, hi.y);
+    let y = if local.y <= near {
+        near
+    } else if far <= local.y {
+        far
+    } else {
+        local.y
+    };
     // The first segment spanning `y`, as the original's `break` picks.
     for (i, s) in surfaces().into_iter().enumerate() {
         if s.kind != kind || line_id(i, s) != line {
             continue;
         }
-        let [x1, y1, x2, y2] = s.coords();
+        let (y1, y2) = (f32::from(s.segment.y1), f32::from(s.segment.y2));
         if (y1 <= y && y <= y2) || (y2 <= y && y <= y1) {
-            // `mpCollisionGetLineDistanceLR`.
-            let x = if y1 == y2 {
-                x1
-            } else {
-                x1 + div_nonzero((y - y1) * (x2 - x1), y2 - y1)
-            };
-            return Some((x - pos.x, contact(i, s)));
+            return Some((line_distance_lr(&s.segment, y) - local.x, contact(i, s)));
         }
     }
     None
+}
+
+/// A line's first and last vertex Y (`vertex1` and `vertex2 - 1`), in its
+/// own frame.
+fn line_ends_y<I, F>(surfaces: &F, kind: Kind, line: u16) -> Option<(f32, f32)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let mut segments = surfaces()
+        .into_iter()
+        .enumerate()
+        .filter(|&(i, s)| s.kind == kind && line_id(i, s) == line);
+    let (_, first) = segments.next()?;
+    let last = segments.last().map_or(first, |(_, s)| s);
+    Some((f32::from(first.segment.y1), f32::from(last.segment.y2)))
+}
+
+/// `mpCollisionGetLineDistanceLR`: the X of `s` at `y`, both in the line's
+/// own frame, bit for bit: the integer differences, then divide before
+/// multiplying.
+fn line_distance_lr(s: &Segment, y: f32) -> f32 {
+    let dy = i32::from(s.y2) - i32::from(s.y1);
+    if dy == 0 {
+        // The original asserts a wall never has two vertices at the same Y.
+        return f32::from(s.x1);
+    }
+    let dx = (i32::from(s.x2) - i32::from(s.x1)) as f32;
+    // `dy != 0` here; `div_nonzero` keeps LLVM from dividing before the
+    // guard (D-050, RE-469).
+    f32::from(s.x1) + div_nonzero(y - f32::from(s.y1), dy as f32) * dx
 }
 
 /// `mpCollisionGetEdgeUnder[L/R]LineID` (a floor's left or right end),
@@ -2332,22 +2461,32 @@ where
     // A flag beside a written value, as in [`edge`].
     let mut found = false;
     let mut best = 0.0f32;
-    for s in surfaces().into_iter() {
-        if s.kind != Kind::RightWall {
+    let mut done = None;
+    for (i, s) in surfaces().into_iter().enumerate() {
+        let line = line_id(i, s);
+        if s.kind != Kind::RightWall || done == Some(line) {
             continue;
         }
-        let [x1, y1, x2, y2] = s.coords();
-        if !((y1 <= pos.y && y2 >= pos.y) || (y2 <= pos.y && y1 >= pos.y)) {
+        // The line's ends gate it, then its first segment spanning
+        // `pos.y` answers for it, in the yakumono frame.
+        let o = s.motion.map_or(Vec2::ZERO, |m| m.offset);
+        let local = Vec2::new(pos.x - o.x, pos.y - o.y);
+        let Some((y1, y2)) = line_ends_y(surfaces, Kind::RightWall, line) else {
             continue;
-        }
-        // `mpCollisionGetLineDistanceLR`.
-        let x = if y1 == y2 {
-            x1
-        } else {
-            x1 + div_nonzero((pos.y - y1) * (x2 - x1), y2 - y1)
         };
-        let dist = x - pos.x;
-        if x <= pos.x && (!found || dist.abs() < best.abs()) {
+        let spans =
+            |y1: f32, y2: f32| (y1 <= local.y && y2 >= local.y) || (y2 <= local.y && y1 >= local.y);
+        if !spans(y1, y2) {
+            done = Some(line);
+            continue;
+        }
+        if !spans(f32::from(s.segment.y1), f32::from(s.segment.y2)) {
+            continue;
+        }
+        done = Some(line);
+        let x = line_distance_lr(&s.segment, local.y);
+        let dist = x - local.x;
+        if x <= local.x && (!found || dist.abs() < best.abs()) {
             found = true;
             best = dist;
         }

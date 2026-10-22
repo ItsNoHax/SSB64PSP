@@ -238,19 +238,24 @@ pub fn set_ground_vel_stick_range(
 /// `ftPhysicsSetGroundVelFriction` @ 0x800D8978.
 ///
 /// Decays X toward zero by `friction`, stopping exactly at zero rather than
-/// overshooting into a reversal.
-pub fn apply_ground_friction(p: &mut PhysicsState, friction: f32) {
-    if p.vel_ground.x < 0.0 {
-        p.vel_ground.x += friction;
-        if p.vel_ground.x > 0.0 {
-            p.vel_ground.x = 0.0;
+/// overshooting into a reversal. The original runs on the facing-relative
+/// speed; `lr` (the facing sign) takes the port's world speed there and
+/// back, so a stop leaves the original's `+0 * lr` (a facing-left stop is
+/// `-0`, which signs `vel_air.y` through `ftPhysicsSetGroundVelTransferAir`).
+pub fn apply_ground_friction(p: &mut PhysicsState, friction: f32, lr: f32) {
+    let mut x = p.vel_ground.x * lr;
+    if x < 0.0 {
+        x += friction;
+        if x > 0.0 {
+            x = 0.0;
         }
     } else {
-        p.vel_ground.x -= friction;
-        if p.vel_ground.x < 0.0 {
-            p.vel_ground.x = 0.0;
+        x -= friction;
+        if x < 0.0 {
+            x = 0.0;
         }
     }
+    p.vel_ground.x = x * lr;
 }
 
 /// `ftPhysicsApplyGroundVelFriction` @ 0x800D8B98.
@@ -261,8 +266,9 @@ pub fn apply_ground_friction_with_material(
     p: &mut PhysicsState,
     attr: &PhysicsAttributes,
     material_friction: f32,
+    lr: f32,
 ) {
-    apply_ground_friction(p, material_friction * attr.traction);
+    apply_ground_friction(p, material_friction * attr.traction, lr);
 }
 
 /// `ftPhysicsClampAirVelY` @ 0x800D8CF8.
@@ -627,11 +633,11 @@ mod tests {
     fn ground_friction_stops_exactly_at_zero_from_both_signs() {
         let mut p = state();
         p.vel_ground.x = 0.05;
-        apply_ground_friction(&mut p, 0.06);
+        apply_ground_friction(&mut p, 0.06, 1.0);
         assert_eq!(p.vel_ground.x, 0.0, "should not reverse");
 
         p.vel_ground.x = -0.05;
-        apply_ground_friction(&mut p, 0.06);
+        apply_ground_friction(&mut p, 0.06, 1.0);
         assert_eq!(p.vel_ground.x, 0.0, "should not reverse");
     }
 
@@ -641,7 +647,7 @@ mod tests {
         // exactly equal to friction decays to exactly zero.
         let mut p = state();
         p.vel_ground.x = 0.06;
-        apply_ground_friction(&mut p, 0.06);
+        apply_ground_friction(&mut p, 0.06, 1.0);
         assert_eq!(p.vel_ground.x, 0.0);
     }
 
@@ -657,8 +663,8 @@ mod tests {
         ice.vel_ground.x = attr.run_speed;
 
         for _ in 0..5 {
-            apply_ground_friction_with_material(&mut normal, &attr, 1.0);
-            apply_ground_friction_with_material(&mut ice, &attr, 0.2);
+            apply_ground_friction_with_material(&mut normal, &attr, 1.0, 1.0);
+            apply_ground_friction_with_material(&mut ice, &attr, 0.2, 1.0);
         }
         assert!(ice.vel_ground.x > normal.vel_ground.x);
         assert!(normal.vel_ground.x > 0.0, "5 frames should not stop him");

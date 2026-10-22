@@ -22,6 +22,7 @@ crates/ssb-game/src/colanim_preserve.rs	PRESERVE_COLANIM	decomp code sites: ftMa
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_EFFECT	decomp code sites: ftMainSetStatus flag columns per call
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_MODELPART	decomp code sites: ftMainSetStatus flag columns per call
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_TEXTUREPART	decomp code sites: ftMainSetStatus flag columns per call
+crates/ssb-game/src/computer/attack_tests.rs	N64_1P_TRAIT_ROWS	test fixture: N64 measurements or expected ROM values
 crates/ssb-game/src/countdown_tests.rs	SIZES	test fixture
 crates/ssb-game/src/explain.rs	ARROWS	vertex data in archive file 0xC6 (a relocatable file, not an overlay d* array)
 crates/ssb-game/src/explain.rs	KEY_EVENTS	link-time labels: llSCExplainMain{0,1,2,3}KeyEvent offsets in the How to Play file
@@ -109,15 +110,22 @@ crates/ssb-rom/src/stage.rs	ONE_P_WALLPAPER_GROUNDS	link-time labels: GRKind and
 crates/ssb-rom/src/task_head.rs	HEAD0_DISPLAY_WEAPONS	link-time label: (file ID, ll* offset) key of the weapon object whose display stays head 0
 crates/ssb-rom/src/transition.rs	EXPECTED_FILES	test fixture: the llLBTransition*FileID labels (reloc_data_symbols.us.txt) the generated dLBTransitionDescs is checked against
 crates/ssb-rom/tests/backup.rs	DEFAULT_BACKUP_ROM	layout: the symbol's address and its segment's ROM and VRAM start, to find the array in the ROM
+crates/ssb-rom/tests/catch_slope.rs	N64	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/common/slot_statuses.rs	SLOT_STATUSES	layout: slot to status ordinal names from ftdef.h and ft<fighter>.h (names and ordinals only)
 crates/ssb-rom/tests/demo_clips.rs	FRAMES	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64_GRABS	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64_HITS	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/explain_movement.rs	N64_SEEDS	test fixture: N64 measurements (RE-468, RE-472)
+crates/ssb-rom/tests/fighter_fidelity.rs	DESCS	layout: ROM offsets of each fighter's special status descs and motion descs
 crates/ssb-rom/tests/special_hi_pitch.rs	BOUND	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	FOX	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
 crates/ssb-rom/tests/special_hi_pitch.rs	QUICK_END	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_n64_rows.rs	CAPTAIN	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_n64_rows.rs	KIRBY	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_n64_rows.rs	NESS	test fixture: N64 measurements or expected ROM values
+crates/ssb-rom/tests/special_n64_rows.rs	PIKACHU	test fixture: N64 measurements or expected ROM values
 psp-asset-viewer/src/addr_diag.rs	PROBES	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/main.rs	TRIANGLE	tooling: render-validation probe fixtures, no ROM data
 psp-asset-viewer/src/normal_diag.rs	CASES	tooling: render-validation probe fixtures, no ROM data
@@ -156,6 +164,7 @@ tools/romtool/src/filter_coverage.rs	HOLDOUT_BASES	tooling: texture-filter cover
 tools/romtool/src/filter_coverage.rs	IDENTITY	tooling: texture-filter coverage experiment parameters, no ROM data
 tools/romtool/src/filter_coverage.rs	PHASES	tooling: texture-filter coverage experiment parameters, no ROM data
 tools/romtool/src/filter_coverage.rs	TRAIN_BASES	tooling: texture-filter coverage experiment parameters, no ROM data
+tools/romtool/src/main.rs	BOSS_COMET_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
 tools/romtool/src/main.rs	DIRECT_WEAPON_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	EFFECT_CLD_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
 tools/romtool/src/main.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of effect trees drawn XLU; the dEFManager*EffectDesc is named, not copied
@@ -171,4 +180,3 @@ tools/romtool/src/residual_fixes.rs	CASES	tooling: residual review fixtures (scr
 tools/romtool/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
-tools/romtool/src/main.rs	BOSS_COMET_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
