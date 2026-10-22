@@ -950,6 +950,47 @@ mod tests {
         crate::combat::resolve(&mut other);
         assert_eq!(other.damage, 12);
     }
+    /// `wpManagerMakeWeapon` gives the trail `GMHITCOLLISION_FLAG_ALL`, so
+    /// `itProcessSearchHitWeapon` tests both its offsets against an item;
+    /// `wpPikachuThunderTrailProcHit` returns FALSE. The record covers the
+    /// group (`wpProcessUpdateHitInteractStats`), head included, and a later
+    /// trail copies the head's records (`wpPikachuThunderTrailMakeWeapon`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_thunder_trail_hits_an_item_once_for_its_group() {
+        let mut pool = WeaponPool::default();
+        pool.spawn(spawn(WeaponKind::PikachuThunder, 0.0, 1500.0));
+        pool.tick(|| [], None);
+        let mut items = crate::item::ItemPool::default();
+        let slot = items
+            .make_setup_common(1, None, Vec3::ZERO, Vec3::ZERO, &core::iter::empty)
+            .unwrap();
+        let item = items.get_mut(slot).unwrap();
+        let id = crate::item::ITEM_RECORD_BASE + slot;
+        let mut emit = crate::wpeffect::Emit::default();
+        // Out of the upper offset's reach (1620): only the lower one (1380).
+        item.pos = Vec3::new(0.0, 1180.0, 0.0);
+        pool.hit_item(item, id, &mut emit);
+        assert_eq!(item.damage_queue, 12, "the lower offset meets the item");
+        pool.finish_item_hits();
+        assert_eq!(pool.thunder_trails().count(), 1, "the trail survives");
+        pool.hit_item(item, id, &mut emit);
+        assert_eq!(item.damage_queue, 12);
+        // The next trail, made at 1050, inherits the head's record.
+        pool.tick(|| [], None);
+        assert_eq!(pool.thunder_trails().count(), 2);
+        item.pos = Vec3::new(0.0, 1050.0, 0.0);
+        pool.hit_item(item, id, &mut emit);
+        assert_eq!(item.damage_queue, 12);
+        // Another item is still fair game.
+        let other = items
+            .make_setup_common(1, None, Vec3::ZERO, Vec3::ZERO, &core::iter::empty)
+            .unwrap();
+        let item = items.get_mut(other).unwrap();
+        item.pos = Vec3::new(0.0, 1050.0, 0.0);
+        pool.hit_item(item, crate::item::ITEM_RECORD_BASE + other, &mut emit);
+        assert_eq!(item.damage_queue, 12);
+    }
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn thunder_trail_scaled_offsets_and_expiration_match_source() {
@@ -1002,6 +1043,35 @@ mod tests {
         pool.tick(|| [], None);
         assert_eq!(pool.thunder_heads().count(), 0);
         assert!(pool.thunder_trails().next().is_some());
+    }
+
+    /// `wpPikachuThunderHeadSetDestroy` runs only in the head's
+    /// `proc_update`, `proc_map` and `proc_dead`, all inside
+    /// `wpProcessProcWeaponMain`: the head has no attack (attack state
+    /// off), so no hit callback sets it. The owner sees it after that
+    /// frame's weapon tick, as Pikachu's next update reads it on the N64.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_head_meeting_the_floor_tells_pikachu_after_that_weapon_tick() {
+        let mut f = Fighter::new(FighterKind::Pikachu, 0, 3);
+        crate::pikachu::set_special_lw(&mut f);
+        f.status.set_time(24.0);
+        f.pikachu.map_bound_top = Some(20_000.0);
+        crate::pikachu::update(&mut f);
+        let s = f.take_weapon_spawn().unwrap();
+        let y = (s.position.y - 700.0) as i16;
+        let floor = surface(MapSurfaceKind::Floor, 1, (-4000, y, 0), (4000, y, 1));
+        let mut pool = WeaponPool::default();
+        pool.spawn(s);
+        pool.observe_owner(&f);
+        pool.tick(|| [floor], None);
+        pool.sync_owner(&mut f);
+        assert_eq!(pool.thunder_heads().count(), 1);
+        assert!(!f.pikachu.thunder_destroyed);
+        pool.tick(|| [floor], None);
+        assert_eq!(pool.thunder_heads().count(), 0);
+        pool.sync_owner(&mut f);
+        assert!(f.pikachu.thunder_destroyed);
     }
 
     #[test]

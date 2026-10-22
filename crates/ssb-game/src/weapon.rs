@@ -1538,6 +1538,14 @@ impl KirbyCutter {
     }
 }
 
+/// One of Ness's weapons, as [`WeaponPool::ness_shots`] lists them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NessShot {
+    Fire(PKFire),
+    Head(PKThunder),
+    Trail(PKThunderTrail),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Weapon {
     Fireball(MarioFireball),
@@ -1689,6 +1697,9 @@ pub struct WeaponPool {
     /// `is_special_interrupt` was set; [`Self::sync_owner`] delivers it.
     caught: [bool; MAX_OWNERS],
     thunder_destroyed: [bool; MAX_OWNERS],
+    /// Ness's `is_thunder_destroy` writes from the hit collisions, for
+    /// [`Self::sync_hit_owner`].
+    ness_thunder_destroyed: [bool; MAX_OWNERS],
     next_group: u16,
     /// Each slot's [`WeaponSpawn::stale`].
     stale: [crate::stale::WeaponStale; MAX_WEAPONS],
@@ -2269,6 +2280,12 @@ enum Proc {
 
 /// The attack-record id naming weapon slot `i` as a victim
 /// (`victim_gobj` is a weapon; a clash records it).
+/// A Thunder trail's second attack offset: the authored -240 at DObj scale
+/// 0.5 (`wpProcessUpdateHitOffsets`).
+fn trail_low_attack(t: ThunderTrail) -> Vec3 {
+    t.position - Vec3::new(0.0, 120.0, 0.0)
+}
+
 fn weapon_victim_id(i: usize) -> u8 {
     crate::combat::WEAPON_RECORD_BASE + i as u8
 }
@@ -2534,7 +2551,9 @@ fn laser_hit(laser: &ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) {
     );
     match pre {
         PreHit::None | PreHit::SetOff => {}
+        // `ftMainUpdateReflectorStatWeapon` records the reflector.
         PreHit::Reflected => {
+            record_weapon_victim(h.records, defender.port);
             h.pending.reflect = Some(Reflector::of(defender));
             return;
         }
@@ -2713,7 +2732,9 @@ fn monster_hit(
             record_shot_victim(&mut h, defender.port, rehit);
             return;
         }
+        // `ftMainUpdateReflectorStatWeapon` records the reflector.
         PreHit::Reflected => {
+            record_shot_victim(&mut h, defender.port, rehit);
             h.pending.reflect = Some(Reflector::of(defender));
             return;
         }
@@ -3039,6 +3060,7 @@ impl Default for WeaponPool {
             owners: [None; MAX_OWNERS],
             caught: [false; MAX_OWNERS],
             thunder_destroyed: [false; MAX_OWNERS],
+            ness_thunder_destroyed: [false; MAX_OWNERS],
             next_group: 1,
             stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
             teams: [crate::team::TEAM_DEFAULT; MAX_WEAPONS],
@@ -3075,6 +3097,7 @@ impl WeaponPool {
         self.owners = [None; MAX_OWNERS];
         self.caught = [false; MAX_OWNERS];
         self.thunder_destroyed = [false; MAX_OWNERS];
+        self.ness_thunder_destroyed = [false; MAX_OWNERS];
         self.next_group = 1;
         self.stale = [crate::stale::WeaponStale::FRESH; MAX_WEAPONS];
         self.teams = [crate::team::TEAM_DEFAULT; MAX_WEAPONS];
@@ -3172,19 +3195,6 @@ impl WeaponPool {
             }
         }
     }
-    fn clear_pk_trails(&mut self) {
-        let mut groups = [None; MAX_WEAPONS];
-        for (i, w) in self.slots.iter().enumerate() {
-            if let Some(Weapon::PKThunder(h)) = w {
-                groups[i] = Some(h.group);
-            }
-        }
-        for slot in &mut self.slots {
-            if matches!(slot, Some(Weapon::PKTrail(t)) if !groups.contains(&Some(t.group))) {
-                destroy(slot);
-            }
-        }
-    }
     /// The `DObj` translations of the weapons that set `is_camera_follow`
     /// (`wpLinkBoomerangMakeWeapon`, `wpYoshiEggThrowMakeWeapon`,
     /// `wpNessPKThunderHeadMakeWeapon`), which `gmCameraUpdateInterests`
@@ -3224,6 +3234,18 @@ impl WeaponPool {
             } else {
                 None
             }
+        })
+    }
+    /// Ness's live weapons in link order: PK Fire sparks, PK Thunder heads
+    /// and their trails. A first reflection's head
+    /// (`wpNessPKReflectHeadMakeWeapon`) is a new weapon, last in the link.
+    pub fn ness_shots(&self) -> impl Iterator<Item = NessShot> + '_ {
+        let (order, n) = self.link_order();
+        (0..n).filter_map(move |k| match self.slots[order[k]] {
+            Some(Weapon::PKFire(w)) => Some(NessShot::Fire(w)),
+            Some(Weapon::PKThunder(w)) => Some(NessShot::Head(w)),
+            Some(Weapon::PKTrail(w)) => Some(NessShot::Trail(w)),
+            _ => None,
         })
     }
     /// Live item-made weapons, in link order (the trace's and the draw's),
@@ -3551,10 +3573,6 @@ impl WeaponPool {
         self.item_spawns[..len].iter_mut().filter_map(Option::take)
     }
 
-    /// A slot's attack as `itProcessSearchHitWeapon` reads it: owner,
-    /// staled hitbox, position and velocity. Pikachu's Thunder and both
-    /// thunder trail kinds keep group records that do not name items; they
-    /// pass items by.
     /// `itProcessSearchHitWeapon`'s view of slot `i`: the item searches
     /// (priority 1) precede every weapon's `wpProcessProcHitCollisions`
     /// (priority 0), so a weapon reads as [`Self::begin_clashes`] took it
@@ -3644,7 +3662,30 @@ impl WeaponPool {
                     prev,
                 ));
             }
-            Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => return None,
+            // `wpNessPKThunderTrailProcUpdate` sets the trail's position,
+            // so its attack box transfers (no sweep); `vel_air` (zero
+            // before a reflect) picks the item's knockback side.
+            Weapon::PKTrail(t) => {
+                let pos = t.hit_position();
+                let hitbox = Hitbox {
+                    damage: stale.damage(ness::TRAIL_HIT.damage),
+                    ..ness::TRAIL_HIT
+                };
+                return Some((t.owner_port, hitbox, pos, t.velocity, pos));
+            }
+            // `wpPikachuThunderHeadMakeWeapon` turns the head's attack off.
+            Weapon::Thunder(_) => return None,
+            // A trail segment stands still: its box transfers. This is its
+            // first attack offset (the authored +240 at DObj scale 0.5);
+            // [`trail_low_attack`] is the second. `vel_air` stays zero.
+            Weapon::Trail(t) => {
+                let pos = t.position + Vec3::new(0.0, 120.0, 0.0);
+                let hitbox = Hitbox {
+                    damage: stale.damage(pikachu::TRAIL_HIT.damage),
+                    ..pikachu::TRAIL_HIT
+                };
+                return Some((t.owner_port, hitbox, pos, Vec3::ZERO, pos));
+            }
         };
         hitbox.damage = stale.damage(hitbox.damage);
         Some((owner, hitbox, pos, vel, pos - vel))
@@ -3720,7 +3761,7 @@ impl WeaponPool {
                             );
                         }
                         if w.priority <= item.attack.priority {
-                            record_weapon_victim(&mut self.hit_records[i], id);
+                            self.record_item_victim(i, id);
                             self.clash_damage[i] = self.clash_damage[i].max(w.damage);
                             self.clash_fx.push(
                                 0,
@@ -3756,12 +3797,20 @@ impl WeaponPool {
                 crate::combat::AttackState::Interpolate
             };
             let tail_hit = matches!(self.slots[i], Some(Weapon::Monster(m)) if m.kind == ShotKind::RayGun && m.attack_tail.is_some_and(|(tail, old)| crate::item::touches_damage_coll(item, tail, old, hitbox.radius, state)));
-            if !crate::item::touches_damage_coll(item, pos, prev, hitbox.radius, state) && !tail_hit
+            // `itProcessSearchHitWeapon` walks every attack offset; a
+            // Thunder trail has two.
+            let trail_low_hit = matches!(self.slots[i], Some(Weapon::Trail(t)) if {
+                let low = trail_low_attack(t);
+                crate::item::touches_damage_coll(item, low, low, hitbox.radius, state)
+            });
+            if !crate::item::touches_damage_coll(item, pos, prev, hitbox.radius, state)
+                && !tail_hit
+                && !trail_low_hit
             {
                 continue;
             }
             // `itProcessUpdateDamageStatWeapon`.
-            record_weapon_victim(&mut self.hit_records[i], id);
+            self.record_item_victim(i, id);
             // `is_rehit`: only a `nITTypeDamage` item is rehit.
             if item.ty == crate::item::ItemType::Damage
                 && matches!(self.slots[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item)
@@ -3828,6 +3877,31 @@ impl WeaponPool {
         }
     }
 
+    /// `wpProcessUpdateHitInteractStats` against item `id`: a weapon with a
+    /// `group_id` records it for every weapon of its group. PK Thunder's
+    /// trails share one group; a reflected head shares its trails' group
+    /// (`wpNessPKReflectHeadMakeWeapon`), the first head's is 0.
+    fn record_item_victim(&mut self, i: usize, id: u8) {
+        let group = |w: &Option<Weapon>| match w {
+            Some(Weapon::PKTrail(t)) => Some(t.group),
+            Some(Weapon::PKThunder(h)) if h.reflected => Some(h.group),
+            // Pikachu's head and trails always share a `group_id`
+            // (wppikachuthunder.c:171, :222).
+            Some(Weapon::Thunder(h)) => Some(h.group),
+            Some(Weapon::Trail(t)) => Some(t.group),
+            _ => None,
+        };
+        let Some(g) = group(&self.slots[i]) else {
+            record_weapon_victim(&mut self.hit_records[i], id);
+            return;
+        };
+        for j in 0..MAX_WEAPONS {
+            if group(&self.slots[j]) == Some(g) {
+                record_weapon_victim(&mut self.hit_records[j], id);
+            }
+        }
+    }
+
     /// `wpProcessProcHitCollisions` for normal hits queued by item searches.
     /// Call once after every item's damage collision has been searched.
     pub fn finish_item_hits(&mut self) {
@@ -3872,6 +3946,9 @@ impl WeaponPool {
                 }
             }
             Weapon::Monster(m) if m.survives(ShotProc::Hit) => {}
+            // `wpNessPKThunderTrailProcHit` and
+            // `wpPikachuThunderTrailProcHit` return FALSE.
+            Weapon::PKTrail(_) | Weapon::Trail(_) => {}
             _ => destroy(slot),
         }
     }
@@ -4017,6 +4094,7 @@ impl WeaponPool {
                                     self.stale[i],
                                     self.teams[i],
                                     self.lrs[i],
+                                    self.hit_records[i],
                                 ));
                             }
                             // `wpPikachuThunderHeadProcDead` notifies
@@ -4098,8 +4176,12 @@ impl WeaponPool {
         for event in rocks.into_iter().flatten() {
             self.push_rock_event(event);
         }
-        for (trail, stale, team, lr) in trails.into_iter().flatten() {
-            self.insert(Weapon::Trail(trail), stale, team, lr);
+        // `wpPikachuThunderTrailMakeWeapon` copies the head's attack
+        // records: an item the group hit stays recorded.
+        for (trail, stale, team, lr, records) in trails.into_iter().flatten() {
+            if let Some(j) = self.insert_at(Weapon::Trail(trail), stale, team, lr) {
+                self.hit_records[j] = records;
+            }
         }
     }
 
@@ -4129,8 +4211,18 @@ impl WeaponPool {
         let rules = self.team_rules;
         let bit = 1u8 << (defender.port & 7);
         let mut thunder_groups = [None; MAX_WEAPONS];
-        for (i, slot) in self.slots.iter_mut().enumerate() {
-            let Some(weapon) = slot else { continue };
+        // `gGCCommonLinks[nGCCommonLinkIDWeapon]`: the weapons in link
+        // order, not slot order (a freed slot refills with a newer weapon).
+        let (order, n) = self.link_order();
+        for &i in &order[..n] {
+            // Ness's trails follow their head in the link.
+            if matches!(self.slots[i], Some(Weapon::PKTrail(_))) {
+                self.search_pk_trail(i, defender);
+                continue;
+            }
+            let Some(weapon) = &mut self.slots[i] else {
+                continue;
+            };
             let fgm_id = weapon.fgm_id();
             let records = &mut self.hit_records[i];
             // An item may have evicted a fighter's record since the last
@@ -4143,11 +4235,6 @@ impl WeaponPool {
                 Weapon::Egg(e) => e.hit_ports = ports,
                 Weapon::Bomb(b) => b.hit_ports = ports,
                 _ => {}
-            }
-            // Ness's trails come after their heads in the link
-            // ([`Self::search_pk_trails`]).
-            if let Weapon::PKTrail(_) = weapon {
-                continue;
             }
             if let Weapon::Thunder(_) = weapon {
                 continue;
@@ -4235,7 +4322,7 @@ impl WeaponPool {
                 }
                 Weapon::PKFire(s) => (s.owner_port, ness::SPARK_HIT, s.position, s.velocity),
                 Weapon::PKThunder(h) => (h.owner_port, ness::HEAD_HIT, h.position, h.velocity),
-                Weapon::PKTrail(_) => unreachable!("searched after the heads"),
+                Weapon::PKTrail(_) => unreachable!("searched by search_pk_trail"),
                 Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
                 Weapon::Fireball(f) => {
                     (f.owner_port, MARIO_FIREBALL_HITBOX, f.position, f.velocity)
@@ -4353,8 +4440,13 @@ impl WeaponPool {
                     record_weapon_victim(records, defender.port);
                     continue;
                 }
-                // `reflect_gobj`: the last reflector wins.
+                // `ftMainUpdateReflectorStatWeapon` records the reflector
+                // (`nGMHitTypeReflect`), kept through the reflection: the
+                // shot passes it from then on. `reflect_gobj`: the last
+                // reflector wins.
                 PreHit::Reflected => {
+                    weapon_saw(weapon, bit);
+                    record_weapon_victim(records, defender.port);
                     self.pending[i].reflect = Some(Reflector::of(defender));
                     continue;
                 }
@@ -4412,68 +4504,60 @@ impl WeaponPool {
                 }
             }
         }
-        self.search_pk_trails(defender);
     }
 
-    /// `ftMainSearchHitWeapon` for Ness's PK Thunder trails, which follow
-    /// their head in the link. A trail records the fighter for its whole
+    /// `ftMainSearchHitWeapon` for Ness's PK Thunder trail in slot `i`, in its
+    /// place in the link. A trail records the fighter for its whole
     /// group (`wpProcessUpdateHitInteractStats`): the trails of one head
     /// and, once reflected, the head too (`wpNessPKReflectHeadMakeWeapon`
     /// gives it a `group_id` its trails copy; the first head's is 0). Its
     /// `proc_hit` and `proc_shield` (`wpNessPKThunderTrailProcHit`) wait
     /// for [`Self::react_to_fighter_hits`].
-    fn search_pk_trails(&mut self, defender: &mut Fighter) {
-        let rules = self.team_rules;
+    fn search_pk_trail(&mut self, i: usize, defender: &mut Fighter) {
+        let Some(Weapon::PKTrail(t)) = self.slots[i] else {
+            return;
+        };
         let bit = 1u8 << (defender.port & 7);
-        // A reflected head that met this fighter has recorded it for its
+        if t.owner_port == defender.port
+            || self.team_rules.spares(defender.team, self.teams[i])
+            || t.hit_ports & bit != 0
+        {
+            return;
+        }
+        // A reflected head that met this fighter recorded it for its
         // trails.
-        let mut groups = [None; MAX_WEAPONS];
-        for (i, w) in self.slots.iter().enumerate() {
-            if let Some(Weapon::PKThunder(h)) = w {
-                if h.reflected && recorded_fighter_ports(&self.hit_records[i]) & bit != 0 {
-                    groups[i] = Some(h.group);
-                }
-            }
+        let head_saw = self.slots.iter().zip(&self.hit_records).any(|(w, r)| {
+            matches!(w, Some(Weapon::PKThunder(h)) if h.reflected && h.group == t.group)
+                && recorded_fighter_ports(r) & bit != 0
+        });
+        if head_saw {
+            return;
         }
-        for (i, slot) in self.slots.iter_mut().enumerate() {
-            let Some(Weapon::PKTrail(t)) = slot else {
-                continue;
-            };
-            if t.owner_port == defender.port
-                || rules.spares(defender.team, self.teams[i])
-                || t.hit_ports & bit != 0
-                || groups.contains(&Some(t.group))
-            {
-                continue;
+        let contact = stale_contact(
+            &ness::TRAIL_HIT,
+            t.hit_position(),
+            Vec3::ZERO,
+            self.stale[i],
+            defender,
+            &mut self.landed[i],
+            t.owner_port,
+            None,
+            crate::item_sounds::weapon::NESS_PK_THUNDER_TRAIL,
+        );
+        match contact {
+            crate::combat::WeaponContact::Missed => return,
+            // `ftMainUpdateShieldStatWeapon`: `proc_shield`.
+            crate::combat::WeaponContact::Shielded(shield) => {
+                self.pending[i].shield.get_or_insert(shield);
             }
-            let contact = stale_contact(
-                &ness::TRAIL_HIT,
-                t.hit_position(),
-                Vec3::ZERO,
-                self.stale[i],
-                defender,
-                &mut self.landed[i],
-                t.owner_port,
-                None,
-                crate::item_sounds::weapon::NESS_PK_THUNDER_TRAIL,
-            );
-            match contact {
-                crate::combat::WeaponContact::Missed => continue,
-                // `ftMainUpdateShieldStatWeapon`: `proc_shield`.
-                crate::combat::WeaponContact::Shielded(shield) => {
-                    self.pending[i].shield.get_or_insert(shield);
-                }
-                // `hit_normal_damage`: `proc_hit`.
-                crate::combat::WeaponContact::Hurt(_) => self.proc_hit[i] = true,
-            }
-            t.hit_ports |= bit;
-            groups[i] = Some(t.group);
+            // `hit_normal_damage`: `proc_hit`.
+            crate::combat::WeaponContact::Hurt(_) => self.proc_hit[i] = true,
         }
-        for (i, slot) in self.slots.iter_mut().enumerate() {
+        for (j, slot) in self.slots.iter_mut().enumerate() {
             match slot {
-                Some(Weapon::PKTrail(t)) if groups.contains(&Some(t.group)) => t.hit_ports |= bit,
-                Some(Weapon::PKThunder(h)) if h.reflected && groups.contains(&Some(h.group)) => {
-                    record_weapon_victim(&mut self.hit_records[i], defender.port);
+                Some(Weapon::PKTrail(o)) if o.group == t.group => o.hit_ports |= bit,
+                Some(Weapon::PKThunder(h)) if h.reflected && h.group == t.group => {
+                    record_weapon_victim(&mut self.hit_records[j], defender.port);
                 }
                 _ => {}
             }
@@ -4486,7 +4570,6 @@ impl WeaponPool {
     /// `proc_absorb`, each only while the weapon lives.
     pub fn react_to_fighter_hits(&mut self) {
         let (order, n) = self.link_order();
-        let mut pk = false;
         for &i in &order[..n] {
             let hit = core::mem::take(&mut self.proc_hit[i]);
             let pending = core::mem::replace(&mut self.pending[i], PendingProcs::NONE);
@@ -4498,7 +4581,6 @@ impl WeaponPool {
                 Some(Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_))
             ) {
                 self.pk_procs(i, hit, pending);
-                pk = true;
                 continue;
             }
             let Some(weapon) = self.slots[i].as_mut() else {
@@ -4532,11 +4614,10 @@ impl WeaponPool {
         }
         self.proc_hit = [false; MAX_WEAPONS];
         self.pending = [PendingProcs::NONE; MAX_WEAPONS];
-        // `wpNessPKThunderHeadSetDestroyTrails` only marks the trails: the
-        // ones later in the link still run their callbacks this pass.
-        if pk {
-            self.clear_pk_trails();
-        }
+        // `wpNessPKThunderHeadSetDestroyTrails` only marks the trails: they
+        // run this pass's callbacks, stay listed and drawn, and their next
+        // `proc_update` ends them ([`Self::tick_pk_thunder`] drops a trail
+        // whose head group is gone).
     }
 
     /// `wpProcessProcHitCollisions` for Ness's weapons: PK Fire's spark
@@ -4555,6 +4636,10 @@ impl WeaponPool {
         let mut emit = Emit::default();
         let mut pillar = false;
         let trail = matches!(weapon, Weapon::PKTrail(_));
+        let thunder_owner = match weapon {
+            Weapon::PKThunder(h) if !h.reflected => Some(h.owner_port),
+            _ => None,
+        };
         let alive = 'procs: {
             if hit {
                 weapon.proc_effects(Proc::Hit, &mut emit);
@@ -4623,6 +4708,16 @@ impl WeaponPool {
             true
         };
         self.fx.extend(self.seq[i], &emit);
+        // `wpNessPKThunderHeadSetDestroyTrails(head, TRUE)` from the head's
+        // `proc_hit`, `proc_shield`, `proc_setoff`, `proc_reflector` (after
+        // giving the head back to Ness) and `proc_absorb` sets Ness's
+        // `is_thunder_destroy` in this pass: his next update counts
+        // `pkthunder_end_delay` down.
+        if let Some(port) = thunder_owner {
+            if !alive || matches!(self.slots[i], Some(Weapon::PKThunder(h)) if h.reflected) {
+                self.mark_ness_thunder_destroyed(port);
+            }
+        }
         if pillar {
             if let Some(Weapon::PKFire(spark)) = self.slots[i] {
                 self.queue_item_spawn(spark.item_spawn(self.stale[i], self.teams[i]));
@@ -4911,7 +5006,7 @@ impl WeaponPool {
     /// first in the source).
     pub fn finish_clashes(&mut self) {
         let (order, n) = self.link_order();
-        let mut thunder = false;
+        let mut ness_thunder = None;
         for &i in &order[..n] {
             let damage = core::mem::take(&mut self.clash_damage[i]);
             if damage == 0 || self.set_off[i] {
@@ -4946,8 +5041,12 @@ impl WeaponPool {
                     self.queue_item_spawn(spawn);
                     false
                 }
-                Weapon::PKThunder(_) => {
-                    thunder = true;
+                // `wpNessPKThunderHeadProcHit`: its trails are marked and
+                // end at their next update; Ness learns of it this pass.
+                Weapon::PKThunder(h) => {
+                    if !h.reflected {
+                        ness_thunder = Some(h.owner_port);
+                    }
                     false
                 }
                 // The Fireball's, Charge Shot's, Final Cutter's and Thunder
@@ -4957,9 +5056,25 @@ impl WeaponPool {
             if !alive {
                 destroy(&mut self.slots[i]);
             }
+            if let Some(port) = ness_thunder.take() {
+                self.mark_ness_thunder_destroyed(port);
+            }
         }
-        if thunder {
-            self.clear_pk_trails();
+    }
+
+    fn mark_ness_thunder_destroyed(&mut self, port: u8) {
+        if let Some(flag) = self.ness_thunder_destroyed.get_mut(usize::from(port)) {
+            *flag = true;
+        }
+    }
+
+    /// Delivers `is_thunder_destroy` writes from the weapons' hit
+    /// collisions (`wpNessPKThunderHeadSetDestroyTrails`) to Ness: call it
+    /// after [`Self::finish_clashes`], so his next update reads it.
+    pub fn sync_hit_owner(&mut self, f: &mut Fighter) {
+        let port = usize::from(f.port);
+        if port < MAX_OWNERS && core::mem::take(&mut self.ness_thunder_destroyed[port]) {
+            f.ness.thunder_destroyed = true;
         }
     }
 
@@ -5887,6 +6002,85 @@ mod tests {
             fox.status.status,
             crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwHit)
         );
+    }
+
+    /// `ftMainUpdateReflectorStatWeapon` records the reflector
+    /// (`wpProcessUpdateHitInteractStats`, `nGMHitTypeReflect`) and
+    /// `wpProcessProcHitCollisions` keeps the records: a Fireball one Fox
+    /// turned back and another turned again passes through the first.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_shot_passes_through_the_fox_that_reflected_it() {
+        let mut weapons = fireball_at(Vec3::new(100.0, 60.0, 0.0), -1.0);
+        let fox = |port: u8, reflecting: bool| {
+            let mut fox = Fighter::new(FighterKind::Fox, port, 3);
+            fox.pos = Vec3::ZERO;
+            fox.situation = Situation::Ground;
+            if reflecting {
+                crate::status::set_fox_special_lw_start(&mut fox);
+                crate::status::set_any_status(
+                    &mut fox,
+                    crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwLoop),
+                    0.0,
+                    crate::status::StatusTiming::unknown(),
+                );
+            }
+            fox
+        };
+        for port in [1, 2] {
+            let mut reflector = fox(port, true);
+            weapons.apply_hits(&mut reflector);
+            crate::combat::resolve(&mut reflector);
+            assert_eq!(weapons.first_fireball().unwrap().owner_port, port);
+        }
+        let mut first = fox(1, false);
+        weapons.apply_hits(&mut first);
+        crate::combat::resolve(&mut first);
+        assert_eq!(first.damage, 0);
+        assert!(weapons.first_fireball().is_some());
+    }
+
+    /// `ftMainSearchHitWeapon` walks `gGCCommonLinks[nGCCommonLinkIDWeapon]`:
+    /// of two equal hits the first in the link sets the fighter's
+    /// `damage_lr` (the damage status keeps the first of equal
+    /// knockbacks). A freed slot refills with a newer weapon, last in the link.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_weapon_search_walks_the_link_not_the_slots() {
+        let spawn = |weapons: &mut WeaponPool, x: f32, facing: f32| {
+            assert!(weapons.spawn(WeaponSpawn {
+                kind: WeaponKind::MarioFireball,
+                owner_port: 0,
+                team: 0,
+                stale: crate::stale::WeaponStale::FRESH,
+                position: Vec3::new(x, 60.0, 0.0),
+                facing,
+            }));
+        };
+        let lr = |weapons: &mut WeaponPool| {
+            let mut f = Fighter::new(FighterKind::Mario, 1, 3);
+            f.situation = Situation::Ground;
+            weapons.apply_hits(&mut f);
+            crate::combat::resolve(&mut f);
+            assert!(f.damage > 0);
+            // The damage status faces the fighter against `damage_lr`.
+            f.facing
+        };
+        let mut left = WeaponPool::default();
+        spawn(&mut left, -60.0, 1.0);
+        let mut right = WeaponPool::default();
+        spawn(&mut right, 60.0, -1.0);
+        let (left_lr, right_lr) = (lr(&mut left), lr(&mut right));
+        assert_ne!(left_lr, right_lr);
+        // Slot 0 frees, then the right shot refills it: slot order would
+        // search it first.
+        let mut both = WeaponPool::default();
+        spawn(&mut both, 5000.0, 1.0);
+        spawn(&mut both, -60.0, 1.0);
+        both.slots[0] = None;
+        spawn(&mut both, 60.0, -1.0);
+        assert!(matches!(both.slots[0], Some(Weapon::Fireball(f)) if f.position.x > 0.0));
+        assert_eq!(lr(&mut both), left_lr);
     }
 
     fn fireball_at(pos: Vec3, facing: f32) -> WeaponPool {

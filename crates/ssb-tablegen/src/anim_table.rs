@@ -489,7 +489,7 @@ static SLOTS: [(&str, Recipe); 667] = [
         Special {
             targets: &["Fox"],
             fighter: "Fox",
-            motion: 214,
+            motion: 212,
         },
     ),
     (
@@ -521,7 +521,7 @@ static SLOTS: [(&str, Recipe); 667] = [
         Special {
             targets: &["Fox"],
             fighter: "Fox",
-            motion: 218,
+            motion: 216,
         },
     ),
     (
@@ -2014,7 +2014,7 @@ static SLOTS: [(&str, Recipe); 667] = [
         Special {
             targets: &["Captain"],
             fighter: "Captain",
-            motion: 206,
+            motion: 209,
         },
     ),
     (
@@ -2046,7 +2046,7 @@ static SLOTS: [(&str, Recipe); 667] = [
         Special {
             targets: &["Captain"],
             fighter: "Captain",
-            motion: 210,
+            motion: 213,
         },
     ),
     (
@@ -2814,7 +2814,7 @@ static SLOTS: [(&str, Recipe); 667] = [
         Special {
             targets: &["Pikachu"],
             fighter: "Pikachu",
-            motion: 200,
+            motion: 201,
         },
     ),
     (

@@ -128,6 +128,26 @@ pub fn training_fighter_at(
     f
 }
 
+/// A VS fighter on `port` at `(x, y)` facing `facing`
+/// (`scVSBattleGetStartPlayerLR`), as its entry leaves it: standing (or
+/// falling) from the first frame of its Wait.
+pub fn vs_fighter(
+    pack: &ssb_rom::pack::Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    kind: FighterKind,
+    port: u8,
+    (x, y, facing): (f32, f32, ssb_game::fighter::Facing),
+    floors: &[(u16, ssb_game::collision::Segment)],
+) -> Fighter {
+    let mut f = training_fighter_at(pack, stage, kind, port, u16::from(port), floors);
+    f.pos = ssb_engine::math::Vec3::new(x, y, 0.0);
+    f.facing = facing;
+    f.topn_lr = facing.sign();
+    f.init_floor(floors.iter().copied());
+    ssb_game::status::set_wait_or_fall(&mut f);
+    f
+}
+
 /// Dream Land's collision lines as the runtime's `FloorSegments` gives
 /// them to the map: every kind, with its topology.
 pub fn dream_land_map(

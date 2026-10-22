@@ -293,6 +293,10 @@ pub struct PKThunderTrail {
     /// update by `syUtilsRandIntRange(WPPKTHUNDER_TEXTURES_NUM - 1)` in
     /// `flush_effects` (RE-550).
     pub texture: u8,
+    /// `physics.vel_air`: zero for a trail of an unreflected head; a
+    /// reflected head's trail copies the head's velocity when it is made
+    /// (`wpNessPKReflectTrailMakeWeapon`).
+    pub velocity: Vec3,
     pub(super) rotation: f32,
     pub(super) spawn_next: bool,
 }
@@ -306,6 +310,11 @@ impl PKThunderTrail {
             lifetime: 160,
             hit_ports: 0,
             texture: 0,
+            velocity: if head.reflected {
+                Vec3::new(head.velocity.x, head.velocity.y, 0.0)
+            } else {
+                Vec3::ZERO
+            },
             // Reflected children inherit their parent's rotation minus 90°.
             // Keep the source's cumulative turns, including its janky offsets.
             rotation: if head.reflected {
@@ -322,7 +331,10 @@ impl PKThunderTrail {
         let make_effect = self.id == 3 && self.lifetime == 158;
         self.lifetime = self.lifetime.saturating_sub(1);
         if head.reflected {
-            self.position = head.position - head.velocity * ((self.id as f32 + 1.5) * 2.0);
+            // `wpNessPKReflectTrailProcUpdate` places it behind the head;
+            // `wpProcessProcWeaponMain` then adds its own `vel_air`.
+            self.position =
+                head.position - head.velocity * ((self.id as f32 + 1.5) * 2.0) + self.velocity;
         } else {
             let index = (head.cursor + 12 - (self.id as usize + 1) * 2) % 12;
             let pos = head.history[index];

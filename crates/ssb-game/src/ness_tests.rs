@@ -330,13 +330,88 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
         assert!(h.reflected);
         assert_eq!(h.owner_port, port);
         assert_eq!(h.lifetime, 160);
-        assert_eq!(pool.pk_trails().count(), 0);
+        // `wpNessPKThunderHeadSetDestroyTrails` only marks the old trails:
+        // they stay listed this frame (`b36/vst1` t515) and their next
+        // update ends them.
+        assert!(pool.pk_trails().any(|t| t.group != h.group));
         for _ in 0..4 {
             pool.tick(core::iter::empty, None);
+            assert!(pool.pk_trails().all(|t| t.group == h.group));
         }
     }
     pool.sync_owner(&mut f);
     assert!(f.ness.thunder_destroyed);
+}
+/// `wpProcessProcWeaponMain` tests every weapon's bounds after its
+/// `proc_update` and `vel_air` step. A reflected trail sits behind its head
+/// (`wpNessPKReflectTrailProcUpdate`), so it can cross a blast-zone edge
+/// the head has not: with no `proc_dead` it ends alone.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_reflected_trail_past_the_blast_zone_ends_alone() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    pool.spawn(f.take_weapon_spawn().unwrap());
+    pool.observe_owner(&f);
+    for _ in 0..12 {
+        pool.tick(core::iter::empty, None);
+    }
+    let head = pool.pk_thunders().next().unwrap();
+    let mut fox = fighter(FighterKind::Fox, 1, false);
+    fox.pos = head.position - Vec3::new(100.0, 250.0, 0.0);
+    status::set_any_status(
+        &mut fox,
+        AnyStatus::Fox(crate::status::FoxStatus::SpecialAirLwLoop),
+        0.0,
+        StatusTiming::unknown(),
+    );
+    pool.apply_hits(&mut fox);
+    crate::combat::resolve(&mut fox);
+    for _ in 0..12 {
+        pool.tick(core::iter::empty, None);
+    }
+    let group = pool.pk_thunders().next().unwrap().group;
+    let trails = pool.pk_trails().filter(|t| t.group == group).count();
+    assert!(trails >= 2);
+    // Next frame without bounds: an edge between the head and its last
+    // trail, across the head's main axis.
+    let mut free = pool.clone();
+    free.tick(core::iter::empty, None);
+    let h = free.pk_thunders().next().unwrap();
+    let last = free
+        .pk_trails()
+        .filter(|t| t.group == group)
+        .max_by_key(|t| t.id)
+        .unwrap();
+    let far = 1.0e6;
+    let mut bounds = crate::status::BlastZone {
+        top: far,
+        bottom: -far,
+        left: -far,
+        right: far,
+    };
+    let mid = (h.position + last.position) * 0.5;
+    if h.velocity.x.abs() >= h.velocity.y.abs() {
+        if h.velocity.x > 0.0 {
+            bounds.left = mid.x;
+        } else {
+            bounds.right = mid.x;
+        }
+    } else if h.velocity.y > 0.0 {
+        bounds.bottom = mid.y;
+    } else {
+        bounds.top = mid.y;
+    }
+    pool.tick(core::iter::empty, Some(bounds));
+    assert!(pool.pk_thunders().next().is_some(), "the head flies on");
+    let left = pool.pk_trails().filter(|t| t.group == group).count();
+    let free_count = free.pk_trails().filter(|t| t.group == group).count();
+    assert!(left > 0 && left < free_count, "{left} of {free_count}");
+    assert!(pool
+        .pk_trails()
+        .all(|t| t.id != last.id || t.group != group));
 }
 /// `wpNessPKThunderTrailProcHit` is the trail's `proc_shield` too and
 /// returns FALSE: a shield leaves the trail flying.
@@ -371,6 +446,64 @@ fn a_shield_leaves_the_pk_thunder_trail_flying() {
     assert_eq!(guard.damage, 0);
     assert_eq!(pool.pk_trails().count(), trails);
     assert_eq!(pool.pk_thunders().count(), 1);
+}
+/// Every weapon's attack interacts with items (`wpManagerMakeWeapon`:
+/// `GMHITCOLLISION_FLAG_ALL`), PK Thunder's trails too
+/// (`itProcessSearchHitWeapon`). The hit records the item for the whole
+/// trail group (`wpProcessUpdateHitInteractStats`), and
+/// `wpNessPKThunderTrailProcHit` leaves the trail flying.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_pk_thunder_trail_hits_an_item_once_for_its_group() {
+    let mut f = fighter(FighterKind::Ness, 0, false);
+    set_special_hi(&mut f);
+    steps(&mut f, 24);
+    let mut pool = WeaponPool::default();
+    pool.spawn(f.take_weapon_spawn().unwrap());
+    pool.observe_owner(&f);
+    for _ in 0..12 {
+        pool.tick(core::iter::empty, None);
+    }
+    let trails = pool.pk_trails().count();
+    assert!(trails >= 2);
+    let trail = pool.pk_trails().last().unwrap();
+    let mut items = ItemPool::default();
+    let slot = items
+        .make_setup_common(1, None, Vec3::ZERO, Vec3::ZERO, &core::iter::empty)
+        .unwrap();
+    let item = items.get_mut(slot).unwrap();
+    let id = crate::item::ITEM_RECORD_BASE + slot;
+    let mut emit = crate::wpeffect::Emit::default();
+    let mut hit = false;
+    for dy in [0.0, 50.0, 100.0, 150.0, 200.0] {
+        item.pos = trail.hit_position() - Vec3::new(0.0, dy, 0.0);
+        pool.hit_item(item, id, &mut emit);
+        if item.damage_queue != 0 {
+            hit = true;
+            break;
+        }
+    }
+    assert!(hit, "a trail meets the item");
+    assert!(
+        item.damage_queue
+            <= crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL
+                .hitbox()
+                .damage
+    );
+    let first = item.damage_queue;
+    pool.finish_item_hits();
+    assert_eq!(pool.pk_trails().count(), trails);
+    // Every trail of the group recorded it: none hits it again (trail 0
+    // sits in reach of the head).
+    for t in pool.pk_trails().filter(|t| t.id > 0).collect::<Vec<_>>() {
+        item.pos = t.hit_position();
+        pool.hit_item(item, id, &mut emit);
+    }
+    assert_eq!(item.damage_queue, first);
+    // The unreflected head's `group_id` is 0: its own record is clear.
+    item.pos = pool.pk_thunders().next().unwrap().position;
+    pool.hit_item(item, id, &mut emit);
+    assert!(item.damage_queue > first);
 }
 /// `ftMainUpdateAbsorbStatWeapon` heals at once but only sets the weapon's
 /// `absorb_gobj`: `proc_absorb` waits for `wpProcessProcHitCollisions`,

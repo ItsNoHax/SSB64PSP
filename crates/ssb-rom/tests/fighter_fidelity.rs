@@ -114,3 +114,46 @@ fn the_hidden_parts_are_the_roms() {
         );
     }
 }
+
+/// Each fixed special slot plays the clip of the motion its ROM status
+/// descriptor names (`FTStatusDesc.mflags >> 6`, then the fighter's motion
+/// descriptor's `anim_file`). The old slots played the next motion's clip:
+/// Fox's reflector loop played `SpecialLwEnd`, which raised joint 4 and the
+/// reflector by ~58 units and reflected PK Thunder three frames early
+/// (RE-566).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn special_slots_play_their_status_descs_motion() {
+    let Some(rom) = rom() else {
+        return;
+    };
+    let be16 = |at: usize| i16::from_be_bytes([rom[at], rom[at + 1]]);
+    let be32 = |at: usize| u32::from_be_bytes(rom[at..at + 4].try_into().unwrap());
+    // (fighter, slot, special status index, status descs, motion descs):
+    // `ft{fox,captain,pikachu}.h` order, ROM offsets of
+    // `dFT<F>SpecialStatusDescs` and `dFT<F>MotionDescs`.
+    let cases = [
+        ("Fox", "FoxSpecialLwLoop", 19, 0x0A_5A14, 0x09_44B0),
+        ("Fox", "FoxSpecialAirLwLoop", 24, 0x0A_5A14, 0x09_44B0),
+        ("Captain", "CaptainSpecialLwBound", 14, 0x0A_657C, 0x09_CC90),
+        ("Captain", "CaptainSpecialAirHi", 18, 0x0A_657C, 0x09_CC90),
+        ("Pikachu", "PikachuSpecialLwHit", 6, 0x0A_6810, 0x09_FB00),
+    ];
+    for (name, slot_name, status, descs, motions) in cases {
+        let motion = (be16(descs + status * 0x14) >> 6) as usize;
+        let file = be32(motions + motion * 12);
+        let slot = ssb_rom::anim::SLOT_NAMES
+            .iter()
+            .position(|n| *n == slot_name)
+            .unwrap();
+        let fighter = ssb_rom::anim::FIGHTER_ANIMS
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap();
+        assert_eq!(
+            u32::from(fighter.files[slot]),
+            file,
+            "{slot_name}: motion {motion}"
+        );
+    }
+}

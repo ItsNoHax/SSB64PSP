@@ -537,7 +537,8 @@ fn jump_edges(c: ssb_engine::input::ControllerState, was_held: &mut bool) -> (bo
 }
 
 /// [`tick_pair`] with fighter 1 on its own pad, `pad1(tick)` (buttons,
-/// stick x, stick y; no jump edges), as a human player 2.
+/// stick x, stick y), as a human player 2 (VS mode's second `Man`
+/// player): its C buttons jump as player 1's do.
 pub fn tick_pair_pads(
     pack: &ssb_rom::pack::Pack<'_>,
     map: &[ssb_game::weapon::MapSurface],
@@ -550,14 +551,8 @@ pub fn tick_pair_pads(
     let c0 = pad(pad0(tick));
     let edges0 = jump_edges(c0, &mut pair.jump_was_held[0]);
     let c1 = pad(pad1(tick));
-    tick_seats(
-        pack,
-        map,
-        fighters,
-        [c0, c1],
-        [edges0, (false, false)],
-        pair,
-    )
+    let edges1 = jump_edges(c1, &mut pair.jump_was_held[1]);
+    tick_seats(pack, map, fighters, [c0, c1], [edges0, edges1], pair)
 }
 
 /// One match-loop tick of a two-fighter scripted replay (How to Play's

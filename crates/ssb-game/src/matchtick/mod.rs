@@ -760,6 +760,9 @@ where
     hooks.phase(Phase::WeaponHits);
     world.weapons.search_weapons();
     world.weapons.finish_clashes();
+    for f in seats.iter_mut().flatten() {
+        world.weapons.sync_hit_owner(f.fighter_mut());
+    }
     world.weapons.flush_clash_effects(world.effects);
     hooks.phase(Phase::Params);
     crate::combat::end_finish(&mut fighters_mut(seats), world.effects, &mut |_| {});

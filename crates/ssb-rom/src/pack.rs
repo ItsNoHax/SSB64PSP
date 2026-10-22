@@ -468,7 +468,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `(PRIM - ENV) * TEXEL0 + ENV` lists convert as texture blend, and binds
 // the boss wallpaper effects' `o_matanim_joint` scripts (file 114) to their
 // `MObj`s (RE-457). No layout change.
-pub const VERSION: u32 = 129;
+// 130 takes four special anim slots from the ROM status descs' motion ids:
+// Fox SpecialLwLoop/AirLwLoop (212/216), Captain SpecialLwBound/AirHi
+// (209/213); the old ids played another motion's clip (the reflector loop
+// played LwEnd, RE-566). No layout change.
+pub const VERSION: u32 = 130;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
