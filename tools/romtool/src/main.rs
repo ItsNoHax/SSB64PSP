@@ -57,6 +57,7 @@ fn main() -> ExitCode {
         ["texgen", rom_path, rest @ ..] => texgen(rom_path.as_ref(), rest),
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["matcolors", rom_path, rest @ ..] => matcolors::matcolors(rom_path.as_ref(), rest),
+        ["costumes", rom_path, rest @ ..] => matcolors::costumes(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["residuals", rom_path, rest @ ..] => residuals_cmd(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
@@ -108,6 +109,7 @@ USAGE:
     romtool texgen   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>] [--verify]
     romtool stages   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
     romtool matcolors <rom.z64> --pack <pack.pak>
+    romtool costumes <rom.z64> [--pack <pack.pak>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
     romtool strict   <pack.pak>

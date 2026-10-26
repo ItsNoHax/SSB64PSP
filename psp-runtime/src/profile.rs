@@ -103,14 +103,17 @@ pub enum Span {
     Billboard,
     /// Billboard node matrices loaded (a count, not microseconds).
     BillboardNodes,
+    /// Inside the draw: the select shadows' `NOISE` texels on the CPU
+    /// (`meshdraw::draw_sprite_noise`).
+    Noise,
 }
 
-const SPANS: usize = 39;
+const SPANS: usize = 40;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
     "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
-    "compose", "allocs", "kallocs", "billboard", "bbnodes",
+    "compose", "allocs", "kallocs", "billboard", "bbnodes", "noise",
 ];
 
 /// Frames per report: two seconds at 60 FPS.

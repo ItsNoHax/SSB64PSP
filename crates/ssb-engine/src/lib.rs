@@ -37,6 +37,7 @@ pub mod heap;
 pub mod input;
 pub mod math;
 pub mod memory;
+pub mod rdp_noise;
 pub mod renderer;
 pub mod rsp_light;
 pub mod timing;

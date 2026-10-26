@@ -160,6 +160,9 @@ struct Reference<'a> {
     cmd22: usize,
     /// Commands run, by opcode.
     ops: [usize; 23],
+    /// `mobj->anim_frame` at `gcAddMObjMatAnimJoint`: the first parse
+    /// starts the wait at its negation.
+    start_frame: f32,
 }
 
 impl<'a> Reference<'a> {
@@ -172,6 +175,16 @@ impl<'a> Reference<'a> {
             tracks: [RefTrack::default(); TRACKS],
             cmd22: 0,
             ops: [0; 23],
+            start_frame: 0.0,
+        }
+    }
+
+    /// [`Self::new`] added at `anim_frame` (a fighter costume's index,
+    /// `lbCommonAddMObjForFighterPartsDObj`).
+    fn at_frame(data: &'a [u8], script: u32, anim_frame: f32) -> Self {
+        Reference {
+            start_frame: anim_frame,
+            ..Self::new(data, script)
         }
     }
 
@@ -189,11 +202,11 @@ impl<'a> Reference<'a> {
     }
 
     /// One frame: `gcParseMObjMatAnimJoint` then `gcPlayMObjMatAnim`, with
-    /// `anim_speed` 1 and `anim_frame` 0.
+    /// `anim_speed` 1.
     fn frame(&mut self) -> Result<Frame, String> {
         const SPEED: f32 = 1.0;
         let mut wait = match self.anim_wait {
-            None => 0.0,
+            None => -self.start_frame,
             Some(w) => w - SPEED,
         };
         if !self.ended && wait <= 0.0 {
@@ -1361,4 +1374,367 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         return Err("material resolvers disagree with the decomp draw path".into());
     }
     Ok(())
+}
+
+/// One costume script's tracks at one costume where [`Reference`] and
+/// [`ssb_rom::matanim::colors_at`] part ways, or a track the costume path
+/// does not carry.
+#[derive(Debug, PartialEq)]
+enum CostumeGap {
+    /// A colour track or `PaletteID` the two readings disagree on.
+    Differs {
+        track: usize,
+        reference: Option<u32>,
+        packed: Option<u32>,
+    },
+    /// A material track other than `PaletteID` the script writes, which
+    /// `colors_at` (and so the packed costume) never reads.
+    Unread { track: usize, value: u32 },
+}
+
+/// The decomp's tracks after `lbCommonAddMObjForFighterPartsDObj`'s one
+/// parse and play at `anim_frame = costume`, against what the packer's
+/// [`ssb_rom::matanim::colors_at`] read. `reads` is which of the two
+/// texture ids (`TextureIDCurrent`, `TextureIDNext`) any `MObjSub` running
+/// the script draws with ([`texture_ids_read`]).
+fn costume_gaps(
+    reference: &Frame,
+    colors: &ssb_rom::matanim::Colors,
+    reads: [bool; 2],
+) -> Vec<CostumeGap> {
+    let word = |c: Option<[u8; 4]>| c.map(u32::from_be_bytes);
+    let packed = [
+        word(colors.prim),
+        word(colors.env),
+        word(colors.blend),
+        word(colors.light1),
+        word(colors.light2),
+    ];
+    let mut gaps = Vec::new();
+    for (k, &p) in packed.iter().enumerate() {
+        let track = EXT + k;
+        if reference[track] != p {
+            gaps.push(CostumeGap::Differs {
+                track,
+                reference: reference[track],
+                packed: p,
+            });
+        }
+    }
+    // `gcDrawMObjForDObj` reads `(s32)mobj->palette_id`, which
+    // `gcAddMObjForDObj` starts at 0: a 0 and no write draw the same.
+    const PALETTE: usize = 9;
+    let palette = reference[PALETTE]
+        .map(|v| f32::from_bits(v) as i32 as u32)
+        .filter(|&p| p != 0);
+    let packed_palette = colors.palette_id.map(|p| p as u32).filter(|&p| p != 0);
+    if palette != packed_palette {
+        gaps.push(CostumeGap::Differs {
+            track: PALETTE,
+            reference: palette,
+            packed: packed_palette,
+        });
+    }
+    // `gcAddMObjForDObj` starts both texture ids at 0: a write of 0 leaves
+    // the `MObj` as it was, and one no `MObjSub` draws with is inert.
+    const TEXTURE_IDS: [usize; 2] = [0, 5];
+    for (track, v) in reference.iter().enumerate().take(EXT) {
+        if track == PALETTE {
+            continue;
+        }
+        if let Some(value) = *v {
+            if let Some(k) = TEXTURE_IDS.iter().position(|&t| t == track) {
+                if f32::from_bits(value) == 0.0 || !reads[k] {
+                    continue;
+                }
+            }
+            gaps.push(CostumeGap::Unread { track, value });
+        }
+    }
+    gaps
+}
+
+/// Whether an `MObjSub` with `flags` draws with `TextureIDCurrent` and
+/// `TextureIDNext` (`gcDrawMObjForDObj`): `FRAC` overwrites both from
+/// `lfrac` first; otherwise `ALPHA` loads `sprites[texture_id_curr]` and
+/// `SPLIT` `sprites[texture_id_next]`.
+fn texture_ids_read(flags: u16) -> [bool; 2] {
+    let own = flags & MOBJ_FLAG_FRAC == 0;
+    [
+        own && flags & MOBJ_FLAG_ALPHA != 0,
+        own && flags & MOBJ_FLAG_SPLIT != 0,
+    ]
+}
+
+/// `romtool costumes`: every fighter costume script (RE-040, RE-096,
+/// RE-098, RE-425) at every selectable costume, read by the decomp
+/// reference and by the packer's `colors_at`; then, with `--pack`, the
+/// costume-override table's keys against the fighters' costume counts.
+pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
+    let mut pack_path: Option<PathBuf> = None;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--pack" => pack_path = it.next().map(PathBuf::from),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+    let rom = fs::read(rom_path)?;
+    let info = ssb_rom::rom::identify(&rom)?;
+    let archive = Archive::open(&rom, info.region)?;
+    let loaded = super::load_all(&archive);
+
+    // `(file, script)` once each: the low-detail graph and the accessory
+    // share scripts with the high-detail one.
+    // Where each is used: `(graph offset, node, material, MObjSub)`, the
+    // accessory's node as `u32::MAX`.
+    let mut scripts: std::collections::BTreeMap<(u32, u32), Vec<(u32, u32, u32, u32)>> =
+        Default::default();
+    let mut graphs = 0usize;
+    for &(id, offset) in loaded.fighter_graphs.keys() {
+        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            continue;
+        };
+        let Some(graph) = loaded
+            .graphs
+            .get(&id)
+            .and_then(|gs| gs.iter().find(|g| g.offset == offset))
+        else {
+            continue;
+        };
+        if let Some(table) = loaded.tables.costumes_for(id, offset) {
+            graphs += 1;
+            let subs: Vec<Vec<u32>> = loaded
+                .tables
+                .table_for(id, offset)
+                .and_then(|at| ssb_rom::mobj::read_table(file, at, graph.nodes.len()))
+                .map(|t| {
+                    t.nodes
+                        .iter()
+                        .map(|c| c.iter().map(|m| m.at).collect())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let resolved = ssb_rom::matanim::resolve_scripts(file, table, graph.nodes.len(), |n| {
+                subs.get(n).map_or(0, Vec::len)
+            });
+            for (node, chain) in resolved.into_iter().enumerate() {
+                for (m, script) in chain.into_iter().enumerate() {
+                    if let Some(script) = script {
+                        scripts.entry((id, script)).or_default().push((
+                            offset,
+                            node as u32,
+                            m as u32,
+                            subs[node][m],
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some((a, _)) = super::fighter_accessory(&loaded, id, graph) {
+            let chain: Vec<u32> = a
+                .mobjsubs
+                .and_then(|(_, at)| ssb_rom::mobj::read_chain(file, at))
+                .map(|c| c.iter().map(|m| m.at).collect())
+                .unwrap_or_default();
+            if let Some((_, at)) = a.costume_matanim_joints.filter(|&(f, _)| f == id) {
+                for (m, &sub) in (0u32..).zip(&chain) {
+                    let s = file
+                        .data
+                        .get((at + 4 * m) as usize..(at + 4 * m + 4) as usize)
+                        .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+                        .filter(|&s| s != 0);
+                    if let Some(s) = s {
+                        scripts
+                            .entry((id, s))
+                            .or_default()
+                            .push((offset, u32::MAX, m, sub));
+                    }
+                }
+            }
+        }
+    }
+
+    let (mut evaluated, mut differs, mut unread) = (0usize, 0usize, 0usize);
+    let mut track_counts = [0usize; TRACKS];
+    for (&(id, script), uses) in &scripts {
+        let file = loaded.files[id as usize].as_ref().expect("loaded above");
+        let mut reads = [false; 2];
+        for &(.., sub) in uses {
+            let r = texture_ids_read(RomSub::read(&file.data, sub)?.flags);
+            reads = [reads[0] || r[0], reads[1] || r[1]];
+        }
+        for costume in 0..super::fighter_costume_count(id) {
+            evaluated += 1;
+            let reference = Reference::at_frame(&file.data, script, costume as f32)
+                .frame()
+                .map_err(|e| format!("file {id} script 0x{script:X} costume {costume}: {e}"))?;
+            for (t, v) in reference.iter().enumerate() {
+                track_counts[t] += usize::from(v.is_some());
+            }
+            let colors =
+                ssb_rom::matanim::colors_at(&file.data, script, costume as f32).map_err(|e| {
+                    format!("file {id} script 0x{script:X} costume {costume}: colors_at {e:?}")
+                })?;
+            for gap in costume_gaps(&reference, &colors, reads) {
+                match gap {
+                    CostumeGap::Differs { .. } => differs += 1,
+                    CostumeGap::Unread { .. } => unread += 1,
+                }
+                println!(
+                    "  file {id} script 0x{script:05X} costume {costume} (graph, node, mobj) \
+                     {uses:X?}: {} {gap:?}",
+                    TRACK_NAMES[match gap {
+                        CostumeGap::Differs { track, .. } | CostumeGap::Unread { track, .. } =>
+                            track,
+                    }]
+                );
+            }
+        }
+    }
+    println!(
+        "{graphs} fighter graph(s) with a costume table; {} script(s); {evaluated} \
+         (script, costume) reading(s)",
+        scripts.len()
+    );
+    for t in 0..TRACKS {
+        if track_counts[t] > 0 {
+            println!(
+                "  {:<16} written in {:5} reading(s)",
+                TRACK_NAMES[t], track_counts[t]
+            );
+        }
+    }
+    println!("{differs} colour/palette difference(s), {unread} unread material track(s)");
+
+    let mut bad_keys = 0usize;
+    if let Some(pack_path) = pack_path {
+        let bytes = fs::read(&pack_path)?;
+        let pack = Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+        let (mut objects, mut nodes) = (0usize, 0usize);
+        for o in (0..pack.object_count()).filter_map(|o| pack.object(o)) {
+            let count = super::fighter_costume_count(o.source_file);
+            if !loaded
+                .fighter_graphs
+                .contains_key(&(o.source_file, o.source_offset))
+            {
+                continue;
+            }
+            objects += 1;
+            // Plain costumes stop at the fighter's count; skeleton sets
+            // and accessories have their own key ranges.
+            let costume_count = pack.object_costume_count(&o);
+            if costume_count > count {
+                bad_keys += 1;
+                println!(
+                    "  object file {} 0x{:X}: {costume_count} costumes packed, {count} selectable",
+                    o.source_file, o.source_offset
+                );
+            }
+            for node in o.first_node..o.first_node + o.node_count {
+                nodes += 1;
+                let rows = pack.costume_rows(node);
+                for c in count..ssb_rom::pack::SKELETON_COSTUME_BASE {
+                    if pack.costume_mesh_in(rows.clone(), node, c).is_some() {
+                        bad_keys += 1;
+                        println!("  node {node}: override for costume {c} of {count}");
+                    }
+                }
+                for c in count..ssb_rom::pack::SKELETON_COSTUME_BASE {
+                    let key = ssb_rom::pack::accessory_costume(c);
+                    if pack.costume_mesh_in(rows.clone(), node, key).is_some() {
+                        bad_keys += 1;
+                        println!("  node {node}: accessory override for costume {c} of {count}");
+                    }
+                }
+            }
+        }
+        println!(
+            "pack: {objects} fighter object(s), {nodes} node(s); {bad_keys} override key(s) \
+             past a fighter's costume count"
+        );
+    }
+    if differs > 0 || unread > 0 || bad_keys > 0 {
+        return Err("fighter costumes disagree with the decomp reference".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A costume list's shape: `SetExtValAfter(PRIM)` then `Wait 1` per
+    /// costume (red, green, blue), then `End`.
+    fn costume_script() -> Vec<u8> {
+        let mut words = Vec::new();
+        for rgba in [0xFF00_00FFu32, 0x00FF_00FF, 0x0000_FFFF] {
+            words.push((19 << 25) | (1 << 15));
+            words.push(rgba);
+            words.push((2 << 25) | 1);
+        }
+        words.push(0);
+        words.iter().flat_map(|w| w.to_be_bytes()).collect()
+    }
+
+    #[test]
+    fn the_reference_and_colors_at_agree_on_every_costume() {
+        let data = costume_script();
+        for costume in 0..3 {
+            let r = Reference::at_frame(&data, 0, costume as f32)
+                .frame()
+                .unwrap();
+            let c = ssb_rom::matanim::colors_at(&data, 0, costume as f32).unwrap();
+            assert_eq!(costume_gaps(&r, &c, [true; 2]), [], "costume {costume}");
+        }
+    }
+
+    /// The check fails when the two readings are a costume apart.
+    #[test]
+    fn a_reading_a_costume_off_is_a_difference() {
+        let data = costume_script();
+        let r = Reference::at_frame(&data, 0, 1.0).frame().unwrap();
+        let c = ssb_rom::matanim::colors_at(&data, 0, 2.0).unwrap();
+        assert_eq!(
+            costume_gaps(&r, &c, [true; 2]),
+            [CostumeGap::Differs {
+                track: EXT,
+                reference: Some(0x00FF_00FF),
+                packed: Some(0x0000_FFFF),
+            }]
+        );
+    }
+
+    /// A costume script that moves a texture the packed costume ignores.
+    #[test]
+    fn a_material_track_the_costume_path_drops_is_reported() {
+        let mut data = Vec::new();
+        // `SetValAfter(TextureIDCurrent)` to 2.0, `Wait 1`, then `End`.
+        for w in [
+            (11u32 << 25) | (1 << 15),
+            2.0f32.to_bits(),
+            (2 << 25) | 1,
+            0,
+        ] {
+            data.extend_from_slice(&w.to_be_bytes());
+        }
+        let r = Reference::at_frame(&data, 0, 0.0).frame().unwrap();
+        let c = ssb_rom::matanim::colors_at(&data, 0, 0.0).unwrap();
+        assert_eq!(
+            costume_gaps(&r, &c, [true, false]),
+            [CostumeGap::Unread {
+                track: 0,
+                value: 2.0f32.to_bits()
+            }]
+        );
+        // Inert where no `MObjSub` draws with it.
+        assert_eq!(
+            costume_gaps(&r, &c, texture_ids_read(MOBJ_FLAG_PALETTE)),
+            []
+        );
+        assert_eq!(
+            texture_ids_read(MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA | MOBJ_FLAG_SPLIT),
+            [false; 2]
+        );
+    }
 }

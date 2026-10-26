@@ -551,3 +551,27 @@ fn the_spotlight_flickers_under_a_held_fighter() {
     assert_eq!(spotlight_translate(0), [-1250.0, -850.0, 0.0]);
     assert_eq!(spotlight_translate(3), [1270.0, -850.0, 0.0]);
 }
+
+/// `mnPlayersVSMakeFighter`: a CPU's fighter gets
+/// `nGMColAnimFighterComPlayer`, white at 0x30 from its first update; a
+/// human's has no colour animation. Opened by the cursor, which runs
+/// before the fighters' link 3, the CPU's fighter updates in the same tic.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_cpu_fighter_is_tinted_white_from_its_first_update() {
+    let mut s = first_visit(BattleState::default());
+    hover(&mut s, FighterKind::Yoshi);
+    toggle_kind(&mut s, 2);
+    let f = s.view.slots[2].fighter.unwrap();
+    assert_eq!(f.colanim.id, crate::colanim::ColAnimId::FIGHTER_COM_PLAYER);
+    let white = Some([0xFF, 0xFF, 0xFF, 0x30]);
+    assert_eq!(f.colanim.color(), white);
+    // A fresh make before any update draws no colour.
+    let made = Fighter::made(None, FighterKind::Mario, true);
+    assert_eq!(made.colanim.color(), None);
+    for _ in 0..100 {
+        idle(&mut s);
+    }
+    assert_eq!(s.view.slots[2].fighter.unwrap().colanim.color(), white);
+    assert_eq!(s.view.slots[0].fighter.unwrap().colanim.color(), None);
+}

@@ -169,14 +169,7 @@ impl Players1PBonus {
     pub(super) fn v_make_fighter(&mut self) {
         if let Some(kind) = self.slot.kind {
             let v = &mut self.view;
-            let (rotate_y, serial) = v.fighter.map_or((0.0, 0), |f| (f.rotate_y, f.serial + 1));
-            v.fighter = Some(Fighter {
-                kind,
-                rotate_y,
-                status: None,
-                serial,
-                hidden: false,
-            });
+            v.fighter = Some(Fighter::made(v.fighter, kind, false));
         }
         if let Some(f) = self.view.fighter.as_mut() {
             f.hidden = false;

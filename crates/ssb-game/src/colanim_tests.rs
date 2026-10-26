@@ -440,3 +440,29 @@ fn the_com_player_tint_is_white_at_0x30() {
         Some([0xFF, 0xFF, 0xFF, 0x30])
     );
 }
+
+/// `dGMColScriptsFighterPikachuSpecialN` from `ftPikachuSpecialNProcAccessory`'s
+/// set (el 161 in the N64 cpufx-s trace): the N64 `FTStruct` colanim read
+/// for el 162-175 is blue 0x32 in use, white 0x5A in use, then cleared, three
+/// times, before the `ShockSmall` effect on the tenth update (el 171). The
+/// blue frame is the PSP's darkened Pikachu at el 162; Rice drops the fog
+/// blender, so the N64 screenshots do not show it (RE-526).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn pikachu_special_n_matches_the_n64_colanim_read() {
+    const BLUE: Option<[u8; 4]> = Some([0x00, 0x00, 0xFF, 0x32]);
+    const WHITE: Option<[u8; 4]> = Some([0xFF, 0xFF, 0xFF, 0x5A]);
+    let mut c = ColAnim::default();
+    assert!(c.check_set(ColAnimId::FIGHTER_PIKACHU_SPECIAL_N, 0));
+    let mut effects = Vec::new();
+    let mut colours = Vec::new();
+    for update in 1..=14 {
+        assert!(!c.update_effects(&mut |e| effects.push((update, e.kind)), false));
+        colours.push(c.color());
+    }
+    let cycle = [BLUE, WHITE, None];
+    let want: Vec<_> = cycle.iter().cycle().take(14).copied().collect();
+    assert_eq!(colours, want);
+    // `nEFKindShockSmall` (10), once per outer loop.
+    assert_eq!(effects, [(10, 10)]);
+}

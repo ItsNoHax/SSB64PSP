@@ -201,14 +201,7 @@ impl FighterSelect {
             return;
         };
         let v = &mut self.view.slots[slot];
-        let (rotate_y, serial) = v.fighter.map_or((0.0, 0), |f| (f.rotate_y, f.serial + 1));
-        v.fighter = Some(Fighter {
-            kind,
-            rotate_y,
-            status: None,
-            serial,
-            hidden: false,
-        });
+        v.fighter = Some(Fighter::made(v.fighter, kind, slot == COM));
     }
 
     /// `mnPlayers1PTrainingUpdateFighter`'s model: an existing fighter with

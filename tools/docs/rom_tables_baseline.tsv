@@ -189,3 +189,4 @@ tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_RUMBLE	port constant: status ids transcribed from decomp FTSTATUS_PRESERVE_RUMBLE users, not read from the ROM
 crates/ssb-game/src/rumble.rs	PRIORITIES	port constant: decomp gmrumble.c source table (not read from the ROM); candidate for tablegen
 crates/ssb-game/src/rumble.rs	SCRIPTS	port constant: decomp gmrumble.c source script table (not read from the ROM); candidate for tablegen
+crates/ssb-engine/src/rdp_noise.rs	LEVELS	port constant: angrylion RDP noise levels (emulator model, not read from the ROM)

@@ -26,6 +26,7 @@
 //! the banner (10, link 38).
 
 use crate::battle::{Rule, TIMELIMIT_INFINITE};
+use crate::colanim::{ColAnim, ColAnimId};
 use crate::fighter::FighterKind;
 use crate::fighter_select::{is_locked, portrait, CursorStatus, PORTRAIT_KINDS};
 use crate::results_scene::{DemoStatus, FIGHTER_SCALES};
@@ -356,9 +357,33 @@ pub struct Fighter {
     /// `scSubsysFighterSetStatus`).
     pub serial: u32,
     pub hidden: bool,
+    /// `fp->colanim`: `nGMColAnimFighterComPlayer` for a CPU's fighter
+    /// (`mnPlayersVSMakeFighter`, `mnPlayers1PTrainingMakeFighter`), run by
+    /// `scSubsysFighterProcUpdate`'s `ftMainRunUpdateColAnim`.
+    pub colanim: ColAnim,
 }
 
 impl Fighter {
+    /// `ftManagerMakeFighter` in status `nFTDemoStatusNull`, keeping
+    /// `prev`'s turn; a CPU's (`pkind == nFTPlayerKindCom`) then gets
+    /// `ftParamCheckSetFighterColAnimID(..., nGMColAnimFighterComPlayer, 0)`.
+    /// The colour shows from its first update ([`turn_fighter`]'s tic).
+    pub fn made(prev: Option<Fighter>, kind: FighterKind, com: bool) -> Self {
+        let (rotate_y, serial) = prev.map_or((0.0, 0), |f| (f.rotate_y, f.serial + 1));
+        let mut colanim = ColAnim::default();
+        if com {
+            colanim.check_set(ColAnimId::FIGHTER_COM_PLAYER, 0);
+        }
+        Fighter {
+            kind,
+            rotate_y,
+            status: None,
+            serial,
+            hidden: false,
+            colanim,
+        }
+    }
+
     /// `translate`: `(player * 840) - 1250`, -850, 0.
     pub fn position(player: usize) -> [f32; 3] {
         [(player * 840) as f32 - 1250.0, -850.0, 0.0]
@@ -736,15 +761,9 @@ impl PlayersVs {
         let Some(kind) = self.slots[p].fkind else {
             return;
         };
+        let com = self.slots[p].pkind == PlayerKind::Com;
         let v = &mut self.view.slots[p];
-        let (rotate_y, serial) = v.fighter.map_or((0.0, 0), |f| (f.rotate_y, f.serial + 1));
-        v.fighter = Some(Fighter {
-            kind,
-            rotate_y,
-            status: None,
-            serial,
-            hidden: false,
-        });
+        v.fighter = Some(Fighter::made(v.fighter, kind, com));
     }
 
     /// `mnPlayersVSUpdateFighter`'s skip: the fighter GObj is hidden.
@@ -1336,7 +1355,13 @@ pub(crate) fn visit_cursor(
 /// a fighter not placed turns 2 degrees a tick; once placed it turns 20 a
 /// tick back to 0 and plays its selected status
 /// (`mnPlayersVSGetStatusSelected`).
+///
+/// The same tic, `scSubsysFighterProcUpdate` runs the fighter's colour
+/// animation (`ftMainRunUpdateColAnim`, its reset on an end included).
 pub(crate) fn turn_fighter(f: &mut Fighter, is_status_selected: &mut bool, selected: bool) {
+    if f.colanim.update() {
+        f.colanim.reset();
+    }
     let set_status = |f: &mut Fighter| {
         f.status = Some(status_selected(f.kind));
         f.serial += 1;

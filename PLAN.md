@@ -58,6 +58,7 @@
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | 1P intro | Kirby vs Yoshi team ~21 FPS on PSP-2000 → profile | RE-537, RE-539 |
+| Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
 | `vs4@2400` | Busy time back under RE-500's 13.64 ms; rise = small gameplay and draw additions | RE-533–RE-539 |
 | Opening | Profile Clash (link order no effect), each fight's first frame (21–40 ms). Levers: `bind_texture` (~121/frame, ~11 µs each), lit-expand traffic (~1.2 µs/vertex) | RE-469–RE-471, RE-476, RE-532, RE-539 |
 | Other scenes | RE-469 scenes, RE-471 worst cases on PSP; explain `vs4@4000` 5.2 ms vs PPSSPP 4.5. Memory stalls 55% of cycles; draw I-cache misses dominate | RE-480, RE-481 |
@@ -135,7 +136,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Select CPU colour animation | VS select CPU colour animation; locked shadows' noise | RE-411, RE-448 |
+| Luigi eyes | Costume scripts 0x29A4/0x4F74 (file 323) set TextureIDCurrent=1; PSP shows sprite 0 (`modelpart.rs:260`). Add per-fighter costume-set initial texture id; N64 capture | RE-569 |
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
 | Battle-stage lights | Stage light colour/ambient registers: N64 RDRAM/DMEM evidence needed; Hyrule floor 10-19 luma darker, bricks +14; Meta Crystal colours | RE-065, RE-529 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
@@ -150,7 +151,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 |---|---|---|
 | Runtime loader | Use `ssb_rom::reloc_link` (layout matches original) | RE-340, RE-341, [D-011](docs/decisions/D-011.md) |
 | Memory arenas | Wire `ssb_engine::memory` arenas, pools into `psp-runtime` | [memory](docs/memory.md#allocators) |
-| Costume check | Independent ROM-derived check of fighter costume, matanim (as stages have) | RE-050–RE-052, RE-142 |
 
 ## Completed
 

@@ -234,8 +234,7 @@ pub struct Shown {
     pub tint: Option<[u8; 4]>,
 }
 
-/// The VS screen back to front (`PlayersVs::visit`). The CPU's colour is
-/// not drawn here (RE-411).
+/// The VS screen back to front (`PlayersVs::visit`).
 pub unsafe fn draw_all(
     gpu: &mut Gpu,
     p: &Pack<'_>,
@@ -248,25 +247,25 @@ pub unsafe fn draw_all(
             fighter,
             position: layer::Fighter::position(i),
             costume: select.slots[i].costume,
-            // `mnPlayersVSMakeFighter`'s `desc.shade`: a team's second
-            // fighter of a kind draws under its shade's fog.
-            tint: select.slots[i]
-                .fkind
-                .and_then(|kind| p.fighter_shade(kind as u32))
-                .and_then(|[s0, s1, s2, fog]| {
-                    ssb_game::shade::fog_color(select.slots[i].shade, None, &[s0, s1, s2], fog)
-                }),
+            // `mnPlayersVSMakeFighter`'s `desc.shade` (a team's second
+            // fighter of a kind) and a CPU's `nGMColAnimFighterComPlayer`.
+            tint: fighter_tint(p, &fighter, select.slots[i].shade),
         })
     });
     let spots = select.spotlights();
     draw_screen(gpu, p, draw_state, &|g| select.visit(g), &shown, &spots, Some(f));
 }
 
-/// `dGMColScriptsFighterComPlayer`'s `SetColor1`: white at 0x30, which
-/// `ftParamCheckSetFighterColAnimID(..., nGMColAnimFighterComPlayer, 0)`
-/// gives the Training select's CPU.
-fn com_player_tint() -> Option<[u8; 4]> {
-    ssb_game::colanim::start_color(ssb_game::colanim::ColAnimId::FIGHTER_COM_PLAYER)
+/// `ftDisplayMainCalcFogColor` or `ftDisplayMainDecideFogColor` for a
+/// select's fighter: its colour animation's `color1` (a CPU's white at
+/// 0x30, `dGMColScriptsFighterComPlayer`) mixed with its shade, or the
+/// shade alone.
+fn fighter_tint(p: &Pack<'_>, fighter: &layer::Fighter, shade: u8) -> Option<[u8; 4]> {
+    let color1 = fighter.colanim.color();
+    match p.fighter_shade(fighter.kind as u32) {
+        Some([s0, s1, s2, fog]) => ssb_game::shade::fog_color(shade, color1, &[s0, s1, s2], fog),
+        None => color1,
+    }
 }
 
 /// The Training screen back to front (`FighterSelect::visit`).
@@ -283,7 +282,7 @@ pub unsafe fn draw_training(
             fighter,
             position: training::fighter_position(slot),
             costume: select.slots[slot].costume,
-            tint: if slot == COM { com_player_tint() } else { None },
+            tint: fighter_tint(p, &fighter, 0),
         })
     };
     let shown = [shown(MAN), shown(COM), None, None];
@@ -363,7 +362,7 @@ pub unsafe fn draw_bonus(
     let records = select.records(backup);
     select.visit(&records, |d| {
         let (piece, size) = match d {
-            Draw::Sprite(piece) | Draw::Shadow(piece) => (piece, None),
+            Draw::Sprite(piece) => (piece, None),
             Draw::Tiled { piece, size } => (piece, Some(size)),
             _ => return draw_select_piece(gpu, p, draw_state, d, &shown, &spots, f),
         };
@@ -398,6 +397,10 @@ unsafe fn draw_screen(
     gpu.set_viewport_pillarboxed();
 }
 
+/// `mnPlayersVSPortraitProcDisplay`'s `gDPSetPrimColor` grey: the
+/// `NOISE` share of a locked portrait's shadow.
+const SHADOW_NOISE_SHARE: u8 = 0x30;
+
 /// One of a select's pieces.
 unsafe fn draw_select_piece(
     gpu: &mut Gpu,
@@ -409,7 +412,12 @@ unsafe fn draw_select_piece(
     f: Option<&Fighters>,
 ) {
     match d {
-        Draw::Sprite(piece) | Draw::Shadow(piece) => draw_piece(p, draw_state, &piece, None),
+        Draw::Sprite(piece) => draw_piece(p, draw_state, &piece, None),
+        Draw::Shadow(piece) => {
+            if let Some((s, d)) = sobj_draw(p, &piece) {
+                meshdraw::draw_sprite_noise(p, &s, &d, SHADOW_NOISE_SHARE, draw_state);
+            }
+        }
         Draw::Tiled { piece, size } => draw_piece(p, draw_state, &piece, Some(size)),
         Draw::Puck { piece, glow } => {
             if let Some(s) = p.sprite(piece.file, piece.offset) {

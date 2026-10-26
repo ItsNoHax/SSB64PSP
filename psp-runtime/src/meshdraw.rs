@@ -3971,7 +3971,7 @@ pub unsafe fn draw_sprite_xy(
     scale: [f32; 2],
     draw_state: &mut DrawState,
 ) {
-    draw_sprite_xy_with(pack, sprite, d, scale, false, draw_state);
+    draw_sprite_xy_with(pack, sprite, d, scale, false, None, draw_state);
 }
 
 /// [`draw_sprite_xy`] under a custom display's
@@ -3990,7 +3990,74 @@ pub unsafe fn draw_sprite_xy_prim_alpha(
     scale: [f32; 2],
     draw_state: &mut DrawState,
 ) {
-    draw_sprite_xy_with(pack, sprite, d, scale, true, draw_state);
+    draw_sprite_xy_with(pack, sprite, d, scale, true, None, draw_state);
+}
+
+/// Seed of [`draw_sprite_noise`]'s per-texel `NOISE` stream; it runs on
+/// across draws and frames as the RDP's does.
+static mut NOISE_RNG: ssb_engine::rdp_noise::NoiseRng = ssb_engine::rdp_noise::NoiseRng::new(1);
+/// [`draw_sprite_noise`]'s combiner table, built for the last `share`.
+static mut NOISE_LUT: Option<ssb_engine::rdp_noise::Lut> = None;
+
+/// [`draw_sprite`] under `mnPlayersVSPortraitProcDisplay`'s
+/// `G_CC((NOISE - TEXEL0) * PRIM + TEXEL0, TEXEL0)`, `PRIM` grey `share`
+/// (the locked portraits' shadows, every select). The GE has no `NOISE`
+/// input, so the combiner runs on the CPU: each texel gets one RDP
+/// `NOISE` level ([`ssb_engine::rdp_noise`]) into a copy in list memory,
+/// redrawn every frame, and the GE draws the copy (alpha untouched).
+///
+/// Deviations: the RDP draws a level per framebuffer pixel; here per
+/// texel, which the 1:1 `SObj` makes the same grid, then filtered as
+/// every sprite is at the PSP scale. Alpha-0 texels keep their colour.
+/// Formats other than RGBA8888 draw without the term. Cost: one
+/// combine per visible texel (about 1,800 a shadow, four shadows on a
+/// fresh save), [`crate::profile::Span::Noise`].
+///
+/// # Safety
+///
+/// As [`draw_sprite`]; between `sceGuStart` and `sceGuFinish`.
+pub unsafe fn draw_sprite_noise(
+    pack: &Pack<'_>,
+    sprite: &ssb_rom::pack::SpriteDesc,
+    d: &SObjDraw,
+    share: u8,
+    draw_state: &mut DrawState,
+) {
+    let image = pack.texture(sprite.texture).filter(|t| {
+        matches!(psm_of(t.psm), TexturePixelFormat::Psm8888) && t.levels <= 1
+    });
+    let texels = image.and_then(|t| texture_image(&t, pack.texture_data(&t)?).map(|i| i.texels));
+    let Some(texels) = texels.filter(|t| !draw_state.mesh_only && t.as_ptr() as usize % 4 == 0)
+    else {
+        return draw_sprite(pack, sprite, d, draw_state);
+    };
+    let start = crate::profile::start_fine();
+    let lut = &mut *core::ptr::addr_of_mut!(NOISE_LUT);
+    if lut.as_ref().is_none_or(|l| l.share() != share) {
+        *lut = Some(ssb_engine::rdp_noise::Lut::new(share));
+    }
+    let lut = lut.as_ref().unwrap_unchecked();
+    let words = texels.len() / 4;
+    let out = crate::gu::list_memory(words * 4) as *mut u32;
+    let src = texels.as_ptr() as *const u32;
+    let rng = &mut *core::ptr::addr_of_mut!(NOISE_RNG);
+    for i in 0..words {
+        let word = src.add(i).read();
+        // An alpha-0 texel shows nothing under `G_RM_AA_XLU_SURF`; it keeps
+        // its colour and costs no random.
+        let word = if word >> 24 == 0 { word } else { lut.texel_rgba8888(word, rng) };
+        out.add(i).write(word);
+    }
+    crate::profile::stop_fine(crate::profile::Span::Noise, start);
+    draw_sprite_xy_with(
+        pack,
+        sprite,
+        d,
+        [d.scale, d.scale],
+        false,
+        Some(out as *const c_void),
+        draw_state,
+    );
 }
 
 unsafe fn draw_sprite_xy_with(
@@ -3999,6 +4066,7 @@ unsafe fn draw_sprite_xy_with(
     d: &SObjDraw,
     [scale_x, scale_y]: [f32; 2],
     prim_alpha: bool,
+    texels: Option<*const c_void>,
     draw_state: &mut DrawState,
 ) {
     if draw_state.mesh_only {
@@ -4008,6 +4076,14 @@ unsafe fn draw_sprite_xy_with(
         return;
     };
     bind_texture(pack, sprite.texture, &t, TextureDesc::NO_ANIM);
+    // A CPU-made copy of the texels (`draw_sprite_noise`): the same
+    // layout, so only the image address changes (`sceGuTexImage` flushes
+    // the texture cache).
+    if let Some(at) = texels {
+        if let Some(image) = pack.texture_data(&t).and_then(|data| texture_image(&t, data)) {
+            image.bind(at);
+        }
+    }
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
