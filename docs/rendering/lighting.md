@@ -37,6 +37,7 @@ Part of [rendering.md](../rendering.md).
 
 - Costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks preserved (RE-261; [D-024](../decisions/D-024.md)).
 - Stage geometry keeps the baked key-light shade.
+- Battle and asset-viewer stages: `DrawState::set_scene_light`; a `LIT` prim whose own list writes both light colours is lit on CPU with those literal colours under the stage direction (RE-570). Lit prims without colour writes keep the bake.
 - Exception: `LIT` primitive with animated `LIGHT_1`/`LIGHT_2` (Race to the Finish).
   - Lit on CPU under the stage light (`DrawState::set_stage_light`, direction `sc1PGameFuncLights` loads).
   - Uses live colours (RE-322).

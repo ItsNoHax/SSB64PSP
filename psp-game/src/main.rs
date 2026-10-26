@@ -8609,9 +8609,12 @@ unsafe fn draw_training(
     gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
     let base = gpu.model_matrix();
 
-    // `sc1PGameFuncLights`: the stage light that animated stage light
-    // colours are evaluated under (RE-322).
-    draw_state.set_stage_light(stage.light_angle_xy);
+    // `sc1PGameFuncLights`/`scVSBattleFuncLights`: `G_LIGHTING` and one
+    // directional light from the stage's `light_angle`, the same setup as
+    // the movies' (RE-529). Every lit stage vertex is shaded under it with
+    // the colours its own list writes (Meta Crystal: `LIGHT_1` white,
+    // `LIGHT_2` 0x4C), or an animated track's (RE-322).
+    draw_state.set_scene_light(stage.light_angle_xy);
     // `gmCameraDefaultProcDisplay` draws the battle in passes of display
     // links, each running every head-0 list of its links before any head-1
     // list (RE-422): link 4 (layer 0); links 6-12 (layer 1, the shadows,

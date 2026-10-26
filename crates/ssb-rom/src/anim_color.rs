@@ -62,8 +62,8 @@ pub enum LightScope {
 /// to a lit primitive whose own list writes both `G_MW_LIGHTCOL` registers
 /// with literal values: the RSP lights it with the scene's light like any
 /// other, and the pack's fixed-direction bake (`pack::shade_normal`) knows
-/// neither that light nor those colours. The movies set it (RE-529); the
-/// battle stages still use the bake (RE-065).
+/// neither that light nor those colours. The movies and the battle set it
+/// (RE-529); a lit primitive that writes neither register keeps the bake.
 pub fn light_scope(
     prim_flags: u32,
     fighter_light: bool,

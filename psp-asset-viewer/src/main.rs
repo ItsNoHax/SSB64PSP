@@ -1756,8 +1756,10 @@ unsafe fn run() -> ! {
                     // Loaded and ticked in the simulation loop above.
                     let scenery = (stage_anim_ok && p.stage_anim(stage_index).is_some())
                         .then_some(&stage_anim);
-                    // The scene light animated stage light colours use (RE-322).
-                    draw_state.set_stage_light(stage.light_angle_xy);
+                    // The battle's scene light (`sc1PGameFuncLights`): lit
+                    // stage vertices with literal or animated light
+                    // colours shade under it (RE-322, RE-529).
+                    draw_state.set_scene_light(stage.light_angle_xy);
                     let (mut tris, layers) = meshdraw::draw_stage_animated(
                         p,
                         &stage,

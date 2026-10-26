@@ -498,8 +498,9 @@ impl DrawState {
         self.stage_light = Some(ssb_engine::rsp_light::reflect_light_dir(angles_degrees));
     }
 
-    /// Records a movie's scene light for this frame (RE-529): the
-    /// `*FuncLights` list's `ftDisplayLightsDrawReflect` direction, which
+    /// Records a movie's or the battle's scene light for this frame
+    /// (RE-529): the `*FuncLights` list's `ftDisplayLightsDrawReflect`
+    /// direction (the battle's: the stage's `light_angle`), which
     /// the RSP applies to every lit vertex. Unlike [`Self::set_stage_light`]
     /// it also lights a primitive whose own list writes both light colours
     /// as literals (the opening's ships write `LIGHT_1` white and `LIGHT_2`

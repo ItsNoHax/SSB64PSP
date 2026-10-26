@@ -137,7 +137,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
-| Battle-stage lights | Stage light colour/ambient registers: N64 RDRAM/DMEM evidence needed; Hyrule floor 10-19 luma darker, bricks +14; Meta Crystal colours | RE-065, RE-529 |
+| Battle-stage lights | Lit stage prims without list colours (Final Destination 7, Yoshi's Island 1, small Yoshi's Island 1) need an N64 trace; stage-select preview should use `dMNMapsLights1`; Meta Crystal unlit girder bar darker (PSP (98,73,55), N64 (155,132,106)) | RE-065, RE-529 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
 | Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; a hit-landing defeat fixture | RE-457 |
