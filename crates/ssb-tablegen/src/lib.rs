@@ -47,6 +47,11 @@ pub mod interp;
 #[path = "../../ssb-rom/src/objanim.rs"]
 #[allow(dead_code)]
 pub mod objanim;
+// `ssb-rom`'s material animation player, for the texture id a fighter's
+// costume script gives its texture part (`model_parts`).
+#[path = "../../ssb-rom/src/matanim.rs"]
+#[allow(dead_code)]
+pub mod matanim;
 
 // `interp` calls `ssb_engine::math::sqrt_exact`. `ssb-engine`'s build script
 // runs this crate too, so the name resolves to this crate's `math` instead,

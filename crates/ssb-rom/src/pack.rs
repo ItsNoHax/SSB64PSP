@@ -478,7 +478,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 132 adds each set model part's `FTModelPart::flags` above the list kind
 // as `modelpart_flags_key(part)` costume overrides whose `mesh` is the flags
 // (Ness's joint 12 part 1 `FTPARTS_FLAG_NOFOG`, RE-453). No layout change.
-pub const VERSION: u32 = 132;
+// 133 tags each texture part with the `texture_id_curr` its costume script
+// makes the `MObj` with (`ssb_game::modelpart::texture_part_made`): Luigi's
+// eye packs sprite 1 (RE-569). No layout change.
+pub const VERSION: u32 = 133;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

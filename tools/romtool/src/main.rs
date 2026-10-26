@@ -10824,7 +10824,8 @@ impl Loaded {
 
     /// Marks node `node`'s texture-part `MObj`s (RE-426): each
     /// `FTTexturePart` on this joint names its `MObj`'s place in the chain
-    /// at this graph's detail, and the ids the fighter's scripts set.
+    /// at this graph's detail, and the ids the fighter's scripts set and
+    /// its costume script makes the `MObj` with (RE-569).
     fn tag_texture_parts(
         &self,
         file: u32,
@@ -10849,14 +10850,18 @@ impl Loaded {
             return;
         };
         let events = ssb_game::motion::texture_part_events(kind);
+        let made = ssb_game::modelpart::texture_part_made(kind);
         for (p, tp) in parts.iter().enumerate() {
             if u32::from(tp.joint) != node as u32 + ssb_rom::fighter::JOINT_COMMON_START {
                 continue;
             }
             let ids = events
                 .iter()
-                .filter(|&&(part, id)| part == p as i32 && id > 0 && id < 16)
-                .fold(0u16, |m, &(_, id)| m | 1 << id);
+                .filter(|&&(part, _)| part == p as i32)
+                .map(|&(_, id)| id)
+                .chain(made[p].0.iter().map(|&id| i32::from(id)))
+                .filter(|&id| id > 0 && id < 16)
+                .fold(0u16, |m, id| m | 1 << id);
             if ids == 0 {
                 continue;
             }

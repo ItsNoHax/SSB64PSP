@@ -201,7 +201,14 @@ fn packed_texture_parts_have_every_reachable_sprite_and_valid_texture() {
                     && e.kind == k as u8
             })
             .unwrap();
-        for (part, id) in ssb_game::motion::texture_part_events(kind) {
+        // RE-569: and the id its costume script makes the `MObj` with.
+        let made = ssb_game::modelpart::texture_part_made(kind)[t.part as usize]
+            .0
+            .map(|id| (t.part as i32, i32::from(id)));
+        for (part, id) in ssb_game::motion::texture_part_events(kind)
+            .into_iter()
+            .chain(made)
+        {
             if part != t.part as i32 || id <= 0 {
                 continue;
             }

@@ -138,6 +138,23 @@ pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
         .flatten()
 }
 
+/// Per texture part (`generated::TEXTURE_PART_MADE`, RE-569): the
+/// `texture_id_curr` its `MObj` has once
+/// `lbCommonAddMObjForFighterPartsDObj` has played the `MObj`'s costume
+/// script (`gcAddMObjForDObj` zeroes it first), at high and low detail, for
+/// the `FTCommonPart` chain; and whether its joint has an `FTModelPartDesc`,
+/// whose parts carry their own costume scripts instead. Every costume gives
+/// the same id (the generator checks), so the table has no costume axis.
+/// Luigi's eye is 1 at both details (file 323, scripts 0x29A4 and 0x4F74);
+/// every other fighter's is 0. `romtool costumes` checks the table against
+/// the decomp reading, and that no model part's script sets an id there.
+pub fn texture_part_made(kind: FighterKind) -> [([i8; 2], bool); TEXTURE_PARTS] {
+    generated::TEXTURE_PART_MADE
+        .get(kind as usize)
+        .copied()
+        .unwrap_or_default()
+}
+
 /// `FTStruct::texturepart_status` and `is_texturepart_modify`, with what
 /// each part's `MObj` shows (RE-426).
 ///
@@ -145,8 +162,9 @@ pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
 /// `detail`th `MObj`, which `gcDrawMObjForDObj` reads to load
 /// `sprites[texture_id_curr]`, and records it in the status. A model-part
 /// change on that joint replaces its `MObj`s (`gcRemoveMObjAll`, then
-/// `gcAddMObjForDObj`, which zeroes `texture_id_curr`), so what the face
-/// shows can differ from the status until the next set.
+/// `gcAddMObjForDObj`, which zeroes `texture_id_curr`, then the costume
+/// script, which can set it: [`texture_part_made`]), so what the face shows
+/// can differ from the status until the next set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TextureParts {
     /// Each part's joint (0: none).
@@ -159,6 +177,11 @@ pub struct TextureParts {
     /// (2) and Ness's alternate head (1). ROM-backed in texture_parts.rs.
     pub missing_part: [Option<i8>; TEXTURE_PARTS],
     pub is_modify: bool,
+    /// [`texture_part_made`]: each part's `texture_id_curr` when its
+    /// `FTCommonPart` chain is made, per [`Detail::index`].
+    pub made: [[i8; 2]; TEXTURE_PARTS],
+    /// [`texture_part_made`]: the part's joint has an `FTModelPartDesc`.
+    pub joint_has_parts: [bool; TEXTURE_PARTS],
 }
 
 /// `FTStruct::modelpart_status` and `is_modelpart_modify`, the texture
@@ -211,6 +234,14 @@ impl ModelParts {
         if let Some(t) = texture_part_table(kind) {
             p.texture.joint = [t[0].0, t[1].0];
         }
+        // `lbCommonSetupFighterPartsDObjs` makes every joint from the
+        // `FTCommonPart` chain, costume script included.
+        let made = texture_part_made(kind);
+        for (part, &(ids, has_parts)) in made.iter().enumerate() {
+            p.texture.made[part] = ids;
+            p.texture.joint_has_parts[part] = has_parts;
+            p.texture.shown[part] = ids[p.detail_curr.index()];
+        }
         p.texture.missing_part[0] = match kind {
             FighterKind::Kirby => Some(2),
             FighterKind::Ness => Some(1),
@@ -253,11 +284,20 @@ impl ModelParts {
     }
 
     /// `gcRemoveMObjAll` on `joint`, then (unless hidden) new `MObj`s
-    /// with `texture_id_curr` 0.
+    /// (`ftParamSetModelPartID`): `texture_id_curr` 0, then what the
+    /// costume script sets. A joint with an `FTModelPartDesc` takes its
+    /// part's `MObj`s and scripts, which set no texture id (`romtool
+    /// costumes`); one without takes the `FTCommonPart` chain again
+    /// ([`texture_part_made`]).
     fn remake(&mut self, joint: u8) {
+        let t = &mut self.texture;
         for p in 0..TEXTURE_PARTS {
-            if self.texture.joint[p] == joint {
-                self.texture.shown[p] = 0;
+            if t.joint[p] == joint {
+                t.shown[p] = if t.joint_has_parts[p] {
+                    0
+                } else {
+                    t.made[p][self.detail_curr.index()]
+                };
             }
         }
     }
@@ -629,6 +669,89 @@ mod tests {
         p.hide_all();
         p.set_texture(0, 8);
         assert_eq!(p.texture.curr[0], 0);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn luigi_eye_is_made_on_sprite_one_for_every_costume() {
+        // RE-569: file 323's costume scripts 0x29A4 (high) and 0x4F74
+        // (low) set TextureIDCurrent 1 on the eye `MObj` (joint 12) at
+        // every costume; the status stays 0.
+        assert_eq!(
+            texture_part_made(FighterKind::Luigi),
+            [([1, 1], false), ([0, 0], false)]
+        );
+        for costume in 0..4 {
+            let d = crate::demo_fighter::DemoFighter::new(FighterKind::Luigi, 0, costume);
+            assert_eq!(d.parts().draw_textures(), [1, 0], "costume {costume}");
+            let mut f = Fighter::new(FighterKind::Luigi, 0, 3);
+            f.costume = costume;
+            let p = &mut f.model_parts;
+            assert_eq!((p.draw_textures()[0], p.texture.curr[0]), (1, 0));
+            // `ftParamResetTexturePartAll` writes only a changed status.
+            p.reset_textures();
+            assert_eq!(p.draw_textures()[0], 1);
+            p.set_detail_all(Detail::Low);
+            assert_eq!(p.draw_textures()[0], 1, "low-detail remake");
+            p.set_texture(0, 2);
+            p.reset_textures();
+            assert_eq!(p.draw_textures()[0], 0, "reset writes the base");
+            p.set_detail_all(Detail::High);
+            assert_eq!(p.draw_textures()[0], 1, "high-detail remake");
+        }
+        // Every other fighter's texture parts are made on sprite 0, and so
+        // is every part whose joint has its own `FTModelPart`s.
+        for kind in (0..27).filter_map(FighterKind::from_ordinal) {
+            for (part, (ids, has_parts)) in texture_part_made(kind).into_iter().enumerate() {
+                if kind != FighterKind::Luigi || has_parts {
+                    assert_eq!(ids, [0, 0], "{kind:?} part {part}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn luigi_eye_after_a_status_detail_restore_matches_the_n64_trace() {
+        // RE-569 N64 RDRAM trace (Training, Luigi P1, stick at x=60): the
+        // Wait blink ends on 0; with `detail_curr` set to low, Dash's
+        // `ftParamSetModelPartDetailAll(detail_base)` remakes the eye `MObj`
+        // with `texture_id_curr` 1, which Run and RunBrake keep. Without the
+        // detail change it stays 0.
+        use crate::status::{AnyStatus, Status, StatusTiming};
+        for low in [true, false] {
+            let mut f = Fighter::new(FighterKind::Luigi, 0, 3);
+            f.model_parts.set_texture(0, 3);
+            f.model_parts.set_texture(0, 0);
+            if low {
+                f.model_parts.detail_curr = Detail::Low;
+            }
+            for status in [Status::Dash, Status::Run, Status::RunBrake] {
+                crate::status::set_any_status(
+                    &mut f,
+                    AnyStatus::Common(status),
+                    0.0,
+                    StatusTiming::unknown(),
+                );
+                assert_eq!(f.model_parts.detail_curr, Detail::High);
+                assert_eq!(
+                    f.model_parts.draw_textures()[0],
+                    i8::from(low),
+                    "{status:?} low {low}"
+                );
+            }
+        }
+        // WalkSlow's script sets 3 at time 0, after the remake (N64: 3).
+        let mut f = Fighter::new(FighterKind::Luigi, 0, 3);
+        f.model_parts.set_texture(0, 0);
+        f.model_parts.detail_curr = Detail::Low;
+        crate::status::set_any_status(
+            &mut f,
+            AnyStatus::Common(Status::WalkSlow),
+            0.0,
+            StatusTiming::unknown(),
+        );
+        assert_eq!(f.model_parts.draw_textures()[0], 3);
     }
 
     #[test]

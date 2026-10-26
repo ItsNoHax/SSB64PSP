@@ -1,7 +1,9 @@
 //! Each fighter's joint masks, for `ssb_game::modelpart`: `FTAttributes`'
 //! `setup_parts` and `animlock` flag pairs, and which of its high-detail
 //! `DObjDesc`s carry a display list (RE-425, RE-509); its `hiddenparts`
-//! from joint 4 on (RE-468) and its `textureparts_container` (RE-426).
+//! from joint 4 on (RE-468), its `textureparts_container` (RE-426) and the
+//! `TextureIDCurrent` each texture part's costume script gives its `MObj`
+//! (RE-569).
 //!
 //! `ssb-rom`'s `fighter::setup_parts`, `fighter::animlock`,
 //! `fighter::common_parts`, `fighter::hidden_part` and
@@ -13,7 +15,8 @@ use std::fmt::Write;
 
 use crate::archive::File;
 use crate::fighters::FIGHTERS;
-use crate::source::be_u32;
+use crate::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
+use crate::source::{be_u32, OverlayData, OVL2};
 use crate::{emit, Error, Result, Source};
 
 /// `FTAttributes::setup_parts` (`u32 *`, two flag words).
@@ -55,6 +58,16 @@ pub const HIDDEN_PART_COUNTS: [u8; 27] = [
     4, 4, 4, 13, 4, 6, 5, 4, 8, 4, 4, 4, 4, // Mario .. Boss
     4, 4, 4, 4, 13, 4, 6, 5, 4, 6, 4, 4, 4, 4, // MMario .. GDonkey
 ];
+/// `nFTPartsJointCommonStart`: `DObjDesc` `n` is joint `n + 4`.
+pub const JOINT_COMMON_START: u32 = 4;
+/// `sizeof(FTCommonPart)`: `dobjdesc`, `p_mobjsubs`,
+/// `p_costume_matanim_joints` and `flags`.
+pub const COMMONPART_SIZE: u32 = 16;
+/// `FTAttributes::modelparts_container` (`FTModelPartContainer *`), one
+/// `FTModelPartDesc *` per joint from joint 4 on.
+pub const MODELPARTS_OFFSET: u32 = 0x328;
+/// `MObj`s in one chain: more than any fighter part holds.
+pub const CHAIN_MAX: u32 = 16;
 /// `sizeof(DObjDesc)`: `id`, `dl`, then translate, rotate and scale.
 pub const DOBJDESC_SIZE: u32 = 44;
 /// `DOBJ_ARRAY_MAX`: the `id` that ends a `DObjDesc` array.
@@ -153,13 +166,130 @@ fn texture_parts(main: &File, attributes: u32) -> Result<Option<TextureParts>> {
     })))
 }
 
+/// The extern pointer at `at` in `file`, as `(target file, offset)`.
+fn extern_at(file: &File, at: u32) -> Option<(u32, u32)> {
+    file.extern_relocs
+        .iter()
+        .find(|r| r.at == at)
+        .map(|r| (u32::from(r.target_file), r.target_offset))
+}
+
+/// The intern pointer at `at`, or `None` for a NULL slot (no relocation).
+fn intern_at(file: &File, at: u32) -> Option<u32> {
+    file.intern_relocs
+        .iter()
+        .find(|r| r.at == at)
+        .map(|r| r.target)
+}
+
+/// One texture part's made `TextureIDCurrent` at each detail, and whether
+/// its joint has an `FTModelPartDesc` (RE-569).
+type TexturePartMade = ([i8; 2], bool);
+
+/// What each texture part's `MObj` shows when `lbCommonSetupFighterPartsDObjs`
+/// (or a model-part change on a joint without an `FTModelPartDesc`) makes
+/// it: `gcAddMObjForDObj` zeroes `texture_id_curr`, then
+/// `lbCommonAddMObjForFighterPartsDObj` plays the `MObj`'s costume script
+/// once at `anim_frame = costume` (`gcAddMObjMatAnimJoint`,
+/// `gcParseMObjMatAnimJoint`, `gcPlayMObjMatAnim`). Detail `d` takes
+/// `commonparts[1]`'s chain only where its descriptor has a list (the
+/// `detail_id` rule), and the `MObj` at `textureparts[p].detail[d]` in it.
+/// `costumes` is how many costumes the fighter can wear; every one must
+/// give the same id, since `ssb_game::modelpart` keeps one per detail.
+fn texture_part_made(
+    rom: &Source,
+    main: &File,
+    attributes: u32,
+    parts: &TextureParts,
+    costumes: u32,
+) -> Result<[TexturePartMade; TEXTURE_PARTS]> {
+    let container = intern(main, attributes + COMMONPARTS_OFFSET)?;
+    let descs = intern(main, attributes + MODELPARTS_OFFSET)?;
+    let commonpart =
+        |detail: u32, field: u32| extern_at(main, container + detail * COMMONPART_SIZE + field);
+    let mut out = [([0i8; 2], false); TEXTURE_PARTS];
+    for (slot, &(joint, index)) in out.iter_mut().zip(parts) {
+        let Some(n) = u32::from(joint).checked_sub(JOINT_COMMON_START) else {
+            continue;
+        };
+        slot.1 = intern_at(main, descs + n * 4).is_some();
+        for d in 0..2u32 {
+            let detail_id = if d == 0 {
+                0
+            } else {
+                let (file, dobjdesc) = commonpart(1, 0).ok_or_else(|| missing(main, container))?;
+                let model = rom.file(file)?;
+                u32::from(intern_at(&model, dobjdesc + n * DOBJDESC_SIZE + 4).is_some())
+            };
+            // `p_mobjsubs[n]`: the NULL-terminated chain the `MObj`s are
+            // made from, which must reach the part's `MObj`.
+            let Some((file, subs)) = commonpart(detail_id, 4) else {
+                continue;
+            };
+            let model = rom.file(file)?;
+            let chain = intern_at(&model, subs + n * 4).map_or(0, |chain| {
+                (0..CHAIN_MAX)
+                    .take_while(|&m| intern_at(&model, chain + m * 4).is_some())
+                    .count() as u32
+            });
+            let m = u32::from(index[d as usize]);
+            if m >= chain {
+                continue;
+            }
+            let Some((file, table)) = commonpart(detail_id, 8) else {
+                continue;
+            };
+            let model = rom.file(file)?;
+            let Some(script) = intern_at(&model, table + n * 4)
+                .and_then(|scripts| intern_at(&model, scripts + m * 4))
+            else {
+                continue;
+            };
+            let ids: Vec<i8> = (0..costumes)
+                .map(|costume| {
+                    let mut joint = MaterialJoint::start(script, costume as f32);
+                    joint
+                        .tick(&model.data, 1.0)
+                        .map_err(|_| missing(&model, script))?;
+                    // `mobj->texture_id_curr = value`, a `u16`.
+                    let id = joint
+                        .track_value(TRACK_TEXTURE_ID_CURRENT)
+                        .map_or(0, |v| v as u16);
+                    i8::try_from(id).map_err(|_| missing(&model, script))
+                })
+                .collect::<Result<_>>()?;
+            assert!(
+                ids.iter().all(|&id| id == ids[0]),
+                "file {} script 0x{script:X}: the texture id differs by costume ({ids:?}), \
+                 which ssb_game::modelpart does not model",
+                model.id
+            );
+            slot.0[d as usize] = ids[0];
+        }
+    }
+    Ok(out)
+}
+
+/// How many costumes fighter `k` can wear: `dFTParamCostumeIDs[k].develop +
+/// 1` for the twelve playable fighters, 1 for the rest
+/// (`ftParamGetCostumeCommonID`).
+fn costume_count(ovl2: &OverlayData, k: usize) -> Result<u32> {
+    let (at, n) = crate::battle_data::COSTUME_IDS;
+    if k >= n {
+        return Ok(1);
+    }
+    Ok(u32::from(ovl2.u8(at + k as u32 * 8 + 7)?) + 1)
+}
+
 pub fn generate(rom: Option<&Source>) -> Result<String> {
     let mut joints = Vec::with_capacity(FIGHTERS.len());
     let mut locks = Vec::with_capacity(FIGHTERS.len());
     let mut hidden = Vec::with_capacity(FIGHTERS.len());
     let mut textures = Vec::with_capacity(FIGHTERS.len());
+    let mut made_rows = Vec::with_capacity(FIGHTERS.len());
+    let ovl2 = OverlayData::new(rom, OVL2);
     for (k, f) in FIGHTERS.iter().enumerate() {
-        let (setup, dl, lock, parts, texture) = match rom {
+        let (setup, dl, lock, parts, texture, made) = match rom {
             Some(rom) => {
                 let main = rom.file(f.main_file)?;
                 let setup = flag_pair(&main, f.attributes + SETUP_PARTS_OFFSET)?;
@@ -172,10 +302,21 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                     parts
                 };
                 let texture = texture_parts(&main, f.attributes)?;
-                (setup, dl & setup, lock, parts, texture)
+                let made = match &texture {
+                    Some(t) => {
+                        texture_part_made(rom, &main, f.attributes, t, costume_count(&ovl2, k)?)?
+                    }
+                    None => Default::default(),
+                };
+                (setup, dl & setup, lock, parts, texture, made)
             }
-            None => (0, 0, 0, Vec::new(), None),
+            None => (0, 0, 0, Vec::new(), None, Default::default()),
         };
+        let cells: Vec<String> = made
+            .iter()
+            .map(|([hi, lo], desc)| format!("([{hi}, {lo}], {desc})"))
+            .collect();
+        made_rows.push(format!("    [{}], // {}", cells.join(", "), f.name));
         joints.push(format!("    (0x{setup:x}, 0x{dl:x}), // {}", f.name));
         locks.push(format!("    0x{lock:x}, // {}", f.name));
         let cells: Vec<String> = parts
@@ -233,6 +374,18 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
         textures.len(),
         textures.join("\n")
     );
+    out.push_str(
+        "\n/// Per `FTKind` and texture part: the `TextureIDCurrent` its costume\n\
+         /// script gives the part's `MObj` when the `FTCommonPart` chain makes\n\
+         /// it, at high and low detail, and whether the part's joint has an\n\
+         /// `FTModelPartDesc` (whose parts carry their own scripts).\n",
+    );
+    let _ = writeln!(
+        out,
+        "#[rustfmt::skip]\npub const TEXTURE_PART_MADE: [[([i8; 2], bool); {TEXTURE_PARTS}]; {}] = [\n{}\n];",
+        made_rows.len(),
+        made_rows.join("\n")
+    );
     Ok(out)
 }
 
@@ -247,6 +400,12 @@ mod tests {
         assert_eq!(text.matches("    &[], //").count(), 27);
         assert!(text.contains("pub const TEXTURE_PARTS: [Option<[(u8, [u8; 2]); 2]>; 27]"));
         assert_eq!(text.matches("    None, //").count(), 27);
+        assert!(text.contains("pub const TEXTURE_PART_MADE: [[([i8; 2], bool); 2]; 27]"));
+        assert_eq!(
+            text.matches("    [([0, 0], false), ([0, 0], false)], //")
+                .count(),
+            27
+        );
     }
 
     #[test]

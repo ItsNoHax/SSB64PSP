@@ -136,7 +136,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Luigi eyes | Costume scripts 0x29A4/0x4F74 (file 323) set TextureIDCurrent=1; PSP shows sprite 0 (`modelpart.rs:260`). Add per-fighter costume-set initial texture id; N64 capture | RE-569 |
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
 | Battle-stage lights | Stage light colour/ambient registers: N64 RDRAM/DMEM evidence needed; Hyrule floor 10-19 luma darker, bricks +14; Meta Crystal colours | RE-065, RE-529 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
