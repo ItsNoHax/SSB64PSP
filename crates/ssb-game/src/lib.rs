@@ -127,6 +127,7 @@ pub mod results_emblem;
 pub mod results_layer;
 pub mod results_scene;
 pub mod rng;
+pub mod rumble;
 pub mod samus;
 #[cfg(test)]
 mod setter_tests;

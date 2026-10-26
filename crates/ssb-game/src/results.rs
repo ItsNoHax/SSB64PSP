@@ -73,6 +73,8 @@ pub struct Results {
     pub fighter_kinds: [Option<FighterKind>; 4],
     /// The results BGM's thread.
     pub audio_thread: AudioThread,
+    /// `func_ovl31_80137898`'s thread: the winner's controller pulses.
+    pub winner_pulse: Option<crate::rumble::WinnerPulse>,
 }
 
 /// `MNVSResultsScore`.
@@ -222,6 +224,7 @@ impl Results {
             character_alpha: 0,
             fighter_kinds: [None; 4],
             audio_thread: AudioThread::None,
+            winner_pulse: None,
         };
         r.winner = r.find_winner();
         r
@@ -274,12 +277,20 @@ impl Results {
     }
 
     /// `mnVSResultsFuncStart`: [`Results::new`] with the battle's
-    /// fighters, and the crowd's cheer unless there was no contest.
+    /// fighters, the motors silenced (`func_ovl31_8013797C`), the winner's
+    /// pulse when the winner is a human player (`func_ovl31_80137938`), and
+    /// the crowd's cheer unless there was no contest.
     pub fn start(b: &Battle, fighter_kinds: [Option<FighterKind>; 4]) -> Results {
-        let r = Results {
+        let mut r = Results {
             fighter_kinds,
             ..Results::new(b)
         };
+        crate::rumble::init_players();
+        if let Some(win) = r.winner.filter(|_| r.kind != Kind::NoContest) {
+            if b.players.get(win).is_some_and(|p| p.is_human) {
+                r.winner_pulse = Some(crate::rumble::WinnerPulse::new(win as u8));
+            }
+        }
         if r.kind != Kind::NoContest {
             sound::play_fgm(id::nSYAudioVoicePublicWin);
         }
@@ -307,11 +318,22 @@ impl Results {
             sound::stop_all_fgm();
             sound::stop_bgm_all();
         }
+        // The winner's pulse (link 15), made in `mnVSResultsFuncStart`,
+        // wakes every frame from the first, before the BGM's thread.
+        if let Some(p) = self.winner_pulse.as_mut() {
+            if !p.tick() {
+                self.winner_pulse = None;
+            }
+        }
         // The thread's GObj (link 17) runs after the scene's; it starts on
         // the next frame.
         self.audio_thread_update();
         if made_thread {
             self.audio_thread = AudioThread::WaitStart;
+        }
+        if leave {
+            // `mnVSResultsStartScene` after the scene loop.
+            crate::rumble::init_players();
         }
         leave
     }

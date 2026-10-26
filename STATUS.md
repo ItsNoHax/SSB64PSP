@@ -16,6 +16,7 @@
 
 ## Current work
 
+- Landed (batch 43): Rumble Pak port (`crates/ssb-game/src/rumble.rs`: decomp scripts, priorities, fighter/item/match call sites, results winner pulse; PSP `MOTOR` sink is a no-op); no golden moved; stack +1096 B. Known: Forward skip list lacks SET_AFTER_IMAGE (`PLAN.md`).
 - Landed (batch 42): battle texgen LookAt (9 `f1-training-link*`/`f1-cpufx-*` rows rebaselined, N64 A/B), Master Hand color2 ENV RGBA, Ness NOFOG part (pack v132); Metal Mario battle darkness not present (RE-453, RE-457, RE-458, RE-065, RE-529).
 - Landed (batch 41): N64 hazard replays with embedded checkpoints (Mushroom Kingdom pipes/scales/plants, Yoshi's Island clouds, Bonus 2 platforms), real-ledge sweep (no Fox freeze), matanim command 22 port and census; no golden moved (RE-010, RE-364, RE-428, RE-429, RE-442, RE-446, RE-510, RE-553).
 - Landed (batch 40): 1P fighter shade/fog (pack bump), ending room matanim, CP/heart tags, bonus pause (N64-traced), intro RSP camera and modelview lights, loss/win host traces; new goldens `f1-bonus-pause`, `f1-onep-yoshi-shade`, none moved (RE-453, RE-456, RE-458, RE-459).
@@ -34,7 +35,7 @@
 
 ## Verification
 
-Baseline: batch 42; deepest game stack 392400 B of 524288.
+Baseline: batch 43; deepest game stack 393496 B (f1-onep-platforms-ride) of 524288.
 
 | Check | Result |
 |---|---|

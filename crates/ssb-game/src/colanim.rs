@@ -29,7 +29,9 @@ mod scripts {
 #[path = "colanim_preserve.rs"]
 mod preserve;
 
-pub use preserve::{PRESERVE_COLANIM, PRESERVE_EFFECT, PRESERVE_MODELPART, PRESERVE_TEXTUREPART};
+pub use preserve::{
+    PRESERVE_COLANIM, PRESERVE_EFFECT, PRESERVE_MODELPART, PRESERVE_RUMBLE, PRESERVE_TEXTUREPART,
+};
 pub use scripts::{Script, DESCS};
 
 /// `gmColCommandEffect` / `...EffectItemHold`: `ftParamMakeEffect`'s

@@ -1339,8 +1339,8 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
 /// A switch that keeps the animation frame and clock, with the flags of
 /// the copy's `SwitchStatus` function the port reads; none passes
 /// `FTSTATUS_PRESERVE_FASTFALL`. `MODELPART`, `TEXTUREPART`, `EFFECT` and
-/// `COLANIM` come from the [`crate::colanim`] preserve tables; `RUMBLE`
-/// has no PSP equivalent.
+/// `COLANIM` come from the [`crate::colanim`] preserve tables, `RUMBLE`
+/// from [`crate::rumble::preserved`].
 fn switch(f: &mut Fighter, s: K) {
     let (frame, mut timing) = (f.status.anim_frame, f.status.timing);
     if matches!(s, K::CopyNessSpecialN | K::CopyNessSpecialAirN) {

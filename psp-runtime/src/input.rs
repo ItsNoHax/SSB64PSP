@@ -82,3 +82,21 @@ impl Input for PspInput {
         // error: the game calls this from ordinary hit reactions.
     }
 }
+
+/// The controller motor the game's rumble actor drives
+/// ([`ssb_game::rumble::Motor`]).
+///
+/// PSP deviation: the PSP has no rumble motor, so `syControllerInitRumble`,
+/// `syControllerStartRumble` and `syControllerStopRumble` do nothing. The
+/// actor's script state still runs as the N64's does (its queues,
+/// priorities and timers), so a backend with a motor needs only this impl.
+pub struct NoMotor;
+
+impl ssb_game::rumble::Motor for NoMotor {
+    fn init(&self, _port: u8) {}
+    fn start(&self, _port: u8) {}
+    fn stop(&self, _port: u8) {}
+}
+
+/// The motor [`ssb_game::rumble::install`] takes at boot.
+pub static MOTOR: NoMotor = NoMotor;

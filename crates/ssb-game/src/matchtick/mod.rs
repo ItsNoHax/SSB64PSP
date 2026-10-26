@@ -285,6 +285,9 @@ pub struct World<'w> {
     /// ([`crate::battle::Battle::go_lands`]): the countdown's lock lifts
     /// after the interrupts (`ftParamUnlockPlayerControl`).
     pub go: bool,
+    /// The rumble actor (`gmRumbleMakeActor`); `None` drops the fighters'
+    /// rumble commands.
+    pub rumble: Option<&'w mut crate::rumble::Rumble>,
 }
 
 /// One battle frame, priority 5 down to 0. The frame's `func_run`s (the
@@ -336,6 +339,14 @@ where
         .stage
         .apply_item_events(world.items.take_stage_events(), ground.groups(), props);
     arena.place_item_trees(world.items);
+    // `gmRumbleActorProcUpdate`: `gcMakeGObjSPAfter(nGCCommonKindRumble,
+    // NULL, nGCCommonLinkIDRumble (13), ...)` with a priority-0 process
+    // (gmrumble.c:643); `gcLinkGObjProcess` (objman.c:246) runs a
+    // priority's processes in link order, so after the fighters', weapons'
+    // and items' priority-0 processes (links 3-5).
+    if let Some(r) = world.rumble.as_deref_mut() {
+        r.tick();
+    }
 }
 
 /// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in port order,
@@ -387,6 +398,7 @@ fn interrupt_pass<A, S, H>(
         jostle_from(seats, i);
         exchange_from(seats, i);
         flush_fighter_effects(seats, world.effects);
+        flush_rumble(seats, world.rumble.as_deref_mut());
     }
 }
 
@@ -527,6 +539,7 @@ fn physics_pass<A, S, H>(
     for f in seats.iter_mut().flatten() {
         world.items.sync_owner(f.fighter_mut());
     }
+    flush_item_rumble(seats, world.items, world.rumble.as_deref_mut());
     world.items.flush_effects(world.effects);
     world.items.flush_monster_shots(world.weapons);
     hooks.end(Span::Items);
@@ -603,6 +616,7 @@ fn fighter_physics<A, S, H>(
         // The motion scripts' effects, made at the end of this fighter's
         // `ftMainProcPhysicsMap`.
         flush_fighter_effects(seats, world.effects);
+        flush_rumble(seats, world.rumble.as_deref_mut());
         if let Some((spawn, parent)) = spawn {
             // `wpManagerMakeWeapon`'s `WEAPON_FLAG_COLLPROJECT` pass.
             world.weapons.spawn_projected(spawn, Some(parent), &map);
@@ -822,6 +836,7 @@ where
         f.settle_status(ground);
     }
     flush_fighter_effects(seats, world.effects);
+    flush_rumble(seats, world.rumble.as_deref_mut());
 }
 
 /// `ftMainSearchFighterCatch` for seat `i` over the others, then the catch
@@ -1082,6 +1097,59 @@ pub fn take_boss_camera<S: HasFighter + ?Sized>(seats: &mut Seats<'_, S>) -> Opt
 
 /// Makes every fighter's queued effects ([`crate::fteffect`]), in port
 /// order, where the process that asked for them ends.
+/// The fighters' queued rumble commands, applied in seat order after each
+/// fighter's process, as the original calls `gmRumble*` from it. A KO's
+/// rumble for the others reads their stocks here, before a later
+/// fighter's process changes them (`ftCommonDeadUpdateRumble`).
+/// What [`crate::rumble::Rumble::apply`] reads of the battle's players.
+pub fn rumble_others<S: HasFighter + ?Sized>(
+    seats: &Seats<'_, S>,
+) -> [crate::rumble::Other; crate::rumble::PLAYERS] {
+    let mut others = [crate::rumble::Other::default(); crate::rumble::PLAYERS];
+    for f in seats.iter().flatten() {
+        let f = f.fighter();
+        if let Some(o) = others.get_mut(usize::from(f.port)) {
+            *o = crate::rumble::Other {
+                is_man: f.is_man,
+                out_of_stock: f.dead.stock_rule && f.stocks == -1,
+            };
+        }
+    }
+    others
+}
+
+pub fn flush_rumble<S: HasFighter + ?Sized>(
+    seats: &mut Seats<'_, S>,
+    mut rumble: Option<&mut crate::rumble::Rumble>,
+) {
+    let others = rumble_others(seats);
+    for f in seats.iter_mut().flatten() {
+        for cmd in f.fighter_mut().rumble.take() {
+            if let Some(r) = rumble.as_deref_mut() {
+                r.apply(cmd, &others);
+            }
+        }
+    }
+}
+
+/// The items' rumble commands, in the order their processes made them
+/// (`itmball.c:390-400`, `itmsbomb.c:336-345`).
+pub fn flush_item_rumble<S: HasFighter + ?Sized>(
+    seats: &Seats<'_, S>,
+    items: &mut crate::item::ItemPool,
+    mut rumble: Option<&mut crate::rumble::Rumble>,
+) {
+    if items.rumble.is_empty() {
+        return;
+    }
+    let others = rumble_others(seats);
+    for cmd in items.rumble.take() {
+        if let Some(r) = rumble.as_deref_mut() {
+            r.apply(cmd, &others);
+        }
+    }
+}
+
 pub fn flush_fighter_effects<S: HasFighter + ?Sized>(
     seats: &mut Seats<'_, S>,
     effects: &mut dyn HitEffectSink,

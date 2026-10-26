@@ -1014,6 +1014,7 @@ fn tick_n(
         started: pair.started,
         locked: pair.locked,
         go: pair.go,
+        rumble: None,
     };
     ssb_game::matchtick::step(&mut arena, &mut seats, &mut world, &mut ());
     sink.queued

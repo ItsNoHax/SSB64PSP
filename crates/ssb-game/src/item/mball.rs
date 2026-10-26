@@ -97,6 +97,9 @@ fn open(item: &mut Item, common: &mut dyn CommonItems) {
     item.vars.mball_open = !item.vars.mball_open;
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMBallOpen);
     item.attach_line = item.floor_line();
+    if let Some(port) = item.player.filter(|&p| p < 4) {
+        common.rumble_player(port, 8, 20);
+    }
     item.vars.mball_rays = common.mball_rays(item.pos);
     item.clear_root_script();
     item.attack.state = AttackState::Off;

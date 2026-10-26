@@ -226,6 +226,9 @@ impl TrainingMenu {
     /// locks both fighters' control.
     pub fn check_enter(&mut self, tapped: N64Buttons, menu_ignore: bool) -> bool {
         if tapped.contains(N64Buttons::START) && !menu_ignore {
+            // `gmRumbleInitPlayers` (`sc1ptrainingmode.c:204`): the motors
+            // stop; the actor runs on with the world.
+            crate::rumble::init_players();
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGamePause);
             crate::sound::set_bgm_volume(0, 0x3C00);
             self.is_read_menu_inputs = false;

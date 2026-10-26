@@ -14,8 +14,8 @@
 //! once, in the same slot of the frame.
 //!
 //! The sounds play where the source plays them, and the KO sounds also
-//! wait for the battle's end queue ([`take_end_sounds`]). Scores, rumble
-//! and the effects are presentation. The
+//! wait for the battle's end queue ([`take_end_sounds`]). Scores, the
+//! rumble queue and the effects are presentation. The
 
 //! explosion's placement ([`DeadState::explode`]), the quake request
 //! ([`DeadState::quake`], RE-420), the screen flash
@@ -429,6 +429,15 @@ fn update_score(f: &mut Fighter) {
     }
 }
 
+/// `ftCommonDeadUpdateRumble`: rumble 0 for 30 ticks on this port, then
+/// rumble 1 for 15 on every other Man port still in the battle (the match
+/// expands [`crate::rumble::Cmd::KoOthers`], as only it sees the others).
+fn update_rumble(f: &mut Fighter) {
+    crate::rumble::make(f, 0, 30);
+    let port = f.port;
+    f.rumble.push(crate::rumble::Cmd::KoOthers { port });
+}
+
 /// `efManagerQuakeMakeEffect(2)`, which the dead setters call directly
 /// (not through `ftParamMakeEffect`): recorded for the host (RE-420).
 fn make_quake(f: &mut Fighter) {
@@ -442,6 +451,7 @@ fn init_status_vars(f: &mut Fighter) {
     f.is_invisible = true;
     f.dead.is_menu_ignore = true;
     make_quake(f);
+    update_rumble(f);
     update_score(f);
     add_dead_voices(f);
 }
@@ -709,6 +719,7 @@ fn update_up_fall(f: &mut Fighter) {
             crate::physics::stop_all(&mut f.physics);
             f.dead.flash = true;
             make_quake(f);
+            update_rumble(f);
             f.is_invisible = true;
             f.interface.tag_hide = true;
             f.dead.is_menu_ignore = true;

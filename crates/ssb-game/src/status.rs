@@ -4123,6 +4123,8 @@ pub struct Preserve {
     pub loop_sfx: bool,
     /// `FTSTATUS_PRESERVE_SLOPECONTOUR`: keep `slope_contour`.
     pub slope_contour: bool,
+    /// `FTSTATUS_PRESERVE_RUMBLE`: keep rumble 7 running.
+    pub rumble: bool,
 }
 
 impl Preserve {
@@ -4136,6 +4138,7 @@ impl Preserve {
         fastfall: false,
         loop_sfx: false,
         slope_contour: false,
+        rumble: false,
     };
     pub const SLOPE_CONTOUR: Preserve = Preserve {
         slope_contour: true,
@@ -4261,6 +4264,13 @@ pub fn set_any_status_preserve(
     // on the N64 and fell on the port).
     if !preserve.fastfall {
         f.physics.is_fastfall = false;
+    }
+    // `ftMainSetStatus` (ftmain.c:4468-4476): a non-Demo fighter stops its
+    // port's rumbles 2 and 3, and 7 unless `FTSTATUS_PRESERVE_RUMBLE`.
+    crate::rumble::stop(f, 2);
+    crate::rumble::stop(f, 3);
+    if !(preserve.rumble || crate::rumble::preserved(f.kind, f.status.status, status)) {
+        crate::rumble::stop(f, 7);
     }
     if !preserve.slope_contour {
         f.slope_contour = 0;

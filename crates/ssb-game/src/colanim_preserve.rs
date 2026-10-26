@@ -409,3 +409,31 @@ pub static PRESERVE_EFFECT: [(u8, u16, u16); 101] = [
     (0xFF, 0xFFFF, 0x009B), // * -> nFTCommonStatusGuardSetOff
     (0xFF, 0xFFFF, 0x00A7), // * -> nFTCommonStatusCatchPull
 ];
+
+/// `ftMainSetStatus` calls whose flags carry `FTSTATUS_PRESERVE_RUMBLE`
+/// (kept: rumble 7): columns as in the module documentation. The Hammer's
+/// (`ftHammerGetStatUpdateFlags`) is [`crate::item_use::is_hammer`].
+pub static PRESERVE_RUMBLE: [(u8, u16, u16); 22] = [
+    (0x00, 0x00E3, 0x00E4), // nFTMarioStatusSpecialLw -> nFTMarioStatusSpecialAirLw
+    (0x00, 0x00E4, 0x00E3), // nFTMarioStatusSpecialAirLw -> nFTMarioStatusSpecialLw
+    (0x01, 0x00E5, 0x00E6), // nFTFoxStatusSpecialHiHold -> nFTFoxStatusSpecialAirHiHold
+    (0x01, 0x00E6, 0x00E5), // nFTFoxStatusSpecialAirHiHold -> nFTFoxStatusSpecialHiHold
+    (0x02, 0x00E0, 0x00E1), // nFTDonkeyStatusSpecialNLoop -> nFTDonkeyStatusSpecialAirNLoop
+    (0x02, 0x00E1, 0x00E0), // nFTDonkeyStatusSpecialAirNLoop -> nFTDonkeyStatusSpecialNLoop
+    (0x02, 0x00E6, 0x00E7), // nFTDonkeyStatusSpecialHi -> nFTDonkeyStatusSpecialAirHi
+    (0x02, 0x00E7, 0x00E6), // nFTDonkeyStatusSpecialAirHi -> nFTDonkeyStatusSpecialHi
+    (0x07, 0x00E4, 0x00E5), // nFTCaptainStatusSpecialN -> nFTCaptainStatusSpecialAirN
+    (0x07, 0x00E5, 0x00E4), // nFTCaptainStatusSpecialAirN -> nFTCaptainStatusSpecialN
+    (0x08, 0x00F4, 0x00F5), // nFTKirbyStatusCopyDonkeySpecialNLoop -> nFTKirbyStatusCopyDonkeySpecialAirNLoop
+    (0x08, 0x00F5, 0x00F4), // nFTKirbyStatusCopyDonkeySpecialAirNLoop -> nFTKirbyStatusCopyDonkeySpecialNLoop
+    (0x08, 0x010E, 0x0117), // nFTKirbyStatusSpecialNLoop -> nFTKirbyStatusSpecialAirNLoop
+    (0x08, 0x0117, 0x010E), // nFTKirbyStatusSpecialAirNLoop -> nFTKirbyStatusSpecialNLoop
+    (0x08, 0x0127, 0x0128), // nFTKirbyStatusCopyCaptainSpecialN -> nFTKirbyStatusCopyCaptainSpecialAirN
+    (0x08, 0x0128, 0x0127), // nFTKirbyStatusCopyCaptainSpecialAirN -> nFTKirbyStatusCopyCaptainSpecialN
+    (0x09, 0x00E1, 0x00E5), // nFTPikachuStatusSpecialLwLoop -> nFTPikachuStatusSpecialAirLwLoop
+    (0x09, 0x00E5, 0x00E1), // nFTPikachuStatusSpecialAirLwLoop -> nFTPikachuStatusSpecialLwLoop
+    (0x09, 0xFFFF, 0x00E1), // * -> nFTPikachuStatusSpecialLwLoop
+    (0x09, 0xFFFF, 0x00E5), // * -> nFTPikachuStatusSpecialAirLwLoop
+    (0x0B, 0x00E5, 0x00E9), // nFTNessStatusSpecialHiHold -> nFTNessStatusSpecialAirHiHold
+    (0x0B, 0x00E9, 0x00E5), // nFTNessStatusSpecialAirHiHold -> nFTNessStatusSpecialHiHold
+];

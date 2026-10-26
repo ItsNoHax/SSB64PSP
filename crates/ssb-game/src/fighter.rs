@@ -628,6 +628,13 @@ pub struct Fighter {
     /// dropped (all but `StopLoopSFX`). Only `mnCharactersMakeFighter` sets
     /// it.
     pub is_muted: bool,
+    /// `fp->pkind == nFTPlayerKindMan`: a pad's fighter, the only kind
+    /// `ftParamMakeRumble` rumbles. The match sets it where it makes the
+    /// fighter ([`crate::rumble`]).
+    pub is_man: bool,
+    /// The fighter's calls into the Rumble Pak queues, which the match
+    /// applies in order ([`crate::rumble::Cmds`]).
+    pub rumble: crate::rumble::Cmds,
 }
 
 impl Fighter {
@@ -751,6 +758,8 @@ impl Fighter {
             public_knockback: 0.0,
             is_demo: false,
             is_muted: false,
+            is_man: false,
+            rumble: crate::rumble::Cmds::default(),
 
             is_knockback_paused: false,
             hits: crate::combat::FrameHits::default(),

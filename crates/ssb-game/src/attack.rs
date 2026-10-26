@@ -427,6 +427,11 @@ pub fn init_damage_vars_sfx(
     f.stick.tap_x = crate::status::STICKBUFFER_MAX;
     f.stick.tap_y = crate::status::STICKBUFFER_MAX;
     f.damage_knockback_stack = knockback;
+    // ftcommondamage.c:622-625: `damage_level == 3 || is_rumble`. Every
+    // caller passes `is_rumble` equal to `is_force_damage_sfx`.
+    if level == 3 || is_force_damage_sfx {
+        crate::rumble::make(f, 2, 0);
+    }
     // `ftCommonDamageUpdateDamageStatus` (`ftcommondamage.c:626`): a
     // tumble pitches the model along the launch at once.
     if f.status.status == Status::DamageFlyRoll {

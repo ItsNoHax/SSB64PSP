@@ -274,6 +274,7 @@ fn trace(seats: u8, held: &[u8]) -> Vec<Phase> {
         started: true,
         locked: false,
         go: false,
+        rumble: None,
     };
     let mut it = fighters.iter_mut();
     let mut seats: Seats<'_, Fighter> = [it.next(), it.next(), it.next(), it.next()];
@@ -387,6 +388,7 @@ fn go_unlocks_after_the_interrupt_and_before_physics() {
         started: true,
         locked: true,
         go: true,
+        rumble: None,
     };
     let mut seats: Seats<'_, LockProbe> = [Some(&mut probe), None, None, None];
     step(
@@ -438,6 +440,7 @@ fn step_joins_every_handle_to_the_battles_counts() {
         started: true,
         locked: false,
         go: false,
+        rumble: None,
     };
     let mut it = fighters.iter_mut();
     let mut seats: Seats<'_, Fighter> = [it.next(), it.next(), None, None];

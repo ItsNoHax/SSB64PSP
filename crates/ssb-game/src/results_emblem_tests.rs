@@ -21,6 +21,7 @@ fn results(kind: Kind, winner: usize) -> Results {
         character_alpha: 0,
         fighter_kinds: [None; 4],
         audio_thread: crate::results::AudioThread::None,
+        winner_pulse: None,
     }
 }
 

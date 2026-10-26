@@ -1334,6 +1334,8 @@ pub struct ItemPool {
     /// The battle's motion and stat counts, which every item made here
     /// carries ([`crate::manager_counts`]).
     pub counts: crate::manager_counts::ManagerCounts,
+    /// Items' rumble commands, drained by the match after the items tick.
+    pub rumble: crate::rumble::Cmds,
 }
 
 impl Default for ItemPool {
@@ -1369,6 +1371,7 @@ impl Default for ItemPool {
             weapon_free: crate::weapon::MAX_WEAPONS as u8,
             fx: crate::wpeffect::WeaponFx::default(),
             counts: crate::manager_counts::ManagerCounts::new(),
+            rumble: crate::rumble::Cmds::default(),
         }
     }
 }
@@ -1960,6 +1963,7 @@ impl ItemPool {
                 crate::sound::play_fgm(attr.heavyget_sfx);
             }
         }
+        crate::rumble::make(f, 6, 0);
         item.pickup_wait = PICKUP_WAIT_DEFAULT;
         f.items.held = Some(held_item(slot, item));
         f.items.held_multi = item.multi;
@@ -2007,6 +2011,12 @@ impl ItemPool {
         let Some(item) = self.get_mut(slot) else {
             return;
         };
+        // itmain.c:382-390: a light item rumbles only on a smash throw.
+        if item.weight != ItemWeight::Light {
+            crate::rumble::make(f, if is_smash { 9 } else { 6 }, 0);
+        } else if is_smash {
+            crate::rumble::make(f, 6, 0);
+        }
         // `dITMainProcThrownList`.
         match item.kind {
             ItemKind::Equipment(_) => equipment::release(item, false, f.facing.sign()),
@@ -2631,7 +2641,7 @@ where
         ItemStatus::Container(s) => return container::proc_map(item, s, surfaces, common, fx),
         ItemStatus::Utility(s) => return utility::proc_map(item, s, surfaces),
         ItemStatus::Equipment(s) => return equipment::proc_map(item, s, surfaces),
-        ItemStatus::MSBomb(s) => return msbomb::proc_map(item, s, surfaces),
+        ItemStatus::MSBomb(s) => return msbomb::proc_map(item, s, surfaces, common),
         ItemStatus::BombHei(s) => return bombhei::proc_map(item, s, surfaces),
         ItemStatus::NBumper(s) => return nbumper::proc_map(item, s, surfaces),
         ItemStatus::Shell(s) => return shell::proc_map(item, s, surfaces),
@@ -2803,6 +2813,11 @@ where
     }
     fn move_display(&mut self, seq: u32, pos: Vec3) {
         self.effects.move_display(seq, pos);
+    }
+    fn rumble_player(&mut self, port: u8, id: u8, len: i32) {
+        self.pool
+            .rumble
+            .push(crate::rumble::Cmd::MakeIfMan { port, id, len });
     }
     fn eggs_enabled(&self) -> bool {
         self.pool.normal_switches.enabled(3)

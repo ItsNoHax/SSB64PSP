@@ -135,7 +135,7 @@ fn update_surface(item: &mut Item) {
 }
 
 /// `itMSBombAttachedSetStatus`.
-fn attach(item: &mut Item) {
+fn attach(item: &mut Item, common: &mut dyn super::normal::CommonItems) {
     set_coll_size(item);
     item.vel_air = Vec3::ZERO;
     // The armed shape shows and the ball hides.
@@ -143,6 +143,9 @@ fn attach(item: &mut Item) {
     update_surface(item);
     item.damage_coll.hitstatus = HitStatus::Normal;
     item.attack.state = AttackState::Off;
+    if let Some(port) = item.player.filter(|&p| p < 4) {
+        common.rumble_player(port, 6, 0);
+    }
     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMMSBombAttach);
     item.clear_owner_stats();
     set(item, Status::Attached);
@@ -251,7 +254,12 @@ pub(super) fn has_proc_map(status: Status) -> bool {
     !matches!(status, Status::Hold | Status::Explode)
 }
 
-pub(super) fn proc_map<I, F>(item: &mut Item, status: Status, surfaces: &F) -> bool
+pub(super) fn proc_map<I, F>(
+    item: &mut Item,
+    status: Status,
+    surfaces: &F,
+    common: &mut dyn super::normal::CommonItems,
+) -> bool
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
@@ -276,7 +284,7 @@ where
         // status reuses the latter.
         Status::Thrown | Status::Dropped | Status::Detached => {
             if map::check_map_proc_all(item, surfaces) {
-                attach(item);
+                attach(item, common);
             }
         }
         Status::Attached => {

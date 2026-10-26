@@ -251,6 +251,9 @@ pub(super) trait CommonItems {
     fn mball_rays(&mut self, _pos: ssb_engine::math::Vec3) -> Option<u32> {
         None
     }
+    /// `ftParamMakeRumble` on the fighter of item player `port`, queued on
+    /// [`super::ItemPool::rumble`].
+    fn rumble_player(&mut self, _port: u8, _id: u8, _len: i32) {}
     /// The opened ball moves its rays to itself.
     fn move_display(&mut self, _seq: u32, _pos: ssb_engine::math::Vec3) {}
     /// `itManagerMakeItemSetupCommon(parent, nITKindEgg, ...)` with

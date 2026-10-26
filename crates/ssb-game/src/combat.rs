@@ -1791,6 +1791,8 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         }
         damage = f.hits.damage_lag;
         is_knockback_paused = true;
+        // ftmain.c:3921: `ftParamMakeRumble(fp, 0, damage_queue * 0.75 + 4)`.
+        crate::rumble::on_damage(f, f.hits.damage_queue);
     } else if f.hits.shield_damage != 0 {
         if is_shieldbreak {
             record_shield_break(f);
@@ -1815,6 +1817,12 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         crate::captain::on_kick_hit(f);
         crate::capture_kirby::on_star_hit(f);
         damage = f.hits.attack_damage;
+        // ftmain.c:3958-3962: the Bat's smash swing has its own rumble.
+        if f.stats.attack.flags.id() == crate::spgame::bonus::HitAttackId::BatSwing4 {
+            crate::rumble::make(f, 10, 0);
+        } else {
+            crate::rumble::on_attack(f, f.hits.attack_damage);
+        }
     } else if f.hits.reflect_damage != 0 {
         // `ftCommonShieldBreakFlyReflectorSetStatus`.
         crate::reaction::set_shield_break_fly(f);

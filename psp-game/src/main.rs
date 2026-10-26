@@ -1526,6 +1526,7 @@ unsafe fn training_step(
     battle: Option<&mut ssb_game::battle::Battle>,
     lead: &mut play::Lead,
     interface: &mut InterfaceThreads<'_>,
+    rumble: &mut ssb_game::rumble::Rumble,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
@@ -1564,6 +1565,7 @@ unsafe fn training_step(
         started,
         locked,
         go,
+        rumble: Some(rumble),
     };
     let mut hooks = MatchHooks {
         stage: &stage,
@@ -2671,9 +2673,23 @@ unsafe fn training_frame(
                     h.update(i32::from(h.damage), false);
                 }
             }
+            // The rumble actor in the frame's `gcRunAll` while the rest
+            // of the world stays paused (`ifcommon.c:2623`).
+            if battle.as_ref().is_some_and(|b| b.rumble_runs(Frame::Frozen)) {
+                damage_hud.rumble.tick();
+            }
             return false;
         }
-        Some((Frame::Done, _)) => return true,
+        Some((Frame::Done, _)) => {
+            // `ifCommonBattleSetUpdateInterface`'s last `gcRunAll`.
+            if battle.as_ref().is_some_and(|b| b.rumble_runs(Frame::Done)) {
+                damage_hud.rumble.tick();
+            }
+            // The battle scene's exit after its loop (`scvsbattle.c:538`,
+            // `sc1pgame.c:2919`, `sc1pbonusstage.c:1185`).
+            ssb_game::rumble::init_players();
+            return true;
+        }
     };
     // `sc1PGameBossLockPlayerControl`: Master Hand's defeat locks every
     // fighter.
@@ -2754,6 +2770,7 @@ unsafe fn training_frame(
         battle.as_mut(),
         lead,
         &mut interface,
+        &mut damage_hud.rumble,
     );
     // The effect and interface processes after the fighters': the KO
     // explosions (with their particles) and the screen flash.
@@ -2874,6 +2891,9 @@ fn entry_zoom_frame(
 /// The battle HUD's state beside the world: the damage displays and the
 /// countdown or sudden death's "GO!".
 struct Hud {
+    /// The battle scene's rumble actor (`gmRumbleMakeActor`, link 13),
+    /// remade by [`reset_damage_hud`] with each battle scene.
+    rumble: ssb_game::rumble::Rumble,
     bonus_tasks: Option<u8>,
     /// Bonus Practice's time passed (`sc1PBonusStageMakeTimer`).
     bonus_timer: Option<ssb_game::spgame::bonus_stage::PracticeTimer>,
@@ -2994,8 +3014,10 @@ fn pause_frame(
                 return;
             }
             if state.retry && pressed.contains(N64Buttons::L) {
-                // `func_800266A0_272A0` before the scene reloads.
+                // `func_800266A0_272A0` and `gmRumbleInitPlayers`
+                // (`ifcommon.c:3059-3060`) before the scene reloads.
                 ssb_game::sound::stop_all_fgm();
+                ssb_game::rumble::init_players();
                 if let Some(bonus) = bonus.as_deref_mut() {
                     bonus.retry_requested = true;
                 }
@@ -3028,6 +3050,7 @@ impl Hud {
     #[inline(never)]
     fn new() -> Hud {
         Hud {
+            rumble: ssb_game::rumble::Rumble::new(),
             bonus_tasks: None,
             bonus_timer: None,
             bonus_fade_alpha: 0,
@@ -3251,6 +3274,8 @@ fn stock_steal_frame(
 /// `ifCommonPlayerDamageInitInterface` for every port, shown at once
 /// outside a battle.
 fn reset_damage_hud(world: &mut TrainingWorld<'_>) {
+    // `gmRumbleMakeActor` in each battle scene's start.
+    world.damage_hud.rumble = ssb_game::rumble::Rumble::new();
     world.damage_hud.bonus_tasks = None;
     world.damage_hud.bonus_timer = None;
     world.damage_hud.bonus_fade_alpha = 0;
@@ -3688,6 +3713,8 @@ fn enter_training(
     // CPUs read the player's hurtbox extent.
     scene.set_damage_detect_size(p);
     scene.fighter.port = 0;
+    // `pkind == nFTPlayerKindMan`: the pad's player (`ftParamMakeRumble`).
+    scene.fighter.is_man = lead.human;
     scene.fighter.team = lead.team;
     scene.fighter.costume = lead.costume;
     scene.fighter.shade = lead.shade;
@@ -4896,6 +4923,9 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // The controller motor (a no-op on the PSP: `NoMotor`), before the
+    // first scene's rumble calls.
+    ssb_game::rumble::install(&ssb_psp_runtime::input::MOTOR);
     // The audio system (D-049), before the backup's options reach it and
     // before the first scene's sound calls.
     #[cfg(not(feature = "no_audio"))]

@@ -114,8 +114,8 @@ fn timing(s: N) -> StatusTiming {
 ///   landing PK Thunder blast loses its hitbox.
 ///
 /// `TEXTUREPART`, `EFFECT` and `COLANIM` come from the
-/// [`crate::colanim::PRESERVE_COLANIM`] tables; `RUMBLE` has no PSP
-/// equivalent.
+/// [`crate::colanim::PRESERVE_COLANIM`] tables, `RUMBLE` from
+/// [`crate::rumble::preserved`].
 fn preserve(s: N, is_switch: bool) -> status::Preserve {
     if !is_switch {
         return status::Preserve {

@@ -186,3 +186,6 @@ tools/romtool/src/residual_fixes.rs	CASES	tooling: residual review fixtures (scr
 tools/romtool/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
+crates/ssb-game/src/colanim_preserve.rs	PRESERVE_RUMBLE	port constant: status ids transcribed from decomp FTSTATUS_PRESERVE_RUMBLE users, not read from the ROM
+crates/ssb-game/src/rumble.rs	PRIORITIES	port constant: decomp gmrumble.c source table (not read from the ROM); candidate for tablegen
+crates/ssb-game/src/rumble.rs	SCRIPTS	port constant: decomp gmrumble.c source script table (not read from the ROM); candidate for tablegen

@@ -275,6 +275,8 @@ impl Title {
     /// (`mnTitleInitVars`'s `nMNTitleLayoutAnimate`). `time` is
     /// `osGetTime`'s low byte.
     pub fn new(time: u8) -> Title {
+        // `mnTitleFuncStart`'s first loop: every controller's motor stops.
+        crate::rumble::stop_all();
         // `mnTitleInitVars`: not after the opening, whose BGM plays on.
         sound::stop_bgm_all();
         sound::stop_all_fgm();
@@ -326,6 +328,8 @@ impl Title {
     /// hidden, the logo's animation with its cutout, strikes, slash and
     /// particles, the red logo at full alpha.
     pub fn new_opening(time: u8) -> Title {
+        // `mnTitleFuncStart`'s first loop: every controller's motor stops.
+        crate::rumble::stop_all();
         Title {
             layout: Layout::Opening,
             transition_tics: 0,

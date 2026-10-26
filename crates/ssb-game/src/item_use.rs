@@ -349,6 +349,7 @@ pub fn status_accessory(f: &mut Fighter) {
                         false,
                     );
                     crate::sound::play_fgm(crate::sound::id::nSYAudioFGMLGunShoot);
+                    crate::rumble::make(f, 9, 0);
                 } else {
                     fx(
                         f,
@@ -424,6 +425,7 @@ fn flower(f: &mut Fighter) {
                     if i >= 5 { 8 - i } else { i },
                     cost,
                 );
+                crate::rumble::make(f, 6, 0);
             }
             f.item_use.fire_count = (f.item_use.fire_count + 1).min(65536);
             f.item_use.flame_index += 1;

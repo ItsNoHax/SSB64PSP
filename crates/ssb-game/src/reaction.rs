@@ -272,7 +272,13 @@ pub fn air_interrupt(f: &mut Fighter) -> bool {
 /// `ftCommonDamageFallSetStatusFromDamage`.
 pub fn set_damage_fall(f: &mut Fighter) {
     set(f, Status::DamageFall);
+    clamp_rumble(f);
+}
+
+/// `ftCommonDamageFallClampRumble`.
+fn clamp_rumble(f: &mut Fighter) {
     crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+    crate::rumble::make(f, 3, 0);
 }
 
 /// `ftCommonDamageFallSetStatusFromCliffWait`: a ledge hang that times out
@@ -280,7 +286,7 @@ pub fn set_damage_fall(f: &mut Fighter) {
 /// passes `FTSTATUS_PRESERVE_FASTFALL` alone: the player tag wait resets.
 pub fn set_damage_fall_from_cliff_wait(f: &mut Fighter) {
     set_preserve(f, Status::DamageFall, status::Preserve::FASTFALL);
-    crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+    clamp_rumble(f);
     f.tics_since_last_z = status::ZTRIGLAST_TICS_MAX;
 }
 
@@ -366,6 +372,7 @@ pub fn set_wall_damage(
     f.physics.vel_damage_ground = ground;
     f.hitstun = hitstun.max(0) as u16;
     f.damage_knockback_stack = knockback;
+    crate::rumble::make(f, 2, 0);
     set_timed_intangible(f, WALLDAMAGE_INTANGIBLE_TIMER);
 }
 
@@ -688,7 +695,7 @@ pub fn set_down_bounce(f: &mut Fighter, floor_y: f32) {
 }
 
 /// `ftCommonDownBounceUpdateEffects`: the impact wave and the fighter's
-/// bounce sound (rumble is not ported).
+/// bounce sound and rumble 4.
 pub(crate) fn down_bounce_effects(f: &mut Fighter) {
     let lr = f.facing.sign() as i8;
     crate::fteffect::request(
@@ -696,6 +703,7 @@ pub(crate) fn down_bounce_effects(f: &mut Fighter) {
         crate::fteffect::EffectRequest::at_joint(crate::fteffect::kind::IMPACT_WAVE, 0, lr),
     );
     crate::sound::play_fgm(crate::fighter_sound::DOWN_BOUNCE_SFX[f.kind as usize]);
+    crate::rumble::make(f, 4, 0);
 }
 
 fn is_down(f: &Fighter) -> bool {
@@ -959,6 +967,7 @@ fn set_shield_break_fall(f: &mut Fighter) {
         },
     );
     crate::physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+    crate::rumble::make(f, 3, 0);
 }
 
 /// `ftCommonShieldBreakDownSetStatus`.

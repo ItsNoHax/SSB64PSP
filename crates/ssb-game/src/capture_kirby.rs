@@ -118,6 +118,7 @@ pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     status::set_status(f, Status::CaptureKirby, 0.0, StatusTiming::unknown());
     // `ftCommonCaptureKirbyProcCapture` plays the first frame (RE-474).
     status::play_anim_events(f);
+    crate::rumble::make(f, 7, 0);
     f.kirby_capture = CaptureKirbyState {
         floor_flags,
         ..CaptureKirbyState::default()

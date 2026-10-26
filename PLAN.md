@@ -18,7 +18,7 @@
 | Gameplay | 12 fighters, Master Hand, Metal Mario, Giant DK, Polygon Team; How to Play matches an N64 trace every frame (RE-472, RE-473) | Fidelity items below |
 | Items | 20 normal items, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons |
 | CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447, RE-568) | N64 trait checks |
-| Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | Rumble |
+| Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | Fidelity items below |
 | Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | opening differences |
 | Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
 | Audio | N64 audio system ported whole, sample-exact ([D-049](docs/decisions/D-049.md), RE-479) | Within the PSP-2000 CPU budget everywhere |
@@ -36,7 +36,7 @@
 | `MS4` | Fighters, Master Hand, special fighters | Done; fidelity remainders below |
 | `MS5` | Match systems: VS, Training, stages, items, CPU, KO | In progress |
 | `MS6` | Front end, 1P campaign, save data | In progress |
-| `MS7` | Audio and rumble | Audio done; rumble open |
+| `MS7` | Audio and rumble | Done |
 | `MS8` | PSP performance and hardware acceptance | In progress; never gates `MS4`–`MS7` ([D-032](docs/decisions/D-032.md), [D-036](docs/decisions/D-036.md)) |
 
 - Retired labels (`P0`–`P5`, `M0`–`M4`, `R0`–`R3`, `F1`, `G0`–`G5`) →
@@ -106,6 +106,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
 | Fox ledge freeze | Host sweep green (`ledge_sweep.rs`, release full sweep); input recorder only if a playtest repro appears | RE-553 |
+| Forward skip list | `motion/mod.rs` Forward pass lacks SET_AFTER_IMAGE, which decomp `ftMainUpdateMotionEventsForward` skips; fix, verify goldens | — |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
 
 ### Audio and rumble (`MS7`)
@@ -113,7 +114,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Attract audio | Compare KO and later hits (97.6–124.5 s), 99 near-full-scale samples with N64; reverb's unapplied low-pass vs hardware recording | RE-479 |
-| Rumble | Port Rumble Pak; accept: N64 motor timings per event match decomp | — |
 
 ### Match systems (`MS5`)
 

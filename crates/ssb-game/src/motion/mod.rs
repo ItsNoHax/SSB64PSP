@@ -23,7 +23,8 @@
 //! step; a status set outside those passes makes them at once.
 //! The model-part commands set [`crate::modelpart`]'s state (RE-425).
 //! Texture-part commands select the joint material's sprite (RE-426).
-//! Sounds, rumble, slope contours and throw descriptors are
+//! Rumble commands queue [`crate::rumble::Cmd`]s on the fighter.
+//! Sounds, slope contours and throw descriptors are
 //! decoded and skipped; the ported status code owns throws.
 
 /// The fighters' motion scripts and tables, generated at build time from the
@@ -682,6 +683,8 @@ fn run(f: &mut Fighter, thread: usize, pass: Pass) {
                                 | op::SET_AIR_JUMP_MAX
                                 | op::SET_COL_ANIM
                                 | op::RESET_COL_ANIM
+                                | op::MAKE_RUMBLE
+                                | op::STOP_RUMBLE
                     )
             }
             Pass::ForwardEffect => {
@@ -851,8 +854,17 @@ fn execute(
         }
         // `nFTMotionEventHideItem`: `is_item_show = value`.
         op::HIDE_ITEM => f.is_item_show = value != 0,
-        // `nFTMotionEventMakeRumble` / `StopRumble`: the PSP has no rumble pak.
-        op::MAKE_RUMBLE | op::STOP_RUMBLE => {}
+        // `nFTMotionEventMakeRumble` (`length : 13`, `rumble_id : 13`) and
+        // `StopRumble` (`value`, the id), skipped for a Demo fighter
+        // (ftmain.c:671-690). Make goes through `ftParamMakeRumble`'s Man
+        // gate; Stop has no gate past Demo.
+        op::MAKE_RUMBLE => {
+            if !f.is_demo {
+                let id = u8::try_from(w & 0x1FFF).unwrap_or(u8::MAX);
+                crate::rumble::make(f, id, ((w >> 13) & 0x1FFF) as i32);
+            }
+        }
+        op::STOP_RUMBLE => crate::rumble::stop(f, value),
         // `nFTMotionEventSetAfterImage`: `is_itemswing : 8`, `drawstatus : 18`
         // stored into the `s8`.
         op::SET_AFTER_IMAGE => {

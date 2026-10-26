@@ -185,6 +185,11 @@ pub struct Battle {
     pub boss_defeat: Option<BossDefeat>,
     /// `dIFCommonBattleBossUpdateWait`.
     boss_wait: u8,
+    /// The rumble actor's processes are paused: `gcFuncGObjAll(
+    /// ifCommonBattleInterfacePauseGObj)` without the
+    /// `gmRumbleResumeProcessAll` of `ifCommonBattleInterfaceProcUpdate`
+    /// (the reset, `ifcommon.c:3049`; the bonus end, `ifcommon.c:3264`).
+    rumble_paused: bool,
     /// `sc1PGameBossDefeatInterfaceProcSet` ran this tick: the host changes
     /// the wallpaper and starts the defeat camera animation.
     pub boss_set: bool,
@@ -269,6 +274,7 @@ impl Battle {
             set_zoom_began: false,
             boss_defeat: None,
             boss_wait: 0,
+            rumble_paused: false,
             boss_set: false,
             boss_update: false,
             is_demo: false,
@@ -513,7 +519,15 @@ impl Battle {
                 if self.status == GameStatus::End {
                     // `ifCommonBattleInterfaceProcUpdate` and
                     // `ifCommonBonusInterfaceProcUpdate`: every FGM stops
-                    // and the end's queue plays.
+                    // and the end's queue plays. The battle's resumes the
+                    // rumble actor (`ifcommon.c:2623`); the bonus's leaves
+                    // it paused and silences the motors (`ifcommon.c:3265`).
+                    if self.is_bonus {
+                        self.rumble_paused = true;
+                        crate::rumble::init_players();
+                    } else {
+                        self.rumble_paused = false;
+                    }
                     crate::sound::stop_all_fgm();
                     self.play_end_sounds();
                 }
@@ -538,6 +552,31 @@ impl Battle {
                     Frame::Done
                 }
             }
+        }
+    }
+
+    /// Whether the rumble actor (`gmrumble.c:643`, link 13) runs on a
+    /// frame `frame` left to the interface: a frame on which
+    /// `ifCommonBattleUpdateInterfaceAll` calls `gcRunAll` with the actor
+    /// unpaused. [`Frame::Run`] ticks it inside the world's step, so this
+    /// is false there. The pause and its camera restore run no
+    /// `gcRunAll`; nor do the defeat's slow frames between two world
+    /// ticks (`ifcommon.c:3128-3139`). End, its wait and Set do
+    /// (`ifcommon.c:3128-3152`), as does Master Hand's zoom, after
+    /// `sc1PGameBossDefeatInterfaceProcUpdate` resumes the actor
+    /// (`sc1pgame.c:1983`).
+    pub fn rumble_runs(&self, frame: Frame) -> bool {
+        if self.rumble_paused {
+            return false;
+        }
+        match frame {
+            Frame::Run => false,
+            Frame::Done => true,
+            Frame::Frozen => match self.status {
+                GameStatus::BossDefeat => self.boss_defeat != Some(BossDefeat::Slow),
+                GameStatus::Set => true,
+                _ => false,
+            },
         }
     }
 
@@ -664,6 +703,11 @@ impl Battle {
     pub fn pause(&mut self) {
         if self.status == GameStatus::Go {
             self.status = GameStatus::Pause;
+            // `ifCommonBattlePauseInitInterface` (`ifcommon.c:2885`): the
+            // motors stop, but the actor's queues and `is_active` stay, so
+            // a script still running restarts the motor only when its
+            // state next differs (the N64's quirk, kept).
+            crate::rumble::init_players();
             crate::sound::pause_fgm();
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMGamePause);
             crate::sound::set_bgm_volume(0, BGM_VOLUME_PAUSE);
@@ -699,8 +743,11 @@ impl Battle {
     /// `ifCommonBattleInterfaceProcSet`.
     pub fn reset(&mut self) {
         if self.status == GameStatus::Pause {
-            // `func_800266A0_272A0`.
+            // `gcFuncGObjAll(ifCommonBattleInterfacePauseGObj)`,
+            // `func_800266A0_272A0`, `gmRumbleInitPlayers`.
+            self.rumble_paused = true;
             crate::sound::stop_all_fgm();
+            crate::rumble::init_players();
             self.is_reset = true;
             self.status = GameStatus::Set;
             self.restore_wait = SET_RESTORE_WAIT;

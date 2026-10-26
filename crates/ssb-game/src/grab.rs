@@ -926,6 +926,7 @@ fn catch_pull(f: &mut Fighter, held: &Fighter) {
     if let Some(joint) = itemheavy_joint(f.kind) {
         f.mark_joint_query(joint as u8);
     }
+    crate::rumble::make(f, 9, 0);
 }
 
 /// The catcher's parts the held fighter's processes query each frame:
@@ -1140,6 +1141,7 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     status::play_anim_events(f);
     f.grab.is_goto_pulled_wait = false;
     f.grab.capture_immune_mask = catch_kind::ALL;
+    crate::rumble::make(f, 9, 0);
     f.physics.vel_air = Vec3::ZERO;
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_knockback = Vec3::ZERO;
@@ -1256,6 +1258,17 @@ fn set_thrown(f: &mut Fighter, status: Status, queue: Option<Status>) {
     f.grab.thrown_queue = queue;
 }
 
+/// The end of `ftCommonThrownSetStatusImmediate` (ftcommonthrown1.c:101-116):
+/// rumble 7 when a Mario or Luigi (any variant) catcher is in `ThrowB`.
+/// Donkey Kong's `Shouldered` never meets it.
+fn thrown_immediate_rumble(f: &mut Fighter, catcher: FighterKind, status: AnyStatus) {
+    if matches!(catcher.character(), FighterKind::Mario | FighterKind::Luigi)
+        && status == AnyStatus::Common(Status::ThrowB)
+    {
+        crate::rumble::make(f, 7, 0);
+    }
+}
+
 /// `ftCommonThrownProcUpdate` @ 0x8014AAF0: the start statuses advance to the
 /// queued one, except while Donkey Kong is still lifting.
 fn update_thrown(f: &mut Fighter) {
@@ -1275,6 +1288,9 @@ fn update_thrown(f: &mut Fighter) {
     if !lifting {
         if let Some(next) = f.grab.thrown_queue {
             set_thrown(f, next, None);
+            if let Some(h) = f.grab.holder {
+                thrown_immediate_rumble(f, h.kind, h.status);
+            }
         }
     }
 }
@@ -1340,6 +1356,7 @@ fn set_shouldered(f: &mut Fighter, staled: StaledThrow) -> i32 {
         crate::colanim::update_damage_colanim(f, kb, crate::combat::Element::Normal);
     }
     f.add_damage(damage);
+    crate::rumble::make(f, 7, 0);
     damage
 }
 
@@ -2532,7 +2549,10 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::GotoPulledWait => to.grab.is_goto_pulled_wait = true,
         GrabEvent::Thrown { first, then } => match first {
             Some(first) => set_thrown(to, first, Some(then)),
-            None => set_thrown(to, then, None),
+            None => {
+                set_thrown(to, then, None);
+                thrown_immediate_rumble(to, from.kind, from.status.status);
+            }
         },
         GrabEvent::Shouldered { staled } => {
             let damage = set_shouldered(to, staled);
@@ -2551,6 +2571,11 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             let damage = release_with(to, desc, Some(lr), shield_catch, staled, thrown);
             record_release(from, to, staled.stat);
             record_throw(from, to, staled, damage);
+            // ftcommonthrown2.c:174-181 (the damage release has none).
+            if damage != 0 {
+                crate::rumble::on_damage(to, damage);
+                crate::rumble::on_attack(from, damage);
+            }
         }
         GrabEvent::DamageRelease {
             desc,
