@@ -715,7 +715,12 @@ fn check_resolvers(
     let sprite_count = bound.iter().map(|b| b.2 + 1).max().unwrap_or(0);
     if sprite_count > 0 {
         let sprites = ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, sprite_count)
-            .ok_or("sprites[] unreadable")?;
+            .ok_or_else(|| {
+                format!(
+                    "MatAnimDesc {i}: file {} MObjSub 0x{:X}: sprites[] unreadable for {sprite_count} entries",
+                    a.source_file, a.source_offset
+                )
+            })?;
         for (name, t, k) in &bound {
             let desc = pack.texture(*t).ok_or("missing packed texture")?;
             tally.textures_checked += 1;

@@ -481,7 +481,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 133 tags each texture part with the `texture_id_curr` its costume script
 // makes the `MObj` with (`ssb_game::modelpart::texture_part_made`): Luigi's
 // eye packs sprite 1 (RE-569). No layout change.
-pub const VERSION: u32 = 133;
+// 134 draws the Zebes acid's two-tile blend under its shade alpha (vertices
+// premultiplied, `TEXEL1` images packed; RE-321) and seeds Link's Spin
+// Attack band with `wpDisplayDrawNormal`'s state (RE-540). No layout change.
+pub const VERSION: u32 = 134;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

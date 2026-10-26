@@ -741,7 +741,13 @@ pub struct LodBlend {
     pub frac: u8,
     /// The constant the second cycle multiplies the blended alpha by:
     /// `PRIMITIVE` alpha, or 255 when it passes `COMBINED_ALPHA` through.
+    /// Unused when [`Self::shade_alpha`] is set.
     pub prim_alpha: u8,
+    /// The second cycle multiplies the blended alpha by `SHADE_ALPHA`, the
+    /// vertex alpha (the Zebes acid's `COMBINED * SHADE`), instead of a
+    /// constant: the vertices keep their own alpha and the material blends
+    /// by it ([`AlphaBlend::Shade`]).
+    pub shade_alpha: bool,
     /// `unk0A`, `unk38`, `unk3A`: tile 1's live window equation inputs.
     pub tile1_params: [u16; 3],
 }
@@ -1544,13 +1550,16 @@ enum LodAlpha {
     Combined,
     /// `(COMBINED - 0) * PRIM + 0`.
     TimesPrim,
+    /// `(COMBINED - 0) * SHADE + 0`.
+    TimesShade,
 }
 
-/// Classifies the second cycle's alpha for the two-tile blend, or declines a
-/// shape that reads anything per-vertex (RE-321).
+/// Classifies the second cycle's alpha for the two-tile blend, or declines
+/// any other shape (RE-321).
 fn lod_cycle2_alpha(lo: u32) -> Option<LodAlpha> {
     const COMBINED: u32 = 0;
     const PRIM: u32 = 3;
+    const SHADE: u32 = 4;
     const ZERO: u32 = 7;
     let (a, b, c, d) = (
         (lo >> 21) & 0x7,
@@ -1561,6 +1570,7 @@ fn lod_cycle2_alpha(lo: u32) -> Option<LodAlpha> {
     match (a, b, c, d) {
         (_, _, ZERO, COMBINED) => Some(LodAlpha::Combined),
         (COMBINED, ZERO, PRIM, ZERO) => Some(LodAlpha::TimesPrim),
+        (COMBINED, ZERO, SHADE, ZERO) => Some(LodAlpha::TimesShade),
         _ => None,
     }
 }
@@ -2179,6 +2189,11 @@ impl State {
             self.material.prim_color.map(|c| AlphaBlend::Prim(c[3]))
         } else if shade_alpha_untextured && self.material.translucent {
             Some(AlphaBlend::Shade)
+        } else if lod_blend.is_some_and(|l| l.shade_alpha) {
+            // RE-321: each pass's alpha is its texel's times the shade's,
+            // `TEXEL0_ALPHA * SHADE_ALPHA` on the GE; the packer proves the
+            // texels opaque before it draws the second pass.
+            Some(AlphaBlend::Shade)
         } else {
             alpha_blend
         };
@@ -2540,14 +2555,16 @@ impl State {
             self.material.prim_color,
             self.material.env_color,
         )?;
-        let prim_alpha = match lod_cycle2_alpha(lo)? {
-            LodAlpha::Combined => 255,
-            LodAlpha::TimesPrim => prim[3],
+        let (prim_alpha, shade_alpha) = match lod_cycle2_alpha(lo)? {
+            LodAlpha::Combined => (255, false),
+            LodAlpha::TimesPrim => (prim[3], false),
+            LodAlpha::TimesShade => (255, true),
         };
         Some(LodBlend {
             next,
             frac,
             prim_alpha,
+            shade_alpha,
             tile1_params: self.tile1_params?,
         })
     }
@@ -2728,9 +2745,10 @@ impl Builder {
             None => {}
         }
         // RE-321: the two-tile blend's alpha is `COMBINED_ALPHA`, optionally
-        // times `PRIM_ALPHA`; it never reads the shade, so the vertex carries
-        // the constant for the GE's `Modulate` to apply to each pass's texel.
-        if let Some(lod) = self.material.lod_blend {
+        // times `PRIM_ALPHA`: the vertex carries the constant for the GE's
+        // `Modulate` to apply to each pass's texel. Times `SHADE_ALPHA`, the
+        // vertex keeps its own alpha (`AlphaBlend::Shade` above).
+        if let Some(lod) = self.material.lod_blend.filter(|l| !l.shade_alpha) {
             v.rgba[3] = lod.prim_alpha;
         }
         if let Some(t) = self.material.texture {

@@ -59,6 +59,7 @@
 |---|---|---|
 | 1P intro | Kirby vs Yoshi team ~21 FPS on PSP-2000 → profile | RE-537, RE-539 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
+| Acid tile-0 duplicates | Zebes acid `textures[1..3]` duplicate the TEXEL1 images (~520 KiB): drop the duplicate slots | RE-364 |
 | `vs4@2400` | Busy time back under RE-500's 13.64 ms; rise = small gameplay and draw additions | RE-533–RE-539 |
 | Opening | Profile Clash (link order no effect), each fight's first frame (21–40 ms). Levers: `bind_texture` (~121/frame, ~11 µs each), lit-expand traffic (~1.2 µs/vertex) | RE-469–RE-471, RE-476, RE-532, RE-539 |
 | Other scenes | RE-469 scenes, RE-471 worst cases on PSP; explain `vs4@4000` 5.2 ms vs PPSSPP 4.5. Memory stalls 55% of cycles; draw I-cache misses dominate | RE-480, RE-481 |
@@ -119,14 +120,13 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Spin Attack band | Less saturated than N64 at el48-52 | RE-540 |
+| Spin Attack band | Lower front arc missing on PSP at tick 449; needs a raw-framebuffer N64 frame at the same phase | RE-540 |
 | cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
 | Thunder Jolt burst | Area 23–36% larger than N64 on the el162 crop (~11% framing, ~20% unattributed): check filter kernel and scale at 2x; acceptance: area within 10% | RE-541 |
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
-| Stages | Sector Z Arwing laser/reflect N64 capture | RE-428 |
-| Acid tile 1 | Only sprite 0 draws; pack converts four 384 × 384 variants | RE-364 |
+| Stages | Sector Z Arwing laser/reflect N64 capture; N64 Zebes acid frame unverified (warp ROM harness no longer boots `zebes.z64`) | RE-428, RE-321, RE-364 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | Results wipe | N64 view | RE-464 |
 | CPU | Countdown seed on Dream Land (Whispy +2 draws, N64 untraced); real menu boot (part B) infeasible | RE-568 |
@@ -149,6 +149,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Runtime loader | Use `ssb_rom::reloc_link` (layout matches original) | RE-340, RE-341, [D-011](docs/decisions/D-011.md) |
+| `matcolors --pack` | `romtool matcolors --pack` fails at MatAnimDesc 38, file 69 MObjSub 0x61F0 ("sprites[] unreadable for 5 entries"); predates batch 47 (fails at c495263f, v133); likely NULL sprite entries | RE-364 |
 | Memory arenas | Wire `ssb_engine::memory` arenas, pools into `psp-runtime` | [memory](docs/memory.md#allocators) |
 
 ## Completed

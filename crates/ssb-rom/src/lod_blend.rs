@@ -22,6 +22,19 @@
 //! exact only when pass 1's pixel replaces the framebuffer: the packer
 //! declines the path for a material the GE would blend (RE-321).
 //!
+//! A translucent primitive whose second cycle multiplies the alpha by
+//! `SHADE` (the Zebes acid, `G_RM_AA_ZB_XLU_SURF2`) blends the crossfade
+//! over the framebuffer by the shade alpha `a`. With every texel of both
+//! tiles opaque the combined alpha is exactly `a`, and with one shade colour
+//! `S` over the primitive the vertices carry `S * a` ([`premultiply_shade`]),
+//! which the GE interpolates exactly:
+//!
+//! ```text
+//! RDP:  M' = (T0 + (T1 - T0) * f / 256) * S * a + M * (1 - a)
+//! GE:   pass 1  M1 = T0*(S*a) * fb/255 + M * (1 - a)     Add(Fix fb, 1 - SrcAlpha)
+//!       pass 2  M2 = T1*(S*a) * fa/255 + M1              Add(Fix fa, Fix 255)
+//! ```
+//!
 //! This module holds the arithmetic both the packer and the renderer use, and
 //! a host reference of the RDP equation the decomposition is tested against.
 
@@ -94,9 +107,105 @@ pub fn rdp_two_cycle_channel(t0: u8, t1: u8, shade: u8, frac: u8) -> u8 {
     (u32::from(lerp) * u32::from(shade) / 255) as u8
 }
 
+/// A vertex colour premultiplied by its own alpha for the translucent
+/// two-pass lowering: `rgb * a / 255`, rounded; the alpha is kept for the
+/// destination factor and the alpha gate.
+pub fn premultiply_shade(rgba: [u8; 4]) -> [u8; 4] {
+    let a = u32::from(rgba[3]);
+    let mul = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
+    [mul(rgba[0]), mul(rgba[1]), mul(rgba[2]), rgba[3]]
+}
+
+/// Model of the GE's translucent two-pass result on one colour channel, for
+/// host tests: the vertex carries `shade * alpha / 255`
+/// ([`premultiply_shade`]), pass 1 blends `TEXEL0` with
+/// `Add(Fix fb, OneMinusSrcAlpha)` and pass 2 adds `TEXEL1` with
+/// `Add(Fix fa, Fix 255)`. Pass 2 is skipped at `frac == 0`.
+pub fn ge_translucent_two_pass_channel(
+    t0: u8,
+    t1: u8,
+    shade: u8,
+    alpha: u8,
+    mem: u8,
+    frac: u8,
+) -> u8 {
+    let premul = premultiply_shade([shade, shade, shade, alpha])[0];
+    let modulate = |t: u8| u32::from(t) * u32::from(premul) / 255;
+    let (fa, fb) = ge_fix_weights(frac);
+    let pass1 = (modulate(t0) * u32::from(fb) + u32::from(mem) * (255 - u32::from(alpha))) / 255;
+    if frac == 0 {
+        return pass1.min(255) as u8;
+    }
+    (pass1 + modulate(t1) * u32::from(fa) / 255).min(255) as u8
+}
+
+/// The N64 reference for the same channel with opaque texels: the lerp,
+/// cycle 2's `COMBINED * SHADE`, then the blender's
+/// `CLR_IN * A_IN + CLR_MEM * (1 - A_IN)` with `A_IN` the shade alpha.
+pub fn rdp_translucent_channel(t0: u8, t1: u8, shade: u8, alpha: u8, mem: u8, frac: u8) -> u8 {
+    let lerp = rdp_combine_channel(t1, t0, frac, t0);
+    let color = u32::from(lerp) * u32::from(shade) / 255;
+    ((color * u32::from(alpha) + u32::from(mem) * (255 - u32::from(alpha))) / 255) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn premultiplied_white_is_the_alpha() {
+        for a in 0..=255u8 {
+            assert_eq!(premultiply_shade([255, 255, 255, a]), [a, a, a, a]);
+        }
+        assert_eq!(premultiply_shade([200, 100, 0, 0]), [0, 0, 0, 0]);
+        assert_eq!(premultiply_shade([200, 100, 1, 128]), [100, 50, 1, 128]);
+    }
+
+    #[test]
+    fn the_translucent_two_pass_tracks_the_rdp_blender() {
+        // The acid's shade is white with alpha 0 or 0xDC; a darker shade
+        // rounds once more, in the premultiplied vertex.
+        let mut worst = [0u8; 2];
+        for frac in (0..=255u8).step_by(3) {
+            for t0 in (0..=255u8).step_by(17) {
+                for t1 in (0..=255u8).step_by(15) {
+                    for (shade, alpha) in
+                        [(255u8, 0xDCu8), (255, 0), (255, 255), (255, 7), (128, 0xDC)]
+                    {
+                        for mem in [0u8, 90, 255] {
+                            let ge =
+                                ge_translucent_two_pass_channel(t0, t1, shade, alpha, mem, frac);
+                            let rdp = rdp_translucent_channel(t0, t1, shade, alpha, mem, frac);
+                            let w = &mut worst[usize::from(shade != 255)];
+                            *w = (*w).max(ge.abs_diff(rdp));
+                        }
+                    }
+                }
+            }
+        }
+        // Each pass truncates its modulate and its blend, against the RDP's
+        // two truncations: one step wider than the opaque bound.
+        assert!(
+            worst[0] <= 3,
+            "worst white-shade two-pass error {}",
+            worst[0]
+        );
+        assert!(
+            worst[1] <= 3,
+            "worst darker-shade two-pass error {}",
+            worst[1]
+        );
+    }
+
+    #[test]
+    fn a_transparent_shade_leaves_the_framebuffer() {
+        for frac in [0u8, 114, 242] {
+            assert_eq!(
+                ge_translucent_two_pass_channel(200, 30, 255, 0, 77, frac),
+                77
+            );
+        }
+    }
 
     #[test]
     fn prim_lod_frac_truncates_the_single_precision_product() {

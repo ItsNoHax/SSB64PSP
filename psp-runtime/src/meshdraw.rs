@@ -1780,6 +1780,56 @@ unsafe fn apply_flags_state(p: &PrimDesc, st: &mut DrawState) {
     }
 }
 
+/// A translucent two-tile blend (RE-321): `LOD_BLEND` on a primitive the GE
+/// blends, whose vertices the packer premultiplied by their shade alpha
+/// ([`ssb_rom::lod_blend`]).
+const LOD_BLEND_TRANSLUCENT: u32 = flags::LOD_BLEND | flags::TRANSLUCENT | flags::ALPHA_BLEND;
+
+/// The fixed `(TEXEL1, TEXEL0)` blend weights of a two-tile blend this
+/// frame, or `None` when the second pass draws nothing.
+fn lod_blend_weights(st: &DrawState, frac: Option<u8>) -> (Option<u32>, u32) {
+    match (st.lod_blend_isolate, frac) {
+        (Some(LodBlendIsolate::Current), _) | (None, None | Some(0)) => (None, 0x00FF_FFFF),
+        (Some(LodBlendIsolate::Next), _) => (Some(0x00FF_FFFF), 0),
+        (None, Some(frac)) => {
+            let (fa, fb) = ssb_rom::lod_blend::ge_fix_colors(frac);
+            (Some(fa), fb)
+        }
+    }
+}
+
+/// Pass 1 of a translucent two-tile blend: `TEXEL0 * (S * a)` weighted by
+/// `fb`, over the framebuffer weighted by `1 - a`
+/// (`Add(Fix fb, OneMinusSrcAlpha)`). With no live fraction `fb` is 255,
+/// the plain `G_RM_AA_ZB_XLU_SURF2` result of `TEXEL0`. The alpha test and
+/// depth state stay as [`apply_material`] set them.
+#[cold]
+#[inline(never)]
+unsafe fn apply_lod_blend_translucent_pass1(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+) {
+    let frac = match effect_mat_anim {
+        Some(m) => m.resolved_lod_blend(pack, p.mat_anim),
+        None => mat_anim.and_then(|m| m.resolved_lod_blend(pack, p.mat_anim)),
+    }
+    .map(|lod| lod.frac);
+    let (_, fix_b) = lod_blend_weights(st, frac);
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::Fix,
+        sys::BlendFactor::OneMinusSrcAlpha,
+        fix_b,
+        0,
+    );
+    st.last_flags = None;
+    st.state_changes += 1;
+}
+
 /// Draws the second pass of the RDP two-tile fractional image blend
 /// (RE-321) over the primitive [`draw_mesh`] just drew.
 ///
@@ -1805,6 +1855,11 @@ unsafe fn apply_flags_state(p: &PrimDesc, st: &mut DrawState) {
 /// * Blend, alpha test and depth mask live under `last_flags`; forgetting it
 ///   makes the next primitive re-issue all three.
 ///
+/// A translucent blend ([`LOD_BLEND_TRANSLUCENT`]) instead adds
+/// `TEXEL1 * (S * a)` weighted by `fa` (`Add(Fix fa, Fix 255)`) and keeps
+/// pass 1's alpha test: both passes' alpha is the shade alpha, which the RDP
+/// gates on.
+///
 /// Returns whether a draw was submitted. A zero fraction submits nothing:
 /// pass 1 already is the RDP result.
 #[cold]
@@ -1823,11 +1878,11 @@ unsafe fn draw_lod_blend_pass(
     }) else {
         return false;
     };
-    let (fix_a, fix_b) = match st.lod_blend_isolate {
-        None if lod.frac == 0 => return false,
-        None => ssb_rom::lod_blend::ge_fix_colors(lod.frac),
-        Some(LodBlendIsolate::Current) => return false,
-        Some(LodBlendIsolate::Next) => (0x00FF_FFFF, 0),
+    let translucent = p.flags & LOD_BLEND_TRANSLUCENT == LOD_BLEND_TRANSLUCENT;
+    let (fix_a, fix_b) = match lod_blend_weights(st, Some(lod.frac)) {
+        (None, _) => return false,
+        (Some(fix_a), _) if translucent => (fix_a, 0x00FF_FFFF),
+        (Some(fix_a), fix_b) => (fix_a, fix_b),
     };
     let Some(t) = pack.texture(lod.texture) else {
         return false;
@@ -1846,7 +1901,9 @@ unsafe fn draw_lod_blend_pass(
         );
     }
 
-    sys::sceGuDisable(GuState::AlphaTest);
+    if !translucent {
+        sys::sceGuDisable(GuState::AlphaTest);
+    }
     sys::sceGuEnable(GuState::Blend);
     sys::sceGuBlendFunc(
         sys::BlendOp::Add,
@@ -1964,6 +2021,9 @@ unsafe fn draw_mesh_vertices(
             Some(clip) => clip_submission(clip, indices, &whole[0]).unwrap_or(&whole),
             None => &whole,
         };
+        if p.flags & LOD_BLEND_TRANSLUCENT == LOD_BLEND_TRANSLUCENT {
+            apply_lod_blend_translucent_pass1(pack, &p, st, mat_anim, effect_mat_anim);
+        }
         let submit_t = crate::profile::start_fine();
         for d in draws {
             d.draw();

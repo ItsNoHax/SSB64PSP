@@ -1230,6 +1230,13 @@ fn source_fully_opaque(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Option
 /// * no palette animation and no texgen, which the second pass does not
 ///   carry.
 ///
+/// A translucent primitive whose second cycle multiplies the alpha by
+/// `SHADE` (the Zebes acid) is exact under the premultiplied lowering
+/// ([`ssb_rom::lod_blend`]) when every `TEXEL0` and `TEXEL1` image is opaque
+/// (the combined alpha is then the shade alpha in both passes and on the
+/// RDP, so the gate agrees too) and the primitive's vertices share one RGB
+/// and no other primitive reads them ([`lod_premultiply_vertices`]).
+///
 /// `TEXEL1` images convert through the ordinary texture pipeline, shaped by
 /// tile 1's own descriptor, under the opaque alpha policy: pass 2 blends by
 /// fixed factors, and the RDP interpolates `TEXEL1`'s colour even where its
@@ -1241,6 +1248,7 @@ fn lod_blend_desc(
     id: u32,
     offset: u32,
     prim_index: usize,
+    packed_index: usize,
     m: &ssb_rom::mesh::Mesh,
     prim: &ssb_rom::mesh::Primitive,
     lod: &ssb_rom::mesh::LodBlend,
@@ -1264,8 +1272,31 @@ fn lod_blend_desc(
     }
     let base = prim.material.texture.ok_or("no TEXEL0 texture")?;
     let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
+    let reached_current = || {
+        let reached = data.sprites.iter().take(data.max_current + 1);
+        std::iter::once(base).chain(reached.map(|p| ssb_rom::mesh::TextureRef {
+            data_file: p.file,
+            data_offset: p.offset,
+            ..base
+        }))
+    };
     if translucent_blend {
-        return Err("GE blending would weight pass 1 by its own alpha");
+        if !lod.shade_alpha || prim.material.alpha_blend != Some(ssb_rom::mesh::AlphaBlend::Shade) {
+            return Err("GE blending would weight pass 1 by its own alpha");
+        }
+        let next = data.sprites.iter().map(|p| ssb_rom::mesh::TextureRef {
+            data_file: p.file,
+            data_offset: p.offset,
+            ..lod.next
+        });
+        for t in reached_current().chain(next) {
+            if source_fully_opaque(src, &t) != Some(true) {
+                return Err("a texel is not provably opaque under the shade-alpha blend");
+            }
+        }
+        lod_premultiply_vertices(m, packed_index)?;
+    } else if lod.shade_alpha && gate != AlphaGate::Off {
+        return Err("the shade alpha can fall below the alpha gate");
     }
     // The least alpha the gate passes, and whether one is set.
     let floor = match gate {
@@ -1273,7 +1304,7 @@ fn lod_blend_desc(
         AlphaGate::Greater(t) => Some(u16::from(t) + 1),
         AlphaGate::GreaterOrEqual(t) => Some(u16::from(t)),
     };
-    if let Some(floor) = floor {
+    if let Some(floor) = floor.filter(|_| !translucent_blend) {
         // With every `TEXEL0` opaque and `PRIM_ALPHA` 255 the blended alpha
         // is at least the lerp from 255 towards 0 at the largest fraction
         // the script reaches; the gate must pass that (RE-424: the cutout
@@ -1285,13 +1316,7 @@ fn lod_blend_desc(
         if lod.prim_alpha != 255 {
             return Err("PRIM_ALPHA below 255 under an alpha gate");
         }
-        let reached = data.sprites.iter().take(data.max_current + 1);
-        let current = std::iter::once(base).chain(reached.map(|p| ssb_rom::mesh::TextureRef {
-            data_file: p.file,
-            data_offset: p.offset,
-            ..base
-        }));
-        for t in current {
+        for t in reached_current() {
             if source_fully_opaque(src, &t) != Some(true) {
                 return Err("a TEXEL0 image is not provably opaque under an alpha gate");
             }
@@ -1332,6 +1357,39 @@ fn lod_blend_desc(
         next_textures,
         tile1_params: lod.tile1_params.map(u32::from),
     })
+}
+
+/// RE-321: the vertices primitive `packed` of `m` draws, when the translucent
+/// two-tile lowering may premultiply them by their alpha
+/// ([`ssb_rom::lod_blend::premultiply_shade`]): one RGB over all of them, so
+/// the GE's interpolation of `S * a` equals the RDP's `S * a` per pixel, and
+/// no other primitive reading them.
+fn lod_premultiply_vertices(
+    m: &ssb_rom::mesh::Mesh,
+    packed: usize,
+) -> Result<std::collections::BTreeSet<u16>, &'static str> {
+    let used: std::collections::BTreeSet<u16> =
+        m.primitives[packed].indices.iter().copied().collect();
+    let mut rgb = used.iter().map(|&i| {
+        let v = &m.vertices[usize::from(i)];
+        (!v.lit).then_some([v.rgba[0], v.rgba[1], v.rgba[2]])
+    });
+    let first = rgb
+        .next()
+        .flatten()
+        .ok_or("no unlit vertex colour to premultiply")?;
+    if !rgb.all(|c| c == Some(first)) {
+        return Err("the shade colour varies over the primitive");
+    }
+    let shared = m
+        .primitives
+        .iter()
+        .enumerate()
+        .any(|(k, p)| k != packed && p.indices.iter().any(|i| used.contains(i)));
+    if shared {
+        return Err("another primitive reads the vertices to premultiply");
+    }
+    Ok(used)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1706,8 +1764,19 @@ fn pack_mesh(
                 match (prim.material.mat_anim, mat_anim_index_resolved) {
                     (Some(key), Some(anim)) => match mat_anim_data.get(&key) {
                         Some(data) => lod_blend_desc(
-                            writer, src, id, offset, prim_index, m, prim, &lod, anim, data,
-                            swizzle, phase,
+                            writer,
+                            src,
+                            id,
+                            offset,
+                            prim_index,
+                            packed_index,
+                            m,
+                            prim,
+                            &lod,
+                            anim,
+                            data,
+                            swizzle,
+                            phase,
                         )
                         .and_then(|desc| {
                             if writer.add_lod_blend(desc) {
@@ -1752,6 +1821,30 @@ fn pack_mesh(
         per_prim_mat_anim.push(mat_anim_index_resolved);
         per_prim_lod.push(lod == Some(true));
     }
+    // RE-321: a translucent two-tile blend draws `S * a` from its vertices
+    // (`lod_blend_desc` proved them its own and of one RGB).
+    let premultiplied;
+    let m = if per_prim_lod
+        .iter()
+        .zip(&m.primitives)
+        .any(|(&lod, p)| lod && ssb_rom::pack::material_alpha_state(&p.material).1)
+    {
+        let mut copy = m.clone();
+        for (k, p) in m.primitives.iter().enumerate() {
+            if !per_prim_lod[k] || !ssb_rom::pack::material_alpha_state(&p.material).1 {
+                continue;
+            }
+            let used = lod_premultiply_vertices(m, k).expect("checked by lod_blend_desc");
+            for i in used {
+                let v = &mut copy.vertices[usize::from(i)];
+                v.rgba = ssb_rom::lod_blend::premultiply_shade(v.rgba);
+            }
+        }
+        premultiplied = copy;
+        &premultiplied
+    } else {
+        m
+    };
     let mesh_index = writer.add_mesh(m, id, offset, |i| per_prim[i], |i| per_prim_mat_anim[i]);
     for (prim, part, textures) in texture_parts {
         writer.add_texture_part(mesh_index, prim, part, textures);
@@ -2531,7 +2624,12 @@ const FIGHTER_STATE_EFFECT_GRAPHS: &[(u32, u32)] = &[
 /// So do the Poké Ball Pokémon's rock, coin, swarm, Hydro Pump, Swift and
 /// Smog (file 86, RE-435). Clefairy's swarm draws Clefairy's item tree under
 /// its own `G_RM_AA_XLU_SURF` and is left with the item.
+/// Link's Spin Attack band (324 + 0x11908, `dWPLinkSpinAttackWeaponDesc`
+/// flags `DOBJDESC | DOBJLINKS`) draws its link-1 list through
+/// `wpDisplayDObjTreeDLLinks`; the list (324 + 0x11680) sets neither a
+/// render mode nor `G_ZBUFFER` (RE-540).
 const WEAPON_SEEDED_GRAPHS: &[(u32, u32)] = &[
+    (324, 0x11908),
     (328, 0x1D388),
     (342, 0x270),
     (342, 0x1888),
