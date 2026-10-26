@@ -106,7 +106,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
 | 1P goldens | 1P intro, stage clear | RE-548 |
 | Fox ledge freeze | Host sweep green (`ledge_sweep.rs`, release full sweep); input recorder only if a playtest repro appears | RE-553 |
-| Forward skip list | `motion/mod.rs` Forward pass lacks SET_AFTER_IMAGE, which decomp `ftMainUpdateMotionEventsForward` skips; fix, verify goldens | — |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
 
 ### Audio and rumble (`MS7`)

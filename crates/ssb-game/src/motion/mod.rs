@@ -1,5 +1,5 @@
-//! Fighter motion scripts — `ftMainParseMotionEvent`,
-//! `ftMainUpdateMotionEventsAll` and `ftMainUpdateMotionEventsForward`.
+//! Fighter motion scripts — `ftMainParseMotionEvent` and the three passes,
+//! `ftMainUpdateMotionEventsAll`, `...Forward` and `...ForwardEffect`.
 //!
 //! A status's attack collisions, hit-status windows, hurtbox edits and
 //! script flags are `ftMotionCommand` bytecode in the fighter's
@@ -10,7 +10,8 @@
 //! `script_wait = anim_speed - frame_begin`, and every frame outside hitlag
 //! the wait drops by the animation speed and the commands run until the next
 //! wait. A status entered part-way (`frame_begin != 0`) fast-forwards,
-//! skipping attack creation, sounds, flags and effects exactly as
+//! skipping attack creation, sounds, flags 0-2, colour animations, rumble,
+//! the after-image and effects exactly as
 //! `ftMainUpdateMotionEventsForward` does.
 //!
 //! Only commands with gameplay effects act here: attack collisions,
@@ -301,6 +302,7 @@ mod op {
     pub const PLAY_FGM_STORE_INFO: u32 = 19;
     pub const PLAY_SMASH_VOICE: u32 = 20;
     pub const SET_FLAG0: u32 = 21;
+    pub const SET_FLAG2: u32 = 23;
     pub const SET_FLAG3: u32 = 24;
     pub const SET_AIR_JUMP_ADD: u32 = 25;
     pub const SET_AIR_JUMP_MAX: u32 = 26;
@@ -660,50 +662,7 @@ fn run(f: &mut Fighter, thread: usize, pass: Pass) {
         let pc = (t.pc - base) as usize;
         let w = words[pc];
         let opcode = w >> 26;
-        let is_effect = matches!(opcode, op::EFFECT | op::EFFECT_ITEM_HOLD);
-        let skip = match pass {
-            Pass::All => is_effect && f.motion_script.is_events_forward,
-            Pass::Forward => {
-                is_effect
-                    || matches!(
-                        opcode,
-                        op::MAKE_ATTACK_COLL
-                            | op::MAKE_ATTACK_COLL_SCALED
-                            | op::SET_ATTACK_COLL_OFFSET
-                            | op::CLEAR_ATTACK_COLL_ID
-                            | op::CLEAR_ATTACK_COLL_ALL
-                            | op::SET_ATTACK_COLL_DAMAGE
-                            | op::SET_ATTACK_COLL_SIZE
-                            | op::SET_ATTACK_COLL_SOUND_LEVEL
-                            | op::REFRESH_ATTACK_COLL_ID
-                            | op::PLAY_FGM..=op::PLAY_SMASH_VOICE
-                            | op::SET_FLAG0
-                            ..=23
-                                | op::SET_AIR_JUMP_ADD
-                                | op::SET_AIR_JUMP_MAX
-                                | op::SET_COL_ANIM
-                                | op::RESET_COL_ANIM
-                                | op::MAKE_RUMBLE
-                                | op::STOP_RUMBLE
-                    )
-            }
-            Pass::ForwardEffect => {
-                !(is_effect
-                    || matches!(
-                        opcode,
-                        op::END
-                            | op::SYNC_WAIT
-                            | op::ASYNC_WAIT
-                            | op::SET_DAMAGE_THROWN
-                            | op::LOOP_BEGIN
-                            | op::LOOP_END
-                            | op::SUBROUTINE
-                            | op::RETURN
-                            | op::GOTO
-                            | op::PAUSE_SCRIPT
-                    ))
-            }
-        };
+        let skip = skips(pass, opcode, f.motion_script.is_events_forward);
         if skip {
             thread_mut(f, pass, thread).pc += command_words(opcode);
             continue;
@@ -711,6 +670,64 @@ fn run(f: &mut Fighter, thread: usize, pass: Pass) {
         execute(
             f, pass, thread, words, base, pc, w, opcode, anim_frame, speed,
         );
+    }
+}
+
+/// Whether `pass` steps over `opcode` (`ftMotionEventAdvance` by
+/// [`command_words`]) instead of handing it to `ftMainParseMotionEvent`
+/// (`ftmain.c:697-939`).
+///
+/// - `All`: `Effect`/`EffectItemHold` while `is_events_forward`
+///   (`ftmain.c:735`).
+/// - `Forward`: attack-collision, sound, flag 0-2, aerial-jump, colour
+///   animation, rumble, after-image and effect commands
+///   (`ftmain.c:795-834`); `SetFlag3` and the rest run.
+/// - `ForwardEffect`: everything but the flow commands, `SetDamageThrown`
+///   and the effects (`ftmain.c:892-931`).
+fn skips(pass: Pass, opcode: u32, is_events_forward: bool) -> bool {
+    let is_effect = matches!(opcode, op::EFFECT | op::EFFECT_ITEM_HOLD);
+    match pass {
+        Pass::All => is_effect && is_events_forward,
+        Pass::Forward => {
+            is_effect
+                || matches!(
+                    opcode,
+                    op::MAKE_ATTACK_COLL
+                        | op::MAKE_ATTACK_COLL_SCALED
+                        | op::SET_ATTACK_COLL_OFFSET
+                        | op::CLEAR_ATTACK_COLL_ID
+                        | op::CLEAR_ATTACK_COLL_ALL
+                        | op::SET_ATTACK_COLL_DAMAGE
+                        | op::SET_ATTACK_COLL_SIZE
+                        | op::SET_ATTACK_COLL_SOUND_LEVEL
+                        | op::REFRESH_ATTACK_COLL_ID
+                        | op::PLAY_FGM..=op::PLAY_SMASH_VOICE
+                        | op::SET_FLAG0..=op::SET_FLAG2
+                        | op::SET_AIR_JUMP_ADD
+                        | op::SET_AIR_JUMP_MAX
+                        | op::SET_COL_ANIM
+                        | op::RESET_COL_ANIM
+                        | op::MAKE_RUMBLE
+                        | op::STOP_RUMBLE
+                        | op::SET_AFTER_IMAGE
+                )
+        }
+        Pass::ForwardEffect => {
+            !(is_effect
+                || matches!(
+                    opcode,
+                    op::END
+                        | op::SYNC_WAIT
+                        | op::ASYNC_WAIT
+                        | op::SET_DAMAGE_THROWN
+                        | op::LOOP_BEGIN
+                        | op::LOOP_END
+                        | op::SUBROUTINE
+                        | op::RETURN
+                        | op::GOTO
+                        | op::PAUSE_SCRIPT
+                ))
+        }
     }
 }
 
@@ -1481,5 +1498,134 @@ mod tests {
             *slot = f.hitstatus == HitStatus::Intangible;
         }
         assert!(!intangible[3] && intangible[4] && intangible[19] && !intangible[20]);
+    }
+
+    /// `(opcode, words)` a pass steps over, from the decomp's switch:
+    /// `ftMotionEventAdvance` by `FTMotionEventDefault` (1),
+    /// `FTMotionEventDouble`/`SetAttackOffset` (2), `MakeEffect` (4),
+    /// `SetDamageCollPartID` (4) or `MakeAttack` (5).
+    fn assert_skip_set(pass: Pass, is_events_forward: bool, want: &[(u32, u32)]) {
+        for opcode in 0..=op::SET_AFTER_IMAGE {
+            let expected = want.iter().find(|&&(o, _)| o == opcode);
+            assert_eq!(
+                skips(pass, opcode, is_events_forward),
+                expected.is_some(),
+                "{pass:?} (is_events_forward {is_events_forward}) opcode {opcode}"
+            );
+            if let Some(&(_, words)) = expected {
+                assert_eq!(
+                    command_words(opcode),
+                    words,
+                    "{pass:?} opcode {opcode} size"
+                );
+            }
+        }
+    }
+
+    /// `ftMainUpdateMotionEventsAll` (`ftmain.c:735-738`): only
+    /// `Effect`/`EffectItemHold`, by `FTMotionEventMakeEffect`, and only
+    /// while `is_events_forward`.
+    #[test]
+    fn the_all_pass_skips_only_effects_inside_the_frame_passes() {
+        assert_skip_set(Pass::All, false, &[]);
+        assert_skip_set(Pass::All, true, &[(38, 4), (39, 4)]);
+    }
+
+    /// `ftMainUpdateMotionEventsForward` (`ftmain.c:793-838`), opcodes by
+    /// `FTMotionEvent` index (`ftdef.h:929`). `SetFlag3` (24) and
+    /// everything else go to `ftMainParseMotionEvent`.
+    #[test]
+    fn the_forward_pass_skips_the_decomp_set() {
+        let want = [
+            (3, 5),  // MakeAttackColl
+            (4, 5),  // MakeAttackCollScaled
+            (5, 1),  // ClearAttackCollID
+            (6, 1),  // ClearAttackCollAll
+            (7, 2),  // SetAttackCollOffset
+            (8, 1),  // SetAttackCollDamage
+            (9, 1),  // SetAttackCollSize
+            (10, 1), // SetAttackCollSoundLevel
+            (11, 1), // RefreshAttackCollID
+            (14, 1), // PlayFGM
+            (15, 1), // PlayLoopSFXStoreInfo
+            (16, 1), // StopLoopSFX
+            (17, 1), // PlayVoiceStoreInfo
+            (18, 1), // PlayLoopVoiceStoreInfo
+            (19, 1), // PlayFGMStoreInfo
+            (20, 1), // PlaySmashVoice
+            (21, 1), // SetFlag0
+            (22, 1), // SetFlag1
+            (23, 1), // SetFlag2
+            (25, 1), // SetAirJumpAdd
+            (26, 1), // SetAirJumpMax
+            (38, 4), // Effect
+            (39, 4), // EffectItemHold
+            (44, 1), // SetColAnim
+            (45, 1), // ResetColAnim
+            (49, 1), // MakeRumble
+            (50, 1), // StopRumble
+            (51, 1), // SetAfterImage
+        ];
+        assert_skip_set(Pass::Forward, false, &want);
+        assert_skip_set(Pass::Forward, true, &want);
+    }
+
+    /// `ftMainUpdateMotionEventsForwardEffect` (`ftmain.c:890-925`): the
+    /// parser runs End, the waits, SetDamageThrown, the loop, subroutine,
+    /// return, goto, pause and effect commands; the rest are stepped over.
+    #[test]
+    fn the_forward_effect_pass_skips_the_decomp_set() {
+        let parsed = [0, 1, 2, 13, 32, 33, 34, 35, 36, 37, 38, 39];
+        let want: Vec<(u32, u32)> = (0..=op::SET_AFTER_IMAGE)
+            .filter(|o| !parsed.contains(o))
+            .map(|o| {
+                let words = match o {
+                    3 | 4 => 5,       // FTMotionEventMakeAttack
+                    7 | 12 | 46 => 2, // FTMotionEventDouble
+                    31 => 4,          // FTMotionEventSetDamageCollPartID
+                    _ => 1,           // FTMotionEventDefault
+                };
+                (o, words)
+            })
+            .collect();
+        assert_skip_set(Pass::ForwardEffect, false, &want);
+        assert_skip_set(Pass::ForwardEffect, true, &want);
+    }
+
+    /// `dLinkMainMotion_Jab1`: `SetSlopeContour`, `WaitAsync(5)`,
+    /// `SetAfterImage(0, 0)`, ... A jab entered at frame 7 fast-forwards
+    /// past the after-image event, which `ftMainUpdateMotionEventsForward`
+    /// skips (`ftmain.c:817`): the trail stays off from `ftMainSetStatus`
+    /// (`drawstatus = -1`, `ftmain.c:4538`). Entered at frame 0 and played
+    /// to frame 7, the event runs.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_status_entered_part_way_skips_its_after_image_event() {
+        let status = AnyStatus::Common(Status::Attack11);
+        let start_pc = motion_desc(FighterKind::Link, status).unwrap().script;
+        let mut played = fighter(FighterKind::Link);
+        status::set_status(
+            &mut played,
+            Status::Attack11,
+            0.0,
+            StatusTiming::frames(30.0),
+        );
+        assert_eq!(played.afterimage.drawstatus, -1);
+        for _ in 0..7 {
+            played.status.anim_frame += 1.0;
+            advance(&mut played);
+        }
+        assert_eq!(played.afterimage.drawstatus, 0);
+
+        let mut forward = fighter(FighterKind::Link);
+        status::set_status(
+            &mut forward,
+            Status::Attack11,
+            7.0,
+            StatusTiming::frames(30.0),
+        );
+        // The fast-forward got past the event (word 2 of the script).
+        assert!(forward.motion_script.threads[0].pc > start_pc + 2);
+        assert_eq!(forward.afterimage.drawstatus, -1);
     }
 }
