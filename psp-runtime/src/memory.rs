@@ -10,6 +10,9 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use psp::sys;
+use ssb_engine::memory::{GameArena, GameArenaError, GameArenaUsage, SceneBox};
+
+use crate::assets::CacheLineBlocks;
 
 /// Free bytes in the user partition, summed over every free block.
 pub fn free() -> usize {
@@ -177,4 +180,77 @@ pub fn frame_arena() -> Option<ssb_engine::memory::FrameArena<'static>> {
             FRAME_ARENA_BYTES,
         )
     })
+}
+
+/// The scene arena (`docs/memory.md`, Allocators): `syTaskmanMalloc`'s
+/// general heap, one block a scene, taken at its entry and freed at its
+/// exit. Only the main thread touches it.
+struct SceneArena(core::cell::UnsafeCell<GameArena<CacheLineBlocks>>);
+
+// SAFETY: only the main thread calls the functions below (the game loop
+// owns every scene).
+unsafe impl Sync for SceneArena {}
+
+static SCENE: SceneArena = SceneArena(core::cell::UnsafeCell::new(GameArena::new(CacheLineBlocks)));
+
+/// The scene arena. Each caller below holds the reference for the call
+/// only and none of them re-enters another.
+#[allow(clippy::mut_from_ref)]
+fn scene() -> &'static mut GameArena<CacheLineBlocks> {
+    // SAFETY: main thread only, and no reference outlives its call (above).
+    unsafe { &mut *SCENE.0.get() }
+}
+
+/// [`fatal`] for a scene arena failure, naming the scene and the sizes.
+#[cold]
+#[inline(never)]
+fn scene_fatal(e: GameArenaError) -> ! {
+    let line = match e {
+        GameArenaError::Full {
+            scene,
+            need,
+            used,
+            capacity,
+        } => alloc::format!("scene arena '{scene}' full: {need} B wanted, {used} of {capacity} B used"),
+        GameArenaError::NoMemory { scene, bytes } => {
+            alloc::format!("scene arena '{scene}': no {bytes} B block")
+        }
+        GameArenaError::NoScene => alloc::string::String::from("scene arena: no scene"),
+        GameArenaError::Open { scene } => alloc::format!("scene arena: '{scene}' still open"),
+        GameArenaError::Live { scene, live } => {
+            alloc::format!("scene arena '{scene}': {live} values outlive the scene")
+        }
+    };
+    fatal(&["Out of memory.", &line])
+}
+
+/// Opens scene `name`'s arena block of `bytes`, after closing the last
+/// scene's ([`end_scene`]).
+pub fn begin_scene(name: &'static str, bytes: usize) {
+    end_scene();
+    scene().begin(name, bytes).unwrap_or_else(|e| scene_fatal(e));
+}
+
+/// Frees the open scene's block, if any; every [`SceneBox`] from it must
+/// be gone. Returns its use.
+pub fn end_scene() -> GameArenaUsage {
+    if !scene().is_open() {
+        return GameArenaUsage::default();
+    }
+    scene().end().unwrap_or_else(|e| scene_fatal(e))
+}
+
+/// The open scene's use (`scene` empty when none is open).
+pub fn scene_usage() -> GameArenaUsage {
+    scene().usage()
+}
+
+/// Uninitialised room for a `T` in the open scene.
+pub fn scene_alloc_uninit<T>() -> SceneBox<core::mem::MaybeUninit<T>> {
+    scene().alloc_uninit().unwrap_or_else(|e| scene_fatal(e))
+}
+
+/// `value` in the open scene.
+pub fn scene_alloc<T>(value: T) -> SceneBox<T> {
+    scene().alloc(value).unwrap_or_else(|e| scene_fatal(e))
 }

@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 67): `ItemPool`/`WeaponPool` on LIFO `ObjectPool` (weapons take the original free-list order); Bonus 2 platforms reserve exactly, peak −162,560 B; peak 20,555,520 B.
+- Landed (batch 68): `GameArena` per battle scene (729,186 B training/vs); peak 19,943,680 B (was 20,555,520 B); `low_free` >= HEAD on all rows (battle `peak_use` +12,288 B is only `boot_free` rising, ELF −20,956 B).
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. Batch 68: `GameArena` per scene.
-2. PSP-1000 memory (RE-572), then MS8.
+1. `FxPlayers` fixed effect cap (small).
+2. PSP-1000 memory per RE-572 (Maps preview first), then MS8.
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 67; deepest game stack 401,704 B (f1-bonus-pause) of 524288.
+Baseline: batch 68; deepest game stack 401,576 B of 524288.
 
 | Check | Result |
 |---|---|

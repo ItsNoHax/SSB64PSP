@@ -112,7 +112,7 @@ lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
 
 | Allocator | Lifetime |
 |---|---|
-| `GameArena` | Per-scene general heap (`syTaskmanMalloc`): sized per scene, freed at scene end; not yet wired |
+| `GameArena` | One kernel block per battle scene (`BATTLE_SCENE_BYTES` by CPU count: 691,707 / 729,186 / 766,665 / 804,144 B), taken at scene entry, freed at exit; holds `BattleWorld` and CPU fighters as `SceneBox`es (drop glue runs; `end` refuses while boxes live); overflow → `memory::fatal` (N64 `syTaskmanInitGeneralHeap`). Objects ≤32 KiB stay on SmallHeap chunks (never returned). Peak metric: `peak_use` is relative to boot free; compare absolute `low_free` (battle `peak_use` +12,288 B is `boot_free` rising from a 20,956 B smaller ELF) |
 | `AssetArena` | One block per read run (≤ 4 MiB load, ≤ 1 MiB prefetch), refcounted by its files; freed at the GE safe point after its last file drops |
 | `FrameArena` | One `Scope` per tick (`psp-game` loop); users: movie camera draw order |
 | `ObjectPool<T>` | Fixed capacity; free order `LowestFirst` or `Lifo`; users: items, weapons |

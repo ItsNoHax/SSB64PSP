@@ -130,8 +130,7 @@ pub(crate) fn start_practice(
 #[inline(never)]
 fn leave(s: &mut Session, pack: Option<&Pack<'_>>, next: ssb_game::menu::Scene) {
     s.campaign = None;
-    s.play_state = None;
-    s.dummies = Default::default();
+    s.leave_battle();
     s.vs_battle = None;
     crate::go_scene(s, pack, next, ssb_game::menu::Scene::OnePGame, false);
 }
@@ -196,8 +195,7 @@ fn on_host(s: &mut Session, pack: Option<&Pack<'_>>, scene: Scene) {
         // Practice select, entered from the bonus stage.
         Scene::Bonus1Select => {
             s.campaign = None;
-            s.play_state = None;
-            s.dummies = Default::default();
+            s.leave_battle();
             s.vs_battle = None;
             crate::go_scene(s, pack, ssb_game::menu::Scene::Players1PBonus1, ssb_game::menu::Scene::BonusStage, false);
         }
@@ -284,9 +282,12 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     });
     s.enter(pack, gkind, &roster, Some(rules));
     s.scene_gkind = gkind;
+    let Some(w) = s.world.as_deref_mut() else {
+        return Err(Blocked::Assets(stage));
+    };
     // `itManagerInitItems` with the 1P stage's switches.
-    s.items.normal_switches = switches;
-    s.items.normal_drops =
+    w.items.normal_switches = switches;
+    w.items.normal_drops =
         ssb_game::item::normal::DropWeights::new(switches, desc.item_weights.as_ref());
     let team_bounds = ssb_game::status::BlastZone {
         top: f32::from(desc.team_bounds.top),
@@ -299,22 +300,22 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     // The campaign's battle runs in the world's slot; `Session` takes it
     // back for the calls that read it.
     s.vs_battle = sp.battle.take();
-    let Some(pl) = s.play_state.as_mut() else {
+    let Some(pl) = w.play_state.as_mut() else {
         return Err(Blocked::Assets(stage));
     };
     pl.camera.bonus_follow = stage == Stage::Bonus3;
-    for f in scenes(pl, &mut s.dummies).into_iter().flatten() {
+    for f in scenes(pl, &mut w.dummies).into_iter().flatten() {
         let port = usize::from(f.fighter.port);
         configure(sp, f, setups[port], team_bounds);
     }
-    for d in s.dummies.iter_mut().flatten() {
+    for d in w.dummies.iter_mut().flatten() {
         let setup = setups[usize::from(d.fighter.port)];
         d.is_1p_game = true;
         d.computer.trait_kind = setup.cp_trait;
     }
-    s.damage_hud.single_stock = Some(single);
+    w.damage_hud.single_stock = Some(single);
     let kinds = sp.state.players.map(|b| b.fkind);
-    for (port, d) in s.damage_hud.damage.iter_mut().enumerate() {
+    for (port, d) in w.damage_hud.damage.iter_mut().enumerate() {
         if positions[port] != 0 {
             let is_boss = kinds[port] == ssb_game::fighter::FighterKind::Boss;
             *d = ssb_game::hud::DamageDisplay::at_kind(port, d.damage, positions[port], is_boss);
@@ -322,10 +323,10 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     }
     // `sc1PGameFuncStart`'s `ifScreenFlashMakeInterface`: the stage's
     // flash alpha (0x80 on the Yoshi and Kirby teams' and the Polygons' stages).
-    s.damage_hud.ko.flash_alpha = flash_alpha;
+    w.damage_hud.ko.flash_alpha = flash_alpha;
     c.boss = None;
     if stage == Stage::Boss {
-        c.boss = Some(BossScene::new_boxed(p, &desc, &mut s.dummies)?);
+        c.boss = Some(BossScene::new_boxed(p, &desc, &mut w.dummies)?);
     }
     c.tic = 0;
     // `sc1PGameFuncStart`: Metal Mario's and the Polygon Team's music waits
@@ -606,10 +607,13 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
         ..VsRules::DEFAULT }));
     s.scene_gkind = gkind;
     s.vs_battle = Some(bonus.battle());
-    s.items.appear = None;
-    if which == Stage::Bonus1 { bonus.make_targets(&positions, &mut s.items); }
+    let Some(w) = s.world.as_deref_mut() else {
+        return Err(Blocked::Assets(which));
+    };
+    w.items.appear = None;
+    if which == Stage::Bonus1 { bonus.make_targets(&positions, &mut w.items); }
     else {
-        let map = s.stage_map.as_mut().ok_or(Blocked::Assets(which))?;
+        let map = w.stage_map.as_mut().ok_or(Blocked::Assets(which))?;
         // One exact allocation: doubling growth would copy each 27 KB `Visual`
         // up to four times and hold two buffers at the last regrowth.
         map.platforms.reserve_exact(bonus.platforms.iter().flatten().count());
@@ -620,10 +624,10 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
         }
         for (i, pos) in bumpers.into_iter().enumerate() {
             use ssb_game::stage::StageItems;
-            s.items.make_item(ssb_game::stage::StageItem::Bonus2Bumper(i as u8), pos).ok_or(Blocked::Assets(which))?;
+            w.items.make_item(ssb_game::stage::StageItem::Bonus2Bumper(i as u8), pos).ok_or(Blocked::Assets(which))?;
         }
     }
-    let pl = s.play_state.as_mut().ok_or(Blocked::Assets(which))?;
+    let pl = w.play_state.as_mut().ok_or(Blocked::Assets(which))?;
     ssb_game::status::set_wait_or_fall(&mut pl.fighter);
     pl.fighter.facing = if pl.fighter.pos.x >= 0.0 { ssb_game::fighter::Facing::Left } else { ssb_game::fighter::Facing::Right };
     pl.fighter.stats.enable();
@@ -631,8 +635,8 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     pl.fighter.dead.spgame_rule = false;
     pl.fighter.dead.bonus_rule = true;
     pl.camera.bonus_follow = true;
-    s.damage_hud.damage[0] = ssb_game::hud::DamageDisplay::at(0, 0, 55);
-    s.damage_hud.bonus_tasks = Some(10);
+    w.damage_hud.damage[0] = ssb_game::hud::DamageDisplay::at(0, 0, 55);
+    w.damage_hud.bonus_tasks = Some(10);
     let c = s.campaign.as_mut().expect("campaign");
     let mut bonus = bonus;
     bonus.practice = c.practice.is_some();
@@ -645,7 +649,7 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     }
 
     // `sc1PBonusStageMakeTimer`'s practice digits.
-    s.damage_hud.bonus_timer = bonus.practice.then(spgame::bonus_stage::PracticeTimer::default);
+    w.damage_hud.bonus_timer = bonus.practice.then(spgame::bonus_stage::PracticeTimer::default);
     c.bonus = Some(alloc::boxed::Box::new(bonus));
     // `sc1PBonusStageFuncStart`'s `mpCollisionSetPlayBGM` and crowd.
     ssb_game::music::start_battle(stage.bgm_id);
@@ -708,7 +712,7 @@ pub(crate) fn log_boss_state(s: &Session, tick: u64) {
         boss.zoom.y,
         boss.zoom.z,
     );
-    for d in s.dummies.iter().flatten() {
+    for d in s.world.iter().flat_map(|w| w.dummies.iter()).flatten() {
         let f = &d.fighter;
         line.push_str(&alloc::format!(
             " B(st={} dmg={} djid={} pos={:.1},{:.1},{:.1})",
@@ -720,7 +724,7 @@ pub(crate) fn log_boss_state(s: &Session, tick: u64) {
             f.pos.z
         ));
     }
-    if let Some(pl) = s.play_state.as_ref() {
+    if let Some(pl) = s.world.as_deref().and_then(|w| w.play_state.as_ref()) {
         let f = &pl.fighter;
         line.push_str(&alloc::format!(
             " K(st={} dmg={} pos={:.1},{:.1})",
@@ -790,7 +794,7 @@ pub(crate) fn log_zako_state(s: &Session, tick: u64) {
             &g.variations[..usize::from(g.enemy_player_count).min(g.variations.len())],
         ));
     }
-    for d in s.dummies.iter().flatten() {
+    for d in s.world.iter().flat_map(|w| w.dummies.iter()).flatten() {
         let f = &d.fighter;
         line.push_str(&alloc::format!(
             " E(p{} k{} st{} dmg{} pos={:.1},{:.1})",
@@ -802,7 +806,7 @@ pub(crate) fn log_zako_state(s: &Session, tick: u64) {
             f.pos.y
         ));
     }
-    if let Some(pl) = s.play_state.as_ref() {
+    if let Some(pl) = s.world.as_deref().and_then(|w| w.play_state.as_ref()) {
         let f = &pl.fighter;
         line.push_str(&alloc::format!(
             " K(st{} dmg{} pos={:.1},{:.1} tw{} hide{} cd{}) eye={:.1},{:.1},{:.1}",
@@ -876,8 +880,8 @@ pub(crate) fn log_capture(s: &Session, tick: u64) {
             .as_ref()
             .and_then(|c| c.frontend.session.as_ref().map(|sp| sp.data.stage)),
         s.vs_battle.as_ref().map(|b| b.clock()),
-        s.damage_hud.countdown.is_some(),
-        s.dummies[0].as_ref().map(|d| d.computer.behavior),
+        s.world.as_deref().is_some_and(|w| w.damage_hud.countdown.is_some()),
+        s.world.as_deref().and_then(|w| w.dummies[0].as_ref()).map(|d| d.computer.behavior),
         s.campaign.as_ref().and_then(|c| c.bonus.as_ref().map(|b| b.tasks_remain)),
         s.vs_battle.as_ref().and_then(|b| b.end),
         s.campaign.as_ref().and_then(|c| c.frontend.session.as_ref().map(|sp| sp.data.bonus_tasks_complete)),
@@ -1185,8 +1189,7 @@ fn finish_practice(
     let c = s.campaign.take().expect("campaign");
     let sp = c.frontend.session.as_ref().expect("campaign session");
     let (fkind, costume) = (sp.data.fkind, sp.data.costume);
-    s.play_state = None;
-    s.dummies = Default::default();
+    s.leave_battle();
     let bonus1 = practice == BonusKind::Targets;
     let next = spgame::bonus_stage::finish_practice(&mut s.backup, bonus1, fkind, tasks_remain, battle.time_passed, battle.is_reset);
     let select = if bonus1 { M::Players1PBonus1 } else { M::Players1PBonus2 };
@@ -1220,8 +1223,7 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     if let Some(mut bonus) = c.bonus.take() {
         if bonus.retry_requested {
             s.vs_battle = None;
-            s.play_state = None;
-            s.dummies = Default::default();
+            s.leave_battle();
             on_host(s, pack, Scene::BonusStage);
             return;
         }
@@ -1235,16 +1237,16 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
         sp.finish_bonus_stage(bonus.result(&battle), tasks, &mut s.backup);
         let scene = c.frontend.sync(&s.backup);
         c.tic = 0;
-        s.play_state = None;
-        s.dummies = Default::default();
+        crate::leave_battle_world(&mut s.world);
         s.screen = Screen::Campaign;
         if matches!(c.frontend.screen, Scene1P::Host(_)) { on_host(s, pack, scene); }
         return;
     }
     c.boss = None;
     // Callbacks still queued on the fighters belong to this battle.
-    if let Some(pl) = s.play_state.as_mut() {
-        for f in scenes(pl, &mut s.dummies).into_iter().flatten() {
+    if let Some(pl) = s.world.as_deref_mut().and_then(|w| w.play_state.as_mut().zip(Some(&mut w.dummies))) {
+        let (pl, dummies) = pl;
+        for f in scenes(pl, dummies).into_iter().flatten() {
             collect_fall(sp, &mut s.vs_battle, &mut f.fighter);
         }
     }
@@ -1252,8 +1254,7 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     sp.finish_battle(&mut s.backup);
     let scene = c.frontend.sync(&s.backup);
     c.tic = 0;
-    s.play_state = None;
-    s.dummies = Default::default();
+    crate::leave_battle_world(&mut s.world);
     match c.frontend.screen {
         Scene1P::Host(_) => {
             s.screen = Screen::Campaign;
@@ -1412,13 +1413,14 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
 /// check; they do not set the task counter or the results directly.
 #[cfg(any(feature = "headless_capture", feature = "capture_scene_file"))]
 pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
+    let Some(w) = s.world.as_deref_mut() else { return };
     // `trainingitemflash`: the walking Bob-omb's `multi` goes from 2 to
     // `ITBOMBHEI_FLASH_WAIT` after its update, as the N64 reference build
     // does, so its next update starts the critical flash (batch 58).
     if scene == GameScene::TrainingItemFlash {
         use ssb_game::item::{bombhei, ItemKind, ItemStatus};
         for slot in 0..ssb_game::item::ITEM_ALLOC_MAX as u8 {
-            if let Some(it) = s.items.get_mut(slot) {
+            if let Some(it) = w.items.get_mut(slot) {
                 if it.kind == ItemKind::BombHei
                     && it.status == ItemStatus::BombHei(bombhei::Status::Walk)
                     && it.multi == 2
@@ -1428,13 +1430,13 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
             }
         }
         let mut line = alloc::format!("itemflash tick={}", tick);
-        if let Some(pl) = s.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_ref() {
             line += &alloc::format!(
                 " P[{:?} x{:.1} y{:.1}]",
                 pl.fighter.status.status, pl.fighter.pos.x, pl.fighter.pos.y
             );
         }
-        for it in s.items.items() {
+        for it in w.items.items() {
             line += &alloc::format!(
                 " I[{:?} {:?} m{} pal{} col{} {:?} x{:.1} y{:.1}]",
                 it.kind,
@@ -1468,7 +1470,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
             .iter()
             .find(|(c, _)| Some(*c) == clock)
         {
-            for d in s.dummies.iter_mut().flatten() {
+            for d in w.dummies.iter_mut().flatten() {
                 if d.fighter.kind == ssb_game::fighter::FighterKind::Boss {
                     d.fighter.damage = damage;
                 }
@@ -1478,7 +1480,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     if scene == GameScene::OnePBossDefeat
         && s.vs_battle.as_ref().is_some_and(|b| b.clock() == 701)
     {
-        for d in s.dummies.iter_mut().flatten() {
+        for d in w.dummies.iter_mut().flatten() {
             if d.fighter.kind == ssb_game::fighter::FighterKind::Boss {
                 d.fighter.damage = ssb_game::boss::HIT_POINTS;
                 ssb_game::boss::update_damage_stats(&mut d.fighter);
@@ -1498,9 +1500,9 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         .as_ref()
         .is_some_and(|b| b.clock() >= 1000 && b.clock() % 150 == 100)
     {
-        if let (Some(pl), Some(stage)) = (s.play_state.as_ref(), pack.stage(s.training_stage)) {
+        if let (Some(pl), Some(stage)) = (w.play_state.as_ref(), pack.stage(s.training_stage)) {
             let team = pl.fighter.team;
-            for d in s.dummies.iter_mut().flatten() {
+            for d in w.dummies.iter_mut().flatten() {
                 // Past `nFTCommonStatusControlStart`: not dead, asleep or entering.
                 if d.fighter.team != team && d.fighter.status.status.id() > ssb_game::status::Status::RebirthWait as u16 {
                     ssb_game::status::set_fall(&mut d.fighter);
@@ -1512,7 +1514,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         }
     }
     if scene == GameScene::OnePRaceHazards && tick == 600 {
-        if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (s.play_state.as_mut(), &s.stage_ctl.controller) {
+        if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (w.play_state.as_mut(), &w.stage_ctl.controller) {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.floor = None;
             pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
@@ -1520,7 +1522,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         }
     }
     if matches!(scene, GameScene::OnePRaceClear | GameScene::OnePRaceFall) && tick == 600 {
-        if let (Some(pl), Some(stage)) = (s.play_state.as_mut(), pack.stage(s.training_stage)) {
+        if let (Some(pl), Some(stage)) = (w.play_state.as_mut(), pack.stage(s.training_stage)) {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.floor = None;
             pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
@@ -1537,15 +1539,15 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     }
     if !s.campaign.as_ref().is_some_and(|c| c.bonus.is_some()) { return; }
     if matches!(scene, GameScene::OnePTargetFall | GameScene::OnePPlatformFall) && tick == 600 {
-        if let Some(pl) = s.play_state.as_mut() {
+        if let Some(pl) = w.play_state.as_mut() {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.pos.y = -20000.0;
         }
     }
     if scene == GameScene::OnePPlatformClear && (600..810).contains(&tick) && tick % 20 == 0 {
-        let Some(pl) = s.play_state.as_mut() else { return };
+        let Some(pl) = w.play_state.as_mut() else { return };
         let Some(stage) = pack.stage(s.training_stage) else { return };
-        let Some(map) = s.stage_map.as_ref() else { return };
+        let Some(map) = w.stage_map.as_ref() else { return };
         let Some(platform) = s.campaign.as_ref().and_then(|c| c.bonus.as_ref())
             .and_then(|b| b.platforms.iter().flatten().find(|p| !p.boarded)) else { return };
         let Some(floor) = pack.stage_lines(&stage).find(|l| l.kind == ssb_rom::pack::line_kind::FLOOR && l.yakumono == platform.group && pack.line_vertices(l).next().is_some_and(|v| v.flags & 0xff == 14)) else { return };
@@ -1561,7 +1563,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
     }
     if scene == GameScene::OnePTargetClear && (600..810).contains(&tick) {
-        let Some(pl) = s.play_state.as_mut() else { return };
+        let Some(pl) = w.play_state.as_mut() else { return };
         // Keep the fighter over its real starting floor and offer one
         // target at a time to Mario's actual jab script; course motion
         // is stopped only for this diagnostic placement fixture.
@@ -1569,11 +1571,11 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
             ssb_game::status::set_wait(&mut pl.fighter);
             ssb_game::status::set_attack11(&mut pl.fighter);
         }
-        let next = (0..ssb_game::item::ITEM_ALLOC_MAX as u8).find(|&i| s.items.get(i).is_some_and(|i| i.kind == ssb_game::item::ItemKind::Target));
+        let next = (0..ssb_game::item::ITEM_ALLOC_MAX as u8).find(|&i| w.items.get(i).is_some_and(|i| i.kind == ssb_game::item::ItemKind::Target));
         if let Some(index) = next {
-            if let Some(item) = s.items.get_mut(index) {
+            if let Some(item) = w.items.get_mut(index) {
                 use ssb_game::item::ItemAnims;
-                ssb_psp_runtime::scene::ItemAnimsPort { pack, objects: &mut s.stage_objects }.stop_root(item.anim_target());
+                ssb_psp_runtime::scene::ItemAnimsPort { pack, objects: &mut w.stage_objects }.stop_root(item.anim_target());
                 item.pos = pl.fighter.pos + ssb_engine::math::Vec3::new(100.0 * pl.fighter.facing.sign(), 120.0, 0.0);
                 item.update_attack_positions();
             }

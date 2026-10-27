@@ -15,7 +15,7 @@
 //! | Allocator | Holds | Lifetime |
 //! |---|---|---|
 //! | [`AssetArena`] | a scene's archive files: one block per read run (RE-571) | a block lives while any of its files is held |
-//! | [`GameArena`] | long-lived game state | one scope per scene |
+//! | [`GameArena`] | a scene's general heap (`syTaskmanMalloc`): its long-lived state | one block per scene |
 //! | [`FrameArena`] | per-frame scratch, so per-frame paths never touch the heap | one scope per tick |
 //!
 //! [`ObjectPool`] is the fixed-capacity store for items and weapons
@@ -25,10 +25,13 @@
 //!
 //! [`AssetArena`] serves `ssb_rom::loader_plan` (the PSP's
 //! `scene_files`); [`FrameArena`] serves the opening movie's camera draw
-//! order; [`GameArena`] is not used yet.
+//! order; [`GameArena`] serves the PSP battle scenes' world.
 
 use alloc::vec::Vec;
 use core::mem::{align_of, needs_drop, size_of, MaybeUninit};
+
+mod game;
+pub use game::{scene_bytes, GameArena, GameArenaError, GameArenaUsage, SceneBox};
 
 /// Default alignment: `LBRELOC_CACHE_ALIGN`'s 16 bytes, which is also what
 /// the GE wants for DMA sources.
@@ -40,8 +43,6 @@ pub struct Arena<'a> {
     high_water: usize,
 }
 
-/// Per-scene game state.
-pub type GameArena<'a> = Arena<'a>;
 /// Per-tick scratch.
 pub type FrameArena<'a> = Arena<'a>;
 

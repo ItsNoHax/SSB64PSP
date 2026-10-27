@@ -235,7 +235,12 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     ssb_game::item::set_explain(true);
     s.enter(pack, explain::GKIND, &roster, Some(RULES));
     s.scene_gkind = explain::GKIND;
-    let Some(pl) = s.play_state.as_mut() else {
+    let Some(w) = s.world.as_deref_mut() else {
+        ssb_game::item::set_explain(false);
+        ssb_game::rng::set_seed(seed_outside);
+        return false;
+    };
+    let Some(pl) = w.play_state.as_mut() else {
         ssb_game::item::set_explain(false);
         ssb_game::rng::set_seed(seed_outside);
         return false;
@@ -246,19 +251,19 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     let [lead_key, other_key] = keys;
     // `ftParamSetKey`.
     s.lead = play::Lead::Key(ssb_game::key::Key::new(lead_key));
-    if let Some(d) = s.dummies[0].as_deref_mut() {
+    if let Some(d) = w.dummies[0].as_deref_mut() {
         d.key = Some(ssb_game::key::Key::new(other_key));
     }
     // `scExplainStartBattle`: each fighter appears where it stands, its
     // camera on the appearance, and takes control.
-    for f in crate::scenes(pl, &mut s.dummies).into_iter().flatten() {
+    for f in crate::scenes(pl, &mut w.dummies).into_iter().flatten() {
         ssb_game::appear::entry_set_status(&mut f.fighter);
         ssb_game::appear::appear_set_status(&mut f.fighter);
         f.fighter.dead.camera_mode = ssb_game::dead::CameraMode::Explain;
         f.fighter.interface.control_disable = false;
     }
     // `scExplainSetPlayerInterfacePositions`.
-    for (port, d) in s.damage_hud.damage.iter_mut().enumerate() {
+    for (port, d) in w.damage_hud.damage.iter_mut().enumerate() {
         *d = ssb_game::hud::DamageDisplay::at_place(
             port,
             0,
@@ -308,8 +313,9 @@ struct World<'a> {
 
 impl World<'_> {
     fn fighter(&mut self, player: usize) -> Option<&mut play::FighterScene> {
-        let pl = self.s.play_state.as_mut()?;
-        crate::scenes(pl, &mut self.s.dummies)
+        let w = self.s.world.as_deref_mut()?;
+        let pl = w.play_state.as_mut()?;
+        crate::scenes(pl, &mut w.dummies)
             .into_iter()
             .flatten()
             .find(|f| usize::from(f.fighter.port) == player)
@@ -319,10 +325,13 @@ impl World<'_> {
 impl auto_demo::World for World<'_> {
     fn is_dead(&self, player: usize) -> bool {
         use ssb_game::status::{AnyStatus, Status};
-        let Some(pl) = self.s.play_state.as_ref() else {
+        let Some(w) = self.s.world.as_deref() else {
             return false;
         };
-        crate::scenes_ref(pl, &self.s.dummies)
+        let Some(pl) = w.play_state.as_ref() else {
+            return false;
+        };
+        crate::scenes_ref(pl, &w.dummies)
             .into_iter()
             .flatten()
             .find(|f| usize::from(f.fighter.port) == player)
@@ -343,8 +352,9 @@ impl auto_demo::World for World<'_> {
             }
         } else if let Some(d) = self
             .s
-            .dummies
-            .get_mut(player - 1)
+            .world
+            .as_deref_mut()
+            .and_then(|w| w.dummies.get_mut(player - 1))
             .and_then(|d| d.as_deref_mut())
         {
             d.computer.level = level;
@@ -362,7 +372,7 @@ impl auto_demo::World for World<'_> {
         let dist = pack
             .fighter(kind as u32)
             .map_or(1000.0, |d| d.closeup_camera_zoom);
-        if let Some(pl) = self.s.play_state.as_mut() {
+        if let Some(pl) = self.s.world.as_deref_mut().and_then(|w| w.play_state.as_mut()) {
             pl.camera.demo_zoom = Some(ssb_game::camera::DemoZoom {
                 port: player as u8,
                 eye,
@@ -376,7 +386,7 @@ impl auto_demo::World for World<'_> {
     }
 
     fn reset_camera(&mut self) {
-        if let Some(pl) = self.s.play_state.as_mut() {
+        if let Some(pl) = self.s.world.as_deref_mut().and_then(|w| w.play_state.as_mut()) {
             pl.camera.demo_zoom = None;
         }
     }
@@ -427,14 +437,17 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
     let Some(stage) = p.stage(s.training_stage) else {
         return false;
     };
-    let Some(pl) = s.play_state.as_mut() else {
+    let Some(w) = s.world.as_deref_mut() else {
+        return false;
+    };
+    let Some(pl) = w.play_state.as_mut() else {
         return false;
     };
     // `desc.damage = players[].stock_damage_all`.
-    for f in crate::scenes(pl, &mut s.dummies).into_iter().flatten() {
+    for f in crate::scenes(pl, &mut w.dummies).into_iter().flatten() {
         let port = usize::from(f.fighter.port);
         f.fighter.damage = setup.damage[port];
-        s.damage_hud.damage[port] =
+        w.damage_hud.damage[port] =
             ssb_game::hud::DamageDisplay::new(port, i32::from(setup.damage[port]));
     }
     // A VS CPU on port 0 too: level 9, the default behaviour and trait.
@@ -445,7 +458,7 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
         auto_demo::LEVEL,
         ssb_game::computer::Behavior::Default,
         ssb_game::computer::attack::Trait::Default,
-        s.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice()),
+        w.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice()),
     )));
     let names = [setup.fkinds[0], setup.fkinds[1]];
     let mut fade = None;
@@ -506,9 +519,9 @@ pub(crate) fn after_world(s: &mut Session, pack: Option<&Pack<'_>>, tapped: bool
     let alpha = match s.demo.as_mut()? {
         Demo::Explain(e) => {
             let tick = e.tick(tapped);
-            if tick.fire_flower {
+            if let Some(w) = s.world.as_deref_mut().filter(|_| tick.fire_flower) {
                 // `scExplainTryMakeFireFlower`.
-                s.items.make_setup_common(
+                w.items.make_setup_common(
                     explain::FIRE_FLOWER_KIND,
                     None,
                     explain::FIRE_FLOWER_POS,
@@ -520,11 +533,11 @@ pub(crate) fn after_world(s: &mut Session, pack: Option<&Pack<'_>>, tapped: bool
                 // frame's start (RE-473).
                 if let Some(banks) = pack.and_then(ssb_psp_runtime::particles::PackBanks::new) {
                     let mut rt = ssb_game::effect::EffectRuntime {
-                        particles: &mut s.damage_hud.particles,
-                        effects: &mut s.damage_hud.effects,
+                        particles: &mut w.damage_hud.particles,
+                        effects: &mut w.damage_hud.effects,
                         banks: &banks,
                     };
-                    s.items.flush_effects(&mut rt);
+                    w.items.flush_effects(&mut rt);
                 }
             }
             load = tick.load;
@@ -533,7 +546,9 @@ pub(crate) fn after_world(s: &mut Session, pack: Option<&Pack<'_>>, tapped: bool
         Demo::AutoDemo(d) => fade_alpha(&mut d.fade),
         Demo::Movie(_) => 0,
     };
-    s.damage_hud.demo_fade_alpha = alpha;
+    if let Some(w) = s.world.as_deref_mut() {
+        w.damage_hud.demo_fade_alpha = alpha;
+    }
     load
 }
 
@@ -554,11 +569,8 @@ pub(crate) fn leave(s: &mut Session) {
         ssb_game::rng::set_seed(e.seed_outside);
     }
     ssb_game::item::set_explain(false);
-    s.damage_hud.movie = false;
-    s.damage_hud.movie_flat48 = false;
     s.lead = play::Lead::Pad;
-    s.play_state = None;
-    s.dummies = Default::default();
+    s.leave_battle();
     s.vs_battle = None;
 }
 
@@ -855,18 +867,21 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
     }
     s.enter(Some(p), b.gkind, &roster, Some(RULES));
     s.scene_gkind = b.gkind;
-    s.damage_hud.movie = true;
+    let Some(w) = s.world.as_deref_mut() else {
+        return;
+    };
+    w.damage_hud.movie = true;
     // `mvOpeningSamusMakeMotionWindow`: Zebes' layer-1 kind-48 matrices
     // become kind 37 (its only opening scene).
-    s.damage_hud.movie_flat48 = b.gkind == ssb_game::opening::fighters::gkind::ZEBES;
-    s.damage_hud.ko.flash_disabled = !b.screen_flash || !s.backup.is_allow_screenflash;
+    w.damage_hud.movie_flat48 = b.gkind == ssb_game::opening::fighters::gkind::ZEBES;
+    w.damage_hud.ko.flash_disabled = !b.screen_flash || !s.backup.is_allow_screenflash;
     let Some(stage) = p.stage(s.training_stage) else {
         return;
     };
-    let Some(pl) = s.play_state.as_mut() else {
+    let Some(pl) = w.play_state.as_mut() else {
         return;
     };
-    for (port, f) in crate::scenes(pl, &mut s.dummies).into_iter().enumerate() {
+    for (port, f) in crate::scenes(pl, &mut w.dummies).into_iter().enumerate() {
         let (Some(f), Some(desc)) = (f, b.players.get(port)) else {
             continue;
         };
@@ -886,7 +901,7 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
             ssb_game::fighter::Facing::Right
         };
         f.fighter.damage = desc.damage;
-        s.damage_hud.damage[port] = ssb_game::hud::DamageDisplay::new(port, i32::from(desc.damage));
+        w.damage_hud.damage[port] = ssb_game::hud::DamageDisplay::new(port, i32::from(desc.damage));
         match (desc.kind, desc.charge) {
             (FighterKind::Donkey, Some(c)) => f.fighter.donkey_special_n.charge_level = c,
             (FighterKind::Samus, Some(c)) => f.fighter.samus.charge_level = c,
@@ -898,7 +913,7 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
         let key = ssb_game::key::Key::new(desc.keys.to_vec());
         if port == 0 {
             s.lead = play::Lead::Key(key);
-        } else if let Some(d) = s.dummies.get_mut(port - 1).and_then(|d| d.as_deref_mut()) {
+        } else if let Some(d) = w.dummies.get_mut(port - 1).and_then(|d| d.as_deref_mut()) {
             d.key = Some(key);
         }
     }
@@ -959,7 +974,7 @@ pub(crate) fn movie_after_world(s: &mut Session, pack: Option<&Pack<'_>>) {
             MovieLogic::Jungle(j) => &j.world,
         };
         m.runtime.sync(world, &a);
-        if let (Some(c), Some(pl)) = (cam, s.play_state.as_mut()) {
+        if let (Some(c), Some(pl)) = (cam, s.world.as_deref_mut().and_then(|w| w.play_state.as_mut())) {
             let (mut eye, mut at, mut up_x, mut fovy) = (c.eye, c.at, c.up_x, c.fovy);
             if let Some(anim) = c.anim {
                 if let Some(fr) = a.camera(anim.slot).and_then(|b| {
