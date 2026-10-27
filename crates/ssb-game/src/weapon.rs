@@ -7,6 +7,7 @@
 //! hidden per-fighter side effect.
 
 use ssb_engine::math::{sin_cos, Vec2, Vec3};
+use ssb_engine::memory::{FreeOrder, ObjectPool};
 
 use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
@@ -1665,13 +1666,22 @@ impl MarioFireball {
 /// once all 32 are live.
 pub const MAX_WEAPONS: usize = 32;
 
+/// `wpManagerAllocWeapons` links struct `i` to `i + 1`;
+/// `wpManagerGetNextStructAlloc` pops the head and
+/// `wpManagerSetPrevStructAlloc` pushes a freed struct back on it.
+const WEAPON_FREE_ORDER: FreeOrder = FreeOrder::Lifo;
+
+type WeaponSlots = ObjectPool<Weapon, MAX_WEAPONS>;
+
 /// Player ports the pool keeps owner views and catch events for.
 const MAX_OWNERS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeaponPool {
     star_rod_smash_desc: bool,
-    slots: [Option<Weapon>; MAX_WEAPONS],
+    /// `sWPManagerStructsAllocFree` (`wpManagerAllocWeapons`): the
+    /// structs, last freed first handed out ([`WEAPON_FREE_ORDER`]).
+    slots: WeaponSlots,
     /// PK Fire flames the sparks' hit callbacks made this frame, for
     /// [`crate::item::ItemPool::take_weapon_spawns`]: the first
     /// `item_spawn_len` slots, all `Some`. Slots past it are never read, so
@@ -1847,8 +1857,8 @@ pub(crate) fn play_weapon_fgm(
 }
 
 /// `wpMainDestroyWeapon`: the slot empties and the weapon's sound stops.
-fn destroy(slot: &mut Option<Weapon>) {
-    if let Some(w) = slot.take() {
+fn destroy(slots: &mut WeaponSlots, i: usize) {
+    if let Some(w) = slots.remove_at(i) {
         stop_weapon_fgm(w.sfx());
     }
 }
@@ -3055,7 +3065,7 @@ impl Default for WeaponPool {
     fn default() -> Self {
         WeaponPool {
             star_rod_smash_desc: false,
-            slots: [None; MAX_WEAPONS],
+            slots: ObjectPool::with_order(WEAPON_FREE_ORDER),
             item_spawns: [None; MAX_WEAPONS],
             item_spawn_len: 0,
             hit_records: [[None; 4]; MAX_WEAPONS],
@@ -3092,7 +3102,7 @@ impl WeaponPool {
     /// [`Self::default`] in place: the pool holds its effect queues, which a
     /// temporary would put on the (256 KB) PSP main-thread stack.
     pub fn reset(&mut self) {
-        self.slots = [None; MAX_WEAPONS];
+        self.slots.reset();
         self.item_spawns = [None; MAX_WEAPONS];
         self.item_spawn_len = 0;
         self.hit_records = [[None; 4]; MAX_WEAPONS];
@@ -3127,8 +3137,8 @@ impl WeaponPool {
         I: IntoIterator<Item = MapSurface>,
     {
         let mut pending = [None; MAX_WEAPONS];
-        for (i, slot) in self.slots.iter_mut().enumerate() {
-            if let Some(Weapon::PKThunder(h)) = slot {
+        for (i, queued) in pending.iter_mut().enumerate() {
+            if let Some(Weapon::PKThunder(h)) = self.slots.slot_value_mut(i) {
                 let owner = self.owners.get(h.owner_port as usize).copied().flatten();
                 let mut emit = Emit::default();
                 let alive = h.tick(surfaces, owner, &mut emit);
@@ -3136,7 +3146,7 @@ impl WeaponPool {
                 // `wpNessPKThunderHeadProcDead` destroys the trails with the
                 // head; the owner learns of it from the missing head.
                 if !alive || bounds.is_some_and(|b| out_of_bounds(b, h.position)) {
-                    destroy(slot);
+                    destroy(&mut self.slots, i);
                     continue;
                 }
                 // The head lives on: its trail effect's process (after the
@@ -3150,7 +3160,7 @@ impl WeaponPool {
                 });
                 self.fx.extend(self.seq[i], &pose);
                 if h.trail_spawn {
-                    pending[i] = Some((
+                    *queued = Some((
                         PKThunderTrail::new(*h, 0),
                         self.stale[i],
                         self.teams[i],
@@ -3160,13 +3170,13 @@ impl WeaponPool {
             }
         }
         let mut heads = [None; MAX_WEAPONS];
-        for (i, slot) in self.slots.iter().enumerate() {
+        for (i, slot) in self.slots.values().iter().enumerate() {
             if let Some(Weapon::PKThunder(h)) = slot {
                 heads[i] = Some(*h);
             }
         }
-        for (i, slot) in self.slots.iter_mut().enumerate() {
-            if let Some(Weapon::PKTrail(t)) = slot {
+        for (i, queued) in pending.iter_mut().enumerate() {
+            if let Some(Weapon::PKTrail(t)) = self.slots.slot_value_mut(i) {
                 if let Some(head) = heads.iter().flatten().find(|h| h.group == t.group) {
                     let mut emit = Emit::default();
                     t.tick(*head, &mut emit);
@@ -3174,10 +3184,10 @@ impl WeaponPool {
                     if t.spawn_next {
                         let mut child = PKThunderTrail::new(*head, t.id + 1);
                         child.position = t.position;
-                        pending[i] = Some((child, self.stale[i], self.teams[i], self.lrs[i]));
+                        *queued = Some((child, self.stale[i], self.teams[i], self.lrs[i]));
                     }
                 } else {
-                    destroy(slot);
+                    destroy(&mut self.slots, i);
                 }
             }
         }
@@ -3189,7 +3199,7 @@ impl WeaponPool {
             let Some(j) = self.insert_at(Weapon::PKTrail(trail), stale, team, lr) else {
                 continue;
             };
-            let Some(Weapon::PKTrail(t)) = &mut self.slots[j] else {
+            let Some(Weapon::PKTrail(t)) = self.slots.slot_value_mut(j) else {
                 continue;
             };
             if let Some(head) = heads.iter().flatten().find(|h| h.group == t.group) {
@@ -3208,14 +3218,18 @@ impl WeaponPool {
     /// is `wpNessPKReflectHeadMakeWeapon`'s new weapon, which leaves the
     /// flag clear.
     pub fn camera_follow_positions(&self) -> impl Iterator<Item = Vec3> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Boomerang(_) | Weapon::Egg(_) => Some(w.position()),
-            Weapon::PKThunder(h) if !h.reflected => Some(h.position),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Boomerang(_) | Weapon::Egg(_) => Some(w.position()),
+                Weapon::PKThunder(h) if !h.reflected => Some(h.position),
+                _ => None,
+            })
     }
     pub fn pk_fires(&self) -> impl Iterator<Item = PKFire> + '_ {
-        self.slots.iter().flatten().filter_map(|w| {
+        self.slots.values().iter().flatten().filter_map(|w| {
             if let Weapon::PKFire(p) = w {
                 Some(*p)
             } else {
@@ -3224,7 +3238,7 @@ impl WeaponPool {
         })
     }
     pub fn pk_thunders(&self) -> impl Iterator<Item = PKThunder> + '_ {
-        self.slots.iter().flatten().filter_map(|w| {
+        self.slots.values().iter().flatten().filter_map(|w| {
             if let Weapon::PKThunder(p) = w {
                 Some(*p)
             } else {
@@ -3233,7 +3247,7 @@ impl WeaponPool {
         })
     }
     pub fn pk_trails(&self) -> impl Iterator<Item = PKThunderTrail> + '_ {
-        self.slots.iter().flatten().filter_map(|w| {
+        self.slots.values().iter().flatten().filter_map(|w| {
             if let Weapon::PKTrail(p) = w {
                 Some(*p)
             } else {
@@ -3246,7 +3260,7 @@ impl WeaponPool {
     /// (`wpNessPKReflectHeadMakeWeapon`) is a new weapon, last in the link.
     pub fn ness_shots(&self) -> impl Iterator<Item = NessShot> + '_ {
         let (order, n) = self.link_order();
-        (0..n).filter_map(move |k| match self.slots[order[k]] {
+        (0..n).filter_map(move |k| match self.slots.values()[order[k]] {
             Some(Weapon::PKFire(w)) => Some(NessShot::Fire(w)),
             Some(Weapon::PKThunder(w)) => Some(NessShot::Head(w)),
             Some(Weapon::PKTrail(w)) => Some(NessShot::Trail(w)),
@@ -3257,7 +3271,7 @@ impl WeaponPool {
     /// for the runtime's draw passes.
     pub fn monster_shots(&self) -> impl Iterator<Item = crate::monster_weapon::MonsterShot> + '_ {
         let (order, n) = self.link_order();
-        (0..n).filter_map(move |k| match self.slots[order[k]] {
+        (0..n).filter_map(move |k| match self.slots.values()[order[k]] {
             Some(Weapon::Monster(m)) => Some(m),
             _ => None,
         })
@@ -3265,7 +3279,7 @@ impl WeaponPool {
 
     /// Free weapon structs.
     pub fn free_count(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_none()).count()
+        MAX_WEAPONS - self.slots.len()
     }
 
     /// `wpManagerMakeWeapon` for an item-made weapon
@@ -3327,10 +3341,14 @@ impl WeaponPool {
 
     /// The live Arwing lasers, in slot order.
     pub fn arwing_lasers(&self) -> impl Iterator<Item = ArwingLaser> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Laser(l) => Some(*l),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Laser(l) => Some(*l),
+                _ => None,
+            })
     }
 
     /// Consumes a fighter's deferred request. A full pool follows the source
@@ -3479,7 +3497,7 @@ impl WeaponPool {
         let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
         let made = self.insert_at(weapon, spawn.stale, spawn.team, lr);
         if let Some(i) = made {
-            match &mut self.slots[i] {
+            match self.slots.slot_value_mut(i) {
                 // `wpLinkBoomerangMakeWeapon`'s `wpMainPlayFGM`.
                 Some(Weapon::Boomerang(b)) => {
                     b.sfx = play_weapon_fgm(b.sfx, crate::sound::id::nSYAudioFGMLinkSpecialNShoot);
@@ -3505,7 +3523,7 @@ impl WeaponPool {
         self.insert_at(weapon, stale, team, lr).is_some()
     }
 
-    /// `wpManagerMakeWeapon`: the first free slot, placed last in the link.
+    /// `wpManagerMakeWeapon`: the free list's head, placed last in the link.
     fn insert_at(
         &mut self,
         mut weapon: Weapon,
@@ -3513,7 +3531,9 @@ impl WeaponPool {
         team: u8,
         lr: f32,
     ) -> Option<usize> {
-        let i = self.slots.iter().position(|slot| slot.is_none())?;
+        if self.slots.is_full() {
+            return None;
+        }
         // `wpManagerMakeWeapon`'s ground-parent case (wpmanager.c:185,
         // :188): a fresh motion count, then a stat count. A fighter or item
         // parent's counts ([`crate::stale::WeaponStale::of`]) are never 0.
@@ -3528,7 +3548,7 @@ impl WeaponPool {
                 m.stat.count = stale.stat.count;
             }
         }
-        self.slots[i] = Some(weapon);
+        let i = self.slots.insert(weapon).ok()?.index();
         self.stale[i] = stale;
         self.teams[i] = team;
         self.lrs[i] = lr;
@@ -3601,7 +3621,7 @@ impl WeaponPool {
     /// hitbox, position, velocity and previous position.
     fn item_attack(&self, i: usize) -> Option<ItemAttack> {
         let stale = self.stale[i];
-        let (owner, mut hitbox, pos, vel) = match self.slots[i]? {
+        let (owner, mut hitbox, pos, vel) = match self.slots.values()[i]? {
             Weapon::Jolt(j) => {
                 let (mut hit, pos) = j.hit();
                 hit.damage = j.damage;
@@ -3805,10 +3825,10 @@ impl WeaponPool {
             } else {
                 crate::combat::AttackState::Interpolate
             };
-            let tail_hit = matches!(self.slots[i], Some(Weapon::Monster(m)) if m.kind == ShotKind::RayGun && m.attack_tail.is_some_and(|(tail, old)| crate::item::touches_damage_coll(item, tail, old, hitbox.radius, state)));
+            let tail_hit = matches!(self.slots.values()[i], Some(Weapon::Monster(m)) if m.kind == ShotKind::RayGun && m.attack_tail.is_some_and(|(tail, old)| crate::item::touches_damage_coll(item, tail, old, hitbox.radius, state)));
             // `itProcessSearchHitWeapon` walks every attack offset; a
             // Thunder trail has two.
-            let trail_low_hit = matches!(self.slots[i], Some(Weapon::Trail(t)) if {
+            let trail_low_hit = matches!(self.slots.values()[i], Some(Weapon::Trail(t)) if {
                 let low = trail_low_attack(t);
                 crate::item::touches_damage_coll(item, low, low, hitbox.radius, state)
             });
@@ -3822,7 +3842,7 @@ impl WeaponPool {
             self.record_item_victim(i, id);
             // `is_rehit`: only a `nITTypeDamage` item is rehit.
             if item.ty == crate::item::ItemType::Damage
-                && matches!(self.slots[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item)
+                && matches!(self.slots.values()[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item)
             {
                 if let Some(r) = self.hit_records[i].iter().position(|r| *r == Some(id)) {
                     self.rehit[i][r] = 16;
@@ -3841,7 +3861,7 @@ impl WeaponPool {
             };
             // `wp->is_hitlag_victim` (the Boomerang, two Pokemon):
             // `gmCollisionGetWeaponAttackItemDamagePosition` and the spark.
-            let is_hitlag_victim = match self.slots[i] {
+            let is_hitlag_victim = match self.slots.values()[i] {
                 Some(Weapon::Boomerang(_)) => true,
                 Some(Weapon::Monster(m)) => m.is_hitlag_victim(),
                 _ => false,
@@ -3879,7 +3899,7 @@ impl WeaponPool {
                 },
             );
             // `itProcessUpdateDamageStatWeapon`'s last line.
-            if let Some(w) = &self.slots[i] {
+            if let Some(w) = self.slots.slot_value(i) {
                 crate::sound::play_fgm(w.fgm_id());
             }
             self.pending_item_hits[i] = true;
@@ -3900,12 +3920,12 @@ impl WeaponPool {
             Some(Weapon::Trail(t)) => Some(t.group),
             _ => None,
         };
-        let Some(g) = group(&self.slots[i]) else {
+        let Some(g) = group(&self.slots.values()[i]) else {
             record_weapon_victim(&mut self.hit_records[i], id);
             return;
         };
         for j in 0..MAX_WEAPONS {
-            if group(&self.slots[j]) == Some(g) {
+            if group(&self.slots.values()[j]) == Some(g) {
                 record_weapon_victim(&mut self.hit_records[j], id);
             }
         }
@@ -3926,8 +3946,9 @@ impl WeaponPool {
     /// matching its reaction to a fighter's hurtbox.
     fn weapon_proc_hit(&mut self, i: usize) {
         let stale = self.stale[i];
-        let slot = &mut self.slots[i];
-        let Some(weapon) = slot else { return };
+        let Some(weapon) = self.slots.slot_value_mut(i) else {
+            return;
+        };
         push_proc(&mut self.fx, self.seq[i], weapon, Proc::Hit);
         match weapon {
             Weapon::Boomerang(b) => b.on_hit(),
@@ -3944,7 +3965,7 @@ impl WeaponPool {
             }
             Weapon::PKFire(p) => {
                 let spawn = p.item_spawn(stale, self.teams[i]);
-                destroy(slot);
+                destroy(&mut self.slots, i);
                 self.queue_item_spawn(spawn);
             }
             // `grSectorArwingWeaponLaser3DProcHit`; the burst has none.
@@ -3958,7 +3979,7 @@ impl WeaponPool {
             // `wpNessPKThunderTrailProcHit` and
             // `wpPikachuThunderTrailProcHit` return FALSE.
             Weapon::PKTrail(_) | Weapon::Trail(_) => {}
-            _ => destroy(slot),
+            _ => destroy(&mut self.slots, i),
         }
     }
 
@@ -3984,9 +4005,10 @@ impl WeaponPool {
     /// `ftManagerDestroyFighterWeapons`, as a fighter dies: only Link's
     /// Boomerang (`boomerang_gobj`, the one it homes back to) goes.
     pub fn destroy_boomerang(&mut self, port: u8) {
-        for slot in self.slots.iter_mut() {
-            if matches!(slot, Some(Weapon::Boomerang(b)) if b.parent_port == Some(port)) {
-                destroy(slot);
+        for i in 0..MAX_WEAPONS {
+            if matches!(self.slots.slot_value(i), Some(Weapon::Boomerang(b)) if b.parent_port == Some(port))
+            {
+                destroy(&mut self.slots, i);
             }
         }
     }
@@ -4005,7 +4027,7 @@ impl WeaponPool {
     /// because the pool was full).
     pub fn sync_owner(&mut self, f: &mut Fighter) {
         if crate::ness::thunder_controlling(f.status.status) {
-            f.ness.thunder_position = self.slots.iter().flatten().find_map(|w| match w {
+            f.ness.thunder_position = self.slots.values().iter().flatten().find_map(|w| match w {
                 Weapon::PKThunder(h)
                     if !h.reflected
                         && h.owner_port == f.port
@@ -4021,14 +4043,15 @@ impl WeaponPool {
         }
         let port = usize::from(f.port);
         if crate::pikachu::thunder_controlling(f.status.status) {
-            f.pikachu.thunder_position = self.slots.iter().flatten().find_map(|w| match w {
-                Weapon::Thunder(h)
-                    if h.owner_port == f.port && h.motion_count == f.pikachu.thunder_motion =>
-                {
-                    Some(h.position)
-                }
-                _ => None,
-            });
+            f.pikachu.thunder_position =
+                self.slots.values().iter().flatten().find_map(|w| match w {
+                    Weapon::Thunder(h)
+                        if h.owner_port == f.port && h.motion_count == f.pikachu.thunder_motion =>
+                    {
+                        Some(h.position)
+                    }
+                    _ => None,
+                });
             if port < MAX_OWNERS && core::mem::take(&mut self.thunder_destroyed[port])
                 || (f.pikachu.thunder_position.is_none() && !f.pikachu.thunder_collide)
             {
@@ -4045,6 +4068,7 @@ impl WeaponPool {
         }
         f.link.boomerang_out = self
             .slots
+            .values()
             .iter()
             .flatten()
             .any(|w| matches!(w, Weapon::Boomerang(b) if b.parent_port == Some(f.port)));
@@ -4072,8 +4096,8 @@ impl WeaponPool {
         self.tick_pk_thunder(surfaces, bounds);
         let mut trails = [None; MAX_WEAPONS];
         let mut rocks: [Option<(u32, bool)>; MAX_WEAPONS] = [None; MAX_WEAPONS];
-        for (i, slot) in self.slots.iter_mut().enumerate() {
-            if let Some(weapon) = slot.as_mut() {
+        for i in 0..MAX_WEAPONS {
+            if let Some(weapon) = self.slots.slot_value_mut(i) {
                 let mut emit = Emit::default();
                 let fx = &mut emit;
                 let alive = match weapon {
@@ -4167,7 +4191,7 @@ impl WeaponPool {
                     && (matches!(weapon, Weapon::Thunder(_))
                         || !bounds.is_some_and(|b| out_of_bounds(b, weapon.position())));
                 if !alive {
-                    destroy(slot);
+                    destroy(&mut self.slots, i);
                 } else if matches!(weapon, Weapon::Monster(_)) {
                     // `wpProcessUpdateAttackRecords`: a rehit record clears
                     // when its timer runs out.
@@ -4227,11 +4251,11 @@ impl WeaponPool {
         let (order, n) = self.link_order();
         for &i in &order[..n] {
             // Ness's trails follow their head in the link.
-            if matches!(self.slots[i], Some(Weapon::PKTrail(_))) {
+            if matches!(self.slots.values()[i], Some(Weapon::PKTrail(_))) {
                 self.search_pk_trail(i, defender);
                 continue;
             }
-            let Some(weapon) = &mut self.slots[i] else {
+            let Some(weapon) = self.slots.slot_value_mut(i) else {
                 continue;
             };
             let fgm_id = weapon.fgm_id();
@@ -4503,7 +4527,7 @@ impl WeaponPool {
                 self.proc_hit[i] = true;
             }
         }
-        for w in self.slots.iter_mut().flatten() {
+        for (_, w) in self.slots.iter_mut() {
             if let Weapon::Trail(t) = w {
                 if thunder_groups.contains(&Some(t.group)) {
                     t.hit_ports |= 1u8 << (defender.port & 7);
@@ -4525,7 +4549,7 @@ impl WeaponPool {
     /// `proc_hit` and `proc_shield` (`wpNessPKThunderTrailProcHit`) wait
     /// for [`Self::react_to_fighter_hits`].
     fn search_pk_trail(&mut self, i: usize, defender: &mut Fighter) {
-        let Some(Weapon::PKTrail(t)) = self.slots[i] else {
+        let Some(Weapon::PKTrail(t)) = self.slots.values()[i] else {
             return;
         };
         let bit = 1u8 << (defender.port & 7);
@@ -4537,10 +4561,15 @@ impl WeaponPool {
         }
         // A reflected head that met this fighter recorded it for its
         // trails.
-        let head_saw = self.slots.iter().zip(&self.hit_records).any(|(w, r)| {
-            matches!(w, Some(Weapon::PKThunder(h)) if h.reflected && h.group == t.group)
-                && recorded_fighter_ports(r) & bit != 0
-        });
+        let head_saw = self
+            .slots
+            .values()
+            .iter()
+            .zip(&self.hit_records)
+            .any(|(w, r)| {
+                matches!(w, Some(Weapon::PKThunder(h)) if h.reflected && h.group == t.group)
+                    && recorded_fighter_ports(r) & bit != 0
+            });
         if head_saw {
             return;
         }
@@ -4564,7 +4593,7 @@ impl WeaponPool {
             // `hit_normal_damage`: `proc_hit`.
             crate::combat::WeaponContact::Hurt(_) => self.proc_hit[i] = true,
         }
-        for (j, slot) in self.slots.iter_mut().enumerate() {
+        for (j, slot) in self.slots.values_mut().enumerate() {
             match slot {
                 Some(Weapon::PKTrail(o)) if o.group == t.group => o.hit_ports |= bit,
                 Some(Weapon::PKThunder(h)) if h.reflected && h.group == t.group => {
@@ -4597,7 +4626,7 @@ impl WeaponPool {
                 ..PendingProcs::NONE
             };
             self.run_procs(i, hit, pending);
-            if self.slots[i].is_none() {
+            if self.slots.values()[i].is_none() {
                 late[i] = PendingProcs::NONE;
             }
         }
@@ -4634,13 +4663,13 @@ impl WeaponPool {
                 return;
             }
             if matches!(
-                self.slots[i],
+                self.slots.values()[i],
                 Some(Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_))
             ) {
                 self.pk_procs(i, hit, pending);
                 return;
             }
-            let Some(weapon) = self.slots[i].as_mut() else {
+            let Some(weapon) = self.slots.slot_value_mut(i) else {
                 return;
             };
             let mut emit = Emit::default();
@@ -4666,7 +4695,7 @@ impl WeaponPool {
             };
             self.fx.extend(self.seq[i], &emit);
             if !alive {
-                destroy(&mut self.slots[i]);
+                destroy(&mut self.slots, i);
             }
         }
     }
@@ -4680,8 +4709,8 @@ impl WeaponPool {
     /// which returns FALSE). The reflector's owner swap (`owner_gobj`,
     /// `team`, US `stat_flags`) runs here, after every fighter's search.
     fn pk_procs(&mut self, i: usize, hit: bool, p: PendingProcs) {
-        let free_slots = self.slots.iter().filter(|s| s.is_none()).count();
-        let Some(weapon) = self.slots[i].as_mut() else {
+        let free_slots = MAX_WEAPONS - self.slots.len();
+        let Some(weapon) = self.slots.slot_value_mut(i) else {
             return;
         };
         let mut emit = Emit::default();
@@ -4766,17 +4795,18 @@ impl WeaponPool {
         // `is_thunder_destroy` in this pass: his next update counts
         // `pkthunder_end_delay` down.
         if let Some(port) = thunder_owner {
-            if !alive || matches!(self.slots[i], Some(Weapon::PKThunder(h)) if h.reflected) {
+            if !alive || matches!(self.slots.values()[i], Some(Weapon::PKThunder(h)) if h.reflected)
+            {
                 self.mark_ness_thunder_destroyed(port);
             }
         }
         if pillar {
-            if let Some(Weapon::PKFire(spark)) = self.slots[i] {
+            if let Some(Weapon::PKFire(spark)) = self.slots.values()[i] {
                 self.queue_item_spawn(spark.item_spawn(self.stale[i], self.teams[i]));
             }
         }
         if !alive {
-            destroy(&mut self.slots[i]);
+            destroy(&mut self.slots, i);
         }
     }
 
@@ -4786,7 +4816,7 @@ impl WeaponPool {
     /// hop and reflect (`wpMainVelSetLR`), which leaves its sign.
     fn cpu_lr(&self, i: usize) -> f32 {
         let sign = |x: f32| if x >= 0.0 { 1.0 } else { -1.0 };
-        match self.slots[i] {
+        match self.slots.values()[i] {
             Some(Weapon::Bomb(b)) => b.lr,
             Some(Weapon::Boomerang(b)) => b.lr,
             Some(Weapon::Egg(e)) => e.lr,
@@ -4820,7 +4850,7 @@ impl WeaponPool {
                 }
             };
             let mut out = [None, None];
-            match self.slots[i] {
+            match self.slots.values()[i] {
                 Some(Weapon::Thunder(_)) | None => {}
                 Some(Weapon::Trail(t)) => {
                     let r = pikachu::TRAIL_HIT.radius;
@@ -4867,17 +4897,19 @@ impl WeaponPool {
     /// the first of the port's PK Thunder trails in the link.
     pub fn own_pk_trail(&self, port: u8) -> Option<Vec3> {
         let (order, n) = self.link_order();
-        order[..n].iter().find_map(|&i| match self.slots[i] {
-            Some(Weapon::PKTrail(t)) if t.owner_port == port => Some(t.position),
-            _ => None,
-        })
+        order[..n]
+            .iter()
+            .find_map(|&i| match self.slots.values()[i] {
+                Some(Weapon::PKTrail(t)) if t.owner_port == port => Some(t.position),
+                _ => None,
+            })
     }
 
     /// The live slots in link order.
     fn link_order(&self) -> ([usize; MAX_WEAPONS], usize) {
         let mut order = [0usize; MAX_WEAPONS];
         let mut n = 0;
-        for (i, slot) in self.slots.iter().enumerate() {
+        for (i, slot) in self.slots.values().iter().enumerate() {
             if slot.is_some() {
                 order[n] = i;
                 n += 1;
@@ -4892,7 +4924,7 @@ impl WeaponPool {
     /// owner, staled damage, priority and its box
     /// `(pos_curr, pos_prev, size, state)`.
     fn clash_attack(&self, i: usize) -> Option<ClashAttack> {
-        let w = self.slots[i]?;
+        let w = self.slots.values()[i]?;
         if !w.flags().can_setoff {
             return None;
         }
@@ -4947,7 +4979,7 @@ impl WeaponPool {
         for i in 0..MAX_WEAPONS {
             view.attacks[i] = self.clash_attack(i);
             view.item_attacks[i] = self.item_attack(i);
-            view.groups[i] = self.slots[i].and_then(|w| w.group());
+            view.groups[i] = self.slots.values()[i].and_then(|w| w.group());
         }
         self.clash_view = view;
     }
@@ -5067,7 +5099,7 @@ impl WeaponPool {
             let seq = self.seq[i];
             let stale = self.stale[i];
             let team = self.teams[i];
-            let Some(weapon) = self.slots[i].as_mut() else {
+            let Some(weapon) = self.slots.slot_value_mut(i) else {
                 continue;
             };
             push_proc(&mut self.fx, seq, weapon, Proc::SetOff);
@@ -5106,7 +5138,7 @@ impl WeaponPool {
                 _ => false,
             };
             if !alive {
-                destroy(&mut self.slots[i]);
+                destroy(&mut self.slots, i);
             }
             if let Some(port) = ness_thunder.take() {
                 self.mark_ness_thunder_destroyed(port);
@@ -5148,7 +5180,7 @@ impl WeaponPool {
             };
             let frame = crate::rng::rand_int_range(i32::from(n)) as u8;
             let owner = slots
-                .iter_mut()
+                .values_mut()
                 .zip(seqs)
                 .find(|(w, &s)| s == seq && w.is_some());
             match owner {
@@ -5174,7 +5206,7 @@ impl WeaponPool {
     }
 
     pub fn jolts(&self) -> impl Iterator<Item = ThunderJolt> + '_ {
-        self.slots.iter().flatten().filter_map(|w| {
+        self.slots.values().iter().flatten().filter_map(|w| {
             if let Weapon::Jolt(j) = w {
                 Some(*j)
             } else {
@@ -5183,7 +5215,7 @@ impl WeaponPool {
         })
     }
     pub fn thunder_heads(&self) -> impl Iterator<Item = ThunderHead> + '_ {
-        self.slots.iter().flatten().filter_map(|w| {
+        self.slots.values().iter().flatten().filter_map(|w| {
             if let Weapon::Thunder(h) = w {
                 Some(*h)
             } else {
@@ -5192,7 +5224,7 @@ impl WeaponPool {
         })
     }
     pub fn thunder_trails(&self) -> impl Iterator<Item = ThunderTrail> + '_ {
-        self.slots.iter().flatten().filter_map(|w| {
+        self.slots.values().iter().flatten().filter_map(|w| {
             if let Weapon::Trail(t) = w {
                 Some(*t)
             } else {
@@ -5202,7 +5234,7 @@ impl WeaponPool {
     }
 
     pub fn active_count(&self) -> usize {
-        self.slots.iter().filter(|slot| slot.is_some()).count()
+        self.slots.len()
     }
 
     pub fn first_fireball(&self) -> Option<MarioFireball> {
@@ -5212,74 +5244,110 @@ impl WeaponPool {
     /// Every live Fireball, for the runtime presentation layer. The pool
     /// remains the sole owner of weapon state; renderers receive snapshots.
     pub fn fireballs(&self) -> impl Iterator<Item = MarioFireball> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Fireball(f) => Some(*f),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Fireball(f) => Some(*f),
+                _ => None,
+            })
     }
 
     pub fn blasters(&self) -> impl Iterator<Item = FoxBlaster> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Blaster(b) => Some(*b),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Blaster(b) => Some(*b),
+                _ => None,
+            })
     }
 
     /// Master Hand's live finger-gun shots.
     pub fn boss_bullets(&self) -> impl Iterator<Item = BossBullet> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::BossBullet(b) => Some(*b),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::BossBullet(b) => Some(*b),
+                _ => None,
+            })
     }
 
     pub fn charge_shots(&self) -> impl Iterator<Item = SamusChargeShot> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::ChargeShot(c) => Some(*c),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::ChargeShot(c) => Some(*c),
+                _ => None,
+            })
     }
 
     pub fn bombs(&self) -> impl Iterator<Item = SamusBomb> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Bomb(b) => Some(*b),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Bomb(b) => Some(*b),
+                _ => None,
+            })
     }
 
     pub fn eggs(&self) -> impl Iterator<Item = YoshiEgg> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Egg(e) => Some(*e),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Egg(e) => Some(*e),
+                _ => None,
+            })
     }
 
     pub fn stars(&self) -> impl Iterator<Item = YoshiStar> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Star(s) => Some(*s),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Star(s) => Some(*s),
+                _ => None,
+            })
     }
 
     pub fn cutters(&self) -> impl Iterator<Item = KirbyCutter> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Cutter(c) => Some(*c),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Cutter(c) => Some(*c),
+                _ => None,
+            })
     }
 
     pub fn boomerangs(&self) -> impl Iterator<Item = LinkBoomerang> + '_ {
-        self.slots.iter().flatten().filter_map(|w| match w {
-            Weapon::Boomerang(b) => Some(*b),
-            _ => None,
-        })
+        self.slots
+            .values()
+            .iter()
+            .flatten()
+            .filter_map(|w| match w {
+                Weapon::Boomerang(b) => Some(*b),
+                _ => None,
+            })
     }
 
     /// The live weapons that play an animation of their own, each with its
     /// pool slot: the slot is the weapon's `GObj` for as long as it lives,
     /// so a presentation layer keys one set of players on it.
     pub fn animated(&self) -> impl Iterator<Item = (usize, AnimatedWeapon)> + '_ {
-        self.slots.iter().enumerate().filter_map(|(i, w)| {
+        self.slots.values().iter().enumerate().filter_map(|(i, w)| {
             let w = match w.as_ref()? {
                 Weapon::Boomerang(b) => AnimatedWeapon::Boomerang(*b),
                 Weapon::Cutter(c) => AnimatedWeapon::Cutter(*c),
@@ -5334,6 +5402,72 @@ pub(crate) fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `wpManagerAllocWeapons`' free list as the decomp builds it, and a
+    /// scripted make/destroy sequence: the pool hands out the same structs,
+    /// and the link (make order) is unchanged by which struct a weapon got.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn weapon_structs_come_off_the_original_free_list() {
+        struct FreeList {
+            next: [Option<usize>; MAX_WEAPONS],
+            head: Option<usize>,
+        }
+        let mut list = FreeList {
+            next: core::array::from_fn(|i| (i + 1 < MAX_WEAPONS).then_some(i + 1)),
+            head: Some(0),
+        };
+        let mut pool = WeaponPool::default();
+        let spawn = WeaponSpawn {
+            kind: WeaponKind::MarioFireball,
+            owner_port: 0,
+            team: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(0.0, 100.0, 0.0),
+            facing: 1.0,
+        };
+        // `Some(n)`: destroy the n-th weapon made; `None`: make one.
+        let mut script = std::vec![None; 8];
+        script.extend([Some(2), Some(6), Some(0), None, None, Some(5), None]);
+        script.extend([Some(3), Some(9), None, None]);
+        script.extend(std::iter::repeat_n(None, 30));
+        let mut made = std::vec::Vec::new();
+        let mut destroyed = std::vec::Vec::new();
+        let mut not_lowest = 0;
+        for step in script {
+            match step {
+                None => {
+                    let empty: std::vec::Vec<bool> =
+                        pool.slots.values().iter().map(Option::is_none).collect();
+                    // `wpManagerGetNextStructAlloc`.
+                    let expected = list.head.inspect(|&w| list.head = list.next[w]);
+                    assert_eq!(pool.spawn(spawn), expected.is_some());
+                    let got =
+                        (0..MAX_WEAPONS).find(|&i| empty[i] && pool.slots.values()[i].is_some());
+                    assert_eq!(got, expected, "make {}", made.len());
+                    if got.is_some() && got != empty.iter().position(|&e| e) {
+                        not_lowest += 1;
+                    }
+                    made.extend(got);
+                }
+                Some(n) => {
+                    destroy(&mut pool.slots, made[n]);
+                    destroyed.push(n);
+                    // `wpManagerSetPrevStructAlloc`.
+                    list.next[made[n]] = list.head;
+                    list.head = Some(made[n]);
+                }
+            }
+        }
+        assert_eq!(pool.active_count(), MAX_WEAPONS);
+        assert!(not_lowest > 0, "the script tells LIFO from lowest-first");
+        let (order, n) = pool.link_order();
+        let live: std::vec::Vec<usize> = (0..made.len())
+            .filter(|k| !destroyed.contains(k))
+            .map(|k| made[k])
+            .collect();
+        assert_eq!(&order[..n], &live[..], "link = make order");
+    }
     use crate::fighter::{FighterKind, Situation};
 
     #[test]
@@ -5408,7 +5542,7 @@ mod tests {
                 MARIO_FIREBALL_HITBOX.damage
             };
             assert_eq!((i32::from(a.damage), i32::from(b.damage)), (damage, damage));
-            assert!(pool.slots.iter().all(Option::is_none));
+            assert!(pool.slots.values().iter().all(Option::is_none));
         }
     }
 
@@ -5968,7 +6102,9 @@ mod tests {
                 facing: -1.0,
             }));
             weapons.tick(open_air, None);
-            let Some(Weapon::BossBullet(b)) = weapons.slots.iter().flatten().next().copied() else {
+            let Some(Weapon::BossBullet(b)) =
+                weapons.slots.values().iter().flatten().next().copied()
+            else {
                 panic!("no bullet");
             };
             let mut target = Fighter::new(FighterKind::Kirby, 0, 3);
@@ -6209,9 +6345,9 @@ mod tests {
         let mut both = WeaponPool::default();
         spawn(&mut both, 5000.0, 1.0);
         spawn(&mut both, -60.0, 1.0);
-        both.slots[0] = None;
+        both.slots.remove_at(0);
         spawn(&mut both, 60.0, -1.0);
-        assert!(matches!(both.slots[0], Some(Weapon::Fireball(f)) if f.position.x > 0.0));
+        assert!(matches!(both.slots.values()[0], Some(Weapon::Fireball(f)) if f.position.x > 0.0));
         assert_eq!(lr(&mut both), left_lr);
     }
 
@@ -6403,7 +6539,7 @@ mod tests {
         crate::status::set_fox_special_lw_hit(&mut fox);
         assert!(crate::combat::reflector(&fox).is_some());
         let mut weapons = fireball_at(Vec3::new(100.0, 60.0, 0.0), -1.0);
-        for w in weapons.slots.iter_mut().flatten() {
+        for w in weapons.slots.values_mut().flatten() {
             if let Weapon::Fireball(f) = w {
                 f.damage = 51;
             }
@@ -6852,7 +6988,7 @@ mod tests {
     #[test]
     fn a_glancing_shield_turns_a_fireball_and_a_head_on_one_destroys_it() {
         let weapons = fireball_at(Vec3::ZERO, 1.0);
-        let mut w = weapons.slots[0].unwrap();
+        let mut w = weapons.slots.values()[0].unwrap();
         let Weapon::Fireball(before) = w else {
             unreachable!()
         };
@@ -6866,7 +7002,7 @@ mod tests {
         assert!((after.velocity.x - (v.x * cos - v.y * sin)).abs() < 1e-3);
         assert!((after.velocity.y - (v.x * sin + v.y * cos)).abs() < 1e-3);
         // The negative direction turns the other way.
-        let mut w = weapons.slots[0].unwrap();
+        let mut w = weapons.slots.values()[0].unwrap();
         assert!(w.on_shield(
             shield_at(120.0, -1.0),
             &mut crate::wpeffect::Emit::default()
@@ -6876,13 +7012,13 @@ mod tests {
         };
         assert!((after.velocity.y - (-v.x * sin + v.y * cos)).abs() < 1e-3);
         // Under 90 degrees the angle clamps to zero.
-        let mut w = weapons.slots[0].unwrap();
+        let mut w = weapons.slots.values()[0].unwrap();
         assert!(w.on_shield(shield_at(60.0, 1.0), &mut crate::wpeffect::Emit::default()));
         let Weapon::Fireball(after) = w else {
             unreachable!()
         };
         assert!((after.velocity - v).length() < 1e-4);
-        let mut w = weapons.slots[0].unwrap();
+        let mut w = weapons.slots.values()[0].unwrap();
         assert!(!w.on_shield(shield_at(135.0, 1.0), &mut crate::wpeffect::Emit::default()));
     }
 
@@ -7061,7 +7197,7 @@ mod tests {
         assert!(t.vel_x < 0.0);
         assert_eq!(t.size, FOX_BLASTER_HITBOX.radius);
         // A reflector turns the shot's velocity, not its `wp->lr`.
-        if let Some(Weapon::Blaster(b)) = pool.slots.iter_mut().flatten().next() {
+        if let Some(Weapon::Blaster(b)) = pool.slots.values_mut().flatten().next() {
             b.velocity.x = -b.velocity.x;
         }
         let t = pool.cpu_threats().next().unwrap();
@@ -7077,7 +7213,7 @@ mod tests {
             facing: 1.0,
             stale: crate::stale::WeaponStale::FRESH,
         }));
-        if let Some(Weapon::PKFire(p)) = pool.slots.iter_mut().flatten().next() {
+        if let Some(Weapon::PKFire(p)) = pool.slots.values_mut().flatten().next() {
             p.velocity.x = -p.velocity.x.abs();
         }
         assert_eq!(pool.cpu_threats().next().unwrap().lr, -1.0);

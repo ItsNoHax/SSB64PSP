@@ -107,15 +107,15 @@ lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
 - `ssb_engine::memory` (RE-340)
   - `Arena` → `Scope` (`begin`, drop releases; `checkpoint` nests, drop rewinds); typed allocs reject drop glue at compile time
   - `AssetArena`: block table over a `BlockAlloc` (PSP: `CacheLineBlocks`)
-  - `ObjectPool<T, N>`: serial-checked handles (serial bumps at insert); `FreeOrder::Lifo` = original item/weapon free lists
+  - `ObjectPool<T, N>`: serial-checked handles (serial bumps at insert); `FreeOrder::Lifo` = original item/weapon free lists; users: `ssb_game::item::ItemPool` (16), `ssb_game::weapon::WeaponPool` (32); item handle `u32` = `slot | serial << 16`
 - `psp-runtime`: `AssetArena`; `FrameArena` (static 4 KiB 64-byte-aligned `.bss`, `memory::frame_arena`)
 
 | Allocator | Lifetime |
 |---|---|
-| `GameArena` | Long-lived game state; freed on scene change |
+| `GameArena` | Per-scene general heap (`syTaskmanMalloc`): sized per scene, freed at scene end; not yet wired |
 | `AssetArena` | One block per read run (≤ 4 MiB load, ≤ 1 MiB prefetch), refcounted by its files; freed at the GE safe point after its last file drops |
 | `FrameArena` | One `Scope` per tick (`psp-game` loop); users: movie camera draw order |
-| `ObjectPool<T>` | Fixed capacity; free order `LowestFirst` or `Lifo` |
+| `ObjectPool<T>` | Fixed capacity; free order `LowestFirst` or `Lifo`; users: items, weapons |
 
 Scratchpad: reserved for VFPU staging and hot loops, after profiling.
 

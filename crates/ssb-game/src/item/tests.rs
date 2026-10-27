@@ -695,6 +695,118 @@ fn sixteen_slot_pool_reuses_last_freed_slot_and_appends_creation_order() {
     assert_eq!(positions, expected);
 }
 
+/// The struct pool before `ObjectPool` (batch 67): a LIFO free list and
+/// a serial per struct, handle `slot | serial << 16`. The scripted
+/// sequence must hand out the same structs and handles.
+#[test]
+fn a_scripted_alloc_and_free_sequence_keeps_slots_and_handles() {
+    struct Before {
+        free: [u8; ITEM_ALLOC_MAX],
+        free_len: usize,
+        live: [bool; ITEM_ALLOC_MAX],
+        serials: [u16; ITEM_ALLOC_MAX],
+    }
+    impl Before {
+        fn alloc(&mut self) -> Option<(u8, u32)> {
+            if self.free_len == 0 {
+                return None;
+            }
+            self.free_len -= 1;
+            let slot = self.free[self.free_len];
+            let s = usize::from(slot);
+            self.live[s] = true;
+            self.serials[s] = self.serials[s].wrapping_add(1);
+            Some((slot, u32::from(slot) | (u32::from(self.serials[s]) << 16)))
+        }
+        fn destroy(&mut self, slot: u8) {
+            if core::mem::take(&mut self.live[usize::from(slot)]) {
+                self.free[self.free_len] = slot;
+                self.free_len += 1;
+            }
+        }
+    }
+    let mut before = Before {
+        free: core::array::from_fn(|i| (ITEM_ALLOC_MAX - 1 - i) as u8),
+        free_len: ITEM_ALLOC_MAX,
+        live: [false; ITEM_ALLOC_MAX],
+        serials: [0; ITEM_ALLOC_MAX],
+    };
+    let counts = crate::manager_counts::ManagerCounts::new();
+    let mut pool = ItemPool::default();
+    let after = |pool: &mut ItemPool| {
+        pool.alloc(link_bomb::make(&counts, Vec3::ZERO))
+            .map(|slot| (slot, pool.handle_of(slot)))
+    };
+    // `Some(n)`: free the struct the n-th alloc got; `None`: alloc.
+    let script: &[Option<usize>] = &[
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(1),
+        Some(4),
+        Some(2),
+        None,
+        None,
+        Some(0),
+        None,
+        None,
+        None,
+        None,
+        Some(9),
+        Some(3),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(5),
+        Some(7),
+        None,
+        None,
+        None,
+    ];
+    let mut made = std::vec::Vec::new();
+    let mut stale = std::vec::Vec::new();
+    for step in script {
+        match *step {
+            None => {
+                let got = after(&mut pool);
+                assert_eq!(got, before.alloc(), "alloc {}", made.len());
+                made.extend(got);
+            }
+            Some(n) => {
+                let (slot, handle) = made[n];
+                pool.destroy(slot);
+                before.destroy(slot);
+                stale.push(handle);
+            }
+        }
+    }
+    assert_eq!(made.len(), 24);
+    assert!(after(&mut pool).is_none(), "all 16 structs are live");
+    assert_eq!(pool.active_count(), ITEM_ALLOC_MAX);
+    for &(slot, handle) in made.iter().filter(|(_, h)| !stale.contains(h)) {
+        assert_eq!(pool.slot_of(handle), Some(slot), "{handle:#x} is live");
+    }
+    for &handle in &stale {
+        assert_eq!(pool.slot_of(handle), None, "{handle:#x} was freed");
+    }
+}
+
 #[test]
 fn bounds_destroy_items_strictly_outside_each_edge() {
     let bounds = BlastZone {
@@ -729,7 +841,7 @@ fn bounds_destroy_items_strictly_outside_each_edge() {
 fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
     let mut pool = ItemPool::default();
     let slot = make_flame(&mut pool);
-    let item = pool.slots[slot as usize].as_mut().unwrap();
+    let item = pool.pool.slot_value_mut(slot as usize).unwrap();
     item.ga = Ga::Ground;
     item.floor.set(crate::ground::Standing {
         line: 0,
@@ -757,7 +869,7 @@ fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
         ..surface
     };
     pool.tick(|| [surface], None, &[], &mut NoItemAnims);
-    let item = pool.slots[slot as usize].as_ref().unwrap();
+    let item = pool.pool.slot_value(slot as usize).unwrap();
     assert_eq!(item.pos, Vec3::new(12.5, 20.25, 0.0));
     pool.tick(
         || [surface],
@@ -770,7 +882,7 @@ fn ground_item_carries_during_hitlag_before_the_bounds_gate() {
         &[],
         &mut NoItemAnims,
     );
-    assert!(pool.slots[slot as usize].is_none());
+    assert!(pool.pool.slot_value(slot as usize).is_none());
 }
 
 /// `itManagerMakeItem` plays the added animation once; each

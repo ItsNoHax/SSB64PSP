@@ -188,7 +188,7 @@ impl ItemPool {
         // is large, and the copies were most of a Break the Targets frame's
         // hit pass (RE-470).
         for &slot in &order[..self.order_len] {
-            let Some(item) = self.slots[usize::from(slot)].as_mut() else {
+            let Some(item) = self.pool.slot_value_mut(usize::from(slot)) else {
                 continue;
             };
             let landed = search_item_on_fighter(item, slot, f, rules);
@@ -218,7 +218,7 @@ impl ItemPool {
         let len = self.order_len;
         for (n, &slot) in order.iter().enumerate().take(len) {
             let rules = self.team_rules;
-            let Some(item) = self.slots[usize::from(slot)].as_mut() else {
+            let Some(item) = self.pool.slot_value_mut(usize::from(slot)) else {
                 continue;
             };
             if item.is_hold {
@@ -231,7 +231,7 @@ impl ItemPool {
             }
             self.fx.extend(n as u32, &emit);
             self.items_attack_item(n);
-            if let Some(item) = self.slots[usize::from(slot)].as_mut() {
+            if let Some(item) = self.pool.slot_value_mut(usize::from(slot)) {
                 let mut emit = crate::wpeffect::Emit::default();
                 weapons.hit_item(item, id, &mut emit);
                 self.fx.extend(n as u32, &emit);
@@ -243,13 +243,13 @@ impl ItemPool {
     /// `itProcessSearchHitItem` for the item at link position `n`.
     fn items_attack_item(&mut self, n: usize) {
         let this_slot = self.order[n];
-        if self.slots[usize::from(this_slot)]
+        if self.pool.values()[usize::from(this_slot)]
             .as_ref()
             .is_none_or(|this| this.damage_coll.interact_mask & INTERACT_ITEM == 0)
         {
             return;
         }
-        let Some(mut this) = self.slots[usize::from(this_slot)].clone() else {
+        let Some(mut this) = self.pool.slot_value(usize::from(this_slot)).cloned() else {
             return;
         };
         let this_id = ITEM_RECORD_BASE + this_slot;
@@ -260,7 +260,7 @@ impl ItemPool {
             }
             // Only items after this one in the link trade clanks with it.
             let is_check_self = m > n;
-            let Some(peek) = self.slots[usize::from(other_slot)].as_ref() else {
+            let Some(peek) = self.pool.slot_value(usize::from(other_slot)) else {
                 continue;
             };
             let other_id = ITEM_RECORD_BASE + other_slot;
@@ -329,9 +329,9 @@ impl ItemPool {
                     }
                 }
             }
-            self.slots[usize::from(other_slot)] = Some(other);
+            self.put(other_slot, other);
         }
-        self.slots[usize::from(this_slot)] = Some(this);
+        self.put(this_slot, this);
     }
 }
 

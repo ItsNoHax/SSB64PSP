@@ -18,10 +18,10 @@
 //! | [`GameArena`] | long-lived game state | one scope per scene |
 //! | [`FrameArena`] | per-frame scratch, so per-frame paths never touch the heap | one scope per tick |
 //!
-//! [`ObjectPool`] is the fixed-capacity store for fighters, items and
-//! particles, whose counts the original also fixes. [`FreeOrder::Lifo`]
-//! reuses slots in the order of `itManagerInitItems` and
-//! `wpManagerAllocWeapons`' free lists.
+//! [`ObjectPool`] is the fixed-capacity store for items and weapons
+//! (`ssb_game::item::ItemPool`, `ssb_game::weapon::WeaponPool`), whose
+//! counts the original also fixes. [`FreeOrder::Lifo`] reuses slots in the
+//! order of `itManagerInitItems` and `wpManagerAllocWeapons`' free lists.
 //!
 //! [`AssetArena`] serves `ssb_rom::loader_plan` (the PSP's
 //! `scene_files`); [`FrameArena`] serves the opening movie's camera draw
@@ -278,23 +278,21 @@ pub enum FreeOrder {
     Lifo,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct Slot<T> {
-    /// Bumped by every insert: a slot's serial.
-    generation: u16,
-    value: Option<T>,
-}
-
 /// At most `N` live objects, no heap. Iteration visits slots in index
 /// order, the order the original's fixed arrays process them.
+///
+/// Values, serials and the free list are three arrays, so a `T` with a
+/// wider alignment pays no per-slot padding for its serial.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectPool<T, const N: usize> {
-    slots: [Slot<T>; N],
-    len: usize,
-    order: FreeOrder,
+    values: [Option<T>; N],
+    /// Each slot's serial, bumped by every insert.
+    serials: [u16; N],
     /// [`FreeOrder::Lifo`]'s free list: `free[free_len - 1]` goes next.
     free: [u16; N],
-    free_len: usize,
+    free_len: u16,
+    len: u16,
+    order: FreeOrder,
 }
 
 impl<T, const N: usize> Default for ObjectPool<T, N> {
@@ -315,14 +313,12 @@ impl<T, const N: usize> ObjectPool<T, N> {
             "pool capacity exceeds u16 handles"
         );
         ObjectPool {
-            slots: core::array::from_fn(|_| Slot {
-                generation: 0,
-                value: None,
-            }),
+            values: core::array::from_fn(|_| None),
+            serials: [0; N],
+            free: core::array::from_fn(|i| (N - 1 - i) as u16),
+            free_len: N as u16,
             len: 0,
             order,
-            free: core::array::from_fn(|i| (N - 1 - i) as u16),
-            free_len: N,
         }
     }
 
@@ -335,78 +331,107 @@ impl<T, const N: usize> ObjectPool<T, N> {
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        usize::from(self.len)
     }
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    pub fn is_full(&self) -> bool {
+        usize::from(self.len) == N
+    }
+
     /// Stores `value` in the free slot [`FreeOrder`] picks, or gives it
     /// back when full. The slot's serial goes up by one.
     pub fn insert(&mut self, value: T) -> Result<Handle, T> {
         let index = match self.order {
-            FreeOrder::LowestFirst => self.slots.iter().position(|s| s.value.is_none()),
+            FreeOrder::LowestFirst => self.values.iter().position(Option::is_none),
             FreeOrder::Lifo => self.free_len.checked_sub(1).map(|top| {
                 self.free_len = top;
-                usize::from(self.free[top])
+                usize::from(self.free[usize::from(top)])
             }),
         };
         let Some(index) = index else {
             return Err(value);
         };
-        let slot = &mut self.slots[index];
-        slot.generation = slot.generation.wrapping_add(1);
-        slot.value = Some(value);
+        let serial = self.serials[index].wrapping_add(1);
+        self.serials[index] = serial;
+        self.values[index] = Some(value);
         self.len += 1;
         Ok(Handle {
             index: index as u16,
-            generation: slot.generation,
+            generation: serial,
         })
     }
 
-    fn slot(&self, h: Handle) -> Option<&Slot<T>> {
-        self.slots
-            .get(h.index())
-            .filter(|s| s.generation == h.generation)
+    fn live(&self, h: Handle) -> bool {
+        self.serials.get(h.index()) == Some(&h.generation)
     }
 
     pub fn get(&self, h: Handle) -> Option<&T> {
-        self.slot(h)?.value.as_ref()
+        if !self.live(h) {
+            return None;
+        }
+        self.values[h.index()].as_ref()
     }
 
     pub fn get_mut(&mut self, h: Handle) -> Option<&mut T> {
-        self.slots
-            .get_mut(h.index())
-            .filter(|s| s.generation == h.generation)?
-            .value
-            .as_mut()
+        if !self.live(h) {
+            return None;
+        }
+        self.values[h.index()].as_mut()
+    }
+
+    /// Every slot in index order, empty ones as `None`.
+    pub fn values(&self) -> &[Option<T>; N] {
+        &self.values
+    }
+
+    /// Every slot in index order, mutably, empty ones as `None`. Filling
+    /// or emptying a slot goes through [`Self::insert`] and
+    /// [`Self::remove_at`].
+    pub fn values_mut(&mut self) -> impl Iterator<Item = Option<&mut T>> {
+        self.values.iter_mut().map(Option::as_mut)
     }
 
     /// The object in slot `index`, whatever its serial.
     pub fn slot_value(&self, index: usize) -> Option<&T> {
-        self.slots.get(index)?.value.as_ref()
+        self.values.get(index)?.as_ref()
     }
 
     pub fn slot_value_mut(&mut self, index: usize) -> Option<&mut T> {
-        self.slots.get_mut(index)?.value.as_mut()
+        self.values.get_mut(index)?.as_mut()
     }
 
     /// Slot `index`'s serial: how many inserts it has taken, wrapping.
     pub fn serial(&self, index: usize) -> Option<u16> {
-        Some(self.slots.get(index)?.generation)
+        self.serials.get(index).copied()
+    }
+
+    /// The handle of the object in slot `index`, if one is there.
+    pub fn handle_at(&self, index: usize) -> Option<Handle> {
+        self.values.get(index)?.as_ref()?;
+        Some(Handle {
+            index: index as u16,
+            generation: self.serials[index],
+        })
     }
 
     /// Removes the object; its handle, and every copy of it, goes stale.
     pub fn remove(&mut self, h: Handle) -> Option<T> {
-        let slot = self
-            .slots
-            .get_mut(h.index())
-            .filter(|s| s.generation == h.generation)?;
-        let value = slot.value.take()?;
+        if !self.live(h) {
+            return None;
+        }
+        self.remove_at(h.index())
+    }
+
+    /// Removes the object in slot `index`, whatever its serial.
+    pub fn remove_at(&mut self, index: usize) -> Option<T> {
+        let value = self.values.get_mut(index)?.take()?;
         self.len -= 1;
         if self.order == FreeOrder::Lifo {
-            self.free[self.free_len] = h.index;
+            self.free[usize::from(self.free_len)] = index as u16;
             self.free_len += 1;
         }
         Some(value)
@@ -416,21 +441,29 @@ impl<T, const N: usize> ObjectPool<T, N> {
     /// free list starts again from slot 0, as the original's is rebuilt at
     /// each battle (`itManagerInitItems`).
     pub fn clear(&mut self) {
-        for slot in &mut self.slots {
-            slot.value = None;
+        for value in &mut self.values {
+            *value = None;
         }
         self.len = 0;
         self.free = core::array::from_fn(|i| (N - 1 - i) as u16);
-        self.free_len = N;
+        self.free_len = N as u16;
+    }
+
+    /// [`Self::clear`] and serials back to zero: the pool as
+    /// [`Self::with_order`] made it, without a temporary.
+    pub fn reset(&mut self) {
+        self.clear();
+        self.serials = [0; N];
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Handle, &T)> {
-        self.slots.iter().enumerate().filter_map(|(i, s)| {
-            s.value.as_ref().map(|v| {
+        let serials = &self.serials;
+        self.values.iter().enumerate().filter_map(move |(i, v)| {
+            v.as_ref().map(|v| {
                 (
                     Handle {
                         index: i as u16,
-                        generation: s.generation,
+                        generation: serials[i],
                     },
                     v,
                 )
@@ -439,18 +472,21 @@ impl<T, const N: usize> ObjectPool<T, N> {
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Handle, &mut T)> {
-        self.slots.iter_mut().enumerate().filter_map(|(i, s)| {
-            let generation = s.generation;
-            s.value.as_mut().map(|v| {
-                (
-                    Handle {
-                        index: i as u16,
-                        generation,
-                    },
-                    v,
-                )
+        let serials = &self.serials;
+        self.values
+            .iter_mut()
+            .enumerate()
+            .filter_map(move |(i, v)| {
+                v.as_mut().map(|v| {
+                    (
+                        Handle {
+                            index: i as u16,
+                            generation: serials[i],
+                        },
+                        v,
+                    )
+                })
             })
-        })
     }
 }
 
@@ -900,6 +936,29 @@ mod tests {
             assert_eq!(pool.get(b), None, "clear leaves handles stale");
             assert_ne!(copy, pool);
         }
+    }
+
+    #[test]
+    fn a_pool_removes_by_slot_and_resets_its_serials() {
+        let mut pool: ObjectPool<u8, 3> = ObjectPool::with_order(FreeOrder::Lifo);
+        let a = pool.insert(1).unwrap();
+        let b = pool.insert(2).unwrap();
+        assert_eq!(pool.handle_at(1), Some(b));
+        assert_eq!(pool.handle_at(2), None);
+        assert_eq!(pool.values(), &[Some(1), Some(2), None]);
+        for v in pool.values_mut().flatten() {
+            *v += 10;
+        }
+        assert_eq!(pool.remove_at(0), Some(11));
+        assert_eq!(pool.remove_at(0), None, "an empty slot frees nothing");
+        assert_eq!(pool.get(a), None);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.insert(3).unwrap().index(), 0, "slot 0 was freed last");
+        assert!(!pool.is_full());
+        pool.insert(4).unwrap();
+        assert!(pool.is_full());
+        pool.reset();
+        assert_eq!(pool, ObjectPool::with_order(FreeOrder::Lifo));
     }
 
     /// A heap block that counts its frees.

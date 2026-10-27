@@ -610,6 +610,9 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     if which == Stage::Bonus1 { bonus.make_targets(&positions, &mut s.items); }
     else {
         let map = s.stage_map.as_mut().ok_or(Blocked::Assets(which))?;
+        // One exact allocation: doubling growth would copy each 27 KB `Visual`
+        // up to four times and hold two buffers at the last regrowth.
+        map.platforms.reserve_exact(bonus.platforms.iter().flatten().count());
         for platform in bonus.platforms.iter().flatten() {
             let group = map.groups.get_mut(platform.group as usize).ok_or(Blocked::Assets(which))?;
             if !group.animated { group.status = ssb_game::map::GroupStatus::On; }

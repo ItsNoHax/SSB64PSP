@@ -49,6 +49,7 @@
 //! keeps the despawn flash, which is display state.
 
 use ssb_engine::math::{Vec2, Vec3};
+use ssb_engine::memory::{FreeOrder, Handle, ObjectPool};
 
 use crate::colanim::{ColAnim, ColAnimId};
 use crate::combat::{AttackState, Element, HitStatus};
@@ -1287,10 +1288,9 @@ pub struct PKFireSpawn {
 /// `gITManagerStructsAllocFree` and the item link.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemPool {
-    slots: [Option<Item>; ITEM_ALLOC_MAX],
-    /// The free list: `free[free_len - 1]` is handed out next.
-    free: [u8; ITEM_ALLOC_MAX],
-    free_len: usize,
+    /// `gITManagerStructsAllocFree`: last freed, first handed out; a
+    /// handle is `slot | serial << 16`.
+    pool: ObjectPool<Item, ITEM_ALLOC_MAX>,
     /// Live structs in link (creation) order.
     order: [u8; ITEM_ALLOC_MAX],
     order_len: usize,
@@ -1312,9 +1312,6 @@ pub struct ItemPool {
     /// The battle camera's look-at X (`CObj::vec.at.x`), which the Star's
     /// maker reads.
     pub camera_at_x: f32,
-    /// Bumped each time a struct is handed out, so a stage's handle to a
-    /// struct that was freed and reused no longer resolves.
-    serials: [u16; ITEM_ALLOC_MAX],
     events: [Option<StageItemEvent>; STAGE_EVENTS_MAX],
     monster_attack_prev: u8,
     /// `gITManagerMonsterData` (`itManagerInitMonsterVars`).
@@ -1344,14 +1341,8 @@ pub struct ItemPool {
 impl Default for ItemPool {
     /// `itManagerInitItems`: struct 0 is handed out first.
     fn default() -> Self {
-        let mut free = [0u8; ITEM_ALLOC_MAX];
-        for (i, f) in free.iter_mut().enumerate() {
-            *f = (ITEM_ALLOC_MAX - 1 - i) as u8;
-        }
         ItemPool {
-            slots: core::array::from_fn(|_| None),
-            free,
-            free_len: ITEM_ALLOC_MAX,
+            pool: ObjectPool::with_order(FreeOrder::Lifo),
             order: [0; ITEM_ALLOC_MAX],
             order_len: 0,
             owners: [None; 4],
@@ -1363,7 +1354,6 @@ impl Default for ItemPool {
             normal_drops: normal::DropWeights::default(),
             appear: None,
             camera_at_x: 0.0,
-            serials: [0; ITEM_ALLOC_MAX],
             events: [None; STAGE_EVENTS_MAX],
             monster_attack_prev: 4,
             monster_data: MonsterData::default(),
@@ -1492,7 +1482,7 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if self.free_len == 0 {
+        if self.pool.is_full() {
             return None;
         }
         let mut item = match index {
@@ -1565,7 +1555,7 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        if self.free_len == 0 {
+        if self.pool.is_full() {
             return None;
         }
         let owners = self.owners;
@@ -1616,7 +1606,7 @@ impl ItemPool {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        let can_alloc = self.free_len != 0;
+        let can_alloc = !self.pool.is_full();
         let Some(spawn) = self
             .appear
             .as_mut()
@@ -1638,7 +1628,7 @@ impl ItemPool {
             let Some(slot) = self.slot_of(handle) else {
                 continue;
             };
-            if let Some(item) = self.slots[usize::from(slot)].as_mut() {
+            if let Some(item) = self.pool.slot_value_mut(usize::from(slot)) {
                 if matches!(item.kind, ItemKind::MMonster(_)) {
                     mmonster::rock_event(item, dead);
                 }
@@ -1664,17 +1654,27 @@ impl ItemPool {
     pub fn items(&self) -> impl Iterator<Item = &Item> + '_ {
         self.order[..self.order_len]
             .iter()
-            .filter_map(|&s| self.slots[usize::from(s)].as_ref())
+            .filter_map(|&s| self.pool.slot_value(usize::from(s)))
     }
 
     pub fn get(&self, slot: u8) -> Option<&Item> {
-        self.slots.get(usize::from(slot)).and_then(|s| s.as_ref())
+        self.pool.slot_value(usize::from(slot))
     }
 
     pub fn get_mut(&mut self, slot: u8) -> Option<&mut Item> {
-        self.slots
-            .get_mut(usize::from(slot))
-            .and_then(|s| s.as_mut())
+        self.pool.slot_value_mut(usize::from(slot))
+    }
+
+    /// Writes a copied-out item back to its struct, which is still live.
+    fn put(&mut self, slot: u8, item: Item) {
+        let live = self.pool.slot_value_mut(usize::from(slot));
+        debug_assert!(
+            live.is_some(),
+            "item struct {slot} was freed while copied out"
+        );
+        if let Some(live) = live {
+            *live = item;
+        }
     }
 
     pub fn active_count(&self) -> usize {
@@ -1683,14 +1683,8 @@ impl ItemPool {
 
     /// `itManagerGetNextStructAlloc` plus the GObj link.
     fn alloc(&mut self, item: Item) -> Option<u8> {
-        if self.free_len == 0 {
-            return None;
-        }
-        self.free_len -= 1;
-        let slot = self.free[self.free_len];
-        self.slots[usize::from(slot)] = Some(item);
+        let slot = self.pool.insert(item).ok()?.index() as u8;
         self.landed[usize::from(slot)] = None;
-        self.serials[usize::from(slot)] = self.serials[usize::from(slot)].wrapping_add(1);
         self.order[self.order_len] = slot;
         self.order_len += 1;
         Some(slot)
@@ -1698,7 +1692,7 @@ impl ItemPool {
 
     /// `itMainDestroyItem`: a held item leaves its fighter's hand.
     fn destroy(&mut self, slot: u8) {
-        let Some(item) = self.slots[usize::from(slot)].take() else {
+        let Some(item) = self.pool.remove_at(usize::from(slot)) else {
             return;
         };
         if item.is_hold {
@@ -1712,8 +1706,6 @@ impl ItemPool {
             self.order.copy_within(i + 1..self.order_len, i);
             self.order_len -= 1;
         }
-        self.free[self.free_len] = slot;
-        self.free_len += 1;
     }
 
     fn mark_released(&mut self, port: u8) {
@@ -1770,7 +1762,7 @@ impl ItemPool {
     pub fn cpu_sights(&self) -> impl Iterator<Item = crate::computer::behave::ItemSight> + '_ {
         self.order[..self.order_len]
             .iter()
-            .filter_map(|&s| self.slots[usize::from(s)].as_ref())
+            .filter_map(|&s| self.pool.slot_value(usize::from(s)))
             .map(|item| {
                 let a = &item.attack;
                 let mut attack_pos = [Vec2::ZERO; ATTACK_COLLS];
@@ -1808,7 +1800,7 @@ impl ItemPool {
         let mut view = ItemView::default();
         for (n, item) in self.order[..self.order_len]
             .iter()
-            .filter_map(|&s| self.slots[usize::from(s)].as_ref().map(|i| (s, i)))
+            .filter_map(|&s| self.pool.slot_value(usize::from(s)).map(|i| (s, i)))
             .enumerate()
         {
             let (slot, item) = item;
@@ -1900,7 +1892,7 @@ impl ItemPool {
     /// already let go of its [`HeldItem`], so the item's side decides.
     fn held_slot(&self, f: &Fighter) -> Option<u8> {
         self.order[..self.order_len].iter().copied().find(|&s| {
-            self.slots[usize::from(s)]
+            self.pool.values()[usize::from(s)]
                 .as_ref()
                 .is_some_and(|i| i.is_hold && i.owner == Some(f.port))
         })
@@ -2114,7 +2106,7 @@ impl ItemPool {
             let item = pk_fire::make(&self.counts, spawn, &surfaces);
             if let Some(slot) = self.alloc(item) {
                 let xf = effects.pk_fire_flame(pos);
-                if let Some(item) = self.slots[usize::from(slot)].as_mut() {
+                if let Some(item) = self.pool.slot_value_mut(usize::from(slot)) {
                     item.vars.pkfire_xf = (xf != crate::particle::NIL).then_some(xf);
                 }
             }
@@ -2169,7 +2161,7 @@ impl ItemPool {
         let mut link = 0;
         while cursor < self.order_len {
             let slot = self.order[cursor];
-            let Some(mut item) = self.slots[usize::from(slot)].clone() else {
+            let Some(mut item) = self.pool.slot_value(usize::from(slot)).cloned() else {
                 unreachable!("live item link names an empty struct");
             };
             let handle = self.handle_of(slot);
@@ -2200,7 +2192,7 @@ impl ItemPool {
             if !alive {
                 item.push_destroy_dust(&mut emit);
             }
-            self.slots[usize::from(slot)] = Some(item);
+            self.put(slot, item);
             self.fx.extend(link as u32, &emit);
             self.apply_effects(effects);
             if !alive {
@@ -2242,7 +2234,7 @@ impl ItemPool {
         let mut link = 0;
         while cursor < self.order_len {
             let slot = self.order[cursor];
-            let Some(mut item) = self.slots[usize::from(slot)].clone() else {
+            let Some(mut item) = self.pool.slot_value(usize::from(slot)).cloned() else {
                 unreachable!("live item link names an empty struct");
             };
             let mut push = |e| push_event(&mut events, e);
@@ -2264,7 +2256,7 @@ impl ItemPool {
                 item.push_destroy_dust(&mut emit);
             }
             self.fx.extend(link as u32, &emit);
-            self.slots[usize::from(slot)] = Some(item);
+            self.put(slot, item);
             if !alive {
                 self.destroy(slot);
             } else {
@@ -2282,14 +2274,13 @@ impl ItemPool {
 
     /// The live struct a stage handle names.
     fn slot_of(&self, handle: u32) -> Option<u8> {
-        let slot = (handle & 0xFF) as u8;
-        let serial = (handle >> 16) as u16;
-        (self.get(slot).is_some() && self.serials.get(usize::from(slot)) == Some(&serial))
-            .then_some(slot)
+        // The slot is the low byte; bits 8-15 are never set.
+        let h = Handle::from_bits(handle & 0xFFFF_00FF);
+        self.pool.get(h).map(|_| h.index() as u8)
     }
 
     fn handle_of(&self, slot: u8) -> u32 {
-        u32::from(slot) | (u32::from(self.serials[usize::from(slot)]) << 16)
+        u32::from(slot) | (u32::from(self.pool.serial(usize::from(slot)).unwrap_or(0)) << 16)
     }
 
     /// Records this frame's landed item hits in the thrower's stale queue
@@ -2339,7 +2330,7 @@ impl crate::stage::StageItems for ItemPool {
             StageItem::Pakkun(i) => pakkun::make(&self.counts, i, pos),
             StageItem::Monster(id) => {
                 let kind = monsters::Kind::from_id(id)?;
-                if self.free_len == 0 {
+                if self.pool.is_full() {
                     return None;
                 }
                 monsters::make(&self.counts, kind, pos, &mut self.monster_attack_prev)
@@ -2838,7 +2829,7 @@ where
         self.pool.normal_switches.enabled(3)
     }
     fn make_egg(&mut self, parent: &Item, pos: Vec3, vel: Vec3) -> bool {
-        if self.pool.free_len == 0 {
+        if self.pool.pool.is_full() {
             return false;
         }
         let mut egg = container::make(&self.pool.counts, container::Kind::Egg, pos, vel);

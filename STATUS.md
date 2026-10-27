@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 66): arena `Scope` + LIFO `ObjectPool` in `ssb-engine`; per-tick `FrameArena` (4 KiB); opening steady allocs 0 (RE-484); peak 20,555,520 B unchanged.
+- Landed (batch 67): `ItemPool`/`WeaponPool` on LIFO `ObjectPool` (weapons take the original free-list order); Bonus 2 platforms reserve exactly, peak −162,560 B; peak 20,555,520 B.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. Batch 67: A2 `GameArena` + A4 `ObjectPool` wiring.
-2. PSP-1000 memory (`PLAN.md` row), then MS8.
+1. Batch 68: `GameArena` per scene.
+2. PSP-1000 memory (RE-572), then MS8.
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 66; deepest game stack 401,704 B (f1-bonus-pause) of 524288.
+Baseline: batch 67; deepest game stack 401,704 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

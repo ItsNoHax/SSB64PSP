@@ -138,7 +138,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Memory arenas | Wire `GameArena`/`ObjectPool` into `psp-runtime`; `AssetArena` (RE-571) and `FrameArena` (movie camera order) done; reads and memory unchanged | RE-571, [memory](docs/memory.md#allocators) |
+| Memory arenas | `GameArena` as the N64's per-scene general heap (`syTaskmanInitGeneralHeap`/`syTaskmanMalloc`): allocated per scene, sized for that scene, freed at scene end, so peak does not rise; convert scene-lifetime types with drop glue to plain data (batch 68). `ObjectPool`, `AssetArena`, `FrameArena` done | RE-571, [memory](docs/memory.md#allocators) |
+| Stack temporaries | Build by-value temporaries in place (`enter_training` 176 KB, `new_session` 139 KB, `bonus2::Visual::new` 52 KB frames); deepest stack 401,704 B of 524,288 | [memory](docs/memory.md) |
 
 ## Completed
 
