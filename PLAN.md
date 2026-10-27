@@ -138,7 +138,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Memory arenas | `GameArena` done. Remaining: `FxPlayers` into the arena behind a fixed effect cap from the N64 effect GObj limit (~150 KB at vs4 peak); KO `ManagerCounts` Rc → plain data | RE-571, [memory](docs/memory.md#allocators) |
+| First-use battle allocations | 15 remain: 13 `depth_mask::Tables` scratch Vecs (first magnifier draw), 2 unattributed; move into `GameArena` or statics | RE-571, [memory](docs/memory.md#allocators) |
 | Stack temporaries | Build by-value temporaries in place (`enter_training` 176 KB, `new_session` 139 KB, `bonus2::Visual::new` 52 KB frames); deepest stack 401,704 B of 524,288 | [memory](docs/memory.md) |
 
 ## Completed
@@ -148,6 +148,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Architecture: portable crates, shared `psp-runtime`, `psp-game`, `psp-asset-viewer`; pinned toolchains; CI without ROM | [D-026](docs/decisions/D-026.md), [D-030](docs/decisions/D-030.md), [D-044](docs/decisions/D-044.md) |
 | ROM: validation; VPK0 (499 files); relocData (2,132 files, 61,343 intern, 3,092 extern relocs); F3DEX2 (1,864 lists, 0 failures) | RE-001, RE-002, RE-017 |
 | Loader on `reloc_link` placement; per-run blocks owned by `AssetArena` (`ssb_rom::loader_plan`) | RE-571, [D-011](docs/decisions/D-011.md) |
+| Memory arenas: `GameArena`, `AssetArena`, `FrameArena`, LIFO item/weapon pools, fixed effect pool, KO counters as plain data | RE-571, [memory](docs/memory.md#allocators) |
 | Pack: meshes, textures (RGBA, IA, I, CI + palette banks), mat/joint anims, figatrees, sprites, particles, collision, stage and fighter tables; per-scene files | [D-046](docs/decisions/D-046.md), RE-475 |
 | Renderer: geometry, projection, texture addressing, 3-point compensation, combiner, `MObj`, lighting, texgen, alpha/blend/depth, billboards, shadows, framebuffer effects, wipes, UI sprites, GE state cache | [rendering](docs/rendering.md) |
 | Physical PSP rendering: PSP-2000, PSP-3000; two 10-minute runs, one 30-minute run | RE-270, RE-271, RE-273, RE-284 |

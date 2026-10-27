@@ -14,6 +14,16 @@
 //! scene runs. Values come out as [`SceneBox`]es, which unlike the
 //! original's plain pointers run their destructors; the block is freed only
 //! once every box has been dropped, which [`GameArena::end`] checks.
+//!
+//! The original's object free lists (`gcGetAObjSetNextAlloc`,
+//! `gcGetDObjSetNextAlloc`, `gcGetMObjSetNextAlloc`, `objman.c:602-706`)
+//! take a new object from the heap whenever their list is empty, into the
+//! slack the heap holds past the scene's setup. The port's block is sized
+//! to the scene's setup alone, so [`GameArena::alloc_grow_uninit`] takes
+//! such an object from a block of its own once the scene's block is full;
+//! those blocks are the scene's too, freed by [`GameArena::end`]. Each
+//! grown block starts with the link to the one grown before it, so the
+//! arena holds only the last.
 
 use core::cell::Cell;
 use core::marker::PhantomData;
@@ -22,6 +32,11 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 use super::{BlockAlloc, ARENA_ALIGN};
+
+/// The most objects [`GameArena::alloc_grow_uninit`] holds past a scene's
+/// block: the effect and weapon players' pool (`psp-game`), 38 effects and
+/// 32 weapons (`EFFECT_ALLOC_NUM`, `WEAPON_ALLOC_NUM`).
+pub const GROW_BLOCKS: usize = 70;
 
 /// What a [`GameArena`] call could not do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +66,9 @@ pub struct GameArenaUsage {
     /// Bytes taken, alignment padding included.
     pub used: usize,
     pub capacity: usize,
+    /// Bytes of the objects in blocks taken past the scene's block
+    /// ([`GameArena::alloc_grow_uninit`]), their links not included.
+    pub grown: usize,
 }
 
 /// The block's first bytes: the count of its live [`SceneBox`]es.
@@ -65,6 +83,11 @@ pub struct GameArena<A: BlockAlloc> {
     scene: &'static str,
     capacity: usize,
     used: usize,
+    /// The last block taken past `block`, one object each, freed with it:
+    /// each starts with the link to the one before ([`Self::grow_link`]).
+    grown: Option<A::Block>,
+    grown_len: usize,
+    grown_bytes: usize,
 }
 
 impl<A: BlockAlloc> GameArena<A> {
@@ -75,6 +98,9 @@ impl<A: BlockAlloc> GameArena<A> {
             scene: "",
             capacity: 0,
             used: 0,
+            grown: None,
+            grown_len: 0,
+            grown_bytes: 0,
         }
     }
 
@@ -118,6 +144,14 @@ impl<A: BlockAlloc> GameArena<A> {
             });
         }
         let usage = self.usage();
+        let mut next = self.grown.take();
+        while let Some(b) = next {
+            // SAFETY: `alloc_grow_uninit` wrote the link, and nothing has
+            // read it out since.
+            next = unsafe { Self::grow_link(&b).read() };
+        }
+        self.grown_len = 0;
+        self.grown_bytes = 0;
         self.block = None;
         self.scene = "";
         self.capacity = 0;
@@ -135,6 +169,7 @@ impl<A: BlockAlloc> GameArena<A> {
             scene: self.scene,
             used: self.used,
             capacity: self.capacity,
+            grown: self.grown_bytes,
         }
     }
 
@@ -155,6 +190,55 @@ impl<A: BlockAlloc> GameArena<A> {
     pub fn alloc_uninit<T>(&mut self) -> Result<SceneBox<MaybeUninit<T>>, GameArenaError> {
         let (ptr, header) = self.bump(size_of::<T>(), align_of::<T>())?;
         Ok(SceneBox::from_raw(ptr.cast::<MaybeUninit<T>>(), header))
+    }
+
+    /// `gcGet*SetNextAlloc` on an empty free list: room for one `T` from
+    /// the scene's block while it has room, else from a block of its own
+    /// (module docs), at most [`GROW_BLOCKS`] of them a scene. A grown
+    /// block is never reused within its scene; the caller keeps its own
+    /// free list, as the original's does.
+    pub fn alloc_grow_uninit<T>(&mut self) -> Result<SceneBox<MaybeUninit<T>>, GameArenaError> {
+        let full = match self.alloc_uninit::<T>() {
+            Err(e @ GameArenaError::Full { .. }) => e,
+            other => return other,
+        };
+        let Some(block) = self.block.as_ref() else {
+            return Err(GameArenaError::NoScene);
+        };
+        if self.grown_len == GROW_BLOCKS {
+            return Err(full);
+        }
+        let header = NonNull::new(A::ptr(block).cast::<Header>()).expect("block pointer");
+        let at = size_of::<Option<A::Block>>().next_multiple_of(align_of::<T>());
+        let bytes = at + size_of::<T>();
+        let grown = self.alloc.alloc(bytes).ok_or(GameArenaError::NoMemory {
+            scene: self.scene,
+            bytes,
+        })?;
+        let base = A::ptr(&grown);
+        assert!(
+            (base as usize).is_multiple_of(align_of::<T>().max(align_of::<Option<A::Block>>())),
+            "grown block below the value's alignment"
+        );
+        // SAFETY: the block is `bytes` long and aligned for the link and,
+        // at `at`, for `T`.
+        let ptr = unsafe {
+            Self::grow_link(&grown).write(self.grown.take());
+            base.add(at)
+        };
+        self.grown = Some(grown);
+        self.grown_len += 1;
+        self.grown_bytes += size_of::<T>();
+        // SAFETY: the header lives while the scene's block does, which
+        // `end` keeps until every box is gone.
+        let h = unsafe { header.as_ref() };
+        h.live.set(h.live.get() + 1);
+        Ok(SceneBox::from_raw(ptr.cast::<MaybeUninit<T>>(), header))
+    }
+
+    /// A grown block's link to the block grown before it, at its start.
+    fn grow_link(block: &A::Block) -> *mut Option<A::Block> {
+        A::ptr(block).cast::<Option<A::Block>>()
     }
 
     /// Moves `value` into the arena.
@@ -247,6 +331,7 @@ impl<A: BlockAlloc> Drop for GameArena<A> {
     fn drop(&mut self) {
         if self.live() != 0 {
             core::mem::forget(self.block.take());
+            core::mem::forget(self.grown.take());
         }
     }
 }
@@ -455,6 +540,46 @@ mod tests {
         let b = unsafe { b.assume_init() };
         assert_eq!(b[4095], 4095);
         drop(b);
+        a.end().unwrap();
+    }
+
+    #[test]
+    fn objects_past_the_block_grow_blocks_of_their_own_freed_with_the_scene() {
+        let (mut a, freed) = arena(1 << 20);
+        a.begin("vs", scene_bytes(&[(size_of::<u64>(), 8)]))
+            .unwrap();
+        // The scene's block takes the first while it has room.
+        let first = a.alloc_grow_uninit::<u64>().unwrap();
+        assert_eq!(a.usage().grown, 0);
+        let mut more = Vec::new();
+        for i in 0..GROW_BLOCKS {
+            let mut b = a.alloc_grow_uninit::<[u64; 4]>().unwrap();
+            b.write([i as u64; 4]);
+            // SAFETY: just written.
+            more.push(unsafe { b.assume_init() });
+        }
+        assert_eq!(a.usage().grown, GROW_BLOCKS * 32);
+        assert_eq!(more[GROW_BLOCKS - 1][3], GROW_BLOCKS as u64 - 1);
+        let used = a.usage().used;
+        assert_eq!(
+            a.alloc_grow_uninit::<[u64; 4]>().err(),
+            Some(GameArenaError::Full {
+                scene: "vs",
+                need: 32,
+                used,
+                capacity: a.usage().capacity
+            })
+        );
+        assert_eq!(a.live(), 1 + GROW_BLOCKS as u32);
+        assert!(matches!(a.end(), Err(GameArenaError::Live { .. })));
+        assert_eq!(freed.get(), 0);
+        drop((first, more));
+        let usage = a.end().unwrap();
+        assert_eq!(usage.grown, GROW_BLOCKS * 32);
+        assert_eq!(freed.get(), 1 + GROW_BLOCKS);
+        // The next scene starts with none grown.
+        a.begin("vs", 64).unwrap();
+        assert_eq!(a.usage().grown, 0);
         a.end().unwrap();
     }
 

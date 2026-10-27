@@ -314,12 +314,6 @@ where
     S: Seat<A::Ground> + ?Sized,
     H: MatchHooks<S>,
 {
-    // One battle, one pair of motion and stat counts (`ftmanager.c:163-164`):
-    // a fighter or pool made with a handle of its own joins the items'.
-    world.weapons.counts.adopt(&world.items.counts);
-    for f in seats.iter_mut().flatten() {
-        f.fighter_mut().stats.counts.adopt(&world.items.counts);
-    }
     // The crowd's view of the fighters as the frame starts ([`crate::public`]).
     crate::public::observe(seats.iter().flatten().map(|f| f.fighter()));
     // Priority 5, Ground link: `gcPlayAnimAll` precedes every fighter

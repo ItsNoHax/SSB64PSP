@@ -411,10 +411,6 @@ fn a_replay_draws_the_same_counts_every_run() {
         let mut counts = Vec::new();
         for tick in 1..=330u64 {
             let _ = tick_pair(&pack, &map, &mut fighters, &pad, tick, &mut pair);
-            for f in &fighters {
-                assert!(f.fighter.stats.counts.same(&pair.items.counts));
-            }
-            assert!(pair.weapons.counts.same(&pair.items.counts));
             counts.push(pair.items.counts.peek());
         }
         counts

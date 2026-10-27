@@ -169,10 +169,9 @@ fn thrown_body_hits_credit_thrower_team_player_and_stale_queue() {
 #[test]
 fn two_thrown_bodies_of_one_battle_do_not_alias_in_the_queue() {
     use crate::stale::MotionAttackId;
-    let battle = crate::manager_counts::ManagerCounts::new();
+    let _battle = crate::manager_counts::ManagerCounts::new();
     let [a, b] = [1, 2].map(|port| {
         let mut f = Fighter::new(FighterKind::Mario, port, 3);
-        f.stats.counts.adopt(&battle);
         f.set_motion_id(MotionAttackId::None);
         (f.motion.attack_id, f.motion.count)
     });

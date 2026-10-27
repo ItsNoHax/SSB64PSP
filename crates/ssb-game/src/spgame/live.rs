@@ -107,6 +107,10 @@ pub enum Event {
     Mew,
 }
 
+/// The events [`Stats::enable`] makes room for: the host drains them
+/// every frame.
+const EVENTS_RESERVED: usize = 8;
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Stats {
     pub attack: AttackStat,
@@ -120,8 +124,11 @@ pub struct Stats {
 }
 
 impl Stats {
+    /// Starts queueing the fighter's events, with room for
+    /// [`EVENTS_RESERVED`] taken now, at the battle's setup: a frame's
+    /// events then allocate nothing unless more are queued at once.
     pub fn enable(&mut self) {
-        self.pending = Some(Vec::new());
+        self.pending = Some(Vec::with_capacity(EVENTS_RESERVED));
     }
     /// Rebirth resets FTStruct fields but preserves undrained callbacks
     /// and the host's campaign attachment, which live outside that struct,

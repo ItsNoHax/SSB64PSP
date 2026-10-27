@@ -107,12 +107,12 @@ lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
 - `ssb_engine::memory` (RE-340)
   - `Arena` → `Scope` (`begin`, drop releases; `checkpoint` nests, drop rewinds); typed allocs reject drop glue at compile time
   - `AssetArena`: block table over a `BlockAlloc` (PSP: `CacheLineBlocks`)
-  - `ObjectPool<T, N>`: serial-checked handles (serial bumps at insert); `FreeOrder::Lifo` = original item/weapon free lists; users: `ssb_game::item::ItemPool` (16), `ssb_game::weapon::WeaponPool` (32); item handle `u32` = `slot | serial << 16`
+  - `ObjectPool<T, N>`: serial-checked handles (serial bumps at insert); `FreeOrder::Lifo` = original item/weapon free lists; users: `ssb_game::item::ItemPool` (16), `ssb_game::weapon::WeaponPool` (32); `FxPool` of 70 = N64 `EFFECT_ALLOC_NUM` 38 + `WEAPON_ALLOC_NUM` 32 (`efdef.h:4`, `efmanager.c:1762`); item handle `u32` = `slot | serial << 16`
 - `psp-runtime`: `AssetArena`; `FrameArena` (static 4 KiB 64-byte-aligned `.bss`, `memory::frame_arena`)
 
 | Allocator | Lifetime |
 |---|---|
-| `GameArena` | One kernel block per battle scene (`BATTLE_SCENE_BYTES` by CPU count: 691,707 / 729,186 / 766,665 / 804,144 B), taken at scene entry, freed at exit; holds `BattleWorld` and CPU fighters as `SceneBox`es (drop glue runs; `end` refuses while boxes live); overflow → `memory::fatal` (N64 `syTaskmanInitGeneralHeap`). Objects ≤32 KiB stay on SmallHeap chunks (never returned). Peak metric: `peak_use` is relative to boot free; compare absolute `low_free` (battle `peak_use` +12,288 B is `boot_free` rising from a 20,956 B smaller ELF) |
+| `GameArena` | One kernel block per battle scene (`BATTLE_SCENE_BYTES` by CPU count: 691,707 / 729,186 / 766,665 / 804,144 B), taken at scene entry, freed at exit; holds `BattleWorld` and CPU fighters as `SceneBox`es (drop glue runs; `end` refuses while boxes live); overflow → `memory::fatal` (N64 `syTaskmanInitGeneralHeap`). `ManagerCounts` are statics, as in the original. Objects ≤32 KiB stay on SmallHeap chunks (never returned). Peak metric: `peak_use` is relative to boot free; compare absolute `low_free` (battle `peak_use` +12,288 B is `boot_free` rising from a 20,956 B smaller ELF) |
 | `AssetArena` | One block per read run (≤ 4 MiB load, ≤ 1 MiB prefetch), refcounted by its files; freed at the GE safe point after its last file drops |
 | `FrameArena` | One `Scope` per tick (`psp-game` loop); users: movie camera draw order |
 | `ObjectPool<T>` | Fixed capacity; free order `LowestFirst` or `Lifo`; users: items, weapons |

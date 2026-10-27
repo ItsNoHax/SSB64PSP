@@ -202,11 +202,18 @@ impl Slot {
     };
 }
 
+/// Container smashes [`Effects::new`] makes room for: each lasts 90
+/// frames, and a battle's crates and barrels seldom break more at once.
+const CONTAINERS_RESERVED: usize = 4;
+
 /// The effect manager's struct pool and particle bank.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effects {
-    /// Custom seven-sibling DObj effects. Storage grows only on allocation,
-    /// keeping the PSP's match initializer off a large stack temporary.
+    /// Custom seven-sibling DObj effects, on the heap: off the PSP's match
+    /// initializer's stack, and room for [`CONTAINERS_RESERVED`] taken at
+    /// [`Self::new`], so a battle's smashes allocate nothing until more
+    /// live at once (each holds a non-forced struct, so at most
+    /// `EFFECT_ALLOC_NUM - 5`).
     containers: alloc::vec::Vec<ContainerSmash>,
     slots: [Slot; EFFECT_ALLOC_NUM],
     live: [bool; EFFECT_ALLOC_NUM],
@@ -261,7 +268,7 @@ impl Effects {
     /// `efManagerInitEffects`, with the common bank loaded as `bank`.
     pub fn new(bank: u8) -> Effects {
         let mut e = Effects {
-            containers: alloc::vec::Vec::new(),
+            containers: alloc::vec::Vec::with_capacity(CONTAINERS_RESERVED),
             slots: [Slot::EMPTY; EFFECT_ALLOC_NUM],
             live: [false; EFFECT_ALLOC_NUM],
             free: 0,

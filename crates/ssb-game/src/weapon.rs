@@ -3092,7 +3092,7 @@ impl Default for WeaponPool {
             set_off: [false; MAX_WEAPONS],
             rehit: [[0; 4]; MAX_WEAPONS],
             rock_events: [None; 2 * MAX_WEAPONS],
-            counts: crate::manager_counts::ManagerCounts::new(),
+            counts: crate::manager_counts::ManagerCounts,
             clash_view: ClashView::default(),
         }
     }
@@ -3127,7 +3127,6 @@ impl WeaponPool {
         self.clash_fx.clear();
         self.clash_damage = [0; MAX_WEAPONS];
         self.set_off = [false; MAX_WEAPONS];
-        self.counts = crate::manager_counts::ManagerCounts::new();
         self.clash_view = ClashView::default();
     }
 

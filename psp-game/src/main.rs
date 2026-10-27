@@ -2159,10 +2159,11 @@ fn log_stack_peak(sim_frame_index: u64) {
     let (boot, low) = ssb_psp_runtime::memory::low_water();
     let report = ssb_psp_runtime::scene_files::report();
     let (held, blocks) = ssb_psp_runtime::scene_files::held();
-    // The scene arena's use: a bump allocator, so its high water.
+    // The scene arena's use: a bump allocator, so its high water; then the
+    // bytes grown past its block (the effect players' free list).
     let arena = ssb_psp_runtime::memory::scene_usage();
     let line = alloc::format!(
-        "stack tick={} peak={} size={}\nmem tick={} boot={} low={} held={} blocks={} demand={}/{} arena={}:{}/{}\nscene {} demand files {:x?}\n",
+        "stack tick={} peak={} size={}\nmem tick={} boot={} low={} held={} blocks={} demand={}/{} arena={}:{}/{}+{}\nscene {} demand files {:x?}\n",
         sim_frame_index,
         used,
         GAME_STACK_BYTES,
@@ -2176,6 +2177,7 @@ fn log_stack_peak(sim_frame_index: u64) {
         arena.scene,
         arena.used,
         arena.capacity,
+        arena.grown,
         report.scene,
         ssb_psp_runtime::scene_files::demand_files(),
     );
@@ -3974,11 +3976,10 @@ fn enter_training(
 ) -> u32 {
     world.weapons.reset();
     world.items = ssb_game::item::ItemPool::default();
-    // `ftManagerAllocFighter` (ftmanager.c:163-164): the battle's motion and
-    // stat counts start at 1, one pair shared by every fighter, item and
-    // weapon of the battle.
+    // `ftManagerAllocFighter` (ftmanager.c:163-164): the item pool's reset
+    // starts the battle's motion and stat counts at 1, one pair shared by
+    // every fighter, item and weapon of the battle.
     let counts = world.items.counts.clone();
-    world.weapons.counts = counts.clone();
     // The battle scene's start: the ground's altitude whistle
     // (`mpCollisionInitGroundData`), `gSCManagerBattleState->damage_ratio`
     // (knockback) and `ftPublicMakeActor`'s quiet crowd.
@@ -7599,13 +7600,15 @@ struct EffectVisuals {
     /// Each port's Egg Lay egg (RE-417), made on the first
     /// [`Self::sync_eggs`].
     eggs: alloc::vec::Vec<EggVisual>,
-    /// Each port's own effects, in [`scenes_ref`] order, made on the first
-    /// [`Self::sync`].
-    ports: alloc::vec::Vec<PortFx>,
-    /// Each weapon pool slot's players, made on the first [`Self::sync`]:
-    /// a weapon is its own `GObj` on the N64, so two Links' Boomerangs or
-    /// every Thunder Jolt in the air play their own animations.
-    weapons: alloc::vec::Vec<WeaponFx>,
+    /// Each port's own effects, in [`scenes_ref`] order.
+    ports: [PortFx; 4],
+    /// Each weapon pool slot's players: a weapon is its own `GObj` on the
+    /// N64, so two Links' Boomerangs or every Thunder Jolt in the air play
+    /// their own animations.
+    weapons: [WeaponFx; ssb_game::weapon::MAX_WEAPONS],
+    /// The players [`Self::ports`] and [`Self::weapons`] take while their
+    /// graphic lives.
+    fx_pool: FxPool,
     items: [ItemVisual; MAX_ITEM_VISUALS],
 }
 
@@ -7624,8 +7627,16 @@ impl EffectVisuals {
             ptr::addr_of_mut!((*p).entry).write(Default::default());
             ptr::addr_of_mut!((*p).ko).write(Default::default());
             ptr::addr_of_mut!((*p).eggs).write(Default::default());
-            ptr::addr_of_mut!((*p).ports).write(Default::default());
-            ptr::addr_of_mut!((*p).weapons).write(Default::default());
+            // One element at a time through one out-of-line writer: an
+            // array's `Default`, or an unrolled loop, builds each element
+            // in line.
+            for i in 0..4 {
+                write_default(ptr::addr_of_mut!((*p).ports[i]));
+            }
+            for i in 0..ssb_game::weapon::MAX_WEAPONS {
+                write_default(ptr::addr_of_mut!((*p).weapons[i]));
+            }
+            ptr::addr_of_mut!((*p).fx_pool).write(FxPool::new());
             for i in 0..MAX_ITEM_VISUALS {
                 ptr::addr_of_mut!((*p).items[i]).write(Default::default());
             }
@@ -7633,21 +7644,98 @@ impl EffectVisuals {
     }
 }
 
-/// One effect's or weapon's transform and material players: some 27 KB,
-/// so each [`FxSlot`] makes its own on the heap the first time its graphic
-/// lives.
+/// Writes `T::default()` at `p`.
+///
+/// # Safety
+/// `p` is valid for a write.
+#[inline(never)]
+unsafe fn write_default<T: Default>(p: *mut T) {
+    // SAFETY: as the caller promises.
+    unsafe { p.write(T::default()) }
+}
+
+/// One effect's or weapon's transform and material players: its `GObj`'s
+/// `DObj`s, `AObj`s and `MObj`s on the N64, some 27 KB here.
 type FxPlayers = ssb_rom::skeleton::GraphicPlayers;
 
-#[inline(never)]
-fn new_fx_players() -> alloc::boxed::Box<FxPlayers> {
-    alloc::boxed::Box::default()
+/// The most effect and weapon graphics live at once: each is an effect's
+/// `EFStruct` (`EFFECT_ALLOC_NUM`, 38: `efManagerGetNextStructAlloc`) or a
+/// weapon's `WPStruct` (`WEAPON_ALLOC_NUM`, 32) on the N64, whose makers
+/// return no `GObj` once their pool is empty.
+const FX_PLAYERS_MAX: usize = ssb_game::effect::EFFECT_ALLOC_NUM + ssb_game::weapon::MAX_WEAPONS;
+const _: () = assert!(FX_PLAYERS_MAX <= ssb_engine::memory::GROW_BLOCKS);
+
+/// The [`FxPlayers`] free list, as the N64's object free lists
+/// (`gcGetAObjSetNextAlloc`, `objman.c:602`): a graphic takes the last
+/// players given back, or, with none, new ones from the scene arena
+/// ([`ssb_psp_runtime::memory::scene_alloc_grow_uninit`]); its eject gives
+/// them back. Nothing is freed before the scene ends, so the scene holds
+/// its most graphics live at once.
+struct FxPool {
+    free: [Option<SceneBox<FxPlayers>>; FX_PLAYERS_MAX],
+    free_len: usize,
+    /// Players made this scene: its most graphics live at once.
+    made: usize,
+}
+
+impl Default for FxPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FxPool {
+    fn new() -> Self {
+        FxPool {
+            free: [const { None }; FX_PLAYERS_MAX],
+            free_len: 0,
+            made: 0,
+        }
+    }
+
+    /// A made graphic's players, as new (`gcAddDObjForGObj` and its
+    /// `AObj`s and `MObj`s start empty). `None` past [`FX_PLAYERS_MAX`]:
+    /// the N64 maker returns `NULL` and nothing is drawn.
+    #[inline(never)]
+    fn take(&mut self) -> Option<SceneBox<FxPlayers>> {
+        if self.free_len > 0 {
+            self.free_len -= 1;
+            let mut players = self.free[self.free_len].take()?;
+            let p: *mut FxPlayers = &mut *players;
+            // SAFETY: `p` is the given-back players: dropped, then written
+            // anew in place.
+            unsafe {
+                core::ptr::drop_in_place(p);
+                write_default(p);
+            }
+            return Some(players);
+        }
+        if self.made == FX_PLAYERS_MAX {
+            return None;
+        }
+        self.made += 1;
+        let mut players = ssb_psp_runtime::memory::scene_alloc_grow_uninit::<FxPlayers>();
+        // SAFETY: written here, then taken as initialized.
+        unsafe {
+            write_default(players.as_mut_ptr());
+            Some(players.assume_init())
+        }
+    }
+
+    /// The graphic's eject: its players go back on the list.
+    fn give(&mut self, players: Option<SceneBox<FxPlayers>>) {
+        if let Some(players) = players {
+            self.free[self.free_len] = Some(players);
+            self.free_len += 1;
+        }
+    }
 }
 
 /// One effect's players and the play count they have reached.
 #[derive(Default)]
 struct FxSlot {
     clock: Option<u16>,
-    players: Option<alloc::boxed::Box<FxPlayers>>,
+    players: Option<SceneBox<FxPlayers>>,
 }
 
 impl FxSlot {
@@ -7661,15 +7749,23 @@ impl FxSlot {
     fn sync(
         &mut self,
         p: &Pack<'_>,
+        pool: &mut FxPool,
         target: Option<u16>,
         object: Option<&ssb_rom::pack::ObjectDesc>,
         anim: Option<&ssb_rom::pack::AnimDesc>,
         speed: f32,
     ) -> bool {
         let Some((restart, ticks)) = catch_up(&mut self.clock, target) else {
+            self.stop(pool);
             return false;
         };
-        let players = self.players.get_or_insert_with(new_fx_players);
+        if self.players.is_none() {
+            self.players = pool.take();
+        }
+        let Some(players) = self.players.as_deref_mut() else {
+            self.clock = None;
+            return false;
+        };
         if restart {
             players.start(p, anim, object.map(|o| object_mat_anims(p, o)));
         }
@@ -7683,6 +7779,12 @@ impl FxSlot {
     /// The players while the effect lives.
     fn live(&self) -> Option<&FxPlayers> {
         self.clock.and(self.players.as_deref())
+    }
+
+    /// The graphic's eject: its players go back to `pool`.
+    fn stop(&mut self, pool: &mut FxPool) {
+        self.clock = None;
+        pool.give(self.players.take());
     }
 }
 
@@ -7722,7 +7824,7 @@ struct ReflectorFx {
     index: u8,
     /// End's table ran out: `gcEjectGObj`.
     ended: bool,
-    players: Option<alloc::boxed::Box<FxPlayers>>,
+    players: Option<SceneBox<FxPlayers>>,
 }
 
 impl ReflectorFx {
@@ -7734,14 +7836,22 @@ impl ReflectorFx {
     fn sync(
         &mut self,
         p: &Pack<'_>,
+        pool: &mut FxPool,
         anims: Option<&[ssb_rom::pack::AnimDesc; 4]>,
         effect: Option<ssb_game::status::FoxReflectorEffect>,
     ) {
         let (Some(anims), Some(e)) = (anims, effect) else {
             self.clock = None;
+            pool.give(self.players.take());
             return;
         };
-        let players = self.players.get_or_insert_with(new_fx_players);
+        if self.players.is_none() {
+            self.players = pool.take();
+            self.clock = None;
+        }
+        let Some(players) = self.players.as_deref_mut() else {
+            return;
+        };
         let set = |players: &mut FxPlayers, index: &mut u8, id: u8| {
             let Some(anim) = anims.get(usize::from(id)) else {
                 return;
@@ -8676,9 +8786,7 @@ impl EffectVisuals {
         }
 
         self.sync_weapons(p, assets, weapons);
-        if self.ports.len() < 4 {
-            self.ports.resize_with(4, Default::default);
-        }
+        let pool = &mut self.fx_pool;
         for (v, f) in self.ports.iter_mut().zip(fighters) {
             fn pair(
                 a: &Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
@@ -8686,33 +8794,34 @@ impl EffectVisuals {
                 a.as_ref().map(|(o, a)| (o, a)).unzip()
             }
             let (object, anim) = pair(&assets.magnet);
-            v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0);
+            v.magnet.sync(p, pool, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.pk_wave);
-            v.pk_wave.sync(p, f.and_then(ssb_game::ness::pk_wave_effect_ticks), object, anim, 1.0);
+            v.pk_wave.sync(p, pool, f.and_then(ssb_game::ness::pk_wave_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.sing);
-            v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0);
+            v.sing.sync(p, pool, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.spin_effect);
-            v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0);
+            v.spin.sync(p, pool, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.spin_weapon);
             let ticks = f.and_then(ssb_game::link::spin_weapon_display).map(|(_, t)| t);
-            v.spin_weapon.sync(p, ticks, object, anim, 1.0);
+            v.spin_weapon.sync(p, pool, ticks, object, anim, 1.0);
             let punch = f.and_then(|f| {
                 ssb_game::captain::punch_effect_ticks(f)
                     .or_else(|| ssb_game::kirby_copy::punch_effect_ticks(f))
             });
-            v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0);
+            v.punch.sync(p, pool, punch, assets.falcon_punch.as_ref(), None, 1.0);
             let (object, anim) = pair(&assets.falcon_kick);
-            v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0);
+            v.kick.sync(p, pool, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0);
             for (i, kind) in ssb_game::kirby::CutterEffect::ALL.into_iter().enumerate() {
                 let (object, anim) = assets.kirby_cutter_fx[i]
                     .as_ref()
                     .map(|(o, a)| (o, a.as_ref()))
                     .unzip();
                 let ticks = f.and_then(|f| ssb_game::kirby::cutter_effect_ticks(f, kind));
-                v.cutter[i].sync(p, ticks, object, anim.flatten(), 1.0);
+                v.cutter[i].sync(p, pool, ticks, object, anim.flatten(), 1.0);
             }
             v.reflector.sync(
                 p,
+                pool,
                 assets.reflector.as_ref().map(|(_, anims)| anims),
                 f.and_then(ssb_game::status::fox_reflector_effect),
             );
@@ -8728,10 +8837,7 @@ impl EffectVisuals {
     #[inline(never)]
     fn sync_weapons(&mut self, p: &Pack<'_>, assets: &DrawAssets, weapons: &ssb_game::weapon::WeaponPool) {
         use ssb_game::weapon::AnimatedWeapon as W;
-        if self.weapons.len() < ssb_game::weapon::MAX_WEAPONS {
-            self.weapons
-                .resize_with(ssb_game::weapon::MAX_WEAPONS, Default::default);
-        }
+        let pool = &mut self.fx_pool;
         let mut seen = [false; ssb_game::weapon::MAX_WEAPONS];
         for (slot, w) in weapons.animated() {
             let Some(v) = self.weapons.get_mut(slot) else {
@@ -8774,15 +8880,16 @@ impl EffectVisuals {
                 ),
             };
             if v.key != Some(key) {
+                // A new weapon: the old one's `GObj` was ejected.
                 v.key = Some(key);
-                v.fx.clock = None;
+                v.fx.stop(pool);
             }
-            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed);
+            v.fx.sync(p, pool, Some(ticks), object.as_ref(), anim.as_ref(), speed);
         }
         for (v, seen) in self.weapons.iter_mut().zip(seen) {
             if !seen {
                 v.key = None;
-                v.fx.clock = None;
+                v.fx.stop(pool);
             }
         }
     }

@@ -31,7 +31,7 @@ use alloc::vec::Vec;
 use core::mem::{align_of, needs_drop, size_of, MaybeUninit};
 
 mod game;
-pub use game::{scene_bytes, GameArena, GameArenaError, GameArenaUsage, SceneBox};
+pub use game::{scene_bytes, GameArena, GameArenaError, GameArenaUsage, SceneBox, GROW_BLOCKS};
 
 /// Default alignment: `LBRELOC_CACHE_ALIGN`'s 16 bytes, which is also what
 /// the GE wants for DMA sources.

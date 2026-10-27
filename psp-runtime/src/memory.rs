@@ -10,7 +10,7 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use psp::sys;
-use ssb_engine::memory::{GameArena, GameArenaError, GameArenaUsage, SceneBox};
+use ssb_engine::memory::{BlockAlloc, GameArena, GameArenaError, GameArenaUsage, SceneBox};
 
 use crate::assets::CacheLineBlocks;
 
@@ -182,21 +182,44 @@ pub fn frame_arena() -> Option<ssb_engine::memory::FrameArena<'static>> {
     })
 }
 
+/// The scene arena's blocks. The scene's own block (past
+/// [`ssb_engine::heap::MAX_SMALL`]) is the kernel's, on whole cache lines
+/// ([`CacheLineBlocks`]). An object grown past it
+/// ([`scene_alloc_grow_uninit`]) comes from the general heap like any
+/// small value: its size class sits in chunks the heap has already taken,
+/// where a kernel block of its own would take fresh memory
+/// (`docs/memory.md`).
+struct SceneBlocks;
+
+impl BlockAlloc for SceneBlocks {
+    type Block = crate::assets::AlignedBuf;
+    fn alloc(&mut self, len: usize) -> Option<crate::assets::AlignedBuf> {
+        if len > ssb_engine::heap::MAX_SMALL {
+            CacheLineBlocks.alloc(len)
+        } else {
+            crate::assets::AlignedBuf::new(len)
+        }
+    }
+    fn ptr(block: &crate::assets::AlignedBuf) -> *mut u8 {
+        CacheLineBlocks::ptr(block)
+    }
+}
+
 /// The scene arena (`docs/memory.md`, Allocators): `syTaskmanMalloc`'s
 /// general heap, one block a scene, taken at its entry and freed at its
 /// exit. Only the main thread touches it.
-struct SceneArena(core::cell::UnsafeCell<GameArena<CacheLineBlocks>>);
+struct SceneArena(core::cell::UnsafeCell<GameArena<SceneBlocks>>);
 
 // SAFETY: only the main thread calls the functions below (the game loop
 // owns every scene).
 unsafe impl Sync for SceneArena {}
 
-static SCENE: SceneArena = SceneArena(core::cell::UnsafeCell::new(GameArena::new(CacheLineBlocks)));
+static SCENE: SceneArena = SceneArena(core::cell::UnsafeCell::new(GameArena::new(SceneBlocks)));
 
 /// The scene arena. Each caller below holds the reference for the call
 /// only and none of them re-enters another.
 #[allow(clippy::mut_from_ref)]
-fn scene() -> &'static mut GameArena<CacheLineBlocks> {
+fn scene() -> &'static mut GameArena<SceneBlocks> {
     // SAFETY: main thread only, and no reference outlives its call (above).
     unsafe { &mut *SCENE.0.get() }
 }
@@ -248,6 +271,13 @@ pub fn scene_usage() -> GameArenaUsage {
 /// Uninitialised room for a `T` in the open scene.
 pub fn scene_alloc_uninit<T>() -> SceneBox<core::mem::MaybeUninit<T>> {
     scene().alloc_uninit().unwrap_or_else(|e| scene_fatal(e))
+}
+
+/// Uninitialised room for a `T` in the open scene, past its block when
+/// that is full ([`GameArena::alloc_grow_uninit`]): an object the scene
+/// makes on demand and keeps on a free list of its own.
+pub fn scene_alloc_grow_uninit<T>() -> SceneBox<core::mem::MaybeUninit<T>> {
+    scene().alloc_grow_uninit().unwrap_or_else(|e| scene_fatal(e))
 }
 
 /// `value` in the open scene.

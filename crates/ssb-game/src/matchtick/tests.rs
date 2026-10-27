@@ -402,11 +402,13 @@ fn go_unlocks_after_the_interrupt_and_before_physics() {
     assert_eq!(probe.at_physics, Some(false));
 }
 
-/// One battle, one pair of counts (`ftmanager.c:163-164`): seats and pools
-/// made with handles of their own all share the items' after one frame,
-/// whose next motion count is past every count any of them drew.
+/// One battle, one pair of counts (`ftmanager.c:163-164`): the seats and
+/// pools draw from the one sequence the item pool's setup started, and a
+/// frame neither restarts it nor repeats a count any of them drew.
 #[test]
-fn step_joins_every_handle_to_the_battles_counts() {
+fn step_keeps_one_sequence_for_every_handle() {
+    let mut weapons: Box<WeaponPool> = Box::default();
+    let mut items: Box<ItemPool> = Box::default();
     let mut fighters: Vec<Fighter> = (0..2)
         .map(|i| {
             let mut f = Fighter::new(FighterKind::Mario, i, 3);
@@ -414,20 +416,20 @@ fn step_joins_every_handle_to_the_battles_counts() {
             f
         })
         .collect();
-    let mut weapons: Box<WeaponPool> = Box::default();
-    let mut items: Box<ItemPool> = Box::default();
-    // Private draws: seat 0 to 3, seat 1 to 5, the weapons to 2.
-    let mut drawn = 0;
+    // Draws through seat 0 (3), seat 1 (5) and the weapons (2).
+    let first = items.counts.peek().0;
+    let mut drawn = Vec::new();
     for (handle, n) in [
         (&fighters[0].stats.counts, 3),
         (&fighters[1].stats.counts, 5),
         (&weapons.counts, 2),
     ] {
-        assert!(!handle.same(&items.counts));
         for _ in 0..n {
-            drawn = drawn.max(handle.motion());
+            drawn.push(handle.motion());
         }
     }
+    let expected: Vec<u16> = (first..first + 10).collect();
+    assert_eq!(drawn, expected);
     let mut stage = Stage::none();
     let mut effects = crate::effect::NoEffects;
     let mut world = World {
@@ -450,12 +452,7 @@ fn step_joins_every_handle_to_the_battles_counts() {
         &mut world,
         &mut (),
     );
-    let battle = world.items.counts.clone();
-    assert!(world.weapons.counts.same(&battle));
-    for f in &fighters {
-        assert!(f.stats.counts.same(&battle));
-    }
-    assert!(battle.motion() > drawn);
+    assert!(world.items.counts.motion() > first + 9);
 }
 
 struct CameraSeat {

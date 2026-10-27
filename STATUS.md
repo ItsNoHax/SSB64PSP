@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 68): `GameArena` per battle scene (729,186 B training/vs); peak 19,943,680 B (was 20,555,520 B); `low_free` >= HEAD on all rows (battle `peak_use` +12,288 B is only `boot_free` rising, ELF −20,956 B).
+- Landed (batch 69): fixed `FxPool` of 70, KO `ManagerCounts` as statics, `GameArena` grow blocks; peak_use 19,945,472 B (`f1-onep-zako-ko-flash`; relative to a higher `boot_free`, absolute `low_free` gains ~287 KB on every row).
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. `FxPlayers` fixed effect cap (small).
-2. PSP-1000 memory per RE-572 (Maps preview first), then MS8.
+1. Batch 70: PSP-1000 step B (Maps previews loaded like the N64, RE-572).
+2. A audio streaming, C figatree streaming (hardware latency gate), then MS8.
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 68; deepest game stack 401,576 B of 524288.
+Baseline: batch 69; deepest game stack 399,856 B of 524288.
 
 | Check | Result |
 |---|---|

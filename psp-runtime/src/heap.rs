@@ -52,7 +52,11 @@ fn chunk(min: usize) -> Option<(*mut u8, usize)> {
     (!p.is_null()).then_some((p, len))
 }
 
+// Out of line, both: under LTO every `Box`, `Vec` and drop site would
+// otherwise take its own copy of the lock and the free lists (~600 drop
+// sites, some 280 KB of code).
 #[no_mangle]
+#[inline(never)]
 unsafe fn __psp_external_alloc(size: usize, align: usize) -> *mut u8 {
     ALLOCS.fetch_add(1, Ordering::Relaxed);
     match class_of(size, align) {
@@ -66,6 +70,7 @@ unsafe fn __psp_external_alloc(size: usize, align: usize) -> *mut u8 {
 }
 
 #[no_mangle]
+#[inline(never)]
 unsafe fn __psp_external_dealloc(ptr: *mut u8, size: usize, align: usize) {
     match class_of(size, align) {
         Some(c) => with_small(|h| h.free(ptr, c)),
