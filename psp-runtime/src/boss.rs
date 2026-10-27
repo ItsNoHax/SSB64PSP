@@ -122,6 +122,16 @@ impl BossEffects {
         fade: Option<[u8; 4]>,
     ) {
         let mut any = false;
+        // The RSP clips the wallpaper like any other list, at the game's
+        // `FRUSTRATIO_1`: the viewport edges. The >180 tunnel's cone runs
+        // from an apex ahead of the camera to a rim at its eye plane, its
+        // ring vertices ~6.6 half-widths off screen. The N64 cuts each
+        // triangle at the screen edge, takes the new corners' shade from
+        // the 3D edge and shades linearly between; unclipped, the GE spread
+        // the ring's shade over the whole screen-space edge and the tunnel
+        // drew much darker (RE-519).
+        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
+        st.clip_at_viewport = true;
         for i in wallpaper.draw_order(tag) {
             let Some(e) = &wallpaper.effects[i] else {
                 continue;
@@ -138,18 +148,21 @@ impl BossEffects {
             if !any {
                 any = true;
                 gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
-                gpu.set_perspective(
+                let proj = ssb_engine::math::Mat4::sy_persp_fast(
                     CAMERA_FOVY,
                     ssb_game::camera::BATTLE_VIEWPORT_WIDTH
                         / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
                     CAMERA_NEAR,
                     CAMERA_FAR,
                 );
-                gpu.set_view(&ssb_engine::math::Mat4::look_at(
+                gpu.set_projection(&proj);
+                let view = ssb_engine::math::Mat4::look_at(
                     ssb_game::spgame::boss::CAMERA_EYE,
                     ssb_engine::math::Vec3::ZERO,
                     ssb_engine::math::Vec3::Y,
-                ));
+                );
+                gpu.set_view(&view);
+                st.clip_view_proj = Some((proj * view).cols);
             }
             let mut posed = [Mat4::IDENTITY; MAX_NODES];
             let n = compose(pack, v, e, &mut posed);
@@ -180,6 +193,7 @@ impl BossEffects {
             );
             st.color_override = None;
         }
+        (st.clip_view_proj, st.clip_at_viewport) = clip;
     }
 }
 

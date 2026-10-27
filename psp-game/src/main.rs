@@ -2761,6 +2761,16 @@ unsafe fn training_frame(
                     ssb_game::particle::run(&mut damage_hud.particles, b, &mut damage_hud.effects);
                 }
             }
+            // `sc1PGameBossDefeatInterfaceProcUpdate` resumes the effect
+            // link (6, before the camera's and the interface's): the
+            // display effects' processes run through the zoom (the damage
+            // sparks' draws), their particles stay paused.
+            if let (Some(b), Some(bk)) = (battle.as_ref(), banks.as_ref()) {
+                if b.boss_defeat == Some(ssb_game::battle::BossDefeat::Zoom) {
+                    damage_hud.effects.func_run();
+                    damage_hud.effects.process(&mut damage_hud.particles, bk);
+                }
+            }
             if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_ref()) {
                 campaign::boss_frozen_frame(p, stage_index, boss, pl, dummies, b);
                 // The damage display's break animation runs on.
@@ -2901,7 +2911,7 @@ unsafe fn training_frame(
         return false;
     }
     if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_mut()) {
-        campaign::boss_after_world(boss, pl, dummies, b, damage_hud);
+        campaign::boss_after_world(boss, pl, dummies, b);
     }
     if let (Some(c), Some(stage)) = (campaign, p.stage(stage_index)) {
         let groups = stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
@@ -3411,10 +3421,11 @@ fn set_fall_interface(damage_hud: &Hud, show_score: bool) {
 /// (`ftCommonRebirthDownSetStatus`), then the update.
 fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fighter::Fighter, fell: bool, shown: bool) {
     use ssb_game::status::{AnyStatus, Status};
-    // The break's draws were made in the fighter's process when the
-    // effect runtime ran it (`ssb_game::ko::make_dead_particles`).
+    // The break's draws were made in the fighter's process: a fall's when
+    // the effect runtime ran it (`ssb_game::ko::make_dead_particles`),
+    // Master Hand's defeat's in `ssb_game::boss::update_damage_stats`.
     match (fell, ssb_game::hud::take_break_vel_x(usize::from(f.port))) {
-        (true, Some(vel_x)) => hud.start_break_anim_from(&vel_x),
+        (_, Some(vel_x)) => hud.start_break_anim_from(&vel_x),
         (true, None) => hud.start_break_anim(),
         _ => {}
     }

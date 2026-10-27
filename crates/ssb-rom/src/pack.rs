@@ -487,7 +487,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 135 seeds Master Hand's wallpaper display procs' render modes and PRIM
 // into each wallpaper's first list (`BOSS_WALLPAPER_GRAPHS`; RE-457). No
 // layout change.
-pub const VERSION: u32 = 135;
+// 136 grows `LodBlendDesc` to 56 bytes with `origin_delta`, tile 0's static
+// origin less tile 1's: the two-tile blend accepts tiles whose origins
+// differ (Master Hand's Fall wallpaper, RE-321).
+pub const VERSION: u32 = 136;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1490,10 +1493,13 @@ pub struct LodBlendDesc {
     /// `MObjSub::{unk0A, unk38, unk3A}`: tile 1's live window equation
     /// inputs, the counterparts of [`MatAnimDesc::uv_tile_params`].
     pub tile1_params: [u32; 3],
+    /// [`crate::mesh::LodBlend::origin_delta`]: tile 0's static origin less
+    /// tile 1's, quarter texels (one word: S low, T high).
+    pub origin_delta: [i16; 2],
 }
 
 impl LodBlendDesc {
-    pub const SIZE: usize = 52;
+    pub const SIZE: usize = 56;
 }
 
 /// A fighter primitive whose image is a texture part's `MObj` sprite
@@ -3949,6 +3955,8 @@ impl PackWriter {
                 .into_iter()
                 .chain(lod.next_textures)
                 .chain(lod.tile1_params)
+                .chain([u32::from(lod.origin_delta[0] as u16)
+                    | u32::from(lod.origin_delta[1] as u16) << 16])
             {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -5654,6 +5662,10 @@ impl<'a> Pack<'a> {
                     next_count: word(1),
                     next_textures: core::array::from_fn(|j| word(2 + j)),
                     tile1_params: core::array::from_fn(|j| word(2 + MatAnimDesc::MAX_TEXTURES + j)),
+                    origin_delta: {
+                        let w = word(5 + MatAnimDesc::MAX_TEXTURES);
+                        [w as u16 as i16, (w >> 16) as u16 as i16]
+                    },
                 }
             })
         })
@@ -8436,6 +8448,7 @@ mod tests {
                 u32::MAX,
             ],
             tile1_params: [384, 128, 128],
+            origin_delta: [0, 0],
         };
         let second = LodBlendDesc {
             mat_anim: 9,
@@ -8451,6 +8464,9 @@ mod tests {
                 u32::MAX,
             ],
             tile1_params: [64, 32, 64],
+            // Master Hand's Fall: tile 0 at (256,128), tile 1 at (256,0); a
+            // negative S checks the sign survives the packed word.
+            origin_delta: [-4, 128],
         };
         assert!(w.add_lod_blend(first));
         assert!(
@@ -8500,6 +8516,7 @@ mod tests {
                 u32::MAX,
             ],
             tile1_params: [1, 2, 3],
+            origin_delta: [0, 0],
         };
         assert!(w.add_lod_blend(blend));
         let digit = SpriteDesc {

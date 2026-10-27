@@ -498,7 +498,6 @@ pub(crate) fn boss_after_world(
     pl: &mut play::FighterScene,
     dummies: &mut Dummies,
     b: &mut ssb_game::battle::Battle,
-    hud: &mut Hud,
 ) {
     boss.run_wallpaper(dummies);
     ssb_psp_runtime::scene::play_camera_anim(pl, boss.camera_anim());
@@ -510,7 +509,7 @@ pub(crate) fn boss_after_world(
         core::mem::take(&mut d.fighter.boss.defeated).then_some(d.fighter.port)
     });
     if let Some(port) = defeated {
-        boss_defeat_init(boss, pl, dummies, b, hud, port);
+        boss_defeat_init(boss, pl, dummies, b, port);
     }
 }
 
@@ -523,7 +522,6 @@ fn boss_defeat_init(
     pl: &mut play::FighterScene,
     dummies: &mut Dummies,
     b: &mut ssb_game::battle::Battle,
-    hud: &mut Hud,
     port: u8,
 ) {
     let Some(f) = dummies.iter().flatten().find(|d| d.fighter.port == port) else {
@@ -537,9 +535,6 @@ fn boss_defeat_init(
         world,
         world + ssb_engine::math::Vec3::new(0.0, 0.0, ssb_game::boss::DEFEAT_ZOOM_EYE_Z),
     );
-    if let Some(h) = hud.damage.get_mut(usize::from(port)) {
-        h.start_break_anim();
-    }
     for f in scenes(pl, dummies).into_iter().flatten() {
         // `sc1PGameBossHidePlayerTagAll`.
         f.fighter.interface.tag_bossend = true;
@@ -738,7 +733,17 @@ pub(crate) fn log_boss_state(s: &Session, tick: u64) {
             ));
         }
     }
-    line.push_str(&alloc::format!(" n={}\n", n));
+    line.push_str(&alloc::format!(" n={}", n));
+    #[cfg(feature = "rng_trace")]
+    ssb_game::rng::trace::take(|file, at, v| {
+        let name = file.rsplit('/').next().unwrap_or(file);
+        if v < 0 {
+            line.push_str(&alloc::format!(" R:{}:{}", name, at));
+        } else {
+            line.push_str(&alloc::format!(" G{:x}@{}:{}", v, name, at));
+        }
+    });
+    line.push('\n');
     unsafe {
         psp::sys::sceIoWrite(
             psp::sys::sceKernelStdout(),

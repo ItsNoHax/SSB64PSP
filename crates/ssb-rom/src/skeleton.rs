@@ -1497,6 +1497,33 @@ pub struct LodBlendState {
     /// `Tra*` slots, over the tile-1 equation inputs. `None` when neither
     /// tile 1's window nor the shared scale moves.
     pub uv: Option<MaterialUv>,
+    /// [`crate::pack::LodBlendDesc::origin_delta`]: tile 0's static origin
+    /// less tile 1's, quarter texels.
+    pub origin_delta: [i16; 2],
+}
+
+impl LodBlendState {
+    /// The second pass's GE scale and offset: tile 1's live window
+    /// ([`MaterialUv::ge_affine`], or the identity at rest) re-based from
+    /// the tile 0 origin the packed UVs had removed. Per axis, in texels,
+    /// with `x` packed and `k` the live scale over the rest:
+    ///
+    /// ```text
+    /// rdp(x) = (x + o0) * k - live1 = [(x + o1) * k - live1] + (o0 - o1) * k
+    /// ```
+    ///
+    /// The bracket is the window affine (its rest origin is tile 1's, as
+    /// the converter required when the two were equal); the last term
+    /// moves by the static difference, scaled with the coordinate.
+    pub fn ge_affine(&self, dims: (u32, u32), clamp: (bool, bool)) -> UvAffine {
+        let mut affine = self
+            .uv
+            .map_or(UvAffine::IDENTITY, |uv| uv.ge_affine(dims, clamp));
+        let dim = [dims.0.max(1) as f32, dims.1.max(1) as f32];
+        affine.offset_s += f32::from(self.origin_delta[0]) / 4.0 * affine.scale_s / dim[0];
+        affine.offset_t += f32::from(self.origin_delta[1]) / 4.0 * affine.scale_t / dim[1];
+        affine
+    }
 }
 
 impl Default for MaterialAnimator {
@@ -1705,6 +1732,7 @@ fn resolve_lod_blend(
         texture,
         frac: crate::lod_blend::prim_lod_frac(lfrac),
         uv,
+        origin_delta: lod.origin_delta,
     })
 }
 
@@ -3134,6 +3162,7 @@ mod tests {
             next_count: 2,
             next_textures,
             tile1_params: [384, 128, 128],
+            origin_delta: [0, 0],
         }));
         (w.finish(), anim, current, next)
     }
@@ -3196,6 +3225,46 @@ mod tests {
             animator.resolved_uv(&pack, anim).is_none(),
             "tile 0 has no UV track here, so its window stays at rest"
         );
+    }
+
+    /// RE-321: tiles whose static origins differ (Master Hand's Fall
+    /// wallpaper, tile 0 at T 128 and tile 1 at T 0 quarter texels): the
+    /// second pass samples tile 1 at the packed coordinate plus tile 0's
+    /// origin less tile 1's, scaled with the coordinate when the window
+    /// scale moves.
+    #[test]
+    fn lod_blend_rebases_a_tile_one_origin_that_differs() {
+        let rest = LodBlendState {
+            texture: 0,
+            frac: 128,
+            uv: None,
+            origin_delta: [0, 128],
+        };
+        let a = rest.ge_affine((32, 64), (true, true));
+        assert_eq!((a.scale_s, a.scale_t), (1.0, 1.0));
+        assert_eq!(a.offset_s, 0.0);
+        // 32 texels on a 64-texel GE axis.
+        assert_eq!(a.offset_t, 0.5);
+        let (bytes, anim, ..) = lod_blend_pack();
+        let pack = Pack::open(&bytes).unwrap();
+        let mut animator = MaterialAnimator::new();
+        animator.start(&pack);
+        let mut uv = None;
+        for _ in 0..8 {
+            animator.tick(&pack);
+            uv = animator.resolved_lod_blend(&pack, anim).unwrap().uv.or(uv);
+        }
+        let uv = uv.unwrap();
+        let live = LodBlendState {
+            uv: Some(uv),
+            ..rest
+        };
+        let window = uv.ge_affine((128, 128), (true, true));
+        let a = live.ge_affine((128, 128), (true, true));
+        assert_eq!(a.scale_t, window.scale_t);
+        let want = window.offset_t + 32.0 * window.scale_t / 128.0;
+        assert!((a.offset_t - want).abs() < 1e-6, "{a:?} {window:?}");
+        assert_eq!(a.offset_s, window.offset_s);
     }
 
     #[test]

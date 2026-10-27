@@ -58,6 +58,7 @@
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Stage clip cost | Battle-stage guard-band clip costs +1.21 ms vs4, +1.75 ms Zebes: run the noclip-timer A/B to split clip from layout; reduce per-vertex test | RE-519 |
+| Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
 | vs4 link order | `vs4@2400` busy 18.3 ms vs RE-539 16.92: re-search the link order | RE-539 |
 | 1P intro | Kirby vs Yoshi team ~21 FPS on PSP-2000 → profile | RE-537, RE-539 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
@@ -135,7 +136,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
-| Master Hand | Fall wallpaper (damage 90) LOD pair: RE-321 tile-origin extension; tunnel colour vs N64 (PSP darker blue); post-defeat RNG draw count | RE-457, RE-321 |
+| Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
 | Special fighters | Unobserved: 30-Polygon clear; 1P intro Metal Mario darkness (cameras 7/15); movie camera kinds 3+8 texgen basis | RE-458 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 

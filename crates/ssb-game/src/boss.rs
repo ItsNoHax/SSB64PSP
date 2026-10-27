@@ -592,7 +592,10 @@ pub fn update_damage_stats(f: &mut Fighter) {
         return;
     }
     if f.damage >= HIT_POINTS {
-        // `sc1PGameBossDefeatInitInterface` → `sc1PGameBossSetCameraZoom`.
+        // `sc1PGameBossDefeatInitInterface`: `ifCommonPlayerDamageStartBreakAnim`'s
+        // draws (the host's display starts the break from them), then
+        // `sc1PGameBossSetCameraZoom`, both before the dead status.
+        crate::hud::draw_break_vel_x(usize::from(f.port & 3));
         f.boss.defeated = true;
         f.boss.defeat_zoom = defeat_zoom_at(f);
         if lr(f) == -1.0 {

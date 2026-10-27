@@ -13,8 +13,11 @@
 //!
 //! Clip coordinates and every attribute are interpolated linearly along the
 //! clipped edges, which is exact in homogeneous space: the rasteriser's
-//! perspective-correct interpolation then reproduces the unclipped
-//! triangle's values at every pixel.
+//! perspective-correct texture coordinates then reproduce the unclipped
+//! triangle's at every pixel. Shade is not perspective-corrected (the RDP's;
+//! the GE's on PPSSPP), so the planes decide the shade on screen when a
+//! vertex lies far outside them: the game clips at `FRUSTRATIO_1`, the
+//! viewport edges (RE-519).
 
 /// Attributes carried through a clip: any per-vertex quantity a caller
 /// needs linearly interpolated (texture coordinates, colour, normal and the

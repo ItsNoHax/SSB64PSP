@@ -750,6 +750,11 @@ pub struct LodBlend {
     pub shade_alpha: bool,
     /// `unk0A`, `unk38`, `unk3A`: tile 1's live window equation inputs.
     pub tile1_params: [u16; 3],
+    /// Tile 0's static origin less tile 1's (`G_SETTILESIZE` `uls`/`ult`,
+    /// S10.2 quarter texels): the packed UVs had tile 0's removed, so the
+    /// second pass adds this back before tile 1's window applies (Master
+    /// Hand's Fall wallpaper: (256,128) and (256,0), RE-321).
+    pub origin_delta: [i16; 2],
 }
 
 /// Identifies the material animation script driving a texture's active
@@ -2523,9 +2528,9 @@ impl State {
     /// TEXEL0` in RGB *and* alpha, an animated `MObj` that set the fraction
     /// and block-loaded tile 1's image at the address tile 1 samples, and a
     /// second cycle the GE can finish per pass. Tile 1 must share tile 0's
-    /// static window, shift and clamp axes: packed UVs had tile 0's origin
-    /// removed on clamped axes, and the second pass re-bases them onto tile
-    /// 1's live window from there.
+    /// shift and clamp axes; its static origin may differ: packed UVs had
+    /// tile 0's origin removed, and the second pass re-bases them onto tile
+    /// 1's live window from there ([`LodBlend::origin_delta`]).
     fn lod_blend_now(&self, texture: Option<TextureRef>) -> Option<LodBlend> {
         let (hi, lo) = self.combiner?;
         if !self.two_cycle || !combiner_is_lod_lerp(hi, lo) {
@@ -2539,11 +2544,13 @@ impl State {
             return None;
         }
         let next = self.tile_texture(self.tile1, Some((offset, file)))?;
-        if (next.clamp_s, next.clamp_t) != (texture.clamp_s, texture.clamp_t)
-            || (next.origin_s, next.origin_t) != (texture.origin_s, texture.origin_t)
-        {
+        if (next.clamp_s, next.clamp_t) != (texture.clamp_s, texture.clamp_t) {
             return None;
         }
+        let origin_delta = [
+            i16::try_from(i32::from(texture.origin_s) - i32::from(next.origin_s)).ok()?,
+            i16::try_from(i32::from(texture.origin_t) - i32::from(next.origin_t)).ok()?,
+        ];
         // Cycle 2 must reduce to a scale on the blended texel (RGB) and to
         // `COMBINED_ALPHA` times a constant (alpha): each pass then applies
         // the same vertex colour to its own texel.
@@ -2566,6 +2573,7 @@ impl State {
             prim_alpha,
             shade_alpha,
             tile1_params: self.tile1_params?,
+            origin_delta,
         })
     }
 

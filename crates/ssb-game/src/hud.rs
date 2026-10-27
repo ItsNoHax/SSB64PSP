@@ -136,6 +136,18 @@ pub fn fall_interface() -> FallInterface {
     }
 }
 
+/// `ifCommonPlayerDamageStartBreakAnim`'s draws for `port`'s display, one
+/// `syUtilsRandFloat` per glyph shown ([`fall_interface`]), left for the
+/// host's display ([`take_break_vel_x`]).
+pub(crate) fn draw_break_vel_x(port: usize) {
+    let ui = fall_interface();
+    let mut vel_x = [0.0; 4];
+    for v in vel_x[..usize::from(ui.char_display_count[port & 3]).min(4)].iter_mut() {
+        *v = crate::rng::rand_float() * 2.0 - 1.0;
+    }
+    put_break_vel_x(port, vel_x);
+}
+
 /// Leaves a fall's break draws for `port`'s display.
 pub(crate) fn put_break_vel_x(port: usize, vel_x: [f32; 4]) {
     BREAK_VEL_X.with(|v| {

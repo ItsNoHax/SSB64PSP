@@ -247,6 +247,46 @@ fn three_hundred_damage_defeats_and_two_hundred_enrages() {
     assert_eq!(f.status.status, AnyStatus::Boss(B::DeadCenter));
 }
 
+/// `sc1PGameBossDefeatInitInterface` runs inside `ftBossCommonUpdateDamageStats`,
+/// before the dead status: the defeat hit's first draws are
+/// `ifCommonPlayerDamageStartBreakAnim`'s, one per glyph shown (N64 RNG
+/// caller trace, `syUtilsRandFloat` ×2 for "300", then the dead status's
+/// `ftParamMakeEffect` draws).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_defeat_breaks_the_damage_display_before_the_dead_status() {
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    let port = usize::from(f.port & 3);
+    let mut count = [0; 4];
+    count[port] = 3;
+    crate::hud::set_fall_interface(&crate::hud::FallInterface {
+        pos: [Some((150, 210)); 4],
+        char_display_count: count,
+        show_score: false,
+    });
+    crate::rng::set_seed(0x1234);
+    let want = [
+        crate::rng::rand_float() * 2.0 - 1.0,
+        crate::rng::rand_float() * 2.0 - 1.0,
+        crate::rng::rand_float() * 2.0 - 1.0,
+        0.0,
+    ];
+    let after = crate::rng::seed();
+    crate::rng::set_seed(0x1234);
+    let _ = crate::hud::take_break_vel_x(port);
+    f.damage = 300;
+    update_damage_stats(&mut f);
+    assert!(f.boss.defeated);
+    assert_eq!(crate::hud::take_break_vel_x(port), Some(want));
+    assert_eq!(crate::rng::seed(), after);
+    // A hit while dying draws nothing.
+    f.damage = 310;
+    update_damage_stats(&mut f);
+    assert_eq!(crate::hud::take_break_vel_x(port), None);
+    crate::hud::clear_fall_interface();
+}
+
 #[test]
 fn facing_right_falls_through_dead_right() {
     let mut f = boss();

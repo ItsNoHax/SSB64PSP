@@ -370,6 +370,13 @@ pub struct DrawState {
     /// triangles the GE would discard clipped on the CPU first
     /// ([`ssb_engine::guard_clip`]). `None` draws every primitive as packed.
     pub clip_view_proj: Option<[[f32; 4]; 4]>,
+    /// Clip [`Self::clip_view_proj`]'s triangles to the viewport,
+    /// `|x|, |y| <= w`, instead of [`GUARD_BAND`]: the game's own
+    /// `gsSPClipRatio(FRUSTRATIO_1)` (`sSYRdpResetDisplayList`). The RDP
+    /// shades the clipped corners linearly in screen space, and so does the
+    /// GE on PPSSPP, so where a triangle's vertices lie far off screen the
+    /// band decides the colour on screen (RE-519).
+    pub clip_at_viewport: bool,
     /// Coordinate mapping last installed.
     ///
     /// Separate from `last_texture` because the scale depends on *both* the
@@ -1184,6 +1191,18 @@ unsafe fn apply_texture_mapping(
         Some((uv, t)) => animated_uv_affine(uv, &t),
         None => ssb_rom::skeleton::UvAffine::IDENTITY,
     };
+    apply_texture_affine(pack, p, st, texture, affine);
+}
+
+/// [`apply_texture_mapping`] for a mapping already resolved to the GE's
+/// scale and offset (the two-tile blend's second pass, RE-321).
+unsafe fn apply_texture_affine(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    texture: u32,
+    affine: ssb_rom::skeleton::UvAffine,
+) {
     let environment = p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
     let key = TextureMapping {
         environment,
@@ -1907,7 +1926,15 @@ unsafe fn draw_lod_blend_pass(
         st.state_changes += 1;
         bind_texture(pack, lod.texture, &t, TextureDesc::NO_ANIM);
     }
-    apply_texture_mapping(pack, p, st, lod.texture, lod.uv);
+    // RE-321: tile 1's live window, re-based from tile 0's static origin.
+    let affine = lod.ge_affine(
+        ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32),
+        (
+            t.wrap & TextureDesc::CLAMP_S != 0,
+            t.wrap & TextureDesc::CLAMP_T != 0,
+        ),
+    );
+    apply_texture_affine(pack, p, st, lod.texture, affine);
     if st.last_texture_func != Some(TextureFuncState::Modulate) {
         st.last_texture_func = Some(TextureFuncState::Modulate);
         sys::sceGuTexFunc(
@@ -1968,7 +1995,10 @@ unsafe fn draw_mesh_vertices(
     let mut tris = 0u32;
     let clip = st
         .clip_view_proj
-        .and_then(|vp| guard_clip(&vp, st.texgen_model.as_ref()?, verts));
+        .and_then(|vp| {
+            let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
+            guard_clip(&vp, band, st.texgen_model.as_ref()?, verts)
+        });
     for i in 0..mesh.prim_count {
         let Some(p) = pack.prim(mesh.first_prim + i) else {
             continue;
@@ -2097,6 +2127,8 @@ static mut CLIP_CODES: [u8; CLIP_CODES_MAX] = [0; CLIP_CODES_MAX];
 /// each primitive through its index list (RE-519).
 struct GuardClip<'a> {
     mvp: [[f32; 4]; 4],
+    /// The clip planes' `|x|, |y| <= band * w`.
+    band: f32,
     verts: &'a [u8],
     /// `codes[i]` is vertex `i`'s outcode; `None` for a mesh past
     /// [`CLIP_CODES_MAX`].
@@ -2117,7 +2149,7 @@ impl GuardClip<'_> {
     #[cold]
     #[inline(never)]
     fn vertex_code(&self, index: usize) -> u8 {
-        vertex_outcode(&self.mvp, self.verts, index)
+        vertex_outcode(&self.mvp, self.band, self.verts, index)
     }
 }
 
@@ -2125,20 +2157,20 @@ impl GuardClip<'_> {
 /// its position as the GE's `GU_VERTEX_16BIT` reads it, as
 /// [`decode_corner`] decodes it. A vertex past the end is the origin, the
 /// default vertex an expanded submission draws there.
-fn vertex_outcode(mvp: &[[f32; 4]; 4], verts: &[u8], index: usize) -> u8 {
+fn vertex_outcode(mvp: &[[f32; 4]; 4], band: f32, verts: &[u8], index: usize) -> u8 {
     let size = core::mem::size_of::<PackedVertex>();
     let p = verts
         .get(index * size..(index + 1) * size)
         // SAFETY: `bytes` is one whole `PackedVertex`, read unaligned.
         .map(|bytes| unsafe { (bytes.as_ptr() as *const PackedVertex).read_unaligned() })
         .map_or([0; 3], |v| [v.x, v.y, v.z]);
-    position_outcode(mvp, p)
+    position_outcode(mvp, band, p)
 }
 
 #[inline(always)]
-fn position_outcode(mvp: &[[f32; 4]; 4], p: [i16; 3]) -> u8 {
+fn position_outcode(mvp: &[[f32; 4]; 4], band: f32, p: [i16; 3]) -> u8 {
     let p = p.map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR);
-    ssb_engine::guard_clip::outcode(ssb_engine::guard_clip::clip_position(mvp, p), GUARD_BAND)
+    ssb_engine::guard_clip::outcode(ssb_engine::guard_clip::clip_position(mvp, p), band)
 }
 
 /// [`draw_mesh_vertices`]' guard clip for `verts` under `model`, when some
@@ -2147,6 +2179,7 @@ fn position_outcode(mvp: &[[f32; 4]; 4], p: [i16; 3]) -> u8 {
 /// otherwise, the common case, leaving the mesh's submissions as packed.
 fn guard_clip<'a>(
     vp: &[[f32; 4]; 4],
+    band: f32,
     model: &ScePspFMatrix4,
     verts: &'a [u8],
 ) -> Option<GuardClip<'a>> {
@@ -2180,17 +2213,17 @@ fn guard_clip<'a>(
         // on the one thread that draws.
         let table = unsafe { &mut (&mut *core::ptr::addr_of_mut!(CLIP_CODES))[..count] };
         for (code, bytes) in table.iter_mut().zip(verts.chunks_exact(size)) {
-            *code = position_outcode(&mvp, position(bytes));
+            *code = position_outcode(&mvp, band, position(bytes));
             union |= *code;
         }
         Some(&*table)
     } else {
         for bytes in verts.chunks_exact(size) {
-            union |= position_outcode(&mvp, position(bytes));
+            union |= position_outcode(&mvp, band, position(bytes));
         }
         None
     };
-    (union != 0).then_some(GuardClip { mvp, verts, codes })
+    (union != 0).then_some(GuardClip { mvp, band, verts, codes })
 }
 
 /// A clipped corner: float texture coordinates and position, since a clip
@@ -2435,7 +2468,7 @@ unsafe fn rebuild_runs(
     let mut block = 0usize;
     clip_triangle_runs(
         tris,
-        GUARD_BAND,
+        clip.band,
         |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
         |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
         |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),
@@ -2525,7 +2558,7 @@ unsafe fn rebuild_clipped(
     let mut n = 0usize;
     clip_triangles(
         tris,
-        GUARD_BAND,
+        clip.band,
         |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
         |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
         |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),

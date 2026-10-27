@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v135 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v136 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 251 of 251 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -16,12 +16,12 @@
 
 ## Current work
 
-- Landed (batch 55): Master Hand defeat matches N64 (owner handicap, Attack12 same-frame interrupt, defeat zoom tick, wallpaper proc render modes seeded in pack v135, head-0 effects under head-1); items start with the make-time frame-0 parse (`StageAnimator::start_item`; Link Bomb sparkle phase now N64's, 4 goldens rebaselined); cpufx matches N64; 2 new goldens (RE-457, RE-444, RE-536).
+- Landed (batch 56): Master Hand defeat draws one RNG per damage digit before the dead status (seeds match N64 t1..2491); boss wallpaper clips at the viewport like the game (tunnel MAE 6.6; `f1-onep-boss-defeat-zoom` rebaselined, MAE vs N64 26.9 to 17.9); RE-321 tile origins may differ (pack v136); Fall still opaque (RE-457, RE-519, RE-321).
+- Landed (batch 55): Master Hand defeat matches N64 (owner handicap, Attack12 same-frame interrupt, defeat zoom tick, wallpaper proc render modes seeded in the pack, head-0 effects under head-1); items start with the make-time frame-0 parse (`StageAnimator::start_item`; Link Bomb sparkle phase now N64's, 4 goldens rebaselined); cpufx matches N64; 2 new goldens (RE-457, RE-444, RE-536).
 - Landed (batch 54): capture-only scenes `TrainingLaser`, `TrainingReflect` force the Sector Z Arwing pattern; N64 ParaLLEl matches laser and Fox reflect (timing, damage, knockback; IoU laser 0.81-0.85, hexagon 0.84-0.90); no port bug; warp offset +7 sector.z64, +3 foxsector.z64; 2 new goldens (RE-428).
 - Landed (batch 53, docs only): N64 ParaLLEl confirms title fire (random colour id; MAE 5.7 forced id 4) and opening room (pose, overlay, cone) (RE-529, RE-467).
 - Landed (batch 52): weapon graphics parse frame 0 on their first counted play (`GraphicPlayers`; Spin band, Boomerang, Final Cutter wave, PK Thunder head); `MAX_EFFECT_MAT_ANIMS` 9 (Spin band has 9 scripts); N64 confirmed Zebes offset (PSP T = t + 8) and wipe (Camera Shutter, timing exact); 6 goldens rebaselined (RE-540, RE-364, RE-464).
 - Landed (batch 51): Thunder Jolt burst area gap was RE-541's whole-image normalisation (2.3125 x 2.267 vs D-047 2.4727); re-measured within spread, no renderer change (RE-541).
-- Landed (batch 50): stage matanim clock restarts per ground creation and plays the creation-time `gcPlayAnimAll` once (`MaterialAnimator::start_stage`); 89 goldens rebaselined, pond water and Zebes acid only (RE-364, RE-321).
 - Open: movie camera kinds 3+8 basis; NOFOG under demo fade; 1P intro Metal Mario darkness. Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); PK Fire item frame-0 rule N64 check. Gaps in `PLAN.md`.
 
 ## Next
@@ -35,7 +35,7 @@
 
 ## Verification
 
-Baseline: batch 55; deepest game stack 395240 B (f1-bonus-pause) of 524288.
+Baseline: batch 56; deepest game stack 395256 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

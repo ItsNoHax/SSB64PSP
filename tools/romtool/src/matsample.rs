@@ -709,9 +709,7 @@ pub(crate) fn check_uv_tile1(
                     (Some(s), Some(r)) => [s[0] as f64 / r[0] as f64, s[1] as f64 / r[1] as f64],
                     _ => [1.0, 1.0],
                 };
-                let affine = g.uv.map_or(ssb_rom::skeleton::UvAffine::IDENTITY, |uv| {
-                    uv.ge_affine(dims, (clamp1[0], clamp1[1]))
-                });
+                let affine = g.ge_affine(dims, (clamp1[0], clamp1[1]));
                 let a = [affine.scale_s as f64, affine.scale_t as f64];
                 let b = [affine.offset_s as f64, affine.offset_t as f64];
                 for &(u, v) in &coords {

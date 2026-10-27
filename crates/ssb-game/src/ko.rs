@@ -204,11 +204,7 @@ pub fn make_dead_particles(f: &mut Fighter, rt: &mut crate::effect::EffectRuntim
 fn make_score_effects(f: &mut Fighter, rt: &mut crate::effect::EffectRuntime<'_>) {
     let ui = crate::hud::fall_interface();
     let port = usize::from(f.port & 3);
-    let mut vel_x = [0.0; 4];
-    for v in vel_x[..usize::from(ui.char_display_count[port]).min(4)].iter_mut() {
-        *v = crate::rng::rand_float() * 2.0 - 1.0;
-    }
-    crate::hud::put_break_vel_x(port, vel_x);
+    crate::hud::draw_break_vel_x(port);
     let Some((x, y)) = ui.pos[port] else {
         return;
     };

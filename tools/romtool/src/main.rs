@@ -1356,6 +1356,7 @@ fn lod_blend_desc(
         next_count: data.sprites.len() as u32,
         next_textures,
         tile1_params: lod.tile1_params.map(u32::from),
+        origin_delta: lod.origin_delta,
     })
 }
 
