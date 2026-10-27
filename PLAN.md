@@ -23,7 +23,7 @@
 | Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
 | Audio | N64 audio system ported whole, sample-exact ([D-049](docs/decisions/D-049.md), RE-479) | Within the PSP-2000 CPU budget everywhere |
 | PSP performance | 60 FPS under PPSSPP; PSP-2000 figures in STATUS | 60 FPS on a PSP-2000 in every scene |
-| Platform | PSP-2000 and later (64 MiB); PSP-1000 unsupported (RE-288, RE-475) | Same (PSP-1000 deferred by the user) |
+| Platform | PSP-2000 and later (64 MiB); PSP-1000 unsupported (RE-288, RE-475) | PSP-1000 (32 MiB) and later |
 | Testing | Host tests (CI: no ROM, stub tables), ROM tests, PPSSPPHeadless goldens as pixel hashes ([visual regression](docs/visual-regression/README.md)), N64 RDRAM traces | Hardware acceptance matrix |
 
 ## Milestones
@@ -86,7 +86,7 @@
 | Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
-| PSP-1000 | Deferred by user; reopen on request. `MEMSIZE=1` ignored; VS results exceed PSP-1000 budget under PPSSPP | RE-288, RE-475 |
+| PSP-1000 | In scope, after arenas, before MS8. Peak use 20.6 MB (VS select) vs ~18 MB free; four scene types over. Step 1: per-file N64 vs pack bytes for the heaviest scenes; then follow the N64's residency, shrink inflated formats. Acceptance: every golden scene under `memory_ballast` 18 MB, then hardware. `MEMSIZE=1` ignored | RE-288, RE-475 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 
