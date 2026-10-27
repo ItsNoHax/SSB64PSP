@@ -139,11 +139,17 @@ unsafe fn draw_ending(
     let (eye, at) = (Vec3::new(c[0], c[1], c[2]), Vec3::new(c[3], c[4], c[5]));
     if let Some(room) = pres.last.room.as_ref() {
         gpu.set_viewport_n64(VIEWPORT);
-        gpu.set_perspective(c[6], ASPECT, movie::CAMERA_NEAR, movie::CAMERA_FAR);
+        let proj = Mat4::sy_persp_fast(c[6], ASPECT, movie::CAMERA_NEAR, movie::CAMERA_FAR);
+        let view = Mat4::look_at(eye, at, Vec3::Y);
+        gpu.set_projection(&proj);
         gpu.reset_modelview();
         st.begin_frame();
-        gpu.set_view(&Mat4::look_at(eye, at, Vec3::Y));
-        room.draw(gpu, p, st, e.props_shown);
+        // `mvEndingFuncLights`: `G_LIGHTING` and `ftDisplayLightsDrawReflect`
+        // at `scSubsysFighterSetLightParams`' angles, before anything draws.
+        // The room's lit walls write both light colours themselves (RE-529).
+        st.set_scene_light(movie::LIGHT_ANGLE);
+        gpu.set_view(&view);
+        room.draw(gpu, p, st, e.props_shown, (proj * view).cols);
     }
     if e.fade_in_alpha > 0 {
         meshdraw::fill_rect_n64(VIEWPORT, [0, 0, 0, e.fade_in_alpha.clamp(0, 0xFF) as u8], st);

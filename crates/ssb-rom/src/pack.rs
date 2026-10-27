@@ -1180,6 +1180,47 @@ impl ObjectDesc {
     pub const SIZE: usize = 16;
 }
 
+/// The order the original draws an object's nodes in, from each node's
+/// parent index within the object.
+///
+/// A `DObjDesc` array is preorder, so a node's descendants follow it
+/// contiguously. The packer appends a leaf for each list a node cannot hold
+/// (`tools/romtool`'s `node_extra`: a second `DObjDLLink` entry), after
+/// every `DObjDesc` node. Such a leaf breaks that contiguity; it goes right
+/// after its parent, whose links `gcDrawDObjTreeDLLinksForGObj` draws before
+/// the parent's children. A node drawn out of this order can paint over a
+/// later translucent list that writes no depth (RE-459: the ending's window
+/// jamb over the curtain).
+pub fn dobj_draw_order(parents: &[Option<usize>]) -> Vec<usize> {
+    let n = parents.len();
+    let descends = |mut k: usize, p: usize| loop {
+        match parents[k] {
+            Some(q) if q == p => return true,
+            Some(q) if q > p && q < k => k = q,
+            _ => return false,
+        }
+    };
+    let appended: Vec<bool> = (0..n)
+        .map(|i| match parents[i] {
+            Some(p) if p < i => (p + 1..i).any(|k| !descends(k, p)),
+            _ => false,
+        })
+        .collect();
+    fn place(i: usize, parents: &[Option<usize>], appended: &[bool], order: &mut Vec<usize>) {
+        order.push(i);
+        for j in 0..parents.len() {
+            if appended[j] && parents[j] == Some(i) {
+                place(j, parents, appended, order);
+            }
+        }
+    }
+    let mut order = Vec::with_capacity(n);
+    for i in (0..n).filter(|&i| !appended[i]) {
+        place(i, parents, &appended, &mut order);
+    }
+    order
+}
+
 /// One node of an object: an optional mesh under a baked world transform.
 ///
 /// The matrix is **baked at build time**, not composed on device. A static
@@ -5164,6 +5205,24 @@ impl<'a> Pack<'a> {
         })
     }
 
+    /// `object`'s nodes, object-relative, in the order the original draws
+    /// them ([`dobj_draw_order`]).
+    pub fn object_draw_order(&self, object: &ObjectDesc) -> Vec<u32> {
+        let parents: Vec<Option<usize>> = (0..object.node_count)
+            .map(|i| {
+                let parent = self.node(object.first_node + i)?.parent;
+                parent
+                    .checked_sub(object.first_node)
+                    .filter(|&p| p < object.node_count)
+                    .map(|p| p as usize)
+            })
+            .collect();
+        dobj_draw_order(&parents)
+            .into_iter()
+            .map(|i| i as u32)
+            .collect()
+    }
+
     pub fn node(&self, i: u32) -> Option<NodeDesc> {
         if i >= self.node_count {
             return None;
@@ -8623,5 +8682,40 @@ mod tests {
         let mut w = PackWriter::new();
         let mesh = w.add_mesh(&sample_mesh(), 1, 2, |_| None, |_| Some(3));
         w.set_mesh_prim_lod_blend(mesh, 0);
+    }
+
+    /// The ending room's background (file 52 at 0x7E98): its 51 `DObjDesc`
+    /// nodes, then the leaves for DObj 20's and 37's second links (RE-459).
+    fn room_background_parents() -> Vec<Option<usize>> {
+        let mut parents = alloc::vec![None, Some(0)];
+        parents.extend([1; 7].map(Some));
+        parents.extend([0, 9, 10, 9, 9, 13, 0, 15, 0, 0].map(Some));
+        parents.extend([18, 18, 18, 18, 22, 22, 22, 18, 18, 18, 18, 29].map(Some));
+        parents.extend([0, 31, 32, 32, 31, 35, 31, 31].map(Some));
+        parents.extend([0, 39, 40, 40, 39, 43, 43, 39, 39, 39, 39, 0].map(Some));
+        parents.extend([20, 37].map(Some));
+        parents
+    }
+
+    #[test]
+    fn an_appended_link_leaf_draws_right_after_its_node() {
+        let parents = room_background_parents();
+        assert_eq!(parents.len(), 53);
+        let mut expected: Vec<usize> = (0..=20).collect();
+        expected.push(51);
+        expected.extend(21..=37);
+        expected.push(52);
+        expected.extend(38..=50);
+        assert_eq!(dobj_draw_order(&parents), expected);
+    }
+
+    #[test]
+    fn a_preorder_array_keeps_its_order() {
+        let mut parents = room_background_parents();
+        parents.truncate(51);
+        assert_eq!(dobj_draw_order(&parents), (0..51).collect::<Vec<_>>());
+        // A leaf that does continue its parent's subtree stays in place.
+        parents.push(Some(0));
+        assert_eq!(dobj_draw_order(&parents), (0..52).collect::<Vec<_>>());
     }
 }

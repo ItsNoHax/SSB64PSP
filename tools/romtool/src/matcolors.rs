@@ -518,6 +518,9 @@ struct ResolverTally {
     /// (RE-336).
     textures_compensated: usize,
     textures_bad: usize,
+    /// Bound `sprites[]` entries that are NULL and that no draw reads
+    /// (RE-467), so have no image to compare.
+    sprites_null_unread: usize,
     /// Static CLUTs compared with `palettes[0]`, and those that differ.
     static_palettes_checked: usize,
     static_palettes_bad: usize,
@@ -599,25 +602,31 @@ fn check_resolvers(
     // Static: the packed tables follow the ROM's arrays. Equal sprite
     // pointers must share a packed texture and distinct ones must not;
     // palettes must hold the ROM's RGBA5551 entries.
-    let same_shape = |ptrs: &[ssb_rom::mobj::Ptr], packed: &[u32]| {
-        (0..ptrs.len())
-            .all(|x| (0..ptrs.len()).all(|y| (ptrs[x] == ptrs[y]) == (packed[x] == packed[y])))
+    // A NULL entry the draw never reads (`sprite_table`) constrains nothing.
+    let same_shape = |ptrs: &[Option<ssb_rom::mobj::Ptr>], packed: &[u32]| {
+        (0..ptrs.len()).all(|x| {
+            (0..ptrs.len()).all(|y| match (ptrs[x], ptrs[y]) {
+                (Some(px), Some(py)) => (px == py) == (packed[x] == packed[y]),
+                _ => true,
+            })
+        })
     };
+    let read = sprites_read(f, sub.prim_l, expected);
     let mut table_notes = Vec::new();
     if a.texture_count > 0 {
         let n = a.texture_count as usize;
-        match ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, n) {
-            Some(ptrs) if same_shape(&ptrs, &a.textures[..n]) => {}
-            Some(_) => table_notes.push("textures[] do not follow sprites[]".to_string()),
-            None => table_notes.push("sprites[] unreadable".to_string()),
+        match sprite_table(&rom_file, a.source_offset, n, &read) {
+            Ok(ptrs) if same_shape(&ptrs, &a.textures[..n]) => {}
+            Ok(_) => table_notes.push("textures[] do not follow sprites[]".to_string()),
+            Err(e) => table_notes.push(e),
         }
     }
     if let Some(l) = lod {
         let n = l.next_count as usize;
-        match ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, n) {
-            Some(ptrs) if same_shape(&ptrs, &l.next_textures[..n]) => {}
-            Some(_) => table_notes.push("next_textures[] do not follow sprites[]".to_string()),
-            None => table_notes.push("sprites[] unreadable".to_string()),
+        match sprite_table(&rom_file, a.source_offset, n, &read) {
+            Ok(ptrs) if same_shape(&ptrs, &l.next_textures[..n]) => {}
+            Ok(_) => table_notes.push("next_textures[] do not follow sprites[]".to_string()),
+            Err(e) => table_notes.push(e),
         }
     }
     if a.palette_count > 0 {
@@ -714,20 +723,25 @@ fn check_resolvers(
     }
     let sprite_count = bound.iter().map(|b| b.2 + 1).max().unwrap_or(0);
     if sprite_count > 0 {
-        let sprites = ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, sprite_count)
-            .ok_or_else(|| {
+        let sprites =
+            sprite_table(&rom_file, a.source_offset, sprite_count, &read).map_err(|e| {
                 format!(
-                    "MatAnimDesc {i}: file {} MObjSub 0x{:X}: sprites[] unreadable for {sprite_count} entries",
+                    "MatAnimDesc {i}: file {} MObjSub 0x{:X}: {e}",
                     a.source_file, a.source_offset
                 )
             })?;
         for (name, t, k) in &bound {
+            // RE-467: a NULL entry no draw reads; the packer filled its slot.
+            let Some(sprite) = sprites[*k] else {
+                tally.sprites_null_unread += 1;
+                continue;
+            };
             let desc = pack.texture(*t).ok_or("missing packed texture")?;
             tally.textures_checked += 1;
             if desc.tile_mirror != 0 || [desc.width, desc.height] != desc.tile_period {
                 tally.textures_folded += 1;
             }
-            let r = crate::matsample::compare_texture(archive, &rom_file, pack, &desc, sprites[*k]);
+            let r = crate::matsample::compare_texture(archive, &rom_file, pack, &desc, sprite);
             match r {
                 Ok(r) if !r.source_matches => {
                     tally.textures_bad += 1;
@@ -1352,12 +1366,13 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     println!(
         "Texels: {} packed texture(s) against sprites[] through their recorded tile, {} differ \
          ({} read through a mirrored or repeated period; {} filter-compensated, \
-         paired by source digest); \
+         paired by source digest; {} NULL sprites[] entr(ies) no draw reads, skipped); \
          {} static CLUT(s) against palettes[0], {} differ",
         tally.textures_checked,
         tally.textures_bad,
         tally.textures_folded,
         tally.textures_compensated,
+        tally.sprites_null_unread,
         tally.static_palettes_checked,
         tally.static_palettes_bad
     );
@@ -1463,6 +1478,52 @@ fn costume_gaps(
         }
     }
     gaps
+}
+
+/// The `sprites[]` indices `gcDrawMObjForDObj` can load for an `MObj`
+/// whose tracks are `expected`. It reads `sprites[texture_id_curr]` under
+/// `FRAC | ALPHA` and `sprites[texture_id_next]` under `FRAC | SPLIT`
+/// (`objdisplay.c:1342-1351`, `:1273-1284`). Both ids start at 0
+/// (`gcAddMObjForDObj`, `objman.c:1326-1327`) and follow the
+/// `TextureIDCurrent`/`TextureIDNext` tracks; under `FRAC` the draw
+/// overwrites them with `trunc(lfrac)` and `trunc(lfrac) + 1`
+/// (`objdisplay.c:1220-1236`), `lfrac` starting at `prim_l / 255`.
+fn sprites_read(flags: u16, prim_l: u8, expected: &[Frame]) -> BTreeSet<usize> {
+    // `texture_id_curr`/`_next` are `u16`: the float truncates.
+    let index = |bits: u32| f32::from_bits(bits).max(0.0) as usize;
+    let mut out = BTreeSet::new();
+    if flags & MOBJ_FLAG_FRAC != 0 {
+        let rest = (f32::from(prim_l) / 255.0).to_bits();
+        for l in std::iter::once(rest).chain(expected.iter().filter_map(|e| e[8])) {
+            out.extend([index(l), index(l) + 1]);
+        }
+        return out;
+    }
+    for (track, bit) in [(0, MOBJ_FLAG_ALPHA), (5, MOBJ_FLAG_SPLIT)] {
+        if flags & bit != 0 {
+            out.insert(0);
+            out.extend(expected.iter().filter_map(|e| e[track]).map(index));
+        }
+    }
+    out
+}
+
+/// `MObjSub.sprites[0..count]`, NULL entries kept as `None`. NULL is legal
+/// where no draw reads it (`read`, from [`sprites_read`]): the standoff
+/// lightning's entry 1 (RE-467), the ground Thunder Jolt's (RE-542).
+/// Errors if the array does not read or a read index is NULL.
+fn sprite_table(
+    file: &ssb_rom::archive::File,
+    sub_at: u32,
+    count: usize,
+    read: &BTreeSet<usize>,
+) -> Result<Vec<Option<ssb_rom::mobj::Ptr>>, String> {
+    let slots = ssb_rom::mobj::read_sprite_slots(file, sub_at, count)
+        .ok_or_else(|| format!("sprites[] unreadable for {count} entries"))?;
+    match (0..count).find(|k| slots[*k].is_none() && read.contains(k)) {
+        Some(k) => Err(format!("sprites[{k}] is NULL and a draw reads it")),
+        None => Ok(slots),
+    }
 }
 
 /// Whether an `MObjSub` with `flags` draws with `TextureIDCurrent` and
@@ -1929,5 +1990,60 @@ mod tests {
         // a gap when made with another.
         assert_eq!(costume_gaps(&r, &c, [true, false], Some(2)), []);
         assert_eq!(costume_gaps(&r, &c, [true, false], Some(1)).len(), 1);
+    }
+
+    /// The indices `gcDrawMObjForDObj` loads: the id tracks under `ALPHA`
+    /// and `SPLIT`, `trunc(lfrac)` and the next under `FRAC`.
+    #[test]
+    fn sprites_read_follows_the_draw_flags() {
+        let mut frame: Frame = [None; TRACKS];
+        frame[0] = Some(4.0f32.to_bits());
+        frame[5] = Some(2.0f32.to_bits());
+        frame[8] = Some(2.5f32.to_bits());
+        let frames = [frame];
+        let set = |v: &[usize]| v.iter().copied().collect::<BTreeSet<usize>>();
+        assert_eq!(sprites_read(MOBJ_FLAG_ALPHA, 0, &frames), set(&[0, 4]));
+        assert_eq!(sprites_read(MOBJ_FLAG_SPLIT, 0, &frames), set(&[0, 2]));
+        assert_eq!(sprites_read(MOBJ_FLAG_PALETTE, 0, &frames), set(&[]));
+        assert_eq!(
+            sprites_read(MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA, 255, &frames),
+            set(&[1, 2, 3])
+        );
+    }
+
+    /// RE-467: MatAnimDesc 38 (file 69 `MObjSub` 0x61F0, script 0x6BEC)
+    /// names `sprites[] = [0x5140, NULL, 0x4138, 0x3130, 0x2128]`; its
+    /// `ALPHA` draw reads only ids 0, 4, 2 and 3. `romtool matcolors --pack`
+    /// stopped there with "sprites[] unreadable for 5 entries".
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_standoff_lightnings_unread_null_sprite_is_legal() {
+        const SUB: u32 = 0x61F0;
+        const SCRIPT: u32 = 0x6BEC;
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+            return;
+        };
+        let rom = fs::read(path).unwrap();
+        let info = ssb_rom::rom::identify(&rom).unwrap();
+        let archive = Archive::open(&rom, info.region).unwrap();
+        let file = archive.load(ssb_rom::opening::file::STANDOFF).unwrap();
+        let sub = RomSub::read(&file.data, SUB).unwrap();
+        assert_eq!(sub.flags, MOBJ_FLAG_ALPHA);
+        let mut reference = Reference::new(&file.data, SCRIPT);
+        let frames: Vec<Frame> = (0..600).map(|_| reference.frame().unwrap()).collect();
+        let read = sprites_read(sub.flags, sub.prim_l, &frames);
+        assert_eq!(read, [0, 2, 3, 4].into_iter().collect());
+
+        let table = sprite_table(&file, SUB, 5, &read).expect("entry 1 is never read");
+        let present: Vec<bool> = table.iter().map(Option::is_some).collect();
+        assert_eq!(present, [true, false, true, true, true]);
+        let here = |offset| Some(ssb_rom::mobj::Ptr { file: None, offset });
+        assert_eq!(table[0], here(0x5140));
+        assert_eq!(table[4], here(0x2128));
+
+        // A NULL entry a draw reads is still an error.
+        let mut with_1 = read.clone();
+        with_1.insert(1);
+        assert!(sprite_table(&file, SUB, 5, &with_1).is_err());
     }
 }

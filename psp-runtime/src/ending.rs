@@ -77,6 +77,9 @@ struct Prop {
     ejected_at_540: bool,
     /// The background's material animation, played once.
     mats: Option<Box<EffectMaterialAnimator>>,
+    /// The nodes in the original's draw order, as runs of consecutive
+    /// object-relative indices (`Pack::object_draw_order`).
+    runs: Vec<core::ops::Range<u32>>,
 }
 
 /// How a prop's joint animation is attached.
@@ -141,18 +144,47 @@ impl Room {
                 count,
                 ejected_at_540,
                 mats,
+                runs: draw_runs(&pack.object_draw_order(&object)),
             });
         }
         Some(Room { props })
     }
 
-    /// Draws the room under the current camera: the desk only once the
-    /// props are ejected.
+    /// Draws the room under the current camera, whose projection times view
+    /// is `view_proj`: the desk only once the props are ejected.
+    ///
+    /// The RSP clips the room against the near plane and the guard band
+    /// where the GE would drop whole triangles: in the tic-91 close-up the
+    /// desk top's near corner lies far off screen, and unclipped the GE
+    /// dropped the top's near triangle (RE-459, RE-519).
+    ///
+    /// The background's list-1 links go to task head 1, which runs after
+    /// every head-0 list of the pass (RE-422), each head in `DObjDesc`
+    /// order: the curtain writes no depth, so the window jamb, a second
+    /// link the pack appends after every node, must draw before it.
     ///
     /// # Safety
     ///
     /// Same as [`crate::meshdraw::draw_mesh`].
     pub unsafe fn draw(
+        &self,
+        gpu: &mut crate::gu::Gpu,
+        pack: &Pack<'_>,
+        st: &mut crate::meshdraw::DrawState,
+        props_shown: bool,
+        view_proj: [[f32; 4]; 4],
+    ) {
+        let clip = st.clip_view_proj.replace(view_proj);
+        let heads = st.heads;
+        for head in [crate::meshdraw::Heads::Head0, crate::meshdraw::Heads::Head1] {
+            st.heads = head;
+            self.draw_props(gpu, pack, st, props_shown);
+        }
+        st.heads = heads;
+        st.clip_view_proj = clip;
+    }
+
+    unsafe fn draw_props(
         &self,
         gpu: &mut crate::gu::Gpu,
         pack: &Pack<'_>,
@@ -165,19 +197,32 @@ impl Room {
             }
             gpu.model_transform([0.0; 3], [0.0; 3], MODEL_SCALE);
             let base = gpu.model_matrix();
-            crate::meshdraw::draw_object_posed(
-                pack,
-                &prop.object,
-                &base,
-                &prop.posed[..prop.count],
-                None,
-                st,
-                None,
-                prop.mats.as_deref(),
-                0,
-            );
+            let first = prop.object.first_node;
+            for run in &prop.runs {
+                crate::meshdraw::draw_object_posed_hiding(
+                    pack,
+                    &prop.object,
+                    &base,
+                    &prop.posed[..prop.count],
+                    st,
+                    prop.mats.as_deref(),
+                    &|node| !run.contains(&(node - first)),
+                );
+            }
         }
     }
+}
+
+/// `order` as runs of consecutive indices.
+fn draw_runs(order: &[u32]) -> Vec<core::ops::Range<u32>> {
+    let mut runs: Vec<core::ops::Range<u32>> = Vec::new();
+    for &i in order {
+        match runs.last_mut() {
+            Some(run) if run.end == i => run.end += 1,
+            _ => runs.push(i..i + 1),
+        }
+    }
+    runs
 }
 
 /// Every primitive's `mat_anim` index across `object`'s nodes.

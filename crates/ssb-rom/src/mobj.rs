@@ -775,7 +775,28 @@ pub fn read_sprite_at(file: &File, sub_at: u32, index: usize) -> Option<Ptr> {
     }
 }
 
+/// The first `count` entries of `MObjSub.sprites[]`, keeping NULL entries
+/// as `None` (a zero word with no extern relocation).
+///
+/// `gcDrawMObjForDObj` reads only `sprites[texture_id_curr]` and
+/// `sprites[texture_id_next]` (`objdisplay.c:1283`, `:1350`), so a NULL
+/// entry no script selects is legal data: the standoff lightning's
+/// `MObjSub`s (file 69, entry 1 of five, RE-467) and the ground Thunder
+/// Jolt (RE-542). The caller decides which indices must be real.
+///
+/// Returns `None` if the array itself does not resolve, or if an entry
+/// is a nonzero word that is not a relocated pointer.
+pub fn read_sprite_slots(file: &File, sub_at: u32, count: usize) -> Option<Vec<Option<Ptr>>> {
+    read_pointer_slots(file, sub_at + F_SPRITES, count)
+}
+
 fn read_pointer_array(file: &File, field_at: u32, count: usize) -> Option<Vec<Ptr>> {
+    read_pointer_slots(file, field_at, count)?
+        .into_iter()
+        .collect()
+}
+
+fn read_pointer_slots(file: &File, field_at: u32, count: usize) -> Option<Vec<Option<Ptr>>> {
     let slots = pointer_slots(file);
     let is_ptr = |at: u32| slots.binary_search(&at).is_ok();
     let data = &file.data;
@@ -797,11 +818,11 @@ fn read_pointer_array(file: &File, field_at: u32, count: usize) -> Option<Vec<Pt
         .map(|i| {
             let slot = array.checked_add(i * 4)?;
             match read_u32(data, slot)? {
-                0 => leaves_file(slot),
-                target if is_ptr(slot) => Some(Ptr {
+                0 => Some(leaves_file(slot)),
+                target if is_ptr(slot) => Some(Some(Ptr {
                     file: None,
                     offset: target,
-                }),
+                })),
                 _ => None,
             }
         })
@@ -1185,6 +1206,32 @@ mod tests {
 
         let table = read_table(&file, TABLE, 5).expect("table");
         assert_eq!(table.nodes[1][0].sprite, None);
+    }
+
+    /// The standoff lightning's shape (RE-467): `[tex, NULL, tex]`.
+    /// [`read_sprites`] declines the whole table; [`read_sprite_slots`]
+    /// keeps the NULL entry as `None`, and still declines a nonzero word
+    /// that is not a relocated pointer.
+    #[test]
+    fn a_sparse_sprite_table_keeps_its_null_entries() {
+        const SPRITES: u32 = 0x150;
+        let mut file = fixture();
+        let mut put = |at: u32, v: u32| {
+            file.data[at as usize..at as usize + 4].copy_from_slice(&v.to_be_bytes());
+            file.intern_relocs.push(InternReloc { at, target: v });
+        };
+        put(SUB_A + F_SPRITES, SPRITES);
+        put(SPRITES, 0x190);
+        put(SPRITES + 8, 0x1A0);
+        let here = |offset| Some(Ptr { file: None, offset });
+
+        assert_eq!(read_sprites(&file, SUB_A, 3), None);
+        assert_eq!(
+            read_sprite_slots(&file, SUB_A, 3),
+            Some(vec![here(0x190), None, here(0x1A0)])
+        );
+        file.data[(SPRITES + 4) as usize..][..4].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+        assert_eq!(read_sprite_slots(&file, SUB_A, 3), None);
     }
 
     #[test]

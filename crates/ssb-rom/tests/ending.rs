@@ -154,3 +154,55 @@ fn the_room_background_carries_its_material_animation() {
     assert!(!bound.is_empty(), "the packed prims are bound");
     assert_eq!(bound.len(), scripted, "one binding per scripted MObj");
 }
+
+/// `gcDrawDObjTreeDLLinksForGObj` draws the background's task-1 links in
+/// `DObjDesc` order, each DObj's links in its `DObjDLLink` array's order.
+/// The pack holds DObj 20's and 37's second links as appended leaves; in
+/// `object_draw_order` they draw where the file has them, so the window
+/// jamb (DObj 20's list-1 link) no longer draws after the curtain (RE-459).
+/// Two readings: the file's link arrays and the pack's meshes.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_room_background_draws_its_links_in_dobj_order() {
+    use ssb_rom::pack::{flags, Pack};
+    let (Some(bytes), Some(pack)) = (rom_bytes(), pack_bytes()) else {
+        return;
+    };
+    let info = rom::identify(&bytes).unwrap();
+    let archive = Archive::open(&bytes, info.region).unwrap();
+    let file = archive.load(ending::ROOM_FILE).unwrap();
+    let word = |at: usize| u32::from_be_bytes(file.data[at..at + 4].try_into().unwrap());
+    // `DObjDesc` is 0x2C bytes: id, the union's link array, then TRS.
+    let mut file_links = Vec::new();
+    let mut desc = ending::ROOM_BACKGROUND as usize;
+    while word(desc) != 18 {
+        let mut link = word(desc + 4) as usize;
+        while link != 0 && word(link) != 4 {
+            if word(link) == 1 {
+                file_links.push(word(link + 4));
+            }
+            link += 8;
+        }
+        desc += 0x2C;
+    }
+
+    let pack = Pack::open(&pack).unwrap();
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|o| o.source_file == ending::ROOM_FILE && o.source_offset == ending::ROOM_BACKGROUND)
+        .expect("the room background is packed");
+    let mut pack_links = Vec::new();
+    for n in pack.object_draw_order(&object) {
+        let node = pack.node(object.first_node + n).unwrap();
+        let Some(mesh) = pack.mesh(node.mesh) else {
+            continue;
+        };
+        let head1 = (0..mesh.prim_count)
+            .any(|j| pack.prim(mesh.first_prim + j).unwrap().flags & flags::HEAD1 != 0);
+        if head1 {
+            pack_links.push(mesh.source_offset);
+        }
+    }
+    assert_eq!(file_links.len(), 10, "{file_links:x?}");
+    assert_eq!(pack_links, file_links);
+}

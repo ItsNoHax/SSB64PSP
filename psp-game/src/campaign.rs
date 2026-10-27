@@ -801,7 +801,19 @@ pub(crate) fn log_zako_state(s: &Session, tick: u64) {
     }
     if let Some(pl) = s.play_state.as_ref() {
         let f = &pl.fighter;
-        line.push_str(&alloc::format!(" K(st{} dmg{} pos={:.1},{:.1})", f.status.status.id(), f.damage, f.pos.x, f.pos.y));
+        line.push_str(&alloc::format!(
+            " K(st{} dmg{} pos={:.1},{:.1} tw{} hide{} cd{}) eye={:.1},{:.1},{:.1}",
+            f.status.status.id(),
+            f.damage,
+            f.pos.x,
+            f.pos.y,
+            f.interface.tag_wait,
+            u8::from(f.interface.tag_hide),
+            u8::from(f.interface.control_disable),
+            pl.camera.eye.x,
+            pl.camera.eye.y,
+            pl.camera.eye.z,
+        ));
     }
     if let Scene1P::StageClear(sc) = &c.frontend.screen {
         line.push_str(&alloc::format!(

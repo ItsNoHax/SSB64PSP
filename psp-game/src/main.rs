@@ -168,6 +168,12 @@ const fn vs_knock_smash(tick: u64) -> bool {
     tick >= VS_KNOCK_FIRST_SMASH && (tick - VS_KNOCK_FIRST_SMASH) % VS_KNOCK_SMASH_PERIOD == 0
 }
 
+/// `onepzako`'s first results A: the last KO's GAME SET. The N64 harness
+/// presses nothing in the battle, so Kirby waits from N64 t799 and its tag
+/// shows from `playertag_wait` 1 (`ifCommonPlayerTagProcDisplay`, RE-458);
+/// a jab every 30 ticks would reset it to 120 on each return to Wait.
+const ZAKO_A_FROM: u64 = 2820;
+
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
         // The fighter-move scenes' capture ticks live with their scripts;
@@ -596,7 +602,9 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             // Past its capture, A every 30 ticks takes a stage the fixture
             // clears through its results into the next stage (RE-478).
             t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePBossDefeat)
-                && t > capture_ticks(scene) && t % 30 == 0 => N64Buttons(N64Buttons::A),
+                && t > capture_ticks(scene)
+                && (scene != GameScene::OnePZako || t >= ZAKO_A_FROM)
+                && t % 30 == 0 => N64Buttons(N64Buttons::A),
             t if scene == GameScene::OnePStaffroll && t >= 400 && t % 20 == 0 => N64Buttons(N64Buttons::A),
             930 if scene == GameScene::OnePFinale => N64Buttons(N64Buttons::START),
             t if scene == GameScene::OnePFinale && t >= 150 && t % 150 == 0 => N64Buttons(N64Buttons::A),
