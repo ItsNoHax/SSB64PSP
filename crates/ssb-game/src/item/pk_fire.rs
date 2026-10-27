@@ -95,6 +95,8 @@ where
     item.is_allow_pickup = false;
     item.is_hold = false;
     item.player = Some(spawn.owner_port);
+    // `ip->handicap = wp->handicap` (itnesspkfire.c).
+    item.handicap = spawn.stale.handicap;
     item.attack.can_rehit_shield = true;
     item.attack.stale = spawn.stale.stale;
     item.attack.motion_attack_id = spawn.stale.attack_id;

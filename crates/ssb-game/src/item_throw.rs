@@ -178,6 +178,10 @@ fn facing_yaw(f: &Fighter) -> f32 {
     core::f32::consts::FRAC_PI_2 * f.facing.sign()
 }
 pub fn model_yaw(f: &Fighter) -> Option<f32> {
+    // Master Hand's `lr = 0` statuses: TopN's yaw is `0 * 90°` (RE-457).
+    if let Some(yaw) = crate::boss::model_yaw(f) {
+        return Some(yaw);
+    }
     if f.status.status == Status::HammerTurn {
         return f.item_use.yaw;
     }

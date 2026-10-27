@@ -267,6 +267,50 @@ fn link_bomb_promotes_its_body_and_animates_the_billboard_fuse_child() {
     );
 }
 
+/// The fuse sparkle's phase on the N64 (RE-444, batch 55 ParaLLEl trace of
+/// the `b13link` warp ROM): the Bomb is made at t 70 with `GObj` frame 1,
+/// then 2, 3, 4, 5, 0 (the 6-frame script loops), so its frame at `t` is
+/// `(t - 69) mod 6`; the sparkle is big on frames 0 and 3. The item has had
+/// two plays on its creation frame (`itManagerMakeItem`'s and
+/// `itProcessProcItemMain`'s): `Item::anim_ticks` 2. `linkbomb` T = t + 4
+/// (Bomb made at T 74, bloat 1.6 from T 295 / t 291): big at T 295 and
+/// 298, small at T 294, 297 and 330.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_link_bomb_fuse_sparkles_in_the_n64_phase() {
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    let object = (0..p.object_count())
+        .filter_map(|i| p.object(i))
+        .find(|o| (o.source_file, o.source_offset) == (353, 0x18D8))
+        .unwrap();
+    let fuse = object.first_node + 2;
+    let anim = p.item_anim(AnimDesc::ITEM_ANIM_LINK_BOMB).unwrap();
+    let script = p.anim_script(&anim).unwrap();
+    let mut players = StageAnimator::new();
+    players.start_item(&p, &anim);
+    let big = |s: f32| s > 1.0;
+    let mut sparkle = Vec::new();
+    for anim_ticks in 1..=300u16 {
+        players.tick(script).unwrap();
+        let scale = players.node_pose(fuse).unwrap().scale[0];
+        if anim_ticks >= 2 {
+            // N64 frame t = anim_ticks + 68.
+            let n64_frame = (anim_ticks - 1) % 6;
+            assert_eq!(big(scale), n64_frame % 3 == 0, "anim_ticks {anim_ticks}");
+        }
+        sparkle.push(big(scale));
+    }
+    // `linkbomb@T`: anim_ticks = T - 72.
+    let at = |t: u16| sparkle[usize::from(t - 72 - 1)];
+    assert!(!at(74), "creation frame: GObj frame 1");
+    assert!(at(295) && at(298) && at(331));
+    assert!(!at(294) && !at(297) && !at(330));
+}
+
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn egg_scale_animation_replays_the_rom_for_two_hundred_plays() {

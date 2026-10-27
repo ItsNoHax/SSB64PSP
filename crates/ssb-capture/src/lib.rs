@@ -306,6 +306,10 @@ pub enum GameScene {
     /// `onepbossdefeat`: Master Hand's hit points seeded out, then the
     /// real defeat sequence (RE-457).
     OnePBossDefeat,
+    /// `onepbosshit`: Master Hand's damage seeded past each wallpaper's
+    /// threshold, then to one hit from defeat; the player's scripted
+    /// attacks land the defeating hit ([`script::boss_hit`], RE-457).
+    OnePBossHit,
     /// `onepmetal`: Meta Crystal with Metal Mario (RE-458).
     OnePMetal,
     /// `onepgiant`: Kongo Jungle with Giant Donkey Kong and two allies
@@ -835,7 +839,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 206] = [
+    pub const ALL: [GameScene; 207] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -851,6 +855,7 @@ impl GameScene {
         GameScene::OnePRaceHazards,
         GameScene::OnePBoss,
         GameScene::OnePBossDefeat,
+        GameScene::OnePBossHit,
         GameScene::OnePMetal,
         GameScene::OnePGiant,
         GameScene::OnePZako,
@@ -1061,6 +1066,7 @@ impl GameScene {
             GameScene::OnePRaceHazards => "onepracehazards",
             GameScene::OnePBoss => "onepboss",
             GameScene::OnePBossDefeat => "onepbossdefeat",
+            GameScene::OnePBossHit => "onepbosshit",
             GameScene::OnePMetal => "onepmetal",
             GameScene::OnePGiant => "onepgiant",
             GameScene::OnePZako => "onepzako",

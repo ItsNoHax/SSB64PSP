@@ -484,7 +484,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 134 draws the Zebes acid's two-tile blend under its shade alpha (vertices
 // premultiplied, `TEXEL1` images packed; RE-321) and seeds Link's Spin
 // Attack band with `wpDisplayDrawNormal`'s state (RE-540). No layout change.
-pub const VERSION: u32 = 134;
+// 135 seeds Master Hand's wallpaper display procs' render modes and PRIM
+// into each wallpaper's first list (`BOSS_WALLPAPER_GRAPHS`; RE-457). No
+// layout change.
+pub const VERSION: u32 = 135;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

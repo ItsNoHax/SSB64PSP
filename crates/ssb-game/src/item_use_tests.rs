@@ -103,6 +103,7 @@ fn ray_gun_second_box_hits_a_fighter_when_the_head_misses() {
             team: 0,
             lr: 1.0,
             handle: 0,
+            handicap: crate::stale::HANDICAP_DEFAULT,
         },
         Vec3::new(1000.0, 100.0, 0.0),
         false,
@@ -139,6 +140,7 @@ fn fire_flower_rehits_an_item_after_sixteen_weapon_updates() {
             team: 0,
             lr: 1.0,
             handle: 0,
+            handicap: crate::stale::HANDICAP_DEFAULT,
         },
         Vec3::ZERO,
         false,
@@ -188,6 +190,7 @@ fn ray_gun_tail_grows_and_hop_and_reflection_reset_it() {
         player: Some(0),
         team: 0,
         lr: -1.0,
+        handicap: crate::stale::HANDICAP_DEFAULT,
     };
     let mut m = MonsterShot::equipment(ShotKind::RayGun, parent, Vec3::ZERO, false, 0);
     assert_eq!(m.attack_tail.unwrap().0.x, -5.0);
@@ -221,6 +224,7 @@ fn star_expires_on_update_31_but_flame_on_30_and_reflection_renews_flame() {
         player: Some(0),
         team: 0,
         lr: 1.0,
+        handicap: crate::stale::HANDICAP_DEFAULT,
     };
     let mut fx = crate::wpeffect::Emit::default();
     let mut star = MonsterShot::equipment(

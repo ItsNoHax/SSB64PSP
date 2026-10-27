@@ -137,6 +137,26 @@ pub mod training_laser {
     pub const REFLECT_CAPTURE_TICK: u64 = 958;
 }
 
+/// `onepbosshit`'s script (RE-457). Master Hand's `percent_damage` is
+/// written at the end of each battle clock in [`DAMAGE_SEEDS`] (the N64
+/// reference writes `percent_damage` and `stock_damage_all` before the
+/// next frame: time_passed = clock - 601). The writes call up the damage
+/// wallpapers (over 90, over 180), the over-270 phase, then leave Master
+/// Hand one hit from defeat; no `ftBossCommonUpdateDamageStats` runs until
+/// a hit lands. From [`JAB_FROM`] the player presses A every
+/// [`JAB_PERIOD`] ticks: Kirby is hit, KO'd and, back on the rebirth
+/// platform, his neutral air lands the defeating hit (N64 frame 2030 of
+/// the boss warp, Master Hand's `damage_joint_id` 20).
+pub mod boss_hit {
+    /// (battle clock, Master Hand's damage).
+    pub const DAMAGE_SEEDS: [(u32, u16); 4] = [(701, 100), (1001, 200), (1301, 280), (1501, 299)];
+    /// First A press: battle clock 1503 (PSP tick = clock + 465).
+    pub const JAB_FROM: u64 = 1968;
+    pub const JAB_PERIOD: u64 = 8;
+    /// The defeat zoom on joint 20.
+    pub const CAPTURE_TICK: u64 = 2500;
+}
+
 /// `vsmagnify`'s script, a VS scene's and so outside [`fighter_pad`]:
 /// `psp-game` presses these, and `scene_inputs` replays them. The
 /// player's Kirby, on Peach's Castle's spawn 0, runs left from "Go" off

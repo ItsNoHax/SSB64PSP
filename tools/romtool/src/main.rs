@@ -2674,6 +2674,24 @@ const PK_THUNDER_TRAIL_GRAPH: (u32, u32) = (335, 0x8B40);
 /// `SC1PGameBossWallpaper0ProcDisplay` under PRIM and ENV by `color_id`.
 const BOSS_COMET_GRAPH: (u32, u32) = (114, 0x8960);
 
+/// Final Destination's boss wallpaper trees whose display procs set the
+/// render mode (and, for the Fall, the cycle type) before the lists, which
+/// set neither (`sc1pgameboss.c`):
+/// - `SC1PGameBossWallpaper1ProcDisplay` (`llGRLastMapEffects1DObjDesc`,
+///   0xA188): `G_CYC_2CYCLE`, `G_RM_PASS, G_RM_AA_XLU_SURF2`, PRIM
+///   (0, 0, 0, alpha), head 1;
+/// - `SC1PGameBossWallpaper2ProcDisplay` (0xDD90): `G_RM_AA_XLU_SURF`,
+///   PRIM (FF, FF, FF, alpha), head 1;
+/// - `SC1PGameBossWallpaper3ProcDisplay0` (0x11268): the same, head 0.
+///
+/// Unseeded, all three drew opaque (RE-457). The renderer replaces the
+/// PRIM alpha per effect.
+const BOSS_WALLPAPER_GRAPHS: &[((u32, u32), bool, [u8; 3])] = &[
+    ((114, 0xA188), true, [0, 0, 0]),
+    ((114, 0xDD90), false, [0xFF; 3]),
+    ((114, 0x11268), false, [0xFF; 3]),
+];
+
 /// `efManagerMakeEffect` effects whose own display sets head 1 to
 /// `G_RM_AA_XLU_SURF` and `G_AC_NONE` before `gcDrawDObjDLLinksForGObj`
 /// (no `Z_CMP`): the list sets no render mode of its own, so it blends with
@@ -2884,6 +2902,32 @@ fn seed_player_interface_commands(key: (u32, u32), decoded: &mut [Vec<ssb_rom::d
                     Cmd::SetEnvColor([er, eg, eb, 0xFF]),
                 ],
             );
+        }
+        return;
+    }
+    if let Some(&(_, two_cycle, [r, g, b])) = BOSS_WALLPAPER_GRAPHS.iter().find(|(k, ..)| *k == key)
+    {
+        if let Some(cmds) = decoded.first_mut() {
+            let mut seed = Vec::with_capacity(3);
+            if two_cycle {
+                seed.push(Cmd::SetOtherModeH {
+                    shift: 20,
+                    len: 2,
+                    data: 0x0010_0000, // G_CYC_2CYCLE
+                });
+            }
+            seed.push(Cmd::SetOtherModeL {
+                shift: 3,
+                len: 29,
+                // G_RM_PASS, G_RM_AA_XLU_SURF2; G_RM_AA_XLU_SURF, SURF2
+                data: if two_cycle { 0x0C18_41C8 } else { 0x0050_41C8 },
+            });
+            seed.push(Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [r, g, b, 0xFF],
+            });
+            cmds.splice(0..0, seed);
         }
         return;
     }
@@ -15234,6 +15278,59 @@ mod tests {
         let offsets: Vec<u32> = data.sprites.iter().map(|s| s.offset).collect();
         assert_eq!(offsets, [0xC18, 0xC18, 0x408]);
         assert_eq!(data.max_current, 2);
+    }
+
+    /// RE-457: Master Hand's tunnel (114 + 0xDD90, list 0xDAA0) and its
+    /// black layer (114 + 0x11268, list 0x10C10) blend by `TEXEL0 * PRIM`
+    /// under the render mode their display procs set before the lists.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn boss_wallpaper_display_render_modes_blend() {
+        use ssb_rom::dl::Cmd;
+        // The display procs' modes reach the first list of every wallpaper.
+        for (graph, words, prim) in [
+            (0xA188, Some(0x0C18_41C8), [0, 0, 0, 0xFF]),
+            (0xDD90, None, [0xFF; 4]),
+            (0x11268, None, [0xFF; 4]),
+        ] {
+            let mut decoded = vec![Vec::new()];
+            super::seed_player_interface_commands((114, graph), &mut decoded);
+            let mut want = Vec::new();
+            if words.is_some() {
+                want.push(Cmd::SetOtherModeH {
+                    shift: 20,
+                    len: 2,
+                    data: 0x0010_0000,
+                });
+            }
+            want.push(Cmd::SetOtherModeL {
+                shift: 3,
+                len: 29,
+                data: words.unwrap_or(0x0050_41C8),
+            });
+            want.push(Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: prim,
+            });
+            assert_eq!(decoded[0], want, "{graph:#x}");
+        }
+        // TranslucentDirect's list loads its own texture: it now blends.
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let info = ssb_rom::rom::identify(&rom).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&rom, info.region).unwrap();
+        let file = archive.load(114).unwrap();
+        let list = 0x10C10;
+        let cmds = ssb_rom::dl::decode_list_at(&file.data[list as usize..], list).unwrap();
+        let mut decoded = vec![cmds];
+        super::seed_player_interface_commands((file.id, 0x11268), &mut decoded);
+        let mesh = ssb_rom::mesh::convert(&decoded[0], ssb_rom::mesh::Source::of(&file)).unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(m.translucent);
+        assert_eq!(m.alpha_blend, Some(ssb_rom::mesh::AlphaBlend::Prim(255)));
     }
 
     #[test]

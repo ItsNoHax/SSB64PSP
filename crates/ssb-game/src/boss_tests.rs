@@ -197,6 +197,13 @@ fn the_background_attacks_request_the_map_zoom_and_fog() {
     f.boss.pos = Vec3::new(0.0, 0.0, 0.0);
     set_okuhikouki2(&mut f);
     assert!(f.boss.lr_zero);
+    // TopN's `rotate.y = 0 * 90°`: gameplay joints (the defeat zoom's
+    // `damage_joint_id`, hurtboxes) are unrotated (RE-457).
+    assert_eq!(crate::item_throw::model_yaw(&f), Some(0.0));
+    assert_eq!(
+        crate::item_throw::model_axes(&f),
+        [Vec3::X, Vec3::Y, Vec3::Z]
+    );
     assert_eq!(f.pos, Vec3::new(-9000.0, 6000.0, BACKGROUND_Z));
     assert_eq!(
         f.boss.camera,

@@ -238,6 +238,7 @@ fn a_coin_lives_ten_updates_and_dies_on_a_hit() {
         team: 0,
         lr: 1.0,
         handle: 0,
+        handicap: crate::stale::HANDICAP_DEFAULT,
     };
     pool.spawn_monster_shot(MonsterShot::coin(p, Vec3::new(0.0, 2000.0, 0.0), 0, 0.0));
     // `itNyarsWeaponCoinProcUpdate` tests before it counts down.
@@ -337,6 +338,7 @@ fn a_rock_bounces_once_per_floor_and_reports_its_end() {
         team: crate::team::TEAM_DEFAULT,
         lr: 1.0,
         handle: 77,
+        handicap: crate::stale::HANDICAP_DEFAULT,
     };
     crate::rng::set_seed(seed_for(2, 1));
     pool.spawn_monster_shot(MonsterShot::rock(p, Vec3::new(0.0, 600.0, 0.0), 0));

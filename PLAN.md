@@ -122,8 +122,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| cpufx pixel captures | N64 pixels for cpufx-d and yoshi-explosion row (RE-536 compared timelines only); second Kirby costume vs N64 HUD icons in cpufx-k; PSP VS camera frames tighter (global MAE unusable) | RE-536 |
-| PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
+| PK Fire | PK Fire flame needs a route onto the dummy platform (PSP and N64); item tree now starts per itManagerMakeItem (one frame later), unobserved on N64 | RE-352, RE-382, RE-383 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
@@ -136,7 +135,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
-| Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; a hit-landing defeat fixture | RE-457 |
+| Master Hand | Fall wallpaper (damage 90) LOD pair: RE-321 tile-origin extension; tunnel colour vs N64 (PSP darker blue); post-defeat RNG draw count | RE-457, RE-321 |
 | Special fighters | Unobserved: 30-Polygon clear; 1P intro Metal Mario darkness (cameras 7/15); movie camera kinds 3+8 texgen basis | RE-458 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 

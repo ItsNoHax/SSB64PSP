@@ -489,6 +489,7 @@ fn parent(item: &Item, handle: u32) -> ShotParent {
         team: item.team,
         lr: item.lr,
         handle,
+        handicap: item.handicap,
     }
 }
 

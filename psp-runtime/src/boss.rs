@@ -104,7 +104,10 @@ impl BossEffects {
     }
 
     /// Draws the live effects whose plan names camera `tag`, under the
-    /// boss camera's projection and view (`sc1PGameBossMakeCamera`).
+    /// boss camera's projection and view (`sc1PGameBossMakeCamera`), in
+    /// [`BossWallpaper::draw_order`]: head 0 (the black
+    /// `TranslucentDirect` layer and the fades, whose rectangle is `fade`)
+    /// under head 1.
     ///
     /// # Safety
     ///
@@ -116,18 +119,22 @@ impl BossEffects {
         st: &mut crate::meshdraw::DrawState,
         wallpaper: &BossWallpaper,
         tag: u8,
+        fade: Option<[u8; 4]>,
     ) {
         let mut any = false;
-        for (v, e) in self.visuals.iter().zip(wallpaper.effects.iter()) {
-            let (Some(v), Some(e)) = (v, e) else {
+        for i in wallpaper.draw_order(tag) {
+            let Some(e) = &wallpaper.effects[i] else {
                 continue;
             };
-            if e.camera_tag != tag
-                || e.hidden
-                || matches!(e.display, Display::FadeAlpha | Display::FadeColor)
-            {
+            if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                if let Some(color) = fade {
+                    crate::meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], color, st);
+                }
                 continue;
             }
+            let Some(v) = &self.visuals[i] else {
+                continue;
+            };
             if !any {
                 any = true;
                 gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);

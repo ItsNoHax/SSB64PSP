@@ -519,6 +519,10 @@ pub struct WeaponStale {
     pub stale: f32,
     pub attack_id: MotionAttackId,
     pub motion_count: u16,
+    /// `wp->handicap`: the parent fighter's, item's or weapon's
+    /// (`wpManagerMakeWeapon`), `WEAPON_HANDICAP_DEFAULT` for a ground
+    /// weapon; a reflector's own after a reflect (`wpProcessProcHitCollisions`).
+    pub handicap: u8,
 }
 
 impl WeaponStale {
@@ -531,6 +535,7 @@ impl WeaponStale {
         stale: 1.0,
         attack_id: MotionAttackId::None,
         motion_count: 0,
+        handicap: HANDICAP_DEFAULT,
     };
 
     /// `ftParamGetStale(fp->player, fp->motion_attack_id, fp->motion_count)`.
@@ -540,6 +545,7 @@ impl WeaponStale {
             stale: f.stale.stale(f.motion.attack_id, f.motion.count),
             attack_id: f.motion.attack_id,
             motion_count: f.motion.count,
+            handicap: f.handicap,
         }
     }
 

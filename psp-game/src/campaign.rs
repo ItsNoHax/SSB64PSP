@@ -529,8 +529,9 @@ fn boss_defeat_init(
     let Some(f) = dummies.iter().flatten().find(|d| d.fighter.port == port) else {
         return;
     };
-    // `sc1PGameBossSetCameraZoom`: `fp->joints[fp->damage_joint_id]`.
-    let world = ssb_game::boss::defeat_zoom_at(&f.fighter);
+    // `sc1PGameBossSetCameraZoom`: `fp->joints[fp->damage_joint_id]`,
+    // queried before the dead status posed the joints.
+    let world = f.fighter.boss.defeat_zoom;
     boss.zoom = world;
     pl.camera.set_status_map_zoom(
         world,
@@ -679,6 +680,71 @@ fn configure(
     f.camera_zoom_frame *= setup.camera_frame_mul;
     if setup.is_skip_entry {
         ssb_game::status::set_wait_or_fall(&mut f.fighter);
+    }
+}
+
+/// One line per tick of Master Hand's stage, for N64 references: the
+/// battle clock, Master Hand's and the player's state, the RNG seed and
+/// the wallpaper (RE-457).
+#[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+pub(crate) fn log_boss_state(s: &Session, tick: u64) {
+    let Some(boss) = s.campaign.as_ref().and_then(|c| c.boss.as_deref()) else {
+        return;
+    };
+    let mut line = alloc::format!(
+        "boss tick={} clock={:?} gs={:?} tp={:?} seed={:08x} wp={}/{:?} fade={:.2} done={} zoom=({:.1},{:.1},{:.1})",
+        tick,
+        s.vs_battle.as_ref().map(|b| b.clock()),
+        s.vs_battle.as_ref().map(|b| b.status),
+        s.vs_battle.as_ref().map(|b| b.time_passed),
+        ssb_game::rng::seed() as u32,
+        boss.wallpaper.wallpaper_id,
+        boss.wallpaper.current,
+        boss.wallpaper.fade_step,
+        u8::from(boss.wallpaper.done),
+        boss.zoom.x,
+        boss.zoom.y,
+        boss.zoom.z,
+    );
+    for d in s.dummies.iter().flatten() {
+        let f = &d.fighter;
+        line.push_str(&alloc::format!(
+            " B(st={} dmg={} djid={} pos={:.1},{:.1},{:.1})",
+            f.status.status.id(),
+            f.damage,
+            f.damage_joint_id,
+            f.pos.x,
+            f.pos.y,
+            f.pos.z
+        ));
+    }
+    if let Some(pl) = s.play_state.as_ref() {
+        let f = &pl.fighter;
+        line.push_str(&alloc::format!(
+            " K(st={} dmg={} pos={:.1},{:.1})",
+            f.status.status.id(),
+            f.damage,
+            f.pos.x,
+            f.pos.y
+        ));
+    }
+    let mut n = 0;
+    for e in boss.wallpaper.iter() {
+        n += 1;
+        if n <= 6 || !matches!(e.display, spgame::boss::Display::Comet) {
+            line.push_str(&alloc::format!(
+                " E(w{} e{} a{} s{} {:?} p{} t{:.0},{:.0},{:.0})",
+                e.wallpaper, e.effect, e.alpha, e.step, e.display, e.plays, e.translate.x, e.translate.y, e.translate.z
+            ));
+        }
+    }
+    line.push_str(&alloc::format!(" n={}\n", n));
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
     }
 }
 
@@ -1138,7 +1204,7 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.stage = Stage::Bonus3 as u8;
             sp.manager.scene = Scene::Intro;
         }
-        GameScene::OnePBoss | GameScene::OnePBossDefeat => {
+        GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit => {
             sp.data.stage = Stage::Boss as u8;
             sp.manager.scene = Scene::Intro;
         }
@@ -1218,6 +1284,22 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     // Master Hand's hit points run out 100 ticks after "Go": the fixture
     // writes the damage, and `ftBossCommonUpdateDamageStats` runs the real
     // defeat from there.
+    // `onepbosshit`: only the damage, as the N64 reference writes
+    // `percent_damage` and `stock_damage_all`; the hit that lands later
+    // runs `ftBossCommonUpdateDamageStats`.
+    if scene == GameScene::OnePBossHit {
+        let clock = s.vs_battle.as_ref().map(|b| b.clock());
+        if let Some(&(_, damage)) = ssb_capture::script::boss_hit::DAMAGE_SEEDS
+            .iter()
+            .find(|(c, _)| Some(*c) == clock)
+        {
+            for d in s.dummies.iter_mut().flatten() {
+                if d.fighter.kind == ssb_game::fighter::FighterKind::Boss {
+                    d.fighter.damage = damage;
+                }
+            }
+        }
+    }
     if scene == GameScene::OnePBossDefeat
         && s.vs_battle.as_ref().is_some_and(|b| b.clock() == 701)
     {

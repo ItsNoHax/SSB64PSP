@@ -234,6 +234,10 @@ pub struct BossState {
     pub camera: Option<CameraRequest>,
     /// `sc1PGameBossDefeatInitInterface`: set once, for the host.
     pub defeated: bool,
+    /// `sSC1PGameBossDefeatZoomPosition`: [`defeat_zoom_at`] where
+    /// `ftBossCommonUpdateDamageStats` calls it, before the dead status
+    /// poses the joints.
+    pub defeat_zoom: Vec3,
 }
 
 impl Default for BossState {
@@ -265,6 +269,7 @@ impl Default for BossState {
             fog: None,
             camera: None,
             defeated: false,
+            defeat_zoom: Vec3::ZERO,
         }
     }
 }
@@ -360,7 +365,7 @@ fn set_lr(f: &mut Fighter, lr: i32) {
 }
 
 /// `joints[nFTPartsJointTopN]->rotate.y = lr * 90°`: the model yaw the
-/// renderer draws, `None` when it follows the facing.
+/// renderer draws and gameplay joints use, `None` when it follows the facing.
 pub fn model_yaw(f: &Fighter) -> Option<f32> {
     (f.kind == crate::fighter::FighterKind::Boss && f.boss.lr_zero).then_some(0.0)
 }
@@ -587,7 +592,9 @@ pub fn update_damage_stats(f: &mut Fighter) {
         return;
     }
     if f.damage >= HIT_POINTS {
+        // `sc1PGameBossDefeatInitInterface` → `sc1PGameBossSetCameraZoom`.
         f.boss.defeated = true;
+        f.boss.defeat_zoom = defeat_zoom_at(f);
         if lr(f) == -1.0 {
             set_dead_left(f);
         } else {

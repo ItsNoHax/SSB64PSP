@@ -153,6 +153,8 @@ pub struct ShotParent {
     pub lr: f32,
     /// The parent's pool handle (Onix's rocks report their end to it).
     pub handle: u32,
+    /// `ip->handicap`.
+    pub handicap: u8,
 }
 
 impl ShotParent {
@@ -167,6 +169,7 @@ impl ShotParent {
         team: crate::team::TEAM_DEFAULT,
         lr: 1.0,
         handle: u32::MAX,
+        handicap: crate::stale::HANDICAP_DEFAULT,
     };
 }
 
@@ -193,6 +196,8 @@ pub struct MonsterShot {
     /// `wp->player`: who its hits credit.
     pub player: Option<u8>,
     pub team: u8,
+    /// `wp->handicap`: the parent item's.
+    pub handicap: u8,
     pub damage: i32,
     pub position: Vec3,
     pub velocity: Vec3,
@@ -233,6 +238,7 @@ impl MonsterShot {
             owner: parent.owner,
             player: parent.player,
             team: parent.team,
+            handicap: parent.handicap,
             damage: attr.damage,
             position,
             velocity: Vec3::ZERO,

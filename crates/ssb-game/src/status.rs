@@ -5281,7 +5281,14 @@ pub(crate) fn rapid_input(f: &mut Fighter) -> bool {
 fn update_attack11_flagged(f: &mut Fighter) {
     let flag1 = f.motion_script.flags[1] != 0;
     if flag1 && f.attack1.is_goto_followup {
-        return set_attack12(f);
+        set_attack12(f);
+        // `ftMainProcUpdateInterrupt` reads `proc_interrupt` after
+        // `proc_update`: the new `Attack12` runs its interrupt this frame,
+        // so this frame's A release counts toward the rapid jab (RE-457).
+        if f.status.status == Status::Attack12 {
+            interrupt_attack12(f);
+        }
+        return;
     }
     if f.status.animation_ended() {
         return anim_end_set_wait(f);
@@ -5323,6 +5330,13 @@ fn update_attack12_flagged(f: &mut Fighter) {
     if f.status.animation_ended() {
         return anim_end_set_wait(f);
     }
+    interrupt_attack12(f);
+}
+
+/// `ftCommonAttack12ProcInterrupt`: `ftCommonAttack13CheckGoto`, then
+/// `ftCommonAttack100StartCheckInterruptCommon`.
+fn interrupt_attack12(f: &mut Fighter) {
+    let flag1 = f.motion_script.flags[1] != 0;
     if f.attack1.followup_frames > 0.0 && attack13_status(f.kind).is_some() {
         f.attack1.followup_frames -= f.status.timing.anim_speed;
         if f.button_tap().contains(N64Buttons::A) {
@@ -8586,6 +8600,38 @@ mod tests {
         assert_eq!(f.status.status, Status::Wait);
     }
 
+    /// One-frame A presses every 8 frames (the `onepbosshit` script and its
+    /// N64 run, RE-457): the jab chains to `Attack12` the frame after the
+    /// second tap, whose `Attack12` interrupt counts that frame's release,
+    /// so the third tap is the fourth edge and starts the rapid jab on its
+    /// own frame, as on the N64.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn kirby_rapid_jab_starts_on_the_third_tap_eight_frames_apart() {
+        let mut f = Fighter::new(FighterKind::Kirby, 0, 3);
+        f.situation = Situation::Ground;
+        tap_a(&mut f);
+        assert!(check_attack1(&mut f));
+        let mut statuses = Vec::new();
+        for frame in 1..=16 {
+            if frame % 8 == 0 {
+                tap_a(&mut f);
+            } else {
+                release_a(&mut f);
+            }
+            update(&mut f);
+            statuses.push(f.status.status);
+        }
+        assert_eq!(statuses[7], Status::Attack11, "second tap");
+        assert_eq!(statuses[8], Status::Attack12);
+        assert_eq!(statuses[14], Status::Attack12);
+        assert_eq!(
+            statuses[15],
+            AnyStatus::Kirby(KirbyStatus::Attack100Start),
+            "third tap"
+        );
+    }
+
     fn link_on_ground() -> Fighter {
         let mut f = Fighter::new(FighterKind::Link, 0, 3);
         f.situation = Situation::Ground;
@@ -9947,6 +9993,7 @@ mod tests {
             stale: 1.0,
             attack_id: crate::stale::MotionAttackId::SpecialN,
             motion_count: f.motion.count,
+            handicap: crate::stale::HANDICAP_DEFAULT,
         };
         assert_eq!(
             f.take_weapon_spawn(),

@@ -86,6 +86,22 @@ pub enum Display {
     FadeColor,
 }
 
+impl Display {
+    /// The display-list head the callback writes:
+    /// `SC1PGameBossWallpaper3ProcDisplay0` and the fades write
+    /// `gSYTaskmanDLHeads[0]`, the others `gSYTaskmanDLHeads[1]`. A
+    /// `COBJ_FLAG_DLBUFFERS` camera's head 0 runs before its head 1
+    /// (`syTaskmanUpdateDLBuffers` branches head 0 into the next), so a
+    /// head-0 effect draws under every head-1 effect of its camera
+    /// (RE-457).
+    pub fn head(self) -> u8 {
+        match self {
+            Display::TranslucentDirect | Display::FadeAlpha | Display::FadeColor => 0,
+            Display::Comet | Display::Fall | Display::Translucent => 1,
+        }
+    }
+}
+
 /// How an effect updates (`SC1PGameBossEffect::proc_update`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // The stub tables name no effect, so no variant is constructed.
@@ -441,6 +457,19 @@ impl BossWallpaper {
         }
     }
 
+    /// Camera `tag`'s visible effect slots in draw order: its head-0
+    /// effects, then its head-1 effects, each in slot order
+    /// ([`Display::head`]).
+    pub fn draw_order(&self, tag: u8) -> impl Iterator<Item = usize> + '_ {
+        (0..2u8).flat_map(move |head| {
+            self.effects.iter().enumerate().filter_map(move |(i, e)| {
+                e.as_ref()
+                    .filter(|e| e.camera_tag == tag && !e.hidden && e.display.head() == head)
+                    .map(|_| i)
+            })
+        })
+    }
+
     /// The fades' display callbacks, once per drawn frame: the white
     /// rises one step to 255, the grey falls 2.55 to 0.
     pub fn display(&mut self) -> Option<(Display, u8)> {
@@ -621,6 +650,39 @@ mod tests {
         // the check, then 100 updates of white and 100 of grey.
         assert_eq!(ticks, 98 + 1 + 100 + 100);
         assert_eq!(w.display(), Some((Display::FadeColor, 0)));
+    }
+
+    #[test]
+    fn a_camera_draws_its_head_0_effects_under_its_head_1_effects() {
+        // Wallpaper 2's tunnel (head 1) made before its black
+        // `TranslucentDirect` layer (head 0): the layer still draws first.
+        let effect = |display, camera_tag, hidden| Effect {
+            serial: 1,
+            wallpaper: 2,
+            effect: 0,
+            camera_tag,
+            update: Update::Plain,
+            display,
+            alpha: 255,
+            step: 1,
+            color: 0,
+            translate: Vec3::ZERO,
+            rotate_z: 0.0,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            anim_speed: 1.0,
+            anim_frame: 0.0,
+            plays: 1,
+            hidden,
+            counter: 0,
+        };
+        let mut w = BossWallpaper::new();
+        w.effects[0] = Some(effect(Display::Translucent, 2, false));
+        w.effects[1] = Some(effect(Display::TranslucentDirect, 2, false));
+        w.effects[2] = Some(effect(Display::Comet, 1, false));
+        w.effects[3] = Some(effect(Display::FadeAlpha, 1, false));
+        w.effects[4] = Some(effect(Display::Fall, 2, true));
+        assert_eq!(w.draw_order(2).collect::<Vec<_>>(), [1, 0]);
+        assert_eq!(w.draw_order(1).collect::<Vec<_>>(), [3, 2]);
     }
 
     #[test]

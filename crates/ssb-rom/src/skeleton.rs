@@ -1008,6 +1008,16 @@ impl StageAnimator {
         }
     }
 
+    /// An item's tree (`itManagerMakeItem`): `gcAddAnimAll(..., 0.0F)` then
+    /// the make's own `gcPlayAnimAll`, which parses frame 0. Each tick of
+    /// this player is one of `Item::anim_ticks`' plays, so after `n` the
+    /// tree stands at frame `n - 1`. The N64 shows the Link Bomb's `GObj`
+    /// frame 1 on its creation frame, after the item process's play
+    /// (RE-444), and Egg's script replays the ROM this way (RE-431).
+    pub fn start_item(&mut self, pack: &Pack<'_>, anim: &AnimDesc) {
+        self.start_changed(pack, anim);
+    }
+
     /// The pose `grDisplayMakeGeometryLayer`'s `gcPlayAnimAll` leaves on a
     /// stage layer when it is made, before its first tick: frame zero
     /// parsed, time not advanced. [`Self::start`]'s first tick plays this

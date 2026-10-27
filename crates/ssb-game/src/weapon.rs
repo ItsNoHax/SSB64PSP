@@ -2319,6 +2319,8 @@ pub(crate) struct Reflector {
     pub(crate) pos: Vec3,
     /// `fp->stat_flags` and `fp->stat_count` (US: `reflect_stat_flags`).
     pub(crate) stat: crate::spgame::live::AttackStat,
+    /// `fp->handicap`.
+    pub(crate) handicap: u8,
 }
 
 impl Reflector {
@@ -2329,6 +2331,7 @@ impl Reflector {
             lr: f.facing.sign(),
             pos: f.pos,
             stat: f.stats.attack,
+            handicap: f.handicap,
         }
     }
 }
@@ -2429,6 +2432,7 @@ fn pre_hit_at(
         pos_curr: position,
         pos_prev: prev,
         source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
+        // Read by no clank, reflect or absorb check.
         handicap: crate::stale::HANDICAP_DEFAULT,
         can_shield: true,
         owner: Some(owner),
@@ -2513,7 +2517,7 @@ fn laser_hit(laser: &ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) {
         pos_curr: pos,
         pos_prev: pos - vel,
         source: crate::combat::HitSource::Weapon { vel_x: vel.x },
-        handicap: crate::stale::HANDICAP_DEFAULT,
+        handicap: h.stale.handicap,
         can_shield,
         owner: owner_player,
         is_hitlag_victim: None,
@@ -2644,6 +2648,7 @@ fn laser_procs(
         );
         laser.reface();
         stale.stat = r.stat;
+        stale.handicap = r.handicap;
         *team = r.team;
     }
     // `proc_absorb` destroys it.
@@ -2767,7 +2772,7 @@ fn monster_hit(
             source: crate::combat::HitSource::Weapon {
                 vel_x: m.velocity.x,
             },
-            handicap: crate::stale::HANDICAP_DEFAULT,
+            handicap: h.stale.handicap,
             can_shield: attr.can_shield,
             owner: m.player,
             is_hitlag_victim: m
@@ -2888,6 +2893,7 @@ fn weapon_procs(
         // `wpProcessProcHitCollisions`: the reflector's team.
         *team = r.team;
         stale.stat = r.stat;
+        stale.handicap = r.handicap;
     }
     if p.absorb {
         weapon.proc_effects(Proc::Absorb, emit);
@@ -2986,7 +2992,6 @@ fn stale_hit(
 ) -> attack::HitOutcome {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
-    // `wp->handicap` is the owner's; every Training player has the default.
     let outcome = attack::HitOutcome::of(crate::combat::weapon_hit(
         defender,
         crate::combat::WeaponAttack {
@@ -2996,7 +3001,7 @@ fn stale_hit(
             pos_curr: position,
             pos_prev: position - velocity,
             source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
-            handicap: crate::stale::HANDICAP_DEFAULT,
+            handicap: stale.handicap,
             can_shield: true,
             owner: Some(owner),
             is_hitlag_victim: None,
@@ -3033,7 +3038,7 @@ fn stale_contact(
             pos_curr: position,
             pos_prev: position - velocity,
             source: crate::combat::HitSource::Weapon { vel_x: velocity.x },
-            handicap: crate::stale::HANDICAP_DEFAULT,
+            handicap: stale.handicap,
             can_shield: true,
             owner: Some(owner),
             is_hitlag_victim,
@@ -3271,7 +3276,10 @@ impl WeaponPool {
         let seq = self.next_seq;
         let made = self.insert(
             Weapon::Monster(shot),
-            crate::stale::WeaponStale::FRESH,
+            crate::stale::WeaponStale {
+                handicap: shot.handicap,
+                ..crate::stale::WeaponStale::FRESH
+            },
             shot.team,
             shot.lr,
         );
@@ -3380,6 +3388,7 @@ impl WeaponPool {
                     team: spawn.team,
                     lr: spawn.facing,
                     handle: u32::MAX,
+                    handicap: spawn.stale.handicap,
                 };
                 let mut m = crate::monster_weapon::MonsterShot::equipment(
                     kind,
@@ -3861,7 +3870,7 @@ impl WeaponPool {
                     team: self.teams[i],
                     // A ground weapon's `wp->player` names no fighter.
                     player: (owner != sector::GROUND_PORT).then_some(owner),
-                    handicap: crate::stale::HANDICAP_DEFAULT,
+                    handicap: self.stale[i].handicap,
                 },
                 crate::item::Knock {
                     weight: hitbox.kb_weight,
@@ -4705,6 +4714,7 @@ impl WeaponPool {
             if let Some(r) = p.reflect {
                 self.teams[i] = r.team;
                 self.stale[i].stat = r.stat;
+                self.stale[i].handicap = r.handicap;
                 match weapon {
                     Weapon::PKFire(spark) => spark.reflect(&r),
                     Weapon::PKThunder(h) => {
@@ -5934,6 +5944,46 @@ mod tests {
         assert!(left.tick(&mut crate::wpeffect::Emit::default()));
         assert!(left.tick(&mut crate::wpeffect::Emit::default()));
         assert!((left.rotate_z + 2.0 * YOSHISTAR_ROTATE_SPEED).abs() < 1e-6);
+    }
+
+    /// `wpManagerMakeWeapon` copies the owner's handicap (`wp->handicap =
+    /// fp->handicap`, wpmanager.c:123): Master Hand's bullet (handicap 36
+    /// in the 1P Game) knocks back about 8% less than a default-handicap
+    /// shot, as the N64 run measured (RE-457).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_weapon_hits_with_its_owners_handicap() {
+        let knockback = |handicap: u8| {
+            let mut owner = Fighter::new(FighterKind::Boss, 1, 3);
+            owner.handicap = handicap;
+            let stale = crate::stale::WeaponStale::of(&owner);
+            assert_eq!(stale.handicap, handicap);
+            let mut weapons = WeaponPool::default();
+            assert!(weapons.spawn(WeaponSpawn {
+                kind: WeaponKind::BossBullet { hard: false },
+                owner_port: 1,
+                team: 1,
+                stale,
+                position: Vec3::ZERO,
+                facing: -1.0,
+            }));
+            weapons.tick(open_air, None);
+            let Some(Weapon::BossBullet(b)) = weapons.slots.iter().flatten().next().copied() else {
+                panic!("no bullet");
+            };
+            let mut target = Fighter::new(FighterKind::Kirby, 0, 3);
+            target.pos = b.position;
+            target.situation = Situation::Ground;
+            target.damage = 50;
+            weapons.apply_hits(&mut target);
+            crate::combat::resolve(&mut target);
+            assert!(target.damage > 50, "the bullet missed");
+            target.damage_knockback_stack
+        };
+        let default = knockback(crate::stale::HANDICAP_DEFAULT);
+        let boss = knockback(36);
+        assert!(default > 0.0);
+        assert!(boss < default * 0.95, "handicap 36 {boss} vs 9 {default}");
     }
 
     /// `wpManagerMakeWeapon` captures the owner's stale factor; the hit
