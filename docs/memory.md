@@ -25,6 +25,7 @@
 - `scene_files::prefetch`:
   - reads the next scene's files beside the running scene (RE-476)
   - stops queuing reads under `PREFETCH_MARGIN`, 6 MiB (`scene_files.rs:55`)
+  - covers the next scene's FuncStart loads only; loads made on input (Maps preview) happen on that input, as on the N64 (RE-572)
 - Static state (RE-534, RE-535):
   - texture bind-block cache: 1024 slots (`meshdraw.rs:808`)
   - texture-mapping cache: 256 slots (`MAP_CACHE_SLOTS`, `meshdraw.rs`)

@@ -4500,7 +4500,7 @@ unsafe fn session_frame(
                             Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, capture_scene.is_some(), sim_frame_index));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
-                        load_players_training();
+                        load_players_training(s);
                     }
                 }
             }
@@ -4584,7 +4584,7 @@ unsafe fn session_frame(
                         ));
                         s.fighter_select_fighters = None;
                         s.screen = Screen::FighterSelect;
-                        load_players_training();
+                        load_players_training(s);
                     }
                 }
                 Some(ssb_game::stage_select::Outcome::Timeout) => {
@@ -4919,7 +4919,7 @@ fn training_menu_frame(
             s.fighter_select = Some(new_fighter_select(s.training_scene, s.backup.fighter_mask, is_capture, sim_frame_index));
             s.fighter_select_fighters = None;
             s.screen = Screen::FighterSelect;
-            load_players_training();
+            load_players_training(s);
         }
         return false;
     }
@@ -5145,7 +5145,11 @@ impl Session {
         self.stage_select = ssb_game::stage_select::StageSelect::new(remembered, self.backup.unlock_mask);
         self.stage_select_layer = Some(ssb_game::stage_select_layer::Layer::new(&self.stage_select, !self.vs));
         self.screen = Screen::StageSelect;
-        scene_load::scene("maps", scene_load::maps_roots(!self.vs));
+        // `mnMapsFuncStart`'s files and the cursor's stage's preview; each
+        // later one is read as the cursor lands on it
+        // (`tick_stage_select_layer`).
+        let gkind = ssb_game::stage_select::slot_gkind(self.stage_select.cursor_slot);
+        scene_load::maps(!self.vs, gkind);
         // The battle's fighters are final: read their files while the
         // stage is picked (D-046), and the stage's once the cursor rests.
         let vs = self.vs;
@@ -5852,7 +5856,7 @@ fn load_scene(s: &Session, scene: MScene) {
         MScene::Characters => MScene::AutoDemo,
         MScene::AutoDemo => MScene::Startup,
         _ => {
-            read_ahead_menus(scene);
+            read_ahead_menus(s, scene);
             return;
         }
     };
@@ -5871,8 +5875,10 @@ fn load_scene(s: &Session, scene: MScene) {
 /// The menus' read-ahead (D-046): each menu starts reading the scenes its
 /// entries lead to, so a pick does not wait for the memory stick. The mode
 /// select reads its four small submenus; the 1P and VS mode menus their
-/// character selects; a character select the stage select's previews.
-fn read_ahead_menus(scene: MScene) {
+/// character selects; a character select the stage select's start: its
+/// files and the preview of the stage its cursor opens on, which is all
+/// `mnMapsFuncStart` reads (RE-572).
+fn read_ahead_menus(s: &Session, scene: MScene) {
     let next: &[MScene] = match scene {
         MScene::ModeSelect => &[MScene::OnePMode, MScene::VsMode, MScene::Option, MScene::Data],
         MScene::OnePMode => &[
@@ -5883,11 +5889,13 @@ fn read_ahead_menus(scene: MScene) {
         ],
         MScene::VsMode => &[MScene::PlayersVs],
         MScene::PlayersVs => {
-            scene_load::read_ahead("maps", 0, || scene_load::maps_roots(false));
+            let gkind = maps_open_gkind(s, true);
+            scene_load::read_ahead("maps", 0, || scene_load::maps_roots(false, gkind));
             return;
         }
         MScene::Players1PTraining => {
-            scene_load::read_ahead("maps", 1, || scene_load::maps_roots(true));
+            let gkind = maps_open_gkind(s, false);
+            scene_load::read_ahead("maps", 1, || scene_load::maps_roots(true, gkind));
             return;
         }
         _ => return,
@@ -5897,11 +5905,20 @@ fn read_ahead_menus(scene: MScene) {
     }
 }
 
+/// The stage the stage select's cursor opens on in VS (`vs`) or Training:
+/// `mnMapsInitVars`' slot of the mode's last stage, as
+/// `Session::open_stage_select` makes it.
+fn maps_open_gkind(s: &Session, vs: bool) -> u8 {
+    let remembered = if vs { s.maps_vsmode_gkind } else { s.maps_training_gkind };
+    let select = ssb_game::stage_select::StageSelect::new(remembered, s.backup.unlock_mask);
+    ssb_game::stage_select::slot_gkind(select.cursor_slot)
+}
+
 /// Training's character select's files, and its stage select's read
 /// ahead (`nSCKindPlayers1PTraining`).
-fn load_players_training() {
+fn load_players_training(s: &Session) {
     scene_load::scene("players-training", scene_load::scene_roots(MScene::Players1PTraining));
-    read_ahead_menus(MScene::Players1PTraining);
+    read_ahead_menus(s, MScene::Players1PTraining);
 }
 
 /// Starts a scene the host runs, entered from `prev`.
@@ -6446,7 +6463,13 @@ fn draw_stage_select(gpu: &mut Gpu, select: &ssb_game::stage_select::StageSelect
 #[inline(never)]
 fn tick_stage_select_layer(pack: Option<&Pack<'_>>, s: &mut Session) {
     if let Some(layer) = s.stage_select_layer.as_mut() {
+        let serial = layer.preview_serial;
         layer.tick(&s.stage_select);
+        // `mnMapsMakePreview`: the new stage's preview is read before it
+        // is made, and the last one's files leave (RE-572).
+        if layer.preview_serial != serial {
+            scene_load::maps_preview(layer.is_training, layer.preview_gkind());
+        }
         stage_screen::tick(pack, layer, &mut s.stage_preview);
     }
 }

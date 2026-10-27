@@ -113,12 +113,28 @@ pub const STAGE_PREVIEW_MODELS: [u32; 9] = [0x6A, 0x6D, 0x6C, 0x69, 0x71, 0x6F, 
 /// a VS stage select's preview shows (`mnMapsMakePreviewWallpaper`): the
 /// pack's stage wallpaper sprite's source, in the stage's map closure.
 pub const STAGE_WALLPAPERS: [u32; 9] = [0x5A, 0x63, 0x5C, 0x59, 0x5F, 0x5D, 0x58, 0x5E, 0x5B];
-/// The Training stage select's preview wallpapers past [`MAPS`]' black one
-/// (`dMNMapsTrainingModeFileInfos`): `GRWallpaperTrainingYellow`, `...Blue`.
-pub const MAPS_TRAINING_WALLPAPERS: [u32; 2] = {
-    let files = crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID;
-    [files[1], files[2]]
-};
+
+/// `mnMapsMakePreview`'s files for `gkind`: what the select reads when the
+/// scene starts and each time the cursor lands on a stage, into one of its
+/// two model heaps (`mnMapsAllocModelHeaps`), the last preview's staying
+/// until the next one is made. The stage's model ([`STAGE_PREVIEW_MODELS`])
+/// and the wallpaper it shows: the stage's ([`STAGE_WALLPAPERS`]), or in
+/// Training the one of `dMNMapsTrainingModeFileInfos`' three (`...Black`,
+/// `...Yellow`, `...Blue`) `dMNMapsTrainingModeWallpaperIDs` picks, which the N64
+/// reads over the stage's in the same heap. None for the random slot
+/// (`gkind` past the nine VS stages), whose picture is in [`MAPS`]'
+/// `MNMaps`.
+pub fn maps_preview(gkind: u8, training: bool) -> Option<[u32; 2]> {
+    let g = usize::from(gkind);
+    let model = *STAGE_PREVIEW_MODELS.get(g)?;
+    let wallpaper = if training {
+        let id = *crate::d_arrays::MN_MAPS_TRAINING_MODE_WALLPAPER_IDS.get(g)?;
+        *crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID.get(usize::try_from(id).ok()?)?
+    } else {
+        STAGE_WALLPAPERS[g]
+    };
+    Some([model, wallpaper])
+}
 
 /// The demo clips a character select poses its fighters with: `Wait`
 /// before a pick, `Win1` to `Win4` after (`mnPlayersVSGetStatusSelected`
@@ -215,6 +231,31 @@ mod tests {
         assert_eq!(ground_map(17), Some(0x10F));
         assert_eq!(ground_map(40), Some(0x126));
         assert_eq!(ground_map(41), None);
+    }
+
+    /// A preview holds its stage's model and one wallpaper: the stage's in
+    /// VS, one of Training's three in Training; the random slot none.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_preview_is_its_model_and_one_wallpaper() {
+        let training = crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID;
+        // `GRWallpaperTrainingBlack` is also one of the scene's own files.
+        assert!(MAPS.contains(&training[0]));
+        let mut shown = [false; 3];
+        for gkind in 0..9u8 {
+            let g = usize::from(gkind);
+            assert_eq!(
+                maps_preview(gkind, false),
+                Some([STAGE_PREVIEW_MODELS[g], STAGE_WALLPAPERS[g]])
+            );
+            let [model, wallpaper] = maps_preview(gkind, true).unwrap();
+            assert_eq!(model, STAGE_PREVIEW_MODELS[g]);
+            let k = training.iter().position(|&f| f == wallpaper).unwrap();
+            shown[k] = true;
+        }
+        assert_eq!(shown, [true; 3], "every Training wallpaper is shown");
+        assert_eq!(maps_preview(0xDE, false), None);
+        assert_eq!(maps_preview(9, true), None);
     }
 
     #[test]

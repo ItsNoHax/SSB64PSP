@@ -86,7 +86,7 @@
 | Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
-| PSP-1000 | In scope, after arenas, before MS8. Peaks 18.8-20.6 MB vs ~18 MB free. Order: B Maps preview on landing (~5.4 MB); A audio sample page cache (~3.9 MB); C per-status figatree streaming (3.5–4.5 MB); D trim resident region (≤2.6 MB). A, C gated on Memory Stick small-read latency. Not a plan: fewer fighters at select (N64 holds 12). Acceptance: every golden under `memory_ballast` 18 MB, then hardware. Open: free at `psp_main`; per-block dump for the 2.0–3.85 MB residual | RE-288, RE-475, RE-572 |
+| PSP-1000 | In scope, before MS8. B (Maps preview on cursor) done. Next A audio sample page cache and C per-status figatree streaming, gated on Memory Stick small-read latency on hardware. Not a plan: fewer fighters at select. Acceptance: every golden under `memory_ballast` 18 MB, then hardware | RE-288, RE-475, RE-572 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 

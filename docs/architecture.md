@@ -35,7 +35,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 - Display lists: converted once at build time; RDP not emulated ([D-001](decisions/D-001.md), [D-002](decisions/D-002.md))
 - Pack: mandatory, built separately ([D-028](decisions/D-028.md))
   - boot reads header, tables, shared region
-  - each scene reads its files and extern closure at start
+  - each scene reads its files and extern closure at start; Maps loads MAPS + cursor preview, swapped per cursor move (`scene_load::maps_preview`)
   - next scene's files prefetched where known ([D-046](decisions/D-046.md))
   - sizes, budgets: [memory.md](memory.md)
 - Extern relocations: zeroed in the pack; converter follows them ([D-011](decisions/D-011.md))

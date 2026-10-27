@@ -791,6 +791,18 @@ fn steps(events: &[Event]) -> Vec<Step> {
                 base = roots.clone();
                 base_in_battle = true;
             }
+            Event::Maps(own, preview) => {
+                base = own.clone();
+                base_in_battle = false;
+                let mut all = own.clone();
+                all.extend_from_slice(preview);
+                out.push(Step::Enter("maps", all, false));
+            }
+            Event::Preview(roots) => {
+                let mut all = base.clone();
+                all.extend_from_slice(roots);
+                out.push(Step::Enter("maps-preview", all, true));
+            }
             Event::Prefetch(roots) => {
                 out.push(Step::Prefetch(roots.clone()));
                 if k % 3 == 0 {
@@ -996,4 +1008,94 @@ fn plan_blocks_follow_their_files() {
     );
     assert_eq!(new.io.heap.used.get(), 0);
     assert!(new.io.spans.is_empty());
+}
+
+/// The stage select as the N64 runs it (`mnMapsMakePreview`, RE-572): one
+/// preview held at a time, read when the cursor lands; the last one's
+/// files stay through the frame that may still draw them and leave at its
+/// safe point, while the battle files read ahead carry on.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_stage_select_holds_the_cursors_preview_alone() {
+    let Some(bytes) = real_pack() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let cfg = Config {
+        budget: 64 << 20,
+        delay: 1_000_000,
+        fail_bg: 0,
+        fail_start: 0,
+    };
+    let mut new = Planned::new(Pack::open(&bytes).unwrap(), cfg);
+    let files = |roots: &[u32]| {
+        let (mut want, mut ids) = (Vec::new(), Vec::new());
+        crate::reloc_link::closure(&pack, roots, &mut want, &mut ids).unwrap();
+        (0..want.len()).filter(|&i| want[i]).collect::<Vec<usize>>()
+    };
+    let held = |new: &Planned<'_>, set: &[usize]| {
+        set.iter().all(|&i| {
+            new.plan.files()[i].block != NO_BLOCK && new.plan.files()[i].keep == Keep::Scene
+        })
+    };
+    let own = crate::scene_roots::MAPS.to_vec();
+    let preview = |g: u8| Roots::preview(false, g);
+    let with = |g: u8| {
+        let mut v = own.clone();
+        v.extend(preview(g));
+        v
+    };
+    // Only the files neither the scene nor the other preview holds.
+    let only = |g: u8, other: u8| {
+        let (mine, theirs) = (files(&with(g)), files(&with(other)));
+        mine.into_iter()
+            .filter(|i| !theirs.contains(i))
+            .collect::<Vec<usize>>()
+    };
+    new.enter("maps", &with(0), false).unwrap();
+    // A background read that never completes: the battle's fighters.
+    new.plan
+        .prefetch(&mut new.io, &[crate::scene_roots::FIGHTER_MAIN[0]]);
+    let next: Vec<usize> = (0..new.plan.files().len())
+        .filter(|&i| new.plan.files()[i].keep == Keep::Next)
+        .collect();
+    assert!(!next.is_empty());
+    new.safe_point();
+    let castle = only(0, 6);
+    assert!(held(&new, &files(&with(0))));
+    let (one, _) = new.plan.held();
+
+    let report = new.enter("maps-preview", &with(6), true).unwrap();
+    assert!(report.loaded_files > 0 && report.reads > 0);
+    assert!(
+        new.plan.in_flight() && !new.plan.jobs().is_empty(),
+        "the read ahead is not waited for"
+    );
+    // The frame that reads it may still draw the last preview.
+    assert!(castle
+        .iter()
+        .all(|&i| new.plan.files()[i].keep == Keep::Leaving));
+    assert!(castle
+        .iter()
+        .all(|&i| new.plan.files()[i].block != NO_BLOCK));
+    new.safe_point();
+    assert!(castle
+        .iter()
+        .all(|&i| new.plan.files()[i].block == NO_BLOCK));
+    assert!(held(&new, &files(&with(6))));
+    assert!(next.iter().all(|&i| new.plan.files()[i].keep == Keep::Next));
+
+    // The random slot reads nothing and holds no preview.
+    let report = new.enter("maps-preview", &with(0xDE), true).unwrap();
+    assert_eq!((report.loaded_files, report.reads), (0, 0));
+    new.safe_point();
+    assert!(only(6, 0xDE)
+        .iter()
+        .all(|&i| new.plan.files()[i].block == NO_BLOCK));
+    let (none, _) = new.plan.held();
+    assert!(none < one);
+
+    // Back on Peach's Castle: what the select held at its start.
+    new.enter("maps-preview", &with(0), true).unwrap();
+    new.safe_point();
+    assert_eq!(new.plan.held().0, one);
+    assert!(next.iter().all(|&i| new.plan.files()[i].keep == Keep::Next));
 }

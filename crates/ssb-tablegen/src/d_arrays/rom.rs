@@ -206,6 +206,17 @@ pub const LIST: &[DArray] = &[
         &[3],
     )
     .stride(8),
+    // `mn/mnmaps/mnmaps.c`: which of those three each `gkind`'s Training
+    // preview shows (`mnMapsMakePreviewWallpaper`); a tenth for the random
+    // slot.
+    DArray::new(
+        "MN_MAPS_TRAINING_MODE_WALLPAPER_IDS",
+        "dMNMapsTrainingModeWallpaperIDs",
+        OVL30,
+        0x8013_4568,
+        Elem::I32,
+        &[10],
+    ),
     // `sys/objman.c`: `CObjVec { xobj, eye, at, up }`.
     DArray::new(
         "GC_COBJ_VEC_DEFAULT_EYE",

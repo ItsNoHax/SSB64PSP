@@ -65,6 +65,12 @@ pub(crate) enum Event {
     SetBase(Vec<u32>),
     /// `scene_load::prefetch`, `read_ahead`.
     Prefetch(Vec<u32>),
+    /// `scene_load::maps`: a scene whose own files are the first, entered
+    /// with the second (a stage select's first preview).
+    Maps(Vec<u32>, Vec<u32>),
+    /// `scene_load::maps_preview`: the scene's own files and a stage
+    /// select's preview, entered within the scene.
+    Preview(Vec<u32>),
     /// `scene_files::safe_point` after a frame.
     Frame,
 }
@@ -258,6 +264,18 @@ impl<'a> Sim<'a> {
                     self.base = roots.clone();
                     self.base_in_battle = true;
                 }
+                Event::Maps(own, preview) => {
+                    self.base = own.clone();
+                    self.base_in_battle = false;
+                    let mut all = own.clone();
+                    all.extend_from_slice(preview);
+                    self.enter("maps", &all, false);
+                }
+                Event::Preview(roots) => {
+                    let mut all = self.base.clone();
+                    all.extend_from_slice(roots);
+                    self.enter("maps-preview", &all, true);
+                }
                 Event::Prefetch(roots) => self.prefetch(roots),
                 Event::Frame => self.safe_point(),
             }
@@ -443,15 +461,30 @@ impl<'a> Roots<'a> {
         v
     }
 
-    fn maps(training: bool) -> Vec<u32> {
+    /// `scene_load::maps_roots`: the stage select's files and the preview
+    /// of `gkind`, the stage its cursor opens on.
+    fn maps(training: bool, gkind: u8) -> Vec<u32> {
         let mut v = r::MAPS.to_vec();
-        v.extend(r::STAGE_PREVIEW_MODELS);
-        if training {
-            v.extend(r::MAPS_TRAINING_WALLPAPERS);
-        } else {
-            v.extend(r::STAGE_WALLPAPERS);
-        }
+        v.extend(Self::preview(training, gkind));
         v
+    }
+
+    /// `scene_load::maps_preview_roots`.
+    pub(crate) fn preview(training: bool, gkind: u8) -> Vec<u32> {
+        r::maps_preview(gkind, training).map_or_else(Vec::new, |f| f.to_vec())
+    }
+
+    /// `open_stage_select` on `from` (`scene_load::maps`), the battle's
+    /// fighters read ahead, then the cursor over `path` (the random slot is
+    /// `0xDE`), each landing reading its preview.
+    fn stage_select(e: &mut Vec<Event>, training: bool, from: u8, path: &[u8], fighters: Vec<u32>) {
+        e.push(Event::Maps(r::MAPS.to_vec(), Self::preview(training, from)));
+        e.push(Event::Prefetch(fighters));
+        e.push(Event::Frame);
+        for &g in path {
+            e.push(Event::Preview(Self::preview(training, g)));
+            e.push(Event::Frame);
+        }
     }
 
     fn results(&self) -> Vec<u32> {
@@ -570,20 +603,21 @@ impl<'a> Roots<'a> {
             r::VS_MODE.to_vec(),
             alloc::vec![self.players(&r::PLAYERS_VS)],
         );
-        for (gkind, kinds) in [(6u32, &[0u32, 1, 2, 3][..]), (3, &[9, 8])] {
+        // The select opens on the stage last picked (Peach's Castle at
+        // first), passes the random slot, and rests on the battle's.
+        for (from, path, gkind, kinds) in [
+            (0u8, &[1u8, 0xDE, 6][..], 6u32, &[0u32, 1, 2, 3][..]),
+            (6, &[3], 3, &[9, 8]),
+        ] {
             menu(
                 &mut e,
                 "players-vs",
                 self.players(&r::PLAYERS_VS),
-                alloc::vec![Self::maps(false)],
+                alloc::vec![Self::maps(false, from)],
             );
-            // `open_stage_select`: the fighters, then the stage on dwell.
-            menu(
-                &mut e,
-                "maps",
-                Self::maps(false),
-                alloc::vec![self.fighter_battle(kinds)],
-            );
+            // `open_stage_select`: the fighters, the previews the cursor
+            // lands on, then the stage on dwell.
+            Self::stage_select(&mut e, false, from, path, self.fighter_battle(kinds));
             e.push(Prefetch(Self::stage_battle(gkind)));
             e.push(Battle(self.battle(gkind, kinds)));
             e.push(Frame);
@@ -602,11 +636,11 @@ impl<'a> Roots<'a> {
             &mut e,
             "players-training",
             self.players(&r::PLAYERS_TRAINING),
-            alloc::vec![Self::maps(true)],
+            alloc::vec![Self::maps(true, 0)],
         );
         let mut fighters = self.fighter_battle(&[5, 2]);
         fighters.extend(r::TRAINING);
-        menu(&mut e, "maps", Self::maps(true), alloc::vec![fighters]);
+        Self::stage_select(&mut e, true, 0, &[5, 4], fighters);
         e.push(Prefetch(Self::stage_battle(4)));
         let mut training = self.battle(4, &[5, 2]);
         training.extend(r::TRAINING);
@@ -616,7 +650,7 @@ impl<'a> Roots<'a> {
             &mut e,
             "players-training",
             self.players(&r::PLAYERS_TRAINING),
-            alloc::vec![Self::maps(true)],
+            alloc::vec![Self::maps(true, 4)],
         );
         // The 1P Game as Mario: Link, the Yoshi team, Fox, the Mario
         // Bros., Kirby's team, the Polygons (`campaign::start_stage`).

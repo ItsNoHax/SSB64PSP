@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 69): fixed `FxPool` of 70, KO `ManagerCounts` as statics, `GameArena` grow blocks; peak_use 19,945,472 B (`f1-onep-zako-ko-flash`; relative to a higher `boot_free`, absolute `low_free` gains ~287 KB on every row).
+- Landed (batch 70): Maps loads the cursor preview like the N64 (RE-572). VS select peak 19.78 to 15.18 MB. Highest peaks: `f1-onep-zako-*` 19,945,472 B, `f1-opening-clash` 17,749,760, `f1-vs-results` 17,680,896, `f1-training-fighter-select` 17,597,696. Boot free 52,671,232 B.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. Batch 70: PSP-1000 step B (Maps previews loaded like the N64, RE-572).
-2. A audio streaming, C figatree streaming (hardware latency gate), then MS8.
+1. Hardware small-read latency on PSP-2000 (PSPLink).
+2. A audio sample streaming, C per-status figatree streaming, then MS8.
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 69; deepest game stack 399,856 B of 524288.
+Baseline: batch 70; deepest game stack 399,856 B of 524288.
 
 | Check | Result |
 |---|---|

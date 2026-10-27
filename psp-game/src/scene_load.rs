@@ -171,7 +171,8 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         Scene::Players1PGame => players(&mut v, &r::PLAYERS_1P),
         Scene::Players1PTraining => players(&mut v, &r::PLAYERS_TRAINING),
         Scene::Players1PBonus1 | Scene::Players1PBonus2 => players(&mut v, &r::PLAYERS_BONUS),
-        Scene::Maps => v.extend(maps_roots(false)),
+        // The preview of the cursor's stage: `maps`.
+        Scene::Maps => v.extend(r::MAPS),
         Scene::Explain => {
             v.extend(r::EXPLAIN);
             // Its battle's, held from the scene's start (RE-476).
@@ -293,20 +294,41 @@ pub fn stage_battle_roots(gkind: u8) -> Vec<u32> {
     v
 }
 
-/// The stage select's files (`mnMapsFuncStart`) and every stage's preview
-/// (`mnMapsMakePreview`): the model, and the stage's wallpaper in VS or
-/// Training's three. The N64 reads a stage's preview each time the cursor
-/// lands on it; the select holds them all from its start, read ahead from
-/// the character select (D-046).
-pub fn maps_roots(training: bool) -> Vec<u32> {
+/// The stage select's files as it starts (`mnMapsFuncStart`): its listed
+/// files and the preview of the stage its cursor opens on, `gkind`
+/// ([`maps_preview_roots`]). The N64 reads no other stage's preview until
+/// the cursor lands on it (RE-572).
+pub fn maps_roots(training: bool, gkind: u8) -> Vec<u32> {
     let mut v: Vec<u32> = Vec::from(r::MAPS);
-    v.extend(r::STAGE_PREVIEW_MODELS);
-    if training {
-        v.extend(r::MAPS_TRAINING_WALLPAPERS);
-    } else {
-        v.extend(r::STAGE_WALLPAPERS);
-    }
+    v.extend(maps_preview_roots(training, gkind));
     v
+}
+
+/// `mnMapsMakePreview`'s files for `gkind` (`ssb_rom::scene_roots::
+/// maps_preview`): none for the random slot.
+pub fn maps_preview_roots(training: bool, gkind: u8) -> Vec<u32> {
+    r::maps_preview(gkind, training).map_or_else(Vec::new, |f| f.to_vec())
+}
+
+/// `mnMapsFuncStart`: the stage select holds its own files, and the
+/// preview of `gkind`, the stage its cursor opens on.
+pub fn maps(training: bool, gkind: u8) {
+    *base() = Vec::from(r::MAPS);
+    // SAFETY: as `base`.
+    unsafe { BASE_IN_BATTLE = false };
+    load("maps", &maps_preview_roots(training, gkind), false);
+}
+
+/// `mnMapsMakePreview` after a cursor move: reads `gkind`'s preview now,
+/// in the tick, as `lbRelocGetForceExternHeapFile` does on the N64 (the
+/// frame runs long and the last picture stays on screen until it ends),
+/// and drops the last preview's files at the frame's safe point, as the
+/// N64's next preview reuses that heap. The battle files read ahead
+/// carry on (`scene_files::enter_within`).
+pub fn maps_preview(training: bool, gkind: u8) {
+    let mut roots = base().clone();
+    roots.extend(maps_preview_roots(training, gkind));
+    enter("maps-preview", &roots, true);
 }
 
 /// The VS results' files: `mnVSResultsFuncStart`'s, all twelve kinds, the
@@ -461,6 +483,11 @@ fn load(name: &'static str, extra: &[u32], within: bool) {
     ahead().clear();
     let mut roots = base().clone();
     roots.extend_from_slice(extra);
+    enter(name, &roots, within);
+}
+
+/// `scene_files::enter` (or `enter_within`) with `roots`, logged.
+fn enter(name: &'static str, roots: &[u32], within: bool) {
     let last = scene_files::report();
     let last_demand = scene_files::demand_files();
     if last.demand_files > 0 {
@@ -471,9 +498,9 @@ fn load(name: &'static str, extra: &[u32], within: bool) {
     }
     let t = ssb_psp_runtime::profile::start();
     let entered = if within {
-        scene_files::enter_within(name, &roots)
+        scene_files::enter_within(name, roots)
     } else {
-        scene_files::enter(name, &roots)
+        scene_files::enter(name, roots)
     };
     let t = unsafe { psp::sys::sceKernelGetSystemTimeLow() }.wrapping_sub(t);
     match entered {
