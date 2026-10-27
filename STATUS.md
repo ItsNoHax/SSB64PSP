@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed (batch 61): N64 5-bit `G_RM_FOG_PRIM_A` fighter fog (RE-459); opening room draw order in DObj order (RE-459); special-stage fixtures press from GAME SET (RE-458); `matcolors --pack` exits 0 (RE-364); golden `f1-onep-challenger`; 30 rows rebaselined.
-- Open: opening-room antenna tip; DK fur offset; NOFOG under demo fade; Mew N64 read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
+- Landed (batch 62): crowd hit reaction plays before the damage voice; attract audio bit-exact vs N64 from ~66.5 s to 124.5 s (RE-479). Verified, no change: opening-room antenna = RE-424 edge blend; DK fur offset = N64 dump expansion bias (RE-459); Kirby/Purin CliffEscapeQuick exact (RE-553). No golden moved.
+- Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew N64 read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 61; deepest game stack 395416 B (f1-bonus-pause) of 524288.
+Baseline: batch 62; deepest game stack 395416 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|
@@ -38,7 +38,7 @@ Baseline: batch 61; deepest game stack 395416 B (f1-bonus-pause) of 524288.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | full matrix 264 of 265; `f1-vs-ball` one-off flake, then matched (visual-regression README) |
+| Goldens | full matrix 265 of 265, verify --twice |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

@@ -562,6 +562,49 @@ mod crowd {
         assert_eq!(plays(&r.take()), [nSYAudioVoicePublicMario]);
     }
 
+    /// `ftCommonDamageInitDamageVars` calls `ftCommonDamageSetPublic`
+    /// (`ftcommondamage.c:588`) before the damage voice (`:638`): the
+    /// crowd's reaction is the hit's first sound, not the frame's last
+    /// (the N64 attract How to Play KO hit, batch 62).
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_crowd_reacts_to_a_hit_before_the_damage_voice() {
+        let r = Recorder::install();
+        public::make_actor();
+        let (mut v, a) = fighters(0);
+        v.become_airborne();
+        v.pos.y = 1000.0;
+        v.damage_player = Some(1);
+        public::observe([&v, &a]);
+        crate::attack::init_damage_vars(&mut v, None, 20, 170.0, 45, 1.0, false);
+        let voice = crate::motion::combat_attrs(FighterKind::Fox)
+            .unwrap()
+            .damage_sfx;
+        assert_eq!(plays(&r.take()), [nSYAudioVoicePublicDamageL, voice]);
+        // Nothing waits for the crowd's own step.
+        step(&v, &a);
+        assert!(plays(&r.take()).is_empty());
+    }
+
+    /// `is_force_curr_knockback`: an attacker who was itself just launched
+    /// hard (`public_knockback >= 160`) draws the call reaction, read
+    /// from the attacker as it stands at the hit.
+    #[test]
+    fn a_hard_launched_attacker_draws_the_call_reaction() {
+        let r = Recorder::install();
+        public::make_actor();
+        let (v, mut a) = fighters(0);
+        a.public_knockback = 160.0;
+        public::observe([&v, &a]);
+        public::common_check(Some(1), 105.0);
+        assert_eq!(plays(&r.take()), [nSYAudioVoicePublicGaspClap]);
+        a.public_knockback = 0.0;
+        public::make_actor();
+        public::observe([&v, &a]);
+        public::common_check(Some(1), 105.0);
+        assert_eq!(plays(&r.take()), [nSYAudioVoicePublicDamageS]);
+    }
+
     #[test]
     fn the_defeated_announcements_wait_for_each_other() {
         let r = Recorder::install();

@@ -9,14 +9,23 @@
 //! announcer voices still play ([`crate::sound::fgm_alive`]); they pace
 //! the next chant and the next announcement and nothing else.
 //!
-//! The source decides a reaction where the hit, the landing or the special
-//! fall happens, reading the attacker's percent, kind and
-//! `public_knockback` there. The port's fighter code holds one fighter, so
-//! those sites queue the reaction ([`common_check`], [`play_cliff_react`],
-//! [`try_play_fall_special_react`]) and [`proc_update`] decides them, in
-//! order, before its own step and in the same frame. The attacker is read
-//! at the end of the frame rather than at the hit: a PSP deviation that
-//! can only change which crowd sound plays.
+//! The source decides a reaction where the hit or the landing happens,
+//! reading the attacker's percent, kind and `public_knockback` there; a
+//! hit's reaction plays before the hit fighter's damage voice
+//! (`ftCommonDamageInitDamageVars`). The port's fighter code holds one
+//! fighter, so the crowd keeps a roster of every fighter's
+//! [`Member`] fields, which [`observe`] refreshes: at the start of each
+//! battle frame, before each fighter's hits apply (the
+//! [`crate::matchtick`] hit pass) and in [`proc_update`]. The hit fighter's
+//! own entry follows its hit ([`damage_set_public`]). [`common_check`] and
+//! [`play_cliff_react`] then decide at once, as in the source.
+//!
+//! PSP deviations:
+//! - A hit outside the hit pass (a throw, a stage hazard) reads the
+//!   attacker as the frame started.
+//! - [`try_play_fall_special_react`] is queued and decided by
+//!   [`proc_update`] before its own step, in the same frame: it needs
+//!   `gMPCollisionBounds.current.bottom`, which the fighter code lacks.
 
 #[cfg(not(any(test, feature = "std")))]
 use core::ptr::addr_of_mut;
@@ -40,17 +49,36 @@ const GASP_KNOCKBACK_MUL: f32 = 0.8;
 const DEFEATED_MAX: usize = 10;
 /// The reactions one frame can queue; more are dropped (and counted).
 const EVENTS_MAX: usize = 16;
+/// `GMCOMMON_PLAYERS_MAX`.
+const ROSTER_MAX: usize = 4;
 
 /// A reaction a fighter's code asked for this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Event {
-    /// `ftCommonDamageSetPublic`: `player` was hit by `attacker` with the
-    /// crowd knockback `knockback`.
-    Damage { attacker: i32, knockback: f32 },
-    /// `ftPublicPlayCliffReact`.
-    Cliff { player: i32, knockback: f32 },
     /// `ftPublicTryPlayFallSpecialReact`.
     FallSpecial { player: i32, pos_y: f32 },
+}
+
+/// The fields of a fighter the crowd reads through
+/// `ftParamGetPlayerNumGObj`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Member {
+    port: u8,
+    kind: crate::fighter::FighterKind,
+    /// `percent_damage`.
+    damage: u16,
+    public_knockback: f32,
+}
+
+impl Member {
+    fn of(f: &Fighter) -> Self {
+        Self {
+            port: f.port,
+            kind: f.kind,
+            damage: f.damage,
+            public_knockback: f.public_knockback,
+        }
+    }
 }
 
 struct State {
@@ -72,6 +100,7 @@ struct State {
     events: [Option<Event>; EVENTS_MAX],
     events_num: usize,
     events_dropped: u32,
+    roster: [Option<Member>; ROSTER_MAX],
 }
 
 const fn initial() -> State {
@@ -94,6 +123,7 @@ const fn initial() -> State {
         events: [None; EVENTS_MAX],
         events_num: 0,
         events_dropped: 0,
+        roster: [None; ROSTER_MAX],
     }
 }
 
@@ -127,6 +157,26 @@ pub fn events_dropped() -> u32 {
     with(|s| s.events_dropped)
 }
 
+/// Refreshes the crowd's roster from every fighter in the battle (in port
+/// order): what `ftParamGetPlayerNumGObj` would reach now.
+pub fn observe<'a>(fighters: impl IntoIterator<Item = &'a Fighter>) {
+    with(|s| {
+        s.roster = [None; ROSTER_MAX];
+        for (slot, f) in s.roster.iter_mut().zip(fighters) {
+            *slot = Some(Member::of(f));
+        }
+    });
+}
+
+/// `ftParamGetPlayerNumGObj(player_num)`'s fighter, from the roster.
+fn member(s: &State, player_num: i32) -> Option<Member> {
+    s.roster
+        .iter()
+        .flatten()
+        .copied()
+        .find(|m| i32::from(m.port) == player_num)
+}
+
 fn push(event: Event) {
     with(|s| {
         if s.events_num < EVENTS_MAX {
@@ -155,25 +205,43 @@ pub fn damage_set_public(f: &mut Fighter, knockback: f32, angle: f32) {
     }
     f.reaction.public_knockback = public;
     f.public_knockback = 0.0;
+    // The hit fighter as it stands now, for the rest of the frame's hits.
+    with(|s| {
+        if let Some(m) = s.roster.iter_mut().flatten().find(|m| m.port == f.port) {
+            *m = Member::of(f);
+        }
+    });
     common_check(f.damage_player, public);
 }
 
-/// `ftPublicCommonCheck`, queued: a hit of 100 or more by `attacker`.
+/// `ftPublicCommonCheck`: a hit of 100 or more by `attacker`, with the
+/// `is_force_curr_knockback` `ftCommonDamageSetPublic` reads from the
+/// attacker (`public_knockback >= 160`).
 pub fn common_check(attacker: Option<u8>, knockback: f32) {
     if knockback >= 100.0 {
-        push(Event::Damage {
-            attacker: player_num(attacker),
-            knockback,
+        with(|s| {
+            let attacker = player_num(attacker);
+            let is_force =
+                member(s, attacker).is_some_and(|m| m.public_knockback >= KNOCKBACK_VERYHIGH);
+            decide_common(s, attacker, knockback, is_force);
         });
     }
 }
 
-/// `ftPublicPlayCliffReact`, queued: a fighter launched hard lands or
-/// grabs a ledge.
+/// `ftPublicPlayCliffReact`: a fighter launched hard lands or grabs a
+/// ledge.
 pub fn play_cliff_react(port: u8, knockback: f32) {
-    push(Event::Cliff {
-        player: i32::from(port),
-        knockback,
+    with(|s| {
+        if s.call_player_num == i32::from(port) {
+            try_interrupt_call(s);
+        }
+        if knockback >= 160.0 {
+            play_common(s, nSYAudioVoicePublicGaspL);
+        } else if knockback >= 130.0 {
+            play_common(s, nSYAudioVoicePublicGaspM);
+        } else if knockback >= 100.0 {
+            play_common(s, nSYAudioVoicePublicGaspS);
+        }
     });
 }
 
@@ -224,17 +292,8 @@ fn try_interrupt_call(s: &mut State) {
 
 /// `ftPublicTryStartCall`: a fighter at 100% or more who scores a big hit
 /// after 1200 quiet tics starts their name chant.
-fn try_start_call(
-    s: &mut State,
-    fighters: &[Option<&Fighter>],
-    knockback: f32,
-    player_num: i32,
-) -> bool {
-    let Some(attacker) = fighters
-        .iter()
-        .flatten()
-        .find(|f| i32::from(f.port) == player_num)
-    else {
+fn try_start_call(s: &mut State, knockback: f32, player_num: i32) -> bool {
+    let Some(attacker) = member(s, player_num) else {
         return false;
     };
     if attacker.damage < 100 || s.call_wait < 1200 {
@@ -265,9 +324,9 @@ fn try_start_call(
 }
 
 /// `ftPublicDecideCall`.
-fn decide_call(s: &mut State, fighters: &[Option<&Fighter>], player_num: i32, knockback: f32) {
+fn decide_call(s: &mut State, player_num: i32, knockback: f32) {
     if knockback >= 130.0 {
-        if try_start_call(s, fighters, knockback, player_num) {
+        if try_start_call(s, knockback, player_num) {
             // `ftPublicCommonStop`.
             stop(s.common_sound);
             return;
@@ -286,22 +345,16 @@ fn decide_call(s: &mut State, fighters: &[Option<&Fighter>], player_num: i32, kn
 
 /// `ftPublicDecideCommon`. `is_force_curr_knockback` is set when the
 /// attacker had itself just been launched hard (`public_knockback >= 160`).
-fn decide_common(
-    s: &mut State,
-    fighters: &[Option<&Fighter>],
-    player_num: i32,
-    knockback: f32,
-    is_force: bool,
-) {
+fn decide_common(s: &mut State, player_num: i32, knockback: f32, is_force: bool) {
     if is_force {
-        decide_call(s, fighters, player_num, knockback);
+        decide_call(s, player_num, knockback);
     } else if player_num == s.common_player_num && s.common_tics_past < 60 {
         let kb = if knockback > s.common_knockback {
             knockback
         } else {
             s.common_knockback
         };
-        decide_call(s, fighters, player_num, kb);
+        decide_call(s, player_num, kb);
     } else if knockback >= KNOCKBACK_VERYHIGH {
         try_interrupt_call(s);
         play_common(s, nSYAudioVoicePublicDamageL);
@@ -318,31 +371,8 @@ fn decide_common(
     s.common_knockback = knockback;
 }
 
-fn run_event(s: &mut State, fighters: &[Option<&Fighter>], bounds_bottom: f32, event: Event) {
+fn run_event(s: &mut State, bounds_bottom: f32, event: Event) {
     match event {
-        Event::Damage {
-            attacker,
-            knockback,
-        } => {
-            let is_force = fighters
-                .iter()
-                .flatten()
-                .find(|f| i32::from(f.port) == attacker)
-                .is_some_and(|f| f.public_knockback >= KNOCKBACK_VERYHIGH);
-            decide_common(s, fighters, attacker, knockback, is_force);
-        }
-        Event::Cliff { player, knockback } => {
-            if s.call_player_num == player {
-                try_interrupt_call(s);
-            }
-            if knockback >= 160.0 {
-                play_common(s, nSYAudioVoicePublicGaspL);
-            } else if knockback >= 130.0 {
-                play_common(s, nSYAudioVoicePublicGaspM);
-            } else if knockback >= 100.0 {
-                play_common(s, nSYAudioVoicePublicGaspS);
-            }
-        }
         Event::FallSpecial { player, pos_y } => {
             if pos_y >= bounds_bottom || pos_y < -2400.0 {
                 return;
@@ -366,11 +396,12 @@ fn run_event(s: &mut State, fighters: &[Option<&Fighter>], bounds_bottom: f32, e
 /// `bounds_bottom` is `gMPCollisionBounds.current.bottom` and `stock_rule`
 /// is `game_rules & SCBATTLE_GAMERULE_STOCK`.
 pub fn proc_update(fighters: &[Option<&Fighter>], bounds_bottom: f32, stock_rule: bool) {
+    observe(fighters.iter().flatten().copied());
     with(|s| {
         let n = core::mem::take(&mut s.events_num);
         for i in 0..n {
             if let Some(e) = s.events[i].take() {
-                run_event(s, fighters, bounds_bottom, e);
+                run_event(s, bounds_bottom, e);
             }
         }
         if s.common_tics_past < u16::MAX as i32 + 1 {

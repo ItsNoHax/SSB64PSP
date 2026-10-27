@@ -320,6 +320,8 @@ where
     for f in seats.iter_mut().flatten() {
         f.fighter_mut().stats.counts.adopt(&world.items.counts);
     }
+    // The crowd's view of the fighters as the frame starts ([`crate::public`]).
+    crate::public::observe(seats.iter().flatten().map(|f| f.fighter()));
     // Priority 5, Ground link: `gcPlayAnimAll` precedes every fighter
     // interrupt and the priority-4 controller.
     hooks.phase(Phase::GroundAnim);
@@ -811,6 +813,9 @@ where
                 }
             }
             crate::hazard::search_ground_hit(fs[k], world.stage);
+            // `ftCommonDamageSetPublic` reads the attacker as it stands at
+            // the hit.
+            crate::public::observe(fs.iter().map(|f| &**f));
             crate::combat::process_hits(fs[k], world.effects);
         }
     }
