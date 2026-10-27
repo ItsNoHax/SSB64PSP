@@ -521,9 +521,13 @@ struct ResolverTally {
     /// Bound `sprites[]` entries that are NULL and that no draw reads
     /// (RE-467), so have no image to compare.
     sprites_null_unread: usize,
-    /// Static CLUTs compared with `palettes[0]`, and those that differ.
+    /// Static CLUTs compared with `palettes[palette_id]` at the `MObj`'s
+    /// start, and those that differ.
     static_palettes_checked: usize,
     static_palettes_bad: usize,
+    /// Of those checked, primitives an item maker starts past `palette_id`
+    /// 0 ([`initial_palette_id`]).
+    static_palettes_variant: usize,
     /// GE against RDP texel coordinates (RE-326).
     uv: crate::matsample::UvTally,
     /// Primitives naming an entry whose texture, palette or window track
@@ -574,6 +578,57 @@ fn uv_diff(
     ))
 }
 
+/// Each packed primitive's mesh key: the `(source_file, source_offset)`
+/// the packer recorded for the mesh it belongs to.
+fn mesh_keys(pack: &Pack<'_>) -> Vec<(u32, u32)> {
+    let mut keys = vec![(u32::MAX, 0); pack.prim_count() as usize];
+    for m in (0..pack.mesh_count()).filter_map(|m| pack.mesh(m)) {
+        let end = (m.first_prim + m.prim_count).min(keys.len() as u32);
+        for p in m.first_prim..end {
+            keys[p as usize] = (m.source_file, m.source_offset);
+        }
+    }
+    keys
+}
+
+/// The `palette_id`s item makers set on a new `MObj` (decomp
+/// `rg "palette_id\s*=" src/it src/wp`; the others set it on a hit or from
+/// an animation, not at creation).
+const MAKER_PALETTE_IDS: [(&str, usize); 2] = [("itGShellMakeItem", 1), ("itRShellMakeItem", 0)];
+const MAX_MAKER_PALETTE_ID: usize = {
+    let (mut max, mut k) = (0, 0);
+    while k < MAKER_PALETTE_IDS.len() {
+        if MAKER_PALETTE_IDS[k].1 > max {
+            max = MAKER_PALETTE_IDS[k].1;
+        }
+        k += 1;
+    }
+    max
+};
+
+/// The `palette_id` a primitive's `MObj` starts at.
+///
+/// `gcAddMObjForDObj` starts every `MObj` at 0 (`objman.c:1328`); an item
+/// maker may set it right after: `itGShellMakeItem` to 1
+/// (`itgshell.c:565`), `itRShellMakeItem` to 0 (`itrshell.c:698`). The
+/// packer lowers such a variant as a second mesh of the same list, keyed by
+/// the palette it binds (RE-434, RE-442): a mesh keyed by the entry's own
+/// file and `palettes[k]`'s offset starts at `k`. Every other mesh starts
+/// at 0.
+fn initial_palette_id(
+    mesh_key: (u32, u32),
+    source_file: u32,
+    palettes: &[ssb_rom::mobj::Ptr],
+) -> usize {
+    if mesh_key.0 != source_file {
+        return 0;
+    }
+    palettes
+        .iter()
+        .position(|p| p.file.is_none() && p.offset == mesh_key.1)
+        .unwrap_or(0)
+}
+
 /// Checks one entry's resolved texture, palette, tile-0 window and
 /// two-tile blend against `gcDrawMObjForDObj` fed by the reference's
 /// tracks and the ROM's `MObjSub`. Returns the first difference per
@@ -584,6 +639,7 @@ fn check_resolvers(
     i: u32,
     expected: &[Frame],
     got: &[Resolved],
+    mesh_keys: &[(u32, u32)],
     tally: &mut ResolverTally,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let a = pack.mat_anim(i).ok_or("missing MatAnimDesc")?;
@@ -669,7 +725,8 @@ fn check_resolvers(
     // Texels (RE-326): every packed texture the entry can bind against the
     // image it stands for. A primitive's own texture is `sprites[0]` when
     // the `MObj` sets the image (`texture_id_curr` starts at 0), and its own
-    // CLUT is `palettes[0]` under `PALETTE` (`palette_id` starts at 0).
+    // CLUT is `palettes[palette_id]` under `PALETTE`, at the `palette_id`
+    // the `MObj` starts at ([`initial_palette_id`]).
     // Only primitives whose `MObj` still owns the image or TLUT (RE-326).
     let owned = |bit: u32| -> BTreeSet<u32> {
         (0..pack.prim_count())
@@ -777,10 +834,34 @@ fn check_resolvers(
         }
     }
     if f & MOBJ_FLAG_PALETTE != 0 {
-        let first = ssb_rom::mobj::read_palettes(&rom_file, a.source_offset, 1)
-            .and_then(|p| p.first().copied())
-            .ok_or("palettes[0] unreadable")?;
-        for &t in &palette_statics {
+        // The script's bound, widened to the ids makers start at; an array
+        // too short for the makers' ids holds no variant.
+        let base = (a.palette_count as usize).max(1);
+        let read = |n| ssb_rom::mobj::read_palettes(&rom_file, a.source_offset, n);
+        let palettes = read(base.max(MAX_MAKER_PALETTE_ID + 1))
+            .or_else(|| read(base))
+            .filter(|p| !p.is_empty())
+            .ok_or("palettes[] unreadable")?;
+        // Each static texture with the `palette_id` its primitive's `MObj`
+        // starts at.
+        let mut starts: BTreeSet<(u32, usize)> = BTreeSet::new();
+        for (p, prim) in (0..pack.prim_count()).filter_map(|p| Some((p, pack.prim(p)?))) {
+            if prim.mat_anim == i
+                && prim.flags & flags::PALETTE_ANIM != 0
+                && palette_statics.contains(&prim.texture)
+            {
+                let key = mesh_keys.get(p as usize).copied().unwrap_or((u32::MAX, 0));
+                starts.insert((
+                    prim.texture,
+                    initial_palette_id(key, a.source_file, &palettes),
+                ));
+            }
+        }
+        for &(t, k) in &starts {
+            if k != 0 {
+                tally.static_palettes_variant += 1;
+            }
+            let first = palettes[k];
             let desc = pack.texture(t).ok_or("missing packed texture")?;
             // A palettized direct-colour texture's CLUT is its own (RE-491).
             if desc.texels & TextureDesc::TEXELS_PALETTIZED != 0 {
@@ -793,7 +874,7 @@ fn check_resolvers(
             if !crate::matsample::palette_matches(archive, &rom_file, words, first)? {
                 tally.static_palettes_bad += 1;
                 notes.push(format!(
-                    "texels: texture {t}'s packed CLUT differs from palettes[0]"
+                    "texels: texture {t}'s packed CLUT differs from palettes[{k}]"
                 ));
             }
         }
@@ -1114,6 +1195,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     let mut declined = Vec::new();
     let mut partial = 0usize;
     let mut ops = [0usize; 23];
+    let mesh_keys = mesh_keys(&pack);
     for i in 0..pack.mat_anim_count() {
         let a = pack.mat_anim(i).ok_or("missing MatAnimDesc")?;
         let data = pack.mat_anim_file(&a).ok_or("missing script bytes")?;
@@ -1206,6 +1288,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
             i,
             &expected,
             &resolved[i as usize],
+            &mesh_keys,
             &mut tally,
         )? {
             println!("  {n}");
@@ -1367,14 +1450,16 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         "Texels: {} packed texture(s) against sprites[] through their recorded tile, {} differ \
          ({} read through a mirrored or repeated period; {} filter-compensated, \
          paired by source digest; {} NULL sprites[] entr(ies) no draw reads, skipped); \
-         {} static CLUT(s) against palettes[0], {} differ",
+         {} static CLUT(s) against palettes[palette_id], {} differ \
+         ({} start past palette_id 0)",
         tally.textures_checked,
         tally.textures_bad,
         tally.textures_folded,
         tally.textures_compensated,
         tally.sprites_null_unread,
         tally.static_palettes_checked,
-        tally.static_palettes_bad
+        tally.static_palettes_bad,
+        tally.static_palettes_variant
     );
     let resolver_bad = tally.bad.iter().sum::<usize>()
         + tally.table_bad
@@ -2045,5 +2130,71 @@ mod tests {
         let mut with_1 = read.clone();
         with_1.insert(1);
         assert!(sprite_table(&file, SUB, 5, &with_1).is_err());
+    }
+
+    /// A mesh keyed by `palettes[k]` of the entry's own file starts at `k`
+    /// (the packer's palette variants, RE-434); any other mesh at 0.
+    #[test]
+    fn a_palette_keyed_mesh_starts_at_that_palette() {
+        let here = |offset| ssb_rom::mobj::Ptr { file: None, offset };
+        let palettes = [here(0x55A0), here(0x5578)];
+        assert_eq!(initial_palette_id((86, 0x5578), 86, &palettes), 1);
+        assert_eq!(initial_palette_id((86, 0x55A0), 86, &palettes), 0);
+        // The list's own mesh, keyed by its display list.
+        assert_eq!(initial_palette_id((86, 0x5EC0), 86, &palettes), 0);
+        // Another file's mesh at the same offset is not this variant.
+        assert_eq!(initial_palette_id((87, 0x5578), 86, &palettes), 0);
+        // A palette in another file is never a mesh key of this one.
+        let foreign = [
+            here(0x55A0),
+            ssb_rom::mobj::Ptr {
+                file: Some(87),
+                offset: 0x5578,
+            },
+        ];
+        assert_eq!(initial_palette_id((86, 0x5578), 86, &foreign), 0);
+        assert_eq!(MAX_MAKER_PALETTE_ID, 1);
+    }
+
+    /// RE-364, RE-434: the Green Shell's list (file 86 0x5EC0) is packed a
+    /// second time keyed by `palettes[1]` (0x5578), because
+    /// `itGShellMakeItem` starts its `MObj` at `palette_id` 1. The two CLUTs
+    /// differ in the ROM, so the checker must compare that variant with
+    /// `palettes[1]`: `romtool matcolors --pack` flagged texture 468 against
+    /// `palettes[0]`.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_green_shell_variant_starts_at_palette_one() {
+        const SHELL_FILE: u32 = 86;
+        const SHELL_SUB: u32 = 0x5E00;
+        const GREEN_SHELL_KEY: u32 = 0x5578;
+        let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+            return;
+        };
+        let rom = fs::read(path).unwrap();
+        let info = ssb_rom::rom::identify(&rom).unwrap();
+        let archive = Archive::open(&rom, info.region).unwrap();
+        let file = archive.load(SHELL_FILE).unwrap();
+        let sub = RomSub::read(&file.data, SHELL_SUB).unwrap();
+        assert_ne!(sub.flags & MOBJ_FLAG_PALETTE, 0);
+        let palettes =
+            ssb_rom::mobj::read_palettes(&file, SHELL_SUB, MAX_MAKER_PALETTE_ID + 1).unwrap();
+        assert_eq!(palettes[1].offset, GREEN_SHELL_KEY);
+        let green = MAKER_PALETTE_IDS
+            .iter()
+            .find(|m| m.0 == "itGShellMakeItem")
+            .unwrap()
+            .1;
+        assert_eq!(
+            initial_palette_id((SHELL_FILE, GREEN_SHELL_KEY), SHELL_FILE, &palettes),
+            green
+        );
+        // Red (`itRShellMakeItem`, 0) and green differ, so the old check
+        // against `palettes[0]` cannot pass for the variant.
+        let clut = |p: ssb_rom::mobj::Ptr| {
+            let at = p.offset as usize;
+            file.data[at..at + 32].to_vec()
+        };
+        assert_ne!(clut(palettes[0]), clut(palettes[1]));
     }
 }

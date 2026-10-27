@@ -2093,9 +2093,28 @@ impl Gpu {
     /// colour by its alpha (`ftDisplayMainSetFogColor`). The GE fogs by
     /// `(far - depth) / (far - near)`, so a window `SPAN` wide placed to
     /// give `1 - alpha` at `depth` varies by under 1/255 across a fighter.
+    ///
+    /// The blend here is the plain `1 - alpha / 255` lerp (items' colour
+    /// animations); fighters take the RDP's 5-bit weights through
+    /// [`Self::set_fog_prim_a`].
     pub fn set_constant_fog(&mut self, depth: f32, rgba: [u8; 4]) {
+        self.set_fog_keep(depth, 1.0 - f32::from(rgba[3]) / 255.0, rgba);
+    }
+
+    /// [`Self::set_constant_fog`] with the RDP blender's weights for a
+    /// fighter's `G_RM_FOG_PRIM_A` ([`ssb_game::shade::fog_prim_a_keep`]):
+    /// an opaque fog still keeps 1/32 of the pixel (the challenger's faint
+    /// silhouette, RE-459). PSP deviation: the GE's 8-bit fog factor and
+    /// 8888 target give `in * 8 / 255` undithered where the N64 dithers
+    /// `in / 32` into its 5-bit framebuffer.
+    pub fn set_fog_prim_a(&mut self, depth: f32, rgba: [u8; 4]) {
+        self.set_fog_keep(depth, ssb_game::shade::fog_prim_a_keep(rgba[3]), rgba);
+    }
+
+    /// Fogs towards `rgba`'s colour so that `keep` of each pixel near view
+    /// depth `depth` remains.
+    fn set_fog_keep(&mut self, depth: f32, keep: f32, rgba: [u8; 4]) {
         const SPAN: f32 = 1.0e5;
-        let keep = 1.0 - f32::from(rgba[3]) / 255.0;
         let far = depth + keep * SPAN;
         let color = u32::from_le_bytes([rgba[0], rgba[1], rgba[2], 0]);
         unsafe {

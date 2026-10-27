@@ -157,6 +157,7 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 
 - Every animator advances per simulation tick at a frozen capture tick → no dependence on load timing or pack size (RE-315).
 - Goldens need the real ROM-generated tables, not `SSB64_STUB_TABLES`.
+- Observed flake: `f1-vs-ball` once changed (480 golden px) in a full parallel run; matched 3x at `-j 1` and 3x parallel. Unreproduced; not a rebaseline.
 
 ### Single captures
 

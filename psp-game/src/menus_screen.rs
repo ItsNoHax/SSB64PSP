@@ -760,7 +760,7 @@ unsafe fn draw_fighter(
         let cam = &menu.camera;
         let view = (cam.at - cam.eye).normalized();
         let at = ssb_engine::math::Vec3 { x: pos[0], y: pos[1], z: pos[2] };
-        gpu.set_constant_fog((at - cam.eye).dot(view), rgba);
+        gpu.set_fog_prim_a((at - cam.eye).dot(view), rgba);
     }
     draw_state.fighter_fog = fog.is_some();
     let parts = m.demo.parts().draw_parts();

@@ -144,7 +144,7 @@ impl Room {
                 count,
                 ejected_at_540,
                 mats,
-                runs: draw_runs(&pack.object_draw_order(&object)),
+                runs: ssb_rom::pack::draw_runs(&pack.object_draw_order(&object)),
             });
         }
         Some(Room { props })
@@ -211,18 +211,6 @@ impl Room {
             }
         }
     }
-}
-
-/// `order` as runs of consecutive indices.
-fn draw_runs(order: &[u32]) -> Vec<core::ops::Range<u32>> {
-    let mut runs: Vec<core::ops::Range<u32>> = Vec::new();
-    for &i in order {
-        match runs.last_mut() {
-            Some(run) if run.end == i => run.end += 1,
-            _ => runs.push(i..i + 1),
-        }
-    }
-    runs
 }
 
 /// Every primitive's `mat_anim` index across `object`'s nodes.

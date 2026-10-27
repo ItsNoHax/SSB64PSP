@@ -125,7 +125,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568) | RE-431–RE-444, RE-566 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
-| Opening room | Draw background links in DObj order (`Pack::object_draw_order`); jamb likely over curtain at op-room@330; verify against N64 | RE-459, RE-198 |
+| Opening room antenna | Background DObj 33 (CI4 TLUT index 0 = green at alpha 0): N64 tip bright green through the TEX_EDGE filter, PSP dark; check the pack RGB under alpha 0 | RE-459, RE-517 |
+| DK fur colour | `f1-training-donkey`: PSP darker than N64 by ~5R 3G 2B in every colour-anim phase (not fog; lighting or filtering); N64 warp `~/ppsspp-test/b61/t3dk/dkpupupu.z64` | RE-459 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
@@ -133,7 +134,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| 1P ending | Challenger blender leak not emulated | RE-459 |
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 
@@ -142,7 +142,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Runtime loader | Use `ssb_rom::reloc_link` (layout matches original) | RE-340, RE-341, [D-011](docs/decisions/D-011.md) |
-| `matcolors --pack` | `romtool matcolors --pack` exits 1 on one static-CLUT note: texture 468 (Green Shell list 0x5EC0 packed under `palettes[1]`, key (86, 0x5578)) checked against `palettes[0]`; `itGShellMakeItem` sets `palette_id` 1. Teach the checker the variant's initial palette; accept = exit 0 | RE-364, RE-434 |
 | Memory arenas | Wire `ssb_engine::memory` arenas, pools into `psp-runtime` | [memory](docs/memory.md#allocators) |
 
 ## Completed

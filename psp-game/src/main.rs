@@ -168,11 +168,22 @@ const fn vs_knock_smash(tick: u64) -> bool {
     tick >= VS_KNOCK_FIRST_SMASH && (tick - VS_KNOCK_FIRST_SMASH) % VS_KNOCK_SMASH_PERIOD == 0
 }
 
-/// `onepzako`'s first results A: the last KO's GAME SET. The N64 harness
-/// presses nothing in the battle, so Kirby waits from N64 t799 and its tag
+/// A special-stage fixture's first results A: its last KO's GAME SET
+/// (`nSCBattleGameStatusEnd`), measured with no presses before it. The N64
+/// harness presses nothing in the battle, so the player waits and its tag
 /// shows from `playertag_wait` 1 (`ifCommonPlayerTagProcDisplay`, RE-458);
-/// a jab every 30 ticks would reset it to 120 on each return to Wait.
-const ZAKO_A_FROM: u64 = 2820;
+/// a jab every 30 ticks would reset it to 120 on each return to Wait, move
+/// the camera and could hit the enemies. 0 for the other scenes.
+const fn special_stage_a_from(scene: GameScene) -> u64 {
+    match scene {
+        // The fixture's KOs at battle clock 1000 (tick 1466).
+        GameScene::OnePMetal | GameScene::OnePGiant => 1466,
+        // The sixth team KO, at clock 1750 (tick 2216).
+        GameScene::OnePYoshi => 2216,
+        GameScene::OnePZako => 2820,
+        _ => 0,
+    }
+}
 
 const fn capture_ticks(scene: GameScene) -> u64 {
     match scene {
@@ -603,7 +614,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             // clears through its results into the next stage (RE-478).
             t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePBossDefeat)
                 && t > capture_ticks(scene)
-                && (scene != GameScene::OnePZako || t >= ZAKO_A_FROM)
+                && t >= special_stage_a_from(scene)
                 && t % 30 == 0 => N64Buttons(N64Buttons::A),
             t if scene == GameScene::OnePStaffroll && t >= 400 && t % 20 == 0 => N64Buttons(N64Buttons::A),
             930 if scene == GameScene::OnePFinale => N64Buttons(N64Buttons::START),
@@ -5318,7 +5329,7 @@ unsafe fn run() -> ! {
             campaign::log_boss_state(&s, sim_frame_index);
         }
         #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
-        if capture_spec == Some(GameScene::OnePZako) {
+        if matches!(capture_spec, Some(GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi)) {
             campaign::log_zako_state(&s, sim_frame_index);
         }
         // `vspush`: the pushed CPU has no jumps left to come back with and
@@ -9378,7 +9389,7 @@ unsafe fn draw_fighter_model(
     if let Some(rgba) = fog {
         let (eye, at) = (camera.eye, camera.at);
         let view = (at - eye).normalized();
-        gpu.set_constant_fog((f.fighter.pos - eye).dot(view), rgba);
+        gpu.set_fog_prim_a((f.fighter.pos - eye).dot(view), rgba);
     }
     draw_state.fighter_fog = fog.is_some();
     // Its model parts and headgear accessory (RE-425).

@@ -1221,6 +1221,19 @@ pub fn dobj_draw_order(parents: &[Option<usize>]) -> Vec<usize> {
     order
 }
 
+/// `order` as runs of consecutive indices: one hiding walk per run draws
+/// an object in that order.
+pub fn draw_runs(order: &[u32]) -> Vec<core::ops::Range<u32>> {
+    let mut runs: Vec<core::ops::Range<u32>> = Vec::new();
+    for &i in order {
+        match runs.last_mut() {
+            Some(run) if run.end == i => run.end += 1,
+            _ => runs.push(i..i + 1),
+        }
+    }
+    runs
+}
+
 /// One node of an object: an optional mesh under a baked world transform.
 ///
 /// The matrix is **baked at build time**, not composed on device. A static
@@ -5223,6 +5236,14 @@ impl<'a> Pack<'a> {
             .collect()
     }
 
+    /// [`Self::object_draw_order`] as runs of consecutive object-relative
+    /// indices ([`draw_runs`]), or `None` where that order is node order
+    /// and one node-order walk draws it.
+    pub fn object_draw_runs(&self, object: &ObjectDesc) -> Option<Vec<core::ops::Range<u32>>> {
+        let runs = draw_runs(&self.object_draw_order(object));
+        (runs.len() > 1).then_some(runs)
+    }
+
     pub fn node(&self, i: u32) -> Option<NodeDesc> {
         if i >= self.node_count {
             return None;
@@ -8707,6 +8728,20 @@ mod tests {
         expected.push(52);
         expected.extend(38..=50);
         assert_eq!(dobj_draw_order(&parents), expected);
+    }
+
+    #[test]
+    fn the_room_background_draws_in_five_runs() {
+        let order: Vec<u32> = dobj_draw_order(&room_background_parents())
+            .into_iter()
+            .map(|i| i as u32)
+            .collect();
+        assert_eq!(draw_runs(&order), [0..21, 51..52, 21..38, 52..53, 38..51]);
+        assert_eq!(
+            draw_runs(&(0..51).collect::<Vec<_>>()),
+            vec![core::ops::Range { start: 0, end: 51 }]
+        );
+        assert!(draw_runs(&[]).is_empty());
     }
 
     #[test]

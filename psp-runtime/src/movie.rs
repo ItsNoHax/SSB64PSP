@@ -92,6 +92,12 @@ struct ModelState {
     played: u32,
     mats: Option<Box<EffectMaterialAnimator>>,
     mats_played: u32,
+    /// The nodes in the original's draw order as runs of object-relative
+    /// indices (`Pack::object_draw_order`), where that is not node order:
+    /// the pack appends a `DObjDLLink` list's second links after every
+    /// node, so the room background's window jamb drew after the curtain,
+    /// which writes no depth (RE-459).
+    runs: Option<Vec<core::ops::Range<u32>>>,
 }
 
 /// A demo fighter's skeleton on its status's clip.
@@ -254,6 +260,7 @@ impl ModelState {
             played: 0,
             mats,
             mats_played: 0,
+            runs: pack.object_draw_runs(&object),
         })
     }
 
@@ -841,7 +848,24 @@ impl Runtime {
         gpu.model_transform([0.0; 3], [0.0; 3], MODEL_SCALE);
         let base = gpu.model_matrix();
         let _ = m;
-        if s.joints.iter().flatten().any(|j| j.flags & 3 != 0) {
+        let hides = s.joints.iter().flatten().any(|j| j.flags & 3 != 0);
+        if let Some(runs) = &s.runs {
+            let first = s.object.first_node;
+            for run in runs {
+                meshdraw::draw_object_posed_hiding(
+                    pack,
+                    &s.object,
+                    &base,
+                    &posed[..n],
+                    st,
+                    s.mats.as_deref(),
+                    &|g| !run.contains(&(g - first)) || (hides && s.hidden(pack, g)),
+                );
+            }
+            crate::profile::stop(crate::profile::Span::MovieMesh, t);
+            return;
+        }
+        if hides {
             meshdraw::draw_object_posed_hiding(
                 pack,
                 &s.object,

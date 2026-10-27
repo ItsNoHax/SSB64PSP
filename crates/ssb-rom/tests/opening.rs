@@ -80,3 +80,43 @@ fn the_standoff_lightning_swaps_textures_from_a_sparse_table() {
         .collect();
     assert_eq!(present, [true, false, true, true, true]);
 }
+
+/// `mvOpeningRoomMakeBackground` draws `llMVCommonRoomBackgroundDObjDesc`
+/// through `gcDrawDObjTreeDLLinksForGObj`: each DObj's list-1 links in
+/// `DObjDesc` order. The pack appends DObj 20's second link (the window
+/// jamb) and DObj 37's after every node, so a node-order walk drew the jamb
+/// after the curtain (DObj 44, no depth update) and over it (RE-459): the
+/// movie must draw this object in runs.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_room_background_draws_the_jamb_before_the_curtain() {
+    use ssb_rom::pack::Pack;
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let object = (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|o| o.source_file == op::file::MV_COMMON && o.source_offset == op::room::BACKGROUND)
+        .expect("the room background is packed");
+    assert_eq!(object.node_count, 53);
+    let runs = pack
+        .object_draw_runs(&object)
+        .expect("the background is not drawn in node order");
+    let order: Vec<u32> = runs.into_iter().flatten().collect();
+    assert_eq!(order, pack.object_draw_order(&object));
+    let at = |n: u32| order.iter().position(|&i| i == n).unwrap();
+    // Node 51 is DObj 20's appended link: right after DObj 20, before the
+    // curtain.
+    assert_eq!(
+        pack.node_parent(object.first_node + 51),
+        Some(object.first_node + 20)
+    );
+    assert_eq!(at(51), at(20) + 1);
+    assert!(at(51) < at(44));
+}

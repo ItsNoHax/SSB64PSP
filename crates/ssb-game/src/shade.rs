@@ -52,6 +52,29 @@ pub fn env_color(color2: Option<[u8; 4]>, fog_grey: Option<u8>) -> Option<[u8; 4
     color2.or_else(|| fog_grey.map(|g| [g, g, g, 0xFF]))
 }
 
+/// `G_RM_FOG_PRIM_A`'s weights out of 32 for the fog colour and the
+/// combiner's colour, `(fog, in)`: `GBL_c1(G_BL_CLR_FOG, G_BL_A_FOG,
+/// G_BL_CLR_IN, G_BL_1MA)` in the first cycle of `G_CYC_2CYCLE`
+/// (`ftdisplaymain.c:717`, `:1178`).
+///
+/// The RDP blender takes each alpha's top 5 bits and adds 1 to the second
+/// weight: `(fog * (a >> 3) + in * ((~a >> 3) + 1)) >> 5`. The weights
+/// always sum to 32, so an opaque fog (`0xFF`, the challenger's black)
+/// still lets `in / 32` through, and an alpha under 8 blends nothing.
+/// ParaLLEl-RDP (bit-exact with the hardware) shows that leak in the
+/// challenger's RDRAM framebuffer: a dithered silhouette of up to one
+/// 5-bit level (RE-459).
+pub const fn fog_prim_a_weights(alpha: u8) -> (u8, u8) {
+    let fog = alpha >> 3;
+    (fog, (!alpha >> 3) + 1)
+}
+
+/// The share of the combiner's colour `G_RM_FOG_PRIM_A` keeps at fog
+/// alpha `alpha` ([`fog_prim_a_weights`]); the rest is the fog colour.
+pub fn fog_prim_a_keep(alpha: u8) -> f32 {
+    f32::from(fog_prim_a_weights(alpha).1) / 32.0
+}
+
 /// `ftDisplayMainCalcFogColor` (`ftdisplaymain.c:600-663`).
 fn calc(ck: [u8; 4], attr: Option<[u8; 4]>, fog_color: [u8; 4]) -> [u8; 4] {
     let c = ck.map(i32::from);
@@ -88,6 +111,28 @@ mod tests {
     /// Every playable fighter's `relocData` literals (`247_YoshiMain.c:342`).
     const SHADES: [[u8; 4]; 3] = [[0xFF, 0xFF, 0xFF, 0x50], [0, 0, 0, 0x50], [0; 4]];
     const FOG: [u8; 4] = [0xFF, 0, 0, 0];
+
+    /// The RDP blender's 5-bit weights: they sum to 32 at every alpha, an
+    /// opaque fog keeps `in / 32` (the challenger's black silhouette
+    /// leaks a lit 255 as 7) and an alpha under 8 blends nothing. A plain
+    /// `1 - a / 255` lerp gives 0 and 0.97 instead.
+    #[test]
+    fn fog_prim_a_keeps_a_32nd_under_opaque_fog() {
+        for a in 0..=0xFF_u8 {
+            let (fog, keep) = fog_prim_a_weights(a);
+            assert_eq!(fog + keep, 32, "alpha {a:#04X}");
+        }
+        assert_eq!(fog_prim_a_weights(0xFF), (31, 1));
+        assert_eq!(fog_prim_a_weights(0x80), (16, 16));
+        assert_eq!(fog_prim_a_weights(7), (0, 32));
+        assert_eq!(fog_prim_a_weights(8), (1, 31));
+        // Black fog at 0xFF over a lit 255: `(0 * 31 + 255 * 1) >> 5`.
+        let (_, keep) = fog_prim_a_weights(0xFF);
+        assert_eq!((255 * u32::from(keep)) >> 5, 7);
+        assert_eq!(fog_prim_a_keep(0xFF), 1.0 / 32.0);
+        assert_eq!(fog_prim_a_keep(0), 1.0);
+        assert_eq!(fog_prim_a_keep(7), 1.0);
+    }
 
     /// `color2` takes `ENV` over Master Hand's fog grey; the grey is
     /// opaque; neither leaves the stage light colour.

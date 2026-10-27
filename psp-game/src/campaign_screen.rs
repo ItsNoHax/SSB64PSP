@@ -758,7 +758,7 @@ unsafe fn draw_model_ex(
         });
     if let Some(rgba) = fog {
         let forward = (at - eye).normalized();
-        gpu.set_constant_fog((Vec3::new(pos[0], pos[1], pos[2]) - eye).dot(forward), rgba);
+        gpu.set_fog_prim_a((Vec3::new(pos[0], pos[1], pos[2]) - eye).dot(forward), rgba);
     }
     st.fighter_fog = fog.is_some();
     let parts = m.demo.parts().draw_parts();
