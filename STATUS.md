@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 64): audio Q15 rounding is microcode-exact, 0 differing samples vs two LLE RSP cores (RE-479); `reloc_link` L0-L2: pack needs no slot patching, per-run blocks kept (RE-571). No golden moved.
+- Landed (batch 65): `scene_files` on `reloc_link::closure` + `place_runs`; `AssetArena` owns and frees the per-run blocks; reads, memory, goldens unchanged (RE-571, D-011).
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. Runtime loader L3 (`scene_files` on `reloc_link`, per-run blocks), then memory arenas A1/A3/A2/A4 (owner decision).
-2. Remaining gameplay rows in `PLAN.md`; then MS8.
+1. Memory arenas: A1 (engine API) + A3 `FrameArena`, then A2 `GameArena`, A4 `ObjectPool`.
+2. PSP-1000 memory (`PLAN.md` row), then MS8.
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 64; deepest game stack 401688 B (f1-bonus-pause) of 524288.
+Baseline: batch 65; deepest game stack 401,704 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

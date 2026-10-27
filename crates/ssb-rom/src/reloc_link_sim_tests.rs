@@ -56,7 +56,7 @@ struct Block {
 }
 
 /// A scene-loading event.
-enum Event {
+pub(crate) enum Event {
     /// `scene_load::scene`.
     Scene(&'static str, Vec<u32>),
     /// `scene_load::battle`.
@@ -266,7 +266,7 @@ impl<'a> Sim<'a> {
 }
 
 /// `scene_load`'s root lists over `pack`.
-struct Roots<'a> {
+pub(crate) struct Roots<'a> {
     pack: &'a Pack<'a>,
     figatrees: Vec<(u32, Vec<u32>)>,
 }
@@ -316,7 +316,7 @@ const OPENING: [Opening; 19] = [
 const ROOM_FIGURES: [u32; 2] = [2, 5];
 
 impl<'a> Roots<'a> {
-    fn new(pack: &'a Pack<'a>) -> Self {
+    pub(crate) fn new(pack: &'a Pack<'a>) -> Self {
         // `scene_load::scan_figatrees`.
         let mut figatrees: Vec<(u32, Vec<u32>)> = Vec::new();
         for a in (0..pack.anim_count()).filter_map(|i| pack.anim(i)) {
@@ -480,7 +480,7 @@ impl<'a> Roots<'a> {
 
     /// The N64 logo, the opening's 19 scenes, then the attract loop:
     /// title, How to Play, Characters, the title demo, the logo.
-    fn attract(&self) -> Vec<Event> {
+    pub(crate) fn attract(&self) -> Vec<Event> {
         use Event::*;
         let mut e = Vec::new();
         e.push(Scene("startup", r::STARTUP.to_vec()));
@@ -533,7 +533,7 @@ impl<'a> Roots<'a> {
 
     /// Title, mode select, VS mode, two VS battles with results, then the
     /// 1P mode, Training, and five 1P stages.
-    fn menus(&self) -> Vec<Event> {
+    pub(crate) fn menus(&self) -> Vec<Event> {
         use Event::*;
         let mut e = Vec::new();
         let menu =

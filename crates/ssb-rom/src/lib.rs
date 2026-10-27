@@ -34,6 +34,7 @@ pub mod fighter;
 pub mod filter_compensation;
 pub mod ground_obj;
 pub mod interp;
+pub mod loader_plan;
 pub mod lod_blend;
 pub mod matanim;
 pub mod menu_pack;

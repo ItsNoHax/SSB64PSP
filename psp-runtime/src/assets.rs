@@ -89,6 +89,21 @@ impl Drop for AlignedBuf {
     }
 }
 
+/// The scene loader's [`ssb_engine::memory::AssetArena`] blocks: one
+/// [`AlignedBuf::cache_lines`] per read run, so a device write into one
+/// never shares a line with another owner (RE-476, RE-360).
+pub(crate) struct CacheLineBlocks;
+
+impl ssb_engine::memory::BlockAlloc for CacheLineBlocks {
+    type Block = AlignedBuf;
+    fn alloc(&mut self, len: usize) -> Option<AlignedBuf> {
+        AlignedBuf::cache_lines(len)
+    }
+    fn ptr(block: &AlignedBuf) -> *mut u8 {
+        block.as_mut_ptr()
+    }
+}
+
 /// Why loading failed. Kept concrete so the on-screen message is useful when
 /// there is no debugger attached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +169,10 @@ pub fn read_capture_scene(buf: &mut [u8]) -> Option<usize> {
 
 /// The NUL-terminated search path [`load_pack`] reported as `display`.
 pub fn c_path(display: &str) -> Option<&'static str> {
-    SEARCH_PATHS.iter().copied().find(|p| display_path(p) == display)
+    SEARCH_PATHS
+        .iter()
+        .copied()
+        .find(|p| display_path(p) == display)
 }
 
 /// Human-readable form of a search path, without the C terminator.
@@ -183,7 +201,13 @@ pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
             return Err(LoadError::Empty);
         }
         let mut head = [0u8; ssb_rom::pack::Header::SIZE];
-        let n = unsafe { sys::sceIoRead(fd, head.as_mut_ptr() as *mut core::ffi::c_void, head.len() as u32) };
+        let n = unsafe {
+            sys::sceIoRead(
+                fd,
+                head.as_mut_ptr() as *mut core::ffi::c_void,
+                head.len() as u32,
+            )
+        };
         unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::Set) };
         if n as usize != head.len() {
             unsafe { sys::sceIoClose(fd) };

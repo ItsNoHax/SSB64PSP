@@ -14,7 +14,7 @@
   - boot: header, tables, shared region
   - boot: audio section, never freed (audio thread reads it any time, [D-049](decisions/D-049.md))
   - scene start: each scene's files with extern closure
-  - `ssb_rom::reloc_link` (closure, placement, run planner) is host-tested; the runtime does not use `place_into` yet (RE-571)
+  - runs `ssb_rom::loader_plan::Plan`: closure, `reloc_link::place_runs` Ascending runs, per-run blocks (RE-571)
 - Scene peaks, boot and XMB free bytes (PSP-2000): RE-475
   - XMB launch: 4 MiB less than PSPLink
 - Feature `memory_ballast`: reproduces any budget under PSPLink or PPSSPP
@@ -105,14 +105,15 @@ lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
 ## Allocators
 
 - `ssb_engine::memory` (RE-340)
-  - `Arena` scopes back `AssetArena`, `GameArena`, `FrameArena`
+  - `Arena` scopes back `GameArena`, `FrameArena`
+  - `AssetArena`: block table over a `BlockAlloc` (PSP: `CacheLineBlocks`)
   - `ObjectPool<T, N>`: generation-checked handles
-- `psp-runtime` does not use them yet
+- `psp-runtime` uses `AssetArena` only
 
 | Allocator | Lifetime |
 |---|---|
 | `GameArena` | Long-lived game state; freed on scene change |
-| `AssetArena` | One contiguous block per scene, sized by the dependency closure |
+| `AssetArena` | One block per read run (≤ 4 MiB load, ≤ 1 MiB prefetch), refcounted by its files; freed at the GE safe point after its last file drops |
 | `FrameArena` | Bump allocator reset every tick; no heap allocation in per-frame paths |
 | `ObjectPool<T>` | Fixed capacity for fighters, items, particles, matching original counts |
 

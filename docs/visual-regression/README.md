@@ -227,6 +227,7 @@ Runner
 - PSPLink: `psp-hardware` skill.
 - Hardware captures are qualitative, never exact evidence: RE-320 (PSP-2000 Slim, firmware 6.61), RE-341 (`psp-game` scenes).
 - Viewer goldens: not recaptured on hardware.
+- PPSSPPHeadless cleanup: `pkill -x PPSSPPHeadless` never matches (process comm is `MainThread`); find the PID by listing.
 
 ## Original game
 

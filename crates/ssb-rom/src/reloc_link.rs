@@ -274,6 +274,12 @@ pub trait FileSource {
     fn extern_count(&self, index: u32) -> u32;
     /// Entry `k` of file `index`'s extern-ID list.
     fn extern_id(&self, index: u32, k: u32) -> u32;
+    /// Appends file `index`'s whole extern-ID list to `out`: what
+    /// [`closure`] walks, in one table read where the source stores the
+    /// list together.
+    fn extend_externs(&self, index: u32, out: &mut Vec<u32>) {
+        out.extend((0..self.extern_count(index)).map(|k| self.extern_id(index, k)));
+    }
     /// Where file `index`'s bytes start in the source's own storage, when
     /// it has one (the pack's blob offset): files whose bytes are adjacent
     /// there can share one read.
@@ -343,6 +349,11 @@ impl FileSource for crate::pack::Pack<'_> {
         self.file_at(index)
             .and_then(|d| self.file_dep(&d, k))
             .unwrap_or(u32::MAX)
+    }
+    fn extend_externs(&self, index: u32, out: &mut Vec<u32>) {
+        if let Some(d) = self.file_at(index) {
+            out.extend((0..d.dep_count).map(|k| self.file_dep(&d, k).unwrap_or(u32::MAX)));
+        }
     }
     fn start(&self, index: u32) -> Option<u32> {
         self.file_at(index).map(|d| d.blob_start)
@@ -455,7 +466,7 @@ pub fn closure(
         if core::mem::replace(&mut want[i as usize], true) {
             continue;
         }
-        stack.extend((0..src.extern_count(i)).map(|k| src.extern_id(i, k)));
+        src.extend_externs(i, stack);
     }
     Ok(())
 }
@@ -542,6 +553,26 @@ fn place_ascending(
     out.want = want;
     out.ids = ids;
     walked?;
+    place_runs(src, held, max_run, out)
+}
+
+/// [`Order::Ascending`]'s read runs over `out.want` as the caller set it:
+/// a [`closure`] (what [`place_into`] does), or any set of files, such as
+/// one file a scene needs at once or the rest of a cancelled read.
+/// `held(index)`: the file is already resident, so it takes no space.
+pub fn place_runs(
+    src: &impl FileSource,
+    held: impl Fn(u32) -> bool,
+    max_run: u32,
+    out: &mut Placement,
+) -> Result<(), LinkError> {
+    let count = src.count() as usize;
+    out.want.resize(count, false);
+    out.offset.clear();
+    out.offset.resize(count, Placement::NONE);
+    out.order.clear();
+    out.runs.clear();
+    out.size = 0;
     let line = |x: u32| x.checked_next_multiple_of(LINE).ok_or(LinkError::TooLarge);
     let mut run: Option<Run> = None;
     for i in 0..src.count() {
@@ -860,4 +891,4 @@ mod pack_tests;
 
 #[cfg(test)]
 #[path = "reloc_link_sim_tests.rs"]
-mod sim_tests;
+pub(crate) mod sim_tests;
