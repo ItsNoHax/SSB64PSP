@@ -215,16 +215,14 @@ impl Standoff {
     fn update_flash(&mut self) {
         let t = self.tics;
         let on = (t > 19 && t < 23) || (t > 149 && t < 153) || (t > 260 && t < 264);
-        let fills = if on {
-            vec![Fill {
-                rect: FULL,
-                rgba: [0xFF, 0xFF, 0xFF, 0x40],
-            }]
-        } else {
-            Vec::new()
-        };
         if let Some(f) = self.world.fills_mut(self.flash) {
-            *f = fills;
+            f.clear();
+            if on {
+                f.push(Fill {
+                    rect: FULL,
+                    rgba: [0xFF, 0xFF, 0xFF, 0x40],
+                });
+            }
         }
     }
 }

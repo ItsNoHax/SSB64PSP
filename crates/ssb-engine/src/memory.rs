@@ -8,7 +8,9 @@
 //! allocation sized up front (`lbRelocGetAllocSize` then
 //! `lbRelocLoadFilesExtern`) and frees it in one go. [`Arena`] keeps that
 //! shape for game state: allocations are pointer bumps inside
-//! [`Arena::scope`], and the whole scope is released when it returns.
+//! a [`Scope`] (from [`Arena::begin`] or [`Arena::scope`]), and the whole
+//! scope is released when it drops. [`Scope::checkpoint`] nests a scope
+//! that rewinds its parent when dropped.
 //!
 //! | Allocator | Holds | Lifetime |
 //! |---|---|---|
@@ -17,13 +19,16 @@
 //! | [`FrameArena`] | per-frame scratch, so per-frame paths never touch the heap | one scope per tick |
 //!
 //! [`ObjectPool`] is the fixed-capacity store for fighters, items and
-//! particles, whose counts the original also fixes.
+//! particles, whose counts the original also fixes. [`FreeOrder::Lifo`]
+//! reuses slots in the order of `itManagerInitItems` and
+//! `wpManagerAllocWeapons`' free lists.
 //!
 //! [`AssetArena`] serves `ssb_rom::loader_plan` (the PSP's
-//! `scene_files`); [`GameArena`] and [`FrameArena`] are not used yet.
+//! `scene_files`); [`FrameArena`] serves the opening movie's camera draw
+//! order; [`GameArena`] is not used yet.
 
 use alloc::vec::Vec;
-use core::mem::{align_of, size_of, MaybeUninit};
+use core::mem::{align_of, needs_drop, size_of, MaybeUninit};
 
 /// Default alignment: `LBRELOC_CACHE_ALIGN`'s 16 bytes, which is also what
 /// the GE wants for DMA sources.
@@ -45,6 +50,22 @@ impl<'a> Arena<'a> {
         Arena { buf, high_water: 0 }
     }
 
+    /// An arena over `len` bytes at `ptr`: a block the platform layer owns
+    /// (a static, or one heap block), normally 64-byte aligned.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` is valid for reads and writes of `len` bytes for `'a`, and
+    /// nothing else accesses them while the arena lives.
+    pub unsafe fn from_aligned(ptr: *mut u8, len: usize) -> Self {
+        assert!(
+            (ptr as usize).is_multiple_of(ARENA_ALIGN),
+            "arena storage below ARENA_ALIGN"
+        );
+        // SAFETY: the caller's contract.
+        Arena::new(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+    }
+
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
@@ -55,28 +76,54 @@ impl<'a> Arena<'a> {
         self.high_water
     }
 
+    /// Opens an empty scope that lasts until it is dropped (a scene, a
+    /// tick). Its allocations borrow the arena, so the next `begin` waits
+    /// until none of them is live.
+    pub fn begin(&mut self) -> Scope<'_> {
+        Scope {
+            rest: &mut self.buf[..],
+            used: 0,
+            high_water: &mut self.high_water,
+        }
+    }
+
     /// Runs `f` with an empty scope. Everything allocated from it is
     /// released when `f` returns; the borrow checker keeps any allocation
     /// from outliving the scope.
     pub fn scope<R>(&mut self, f: impl for<'s> FnOnce(&mut Scope<'s>) -> R) -> R {
-        let mut scope = Scope {
-            rest: &mut self.buf[..],
-            used: 0,
-        };
-        let result = f(&mut scope);
-        self.high_water = self.high_water.max(scope.used);
-        result
+        f(&mut self.begin())
     }
 }
 
 /// One scope of an [`Arena`]: allocations live until the scope ends.
+///
+/// Scopes run no destructors, so only types without drop glue go in
+/// (`T: !needs_drop`, checked when the call is compiled):
+///
+/// ```compile_fail,E0080
+/// # use ssb_engine::memory::Arena;
+/// let mut buf = [0u8; 64];
+/// let mut arena = Arena::new(&mut buf);
+/// let mut scope = arena.begin();
+/// scope.alloc(Vec::<u8>::new()); // a `Vec` needs its destructor
+/// ```
 pub struct Scope<'s> {
     rest: &'s mut [u8],
+    /// Bytes from the arena's start, padding included.
     used: usize,
+    high_water: &'s mut usize,
+}
+
+impl Drop for Scope<'_> {
+    fn drop(&mut self) {
+        *self.high_water = (*self.high_water).max(self.used);
+    }
 }
 
 impl<'s> Scope<'s> {
-    /// Bytes used so far, alignment padding included.
+    /// Bytes used so far from the arena's start, alignment padding
+    /// included (a [`checkpoint`](Self::checkpoint) scope counts its
+    /// parent's too).
     pub fn used(&self) -> usize {
         self.used
     }
@@ -85,12 +132,24 @@ impl<'s> Scope<'s> {
         self.rest.len()
     }
 
+    /// A nested scope from this one's current end. Dropping it rewinds
+    /// this scope to here: its allocations borrow this scope, so none can
+    /// outlive the rewind.
+    pub fn checkpoint(&mut self) -> Scope<'_> {
+        Scope {
+            rest: &mut *self.rest,
+            used: self.used,
+            high_water: &mut *self.high_water,
+        }
+    }
+
+    /// Ends the scope; the same as dropping it.
+    pub fn rewind(self) {}
+
     /// `len` bytes aligned to `align` (a power of two), or `None` when the
     /// arena is full. The contents are whatever an earlier scope left.
     pub fn alloc_bytes(&mut self, len: usize, align: usize) -> Option<&'s mut [u8]> {
-        debug_assert!(align.is_power_of_two());
-        let addr = self.rest.as_ptr() as usize;
-        let pad = addr.wrapping_neg() & (align - 1);
+        let pad = self.pad(align);
         if pad.checked_add(len)? > self.rest.len() {
             return None;
         }
@@ -102,8 +161,14 @@ impl<'s> Scope<'s> {
         Some(out)
     }
 
+    fn pad(&self, align: usize) -> usize {
+        debug_assert!(align.is_power_of_two());
+        (self.rest.as_ptr() as usize).wrapping_neg() & (align - 1)
+    }
+
     /// Moves `value` into the arena.
-    pub fn alloc<T: Copy>(&mut self, value: T) -> Option<&'s mut T> {
+    pub fn alloc<T>(&mut self, value: T) -> Option<&'s mut T> {
+        const { assert!(!needs_drop::<T>(), "arena values run no destructor") };
         let bytes = self.alloc_bytes(size_of::<T>(), align_of::<T>())?;
         let slot = bytes.as_mut_ptr().cast::<MaybeUninit<T>>();
         // SAFETY: `bytes` is exclusively borrowed for `'s`, `size_of::<T>()`
@@ -114,16 +179,58 @@ impl<'s> Scope<'s> {
 
     /// `len` copies of `value`, contiguous.
     pub fn alloc_slice<T: Copy>(&mut self, len: usize, value: T) -> Option<&'s mut [T]> {
+        self.alloc_slice_with(len, |_| value)
+    }
+
+    /// `[f(0), f(1), .., f(len - 1)]`, contiguous.
+    pub fn alloc_slice_with<T>(
+        &mut self,
+        len: usize,
+        mut f: impl FnMut(usize) -> T,
+    ) -> Option<&'s mut [T]> {
+        const { assert!(!needs_drop::<T>(), "arena values run no destructor") };
         let bytes = self.alloc_bytes(size_of::<T>().checked_mul(len)?, align_of::<T>())?;
         let first = bytes.as_mut_ptr().cast::<T>();
         // SAFETY: as in `alloc`, for `len` elements; every element is
         // written before the slice is formed.
         unsafe {
             for i in 0..len {
-                first.add(i).write(value);
+                first.add(i).write(f(i));
             }
             Some(core::slice::from_raw_parts_mut(first, len))
         }
+    }
+
+    /// The iterator's items, contiguous, or `None` when they do not all
+    /// fit (the scope is then unchanged). The length need not be known up
+    /// front: items are written at the scope's end as they come.
+    pub fn alloc_from_iter<T>(
+        &mut self,
+        items: impl IntoIterator<Item = T>,
+    ) -> Option<&'s mut [T]> {
+        const { assert!(!needs_drop::<T>(), "arena values run no destructor") };
+        let pad = self.pad(align_of::<T>());
+        if pad > self.rest.len() {
+            return None;
+        }
+        let room = self.rest.len() - pad;
+        // SAFETY: `pad` is in bounds; the elements written below stay
+        // inside `rest[pad..]`.
+        let first = unsafe { self.rest.as_mut_ptr().add(pad) }.cast::<T>();
+        let mut len = 0usize;
+        for item in items {
+            if size_of::<T>().checked_mul(len + 1)? > room {
+                return None;
+            }
+            // SAFETY: in bounds by the check above and aligned by `pad`;
+            // `rest` is exclusively borrowed, so nothing aliases it.
+            unsafe { first.add(len).write(item) };
+            len += 1;
+        }
+        let out = self.alloc_bytes(size_of::<T>() * len, align_of::<T>())?;
+        debug_assert_eq!(out.as_mut_ptr().cast::<T>(), first);
+        // SAFETY: `out` is the bytes just written: `len` initialised `T`s.
+        Some(unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<T>(), len) })
     }
 }
 
@@ -139,18 +246,55 @@ impl Handle {
     pub fn index(self) -> usize {
         usize::from(self.index)
     }
+
+    /// The slot's serial when the handle was made.
+    pub fn generation(self) -> u16 {
+        self.generation
+    }
+
+    /// `index | generation << 16`: the item pool's `u32` handle encoding.
+    pub fn to_bits(self) -> u32 {
+        u32::from(self.index) | (u32::from(self.generation) << 16)
+    }
+
+    pub fn from_bits(bits: u32) -> Self {
+        Handle {
+            index: bits as u16,
+            generation: (bits >> 16) as u16,
+        }
+    }
 }
 
+/// Which free slot [`ObjectPool::insert`] takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreeOrder {
+    /// The lowest free index.
+    LowestFirst,
+    /// The last one freed; slot 0 first from a fresh pool. The original's
+    /// item and weapon free lists (`itManagerInitItems` links struct `i`
+    /// to `i + 1`; `itManagerGetNextStructAlloc` pops the head,
+    /// `itManagerSetPrevStructAlloc` pushes a freed struct on it; `wpmanager.c`
+    /// does the same).
+    Lifo,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct Slot<T> {
+    /// Bumped by every insert: a slot's serial.
     generation: u16,
     value: Option<T>,
 }
 
 /// At most `N` live objects, no heap. Iteration visits slots in index
 /// order, the order the original's fixed arrays process them.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ObjectPool<T, const N: usize> {
     slots: [Slot<T>; N],
     len: usize,
+    order: FreeOrder,
+    /// [`FreeOrder::Lifo`]'s free list: `free[free_len - 1]` goes next.
+    free: [u16; N],
+    free_len: usize,
 }
 
 impl<T, const N: usize> Default for ObjectPool<T, N> {
@@ -160,7 +304,12 @@ impl<T, const N: usize> Default for ObjectPool<T, N> {
 }
 
 impl<T, const N: usize> ObjectPool<T, N> {
+    /// A pool that fills its lowest free slot first.
     pub fn new() -> Self {
+        Self::with_order(FreeOrder::LowestFirst)
+    }
+
+    pub fn with_order(order: FreeOrder) -> Self {
         assert!(
             N <= usize::from(u16::MAX),
             "pool capacity exceeds u16 handles"
@@ -171,11 +320,18 @@ impl<T, const N: usize> ObjectPool<T, N> {
                 value: None,
             }),
             len: 0,
+            order,
+            free: core::array::from_fn(|i| (N - 1 - i) as u16),
+            free_len: N,
         }
     }
 
     pub const fn capacity(&self) -> usize {
         N
+    }
+
+    pub fn order(&self) -> FreeOrder {
+        self.order
     }
 
     pub fn len(&self) -> usize {
@@ -186,12 +342,21 @@ impl<T, const N: usize> ObjectPool<T, N> {
         self.len == 0
     }
 
-    /// Stores `value` in the lowest free slot, or gives it back when full.
+    /// Stores `value` in the free slot [`FreeOrder`] picks, or gives it
+    /// back when full. The slot's serial goes up by one.
     pub fn insert(&mut self, value: T) -> Result<Handle, T> {
-        let Some(index) = self.slots.iter().position(|s| s.value.is_none()) else {
+        let index = match self.order {
+            FreeOrder::LowestFirst => self.slots.iter().position(|s| s.value.is_none()),
+            FreeOrder::Lifo => self.free_len.checked_sub(1).map(|top| {
+                self.free_len = top;
+                usize::from(self.free[top])
+            }),
+        };
+        let Some(index) = index else {
             return Err(value);
         };
         let slot = &mut self.slots[index];
+        slot.generation = slot.generation.wrapping_add(1);
         slot.value = Some(value);
         self.len += 1;
         Ok(Handle {
@@ -218,6 +383,20 @@ impl<T, const N: usize> ObjectPool<T, N> {
             .as_mut()
     }
 
+    /// The object in slot `index`, whatever its serial.
+    pub fn slot_value(&self, index: usize) -> Option<&T> {
+        self.slots.get(index)?.value.as_ref()
+    }
+
+    pub fn slot_value_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.slots.get_mut(index)?.value.as_mut()
+    }
+
+    /// Slot `index`'s serial: how many inserts it has taken, wrapping.
+    pub fn serial(&self, index: usize) -> Option<u16> {
+        Some(self.slots.get(index)?.generation)
+    }
+
     /// Removes the object; its handle, and every copy of it, goes stale.
     pub fn remove(&mut self, h: Handle) -> Option<T> {
         let slot = self
@@ -225,18 +404,24 @@ impl<T, const N: usize> ObjectPool<T, N> {
             .get_mut(h.index())
             .filter(|s| s.generation == h.generation)?;
         let value = slot.value.take()?;
-        slot.generation = slot.generation.wrapping_add(1);
         self.len -= 1;
+        if self.order == FreeOrder::Lifo {
+            self.free[self.free_len] = h.index;
+            self.free_len += 1;
+        }
         Some(value)
     }
 
+    /// Empties the pool. Serials are kept, so old handles stay stale; the
+    /// free list starts again from slot 0, as the original's is rebuilt at
+    /// each battle (`itManagerInitItems`).
     pub fn clear(&mut self) {
         for slot in &mut self.slots {
-            if slot.value.take().is_some() {
-                slot.generation = slot.generation.wrapping_add(1);
-            }
+            slot.value = None;
         }
         self.len = 0;
+        self.free = core::array::from_fn(|i| (N - 1 - i) as u16);
+        self.free_len = N;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Handle, &T)> {
@@ -557,6 +742,164 @@ mod tests {
         pool.clear();
         assert!(pool.is_empty());
         assert_eq!(pool.get(b), None);
+    }
+
+    #[test]
+    fn a_begun_scope_lives_until_dropped() {
+        let mut backing = Backing([0; 256]);
+        let mut arena = Arena::new(&mut backing.0);
+        let first = {
+            let mut s = arena.begin();
+            let a = s.alloc(1u32).unwrap();
+            let b = s.alloc_slice(3, 2u8).unwrap();
+            *a += 1;
+            assert_eq!((*a, &*b), (2, &[2u8, 2, 2][..]));
+            a as *mut u32 as usize
+        };
+        assert_eq!(arena.high_water(), 7);
+        // Dropped: the next scope starts at the same place.
+        let mut s = arena.begin();
+        assert_eq!(s.alloc(0u32).map(|r| r as *mut u32 as usize), Some(first));
+    }
+
+    #[test]
+    fn a_checkpoint_rewinds_its_parent() {
+        let mut backing = Backing([0; 256]);
+        let mut arena = Arena::new(&mut backing.0);
+        let mut tick = arena.begin();
+        let kept = tick.alloc(7u64).unwrap();
+        let at = {
+            let mut scratch = tick.checkpoint();
+            let tmp = scratch.alloc_slice(4, 9u32).unwrap();
+            assert_eq!(scratch.used(), 24);
+            tmp.as_ptr() as usize
+        };
+        assert_eq!(tick.used(), 8, "the checkpoint's bytes are back");
+        let again = tick.alloc(1u32).unwrap();
+        assert_eq!(again as *mut u32 as usize, at);
+        assert_eq!(*kept, 7);
+        let mut scratch = tick.checkpoint();
+        scratch.alloc_bytes(100, 1).unwrap();
+        scratch.rewind();
+        assert_eq!(tick.remaining(), 256 - 12);
+        drop(tick);
+        assert_eq!(arena.high_water(), 112, "the deepest checkpoint counts");
+    }
+
+    /// Not `Copy`, but nothing to drop.
+    #[derive(Debug, PartialEq)]
+    struct Pair {
+        id: u16,
+        name: &'static str,
+    }
+
+    #[test]
+    fn values_without_drop_glue_need_not_be_copy() {
+        let mut backing = Backing([0; 256]);
+        let mut arena = Arena::new(&mut backing.0);
+        arena.scope(|s| {
+            let p = s.alloc(Pair { id: 1, name: "a" }).unwrap();
+            assert_eq!(p.name, "a");
+            let v = s
+                .alloc_slice_with(3, |i| Pair {
+                    id: i as u16,
+                    name: "w",
+                })
+                .unwrap();
+            assert_eq!(v[2], Pair { id: 2, name: "w" });
+            let names = ["x", "y"];
+            let it = s
+                .alloc_from_iter(names.iter().enumerate().map(|(i, &name)| Pair {
+                    id: 10 + i as u16,
+                    name,
+                }))
+                .unwrap();
+            assert_eq!(
+                it,
+                &[Pair { id: 10, name: "x" }, Pair { id: 11, name: "y" }]
+            );
+            assert_eq!(it.as_ptr() as usize % align_of::<Pair>(), 0);
+            // Borrows of locals go into a checkpoint, whose lifetime is
+            // the local borrow's, not the closure scope's.
+            let local = [1u8, 2];
+            let mut inner = s.checkpoint();
+            let refs = inner.alloc_from_iter(local.iter()).unwrap();
+            assert_eq!(*refs[1], 2);
+            drop(inner);
+            // Too many: nothing is taken.
+            let left = s.remaining();
+            assert!(s.alloc_from_iter(0..u64::MAX).is_none());
+            assert_eq!(s.remaining(), left);
+        });
+        assert!(!needs_drop::<Pair>());
+    }
+
+    #[test]
+    fn an_arena_over_raw_storage() {
+        let mut backing = Backing([0; 256]);
+        // SAFETY: `backing` outlives the arena and is used through it only.
+        let mut arena = unsafe { Arena::from_aligned(backing.0.as_mut_ptr(), 64) };
+        assert_eq!(arena.capacity(), 64);
+        assert!(arena.scope(|s| s.alloc_bytes(65, 1).is_none()));
+    }
+
+    #[test]
+    fn a_lifo_pool_reuses_the_last_freed_slot() {
+        let mut pool: ObjectPool<u8, 3> = ObjectPool::with_order(FreeOrder::Lifo);
+        let h: [Handle; 3] = core::array::from_fn(|i| pool.insert(i as u8).unwrap());
+        assert_eq!(
+            h.map(Handle::index),
+            [0, 1, 2],
+            "struct 0 is handed out first"
+        );
+        assert_eq!(pool.insert(9), Err(9));
+        pool.remove(h[0]).unwrap();
+        pool.remove(h[2]).unwrap();
+        let a = pool.insert(20).unwrap();
+        let b = pool.insert(21).unwrap();
+        assert_eq!((a.index(), b.index()), (2, 0), "last freed, first reused");
+        // The other order on the same sequence.
+        let mut low: ObjectPool<u8, 3> = ObjectPool::new();
+        let g: [Handle; 3] = core::array::from_fn(|i| low.insert(i as u8).unwrap());
+        low.remove(g[0]).unwrap();
+        low.remove(g[2]).unwrap();
+        assert_eq!(low.insert(20).unwrap().index(), 0);
+        pool.clear();
+        assert_eq!(
+            pool.insert(1).unwrap().index(),
+            0,
+            "clear rebuilds the list"
+        );
+    }
+
+    #[test]
+    fn a_reused_slot_leaves_old_handles_stale() {
+        for order in [FreeOrder::LowestFirst, FreeOrder::Lifo] {
+            let mut pool: ObjectPool<u32, 2> = ObjectPool::with_order(order);
+            let a = pool.insert(1).unwrap();
+            assert_eq!(a.to_bits(), 1 << 16, "slot 0, first serial 1");
+            assert_eq!(Handle::from_bits(a.to_bits()), a);
+            assert_eq!(pool.serial(0), Some(1));
+            pool.remove(a).unwrap();
+            assert_eq!(pool.get(a), None);
+            assert_eq!(pool.remove(a), None);
+            let b = pool.insert(2).unwrap();
+            assert_eq!(b.index(), a.index());
+            assert_eq!(b.generation(), 2);
+            assert_eq!(pool.get(a), None, "{order:?}: the old handle stays stale");
+            assert_eq!(pool.get_mut(a), None);
+            assert_eq!(pool.get(b), Some(&2));
+            assert_eq!(pool.slot_value(0), Some(&2));
+            *pool.slot_value_mut(0).unwrap() = 3;
+            assert_eq!(pool.get(b), Some(&3));
+            assert_eq!(pool.slot_value(1), None);
+            assert_eq!(pool.serial(2), None);
+            let copy = pool.clone();
+            assert_eq!(copy, pool);
+            pool.clear();
+            assert_eq!(pool.get(b), None, "clear leaves handles stale");
+            assert_ne!(copy, pool);
+        }
     }
 
     /// A heap block that counts its frees.

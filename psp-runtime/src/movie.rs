@@ -14,6 +14,7 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use ssb_engine::math::Vec3;
+use ssb_engine::memory::Scope;
 use ssb_game::fighter::FighterKind;
 use ssb_game::menu::Piece;
 use ssb_game::opening::movie::{
@@ -659,23 +660,32 @@ impl Runtime {
         }
     }
 
-    /// The world as `gcDrawAll` draws it. `host` draws the scene's own
-    /// displays ([`ObjectKind::Host`]) for the camera and head it is given.
+    /// The world as `gcDrawAll` draws it, the cameras whose priority
+    /// `keep` admits only. `host` draws the scene's own displays
+    /// ([`ObjectKind::Host`]) for the camera and head it is given. The
+    /// camera order is scratch in `frame` (the frame arena).
     ///
     /// # Safety
     ///
     /// Between `begin_frame` and `end_frame`.
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn draw(
         &self,
         world: &World,
         gpu: &mut Gpu,
         st: &mut DrawState,
         a: &Assets<'_, '_>,
+        frame: &mut Scope<'_>,
+        keep: &dyn Fn(u32) -> bool,
         host: &mut dyn FnMut(&mut Gpu, &mut DrawState, &Camera, &Object, Head),
     ) {
         let texgen_basis = st.texgen_basis;
         let mut look_at = ssb_game::opening::movie::LookAtTracker::default();
-        for cam in world.draw_order() {
+        let mut scratch = frame.checkpoint();
+        let Some(order) = world.draw_order_in(&mut scratch) else {
+            crate::memory::fatal(&["Out of frame arena memory (movie cameras)."]);
+        };
+        for cam in order.iter().copied().filter(|c| keep(c.priority)) {
             gpu.set_viewport_n64(cam.viewport);
             match &cam.kind {
                 CameraKind::Default { fill, zbuffer } => {

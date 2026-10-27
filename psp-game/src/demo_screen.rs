@@ -17,6 +17,7 @@ use ssb_game::explain::{self, Explain};
 use ssb_game::fighter::FighterKind;
 use ssb_game::menu::Scene as MScene;
 use ssb_game::spgame::congra::Fade;
+use ssb_engine::memory::Scope;
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw;
 use ssb_rom::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
@@ -639,6 +640,7 @@ pub(crate) unsafe fn draw(
     pack: Option<&Pack<'_>>,
     draw_state: &mut meshdraw::DrawState,
     demo: &Demo,
+    frame: &mut Scope<'_>,
 ) {
     use ssb_rom::sprite::{SP_TEXSHUF, SP_TRANSPARENT};
     draw_state.kind48_flat = false;
@@ -719,7 +721,7 @@ pub(crate) unsafe fn draw(
             if let Some(p) = pack {
                 // The cameras after the battle camera (priority 50): the
                 // posed panel's.
-                draw_movie_cameras(gpu, p, draw_state, m, |priority| priority < 50);
+                draw_movie_cameras(gpu, p, draw_state, m, frame, &|priority| priority < 50);
             }
         }
         Demo::AutoDemo(d) => {
@@ -767,16 +769,22 @@ pub(crate) unsafe fn draw_movie_cameras(
     p: &Pack<'_>,
     draw_state: &mut meshdraw::DrawState,
     m: &MovieScene,
-    keep: impl Fn(u32) -> bool,
+    frame: &mut Scope<'_>,
+    keep: &dyn Fn(u32) -> bool,
 ) {
-    let mut world = m.world().clone();
-    world.cameras.retain(|c| keep(c.priority));
     let a = ssb_psp_runtime::movie::Assets {
         main: p,
         scene: m.scene_pack(),
     };
-    m.runtime
-        .draw(&world, gpu, draw_state, &a, &mut |_, _, _, _, _| {});
+    m.runtime.draw(
+        m.world(),
+        gpu,
+        draw_state,
+        &a,
+        frame,
+        keep,
+        &mut |_, _, _, _, _| {},
+    );
 }
 
 /// The movie scene's picture before its battle exists: its own cameras
@@ -790,12 +798,13 @@ pub(crate) unsafe fn draw_movie_only(
     pack: Option<&Pack<'_>>,
     draw_state: &mut meshdraw::DrawState,
     demo: &Demo,
+    frame: &mut Scope<'_>,
 ) {
     gpu.set_viewport_pillarboxed();
     gpu.begin_frame(Some(ssb_engine::renderer::Color::rgba(0, 0, 0, 0xFF)));
     gpu.set_viewport_pillarboxed();
     if let (Some(p), Demo::Movie(m)) = (pack, demo) {
-        draw_movie_cameras(gpu, p, draw_state, m, |_| true);
+        draw_movie_cameras(gpu, p, draw_state, m, frame, &|_| true);
     }
     gpu.set_viewport_pillarboxed();
 }

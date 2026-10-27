@@ -2,7 +2,6 @@
 //! in on white, as silhouettes until the save has unlocked them, then a
 //! fade to black and the title.
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use super::movie::{link, CameraKind, Fill, Head, Joints, Model, ObjectKind, Persp, World, FULL};
@@ -175,10 +174,11 @@ impl Newcomers {
             let a = *alpha as u8;
             let id = *id;
             if let Some(f) = self.world.fills_mut(id) {
-                *f = vec![Fill {
+                f.clear();
+                f.push(Fill {
                     rect: FULL,
                     rgba: [0, 0, 0, a],
-                }];
+                });
             }
         }
         exit

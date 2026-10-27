@@ -1,7 +1,6 @@
 //! `mv/mvopening/mvopeningclash.c`: the eight fighters clashing before a
 //! four-cornered animated backdrop, then the screen washing out to white.
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use super::movie::{
@@ -182,10 +181,11 @@ impl Clash {
             let a = *alpha as u8;
             let id = *id;
             if let Some(f) = self.world.fills_mut(id) {
-                *f = vec![Fill {
+                f.clear();
+                f.push(Fill {
                     rect: FULL,
                     rgba: [0xFF, 0xFF, 0xFF, a],
-                }];
+                });
             }
         }
         exit

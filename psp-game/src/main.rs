@@ -44,6 +44,7 @@ mod title_opening;
 mod training_screen;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
+use ssb_engine::memory::Scope;
 use ssb_engine::renderer::Color;
 use ssb_game::menu::Scene as MScene;
 use ssb_rom::pack::Pack;
@@ -4054,6 +4055,7 @@ unsafe fn draw_frame(
     effect_visuals: &mut EffectVisuals,
     draw_assets: &DrawAssets,
     no_pack_color: Color,
+    frame: &mut Scope<'_>,
 ) {
     match s.screen {
         Screen::CaptureIntro | Screen::CaptureMenu => {
@@ -4061,7 +4063,7 @@ unsafe fn draw_frame(
             gpu.begin_frame(Some(BG_RESULTS));
         }
         Screen::Menus => s.menus.draw(gpu, pack.as_ref(), draw_state, &s.backup),
-        Screen::Opening => opening_screen::draw(&mut s.opening, gpu, pack.as_ref(), draw_state),
+        Screen::Opening => opening_screen::draw(&mut s.opening, gpu, pack.as_ref(), draw_state, frame),
         Screen::FighterSelect => draw_training_select(
             gpu,
             pack.as_ref(),
@@ -4113,7 +4115,7 @@ unsafe fn draw_frame(
         // An opening battle scene before its battle exists (RE-467).
         Screen::Training if s.play_state.is_none() && matches!(s.demo, Some(demo_screen::Demo::Movie(_))) => {
             if let Some(demo) = s.demo.as_ref() {
-                demo_screen::draw_movie_only(gpu, pack.as_ref(), draw_state, demo);
+                demo_screen::draw_movie_only(gpu, pack.as_ref(), draw_state, demo, frame);
             }
         }
         Screen::Training => {
@@ -4208,7 +4210,7 @@ unsafe fn draw_frame(
                     .and_then(|b| b.effects.as_ref().map(|e| (e, &b.wallpaper))),
             );
             if let Some(demo) = s.demo.as_ref() {
-                demo_screen::draw(gpu, pack.as_ref(), draw_state, demo);
+                demo_screen::draw(gpu, pack.as_ref(), draw_state, demo, frame);
             }
             if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), s.play_state.as_ref()) {
                 let dummy = s.dummies[0].as_ref().map(|x| &x.fighter);
@@ -5230,8 +5232,13 @@ unsafe fn run() -> ! {
     let mut headless_capture_sent = false;
     #[cfg(feature = "golden_capture")]
     let mut frames_after_capture = 0u32;
+    // Per-frame scratch: one scope a tick, released before the next.
+    let Some(mut frame_arena) = ssb_psp_runtime::memory::frame_arena() else {
+        ssb_psp_runtime::memory::fatal(&["Frame arena already taken."]);
+    };
 
     loop {
+        let mut frame = frame_arena.begin();
         sim_frame_index = sim_frame_index.saturating_add(1);
         if matches!(sim_frame_index, 1 | 60 | 600) {
             boot_log::log_args(format_args!("frame {sim_frame_index}"));
@@ -5414,6 +5421,7 @@ unsafe fn run() -> ! {
                 &mut effect_visuals,
                 &draw_assets,
                 no_pack_color,
+                &mut frame,
             );
             profile::stop(profile::Span::Draw, draw_start);
             gpu.end_frame();

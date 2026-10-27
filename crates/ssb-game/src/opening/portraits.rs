@@ -148,7 +148,9 @@ impl Portraits {
     /// cover sprite in black.
     fn update_cover_display(&mut self) {
         let row = self.row;
-        let mut fills = Vec::new();
+        // Refilled in place: no allocation a tick.
+        let fills = &mut self.fills;
+        fills.clear();
         let black = [0, 0, 0, 0xFF];
         for r in 0..4 {
             if r != row {
@@ -181,7 +183,6 @@ impl Portraits {
                 rgba: black,
             });
         }
-        self.fills = fills;
     }
 
     /// The cover display's black rectangles, drawn before its sprite.

@@ -524,7 +524,9 @@ impl Room {
         }
         let rgba = [0, 0, 0, self.overlay_alpha as u8];
         if let Some(f) = self.world.fills_mut(self.ids.overlay) {
-            *f = vec![Fill { rect: FULL, rgba }];
+            // Refilled in place: no allocation a tick.
+            f.clear();
+            f.push(Fill { rect: FULL, rgba });
         }
     }
 

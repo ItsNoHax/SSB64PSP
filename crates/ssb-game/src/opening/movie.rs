@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 use crate::fighter::FighterKind;
 use crate::menu::Piece;
 use ssb_engine::math::Vec3;
+use ssb_engine::memory::Scope;
 
 /// `COBJ_MASK_DLLINK(link)`.
 pub const fn link(link: u8) -> u32 {
@@ -488,8 +489,29 @@ impl World {
     }
 
     /// Every camera in `gcDrawAll`'s order: highest priority first, ties in
-    /// creation order.
-    pub fn draw_order(&self) -> Vec<&Camera> {
+    /// creation order. The list is per-frame scratch in `scope` (the
+    /// frame arena), so the draw takes nothing from the heap; `None` when
+    /// it does not fit.
+    pub fn draw_order_in<'w: 's, 's>(
+        &'w self,
+        scope: &mut Scope<'s>,
+    ) -> Option<&'s mut [&'w Camera]> {
+        let order = scope.alloc_from_iter(self.cameras.iter())?;
+        // Stable insertion sort (no buffer): a camera moves only past a
+        // lower priority, so ties keep creation order.
+        for i in 1..order.len() {
+            let mut j = i;
+            while j > 0 && order[j - 1].priority < order[j].priority {
+                order.swap(j - 1, j);
+                j -= 1;
+            }
+        }
+        Some(order)
+    }
+
+    /// [`World::draw_order_in`] on the heap, for tests.
+    #[cfg(test)]
+    pub(crate) fn draw_order(&self) -> Vec<&Camera> {
         let mut v: Vec<&Camera> = self.cameras.iter().collect();
         v.sort_by_key(|c| core::cmp::Reverse(c.priority));
         v
@@ -548,6 +570,26 @@ mod tests {
         let mid = w.camera(10, link(28), FULL, CameraKind::Sprite);
         let order: Vec<u16> = w.draw_order().iter().map(|c| c.id).collect();
         assert_eq!(order, [high, low, mid]);
+        {
+            // The frame-arena order is the same, ties included.
+            let top = w.camera(80, link(29), FULL, CameraKind::Sprite);
+            let last = w.camera(5, link(30), FULL, CameraKind::Sprite);
+            let mut buf = [0u8; 256];
+            let mut arena = ssb_engine::memory::Arena::new(&mut buf);
+            let mut frame = arena.begin();
+            let ids: Vec<u16> = w
+                .draw_order_in(&mut frame)
+                .unwrap()
+                .iter()
+                .map(|c| c.id)
+                .collect();
+            assert_eq!(ids, [high, top, low, mid, last]);
+            let heap: Vec<u16> = w.draw_order().iter().map(|c| c.id).collect();
+            assert_eq!(ids, heap);
+            // The scope borrows the world's cameras until it drops.
+            drop(frame);
+            w.cameras.retain(|c| c.id != top && c.id != last);
+        }
         let a = w.object(26, Head::Zero, ObjectKind::Host(1));
         let b = w.object(9, Head::Zero, ObjectKind::Host(2));
         let c = w.object(26, Head::Zero, ObjectKind::Host(3));

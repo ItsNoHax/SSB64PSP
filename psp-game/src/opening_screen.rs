@@ -17,6 +17,7 @@ use ssb_game::opening::{
     clash, cliff, newcomers, portraits, room, run, sector, standoff, startup, yamabuki, yoster,
     Clock, Exit, Kind,
 };
+use ssb_engine::memory::Scope;
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::meshdraw::DrawState;
 use ssb_psp_runtime::movie::{self, Assets, Runtime};
@@ -323,6 +324,7 @@ pub(crate) unsafe fn draw(
     gpu: &mut Gpu,
     pack: Option<&Pack<'_>>,
     st: &mut DrawState,
+    frame: &mut Scope<'_>,
 ) {
     // `mvOpeningRoomFuncRun` at tic 1037: the default camera stops filling,
     // and the transition opens over the picture left on screen.
@@ -359,7 +361,8 @@ pub(crate) unsafe fn draw(
         }
         host_draw(logic, runtime, gpu, st, &a, obj, head);
     };
-    o.runtime.draw(logic.world(), gpu, st, &a, &mut host);
+    o.runtime
+        .draw(logic.world(), gpu, st, &a, frame, &|_| true, &mut host);
     gpu.set_viewport_pillarboxed();
 }
 

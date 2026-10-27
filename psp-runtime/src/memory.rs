@@ -7,7 +7,7 @@
 //! PSPLink. [`hold_ballast`] takes the difference away at boot so PPSSPP
 //! and PSPLink runs see a launch's budget.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use psp::sys;
 
@@ -147,4 +147,34 @@ pub fn fatal(lines: &[&str]) -> ! {
         // SAFETY: as above.
         unsafe { sys::sceDisplayWaitVblankStart() };
     }
+}
+
+/// Bytes behind [`frame_arena`]. Measured high water: 28 B (opening
+/// movie camera order); 4 KiB keeps static RAM low for the PSP-1000.
+pub const FRAME_ARENA_BYTES: usize = 4 * 1024;
+
+/// The frame arena's storage, on its own D-cache lines like the GE
+/// buffers (`gu.rs`, RE-360), though only the CPU touches it.
+#[repr(C, align(64))]
+struct FrameBuf([u8; FRAME_ARENA_BYTES]);
+
+static mut FRAME_BUF: FrameBuf = FrameBuf([0; FRAME_ARENA_BYTES]);
+static FRAME_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The per-tick scratch arena (`docs/memory.md`, Allocators) over a
+/// static buffer: the game loop opens one scope a tick, so per-frame
+/// lists never touch the heap. The first call gets it; later calls get
+/// `None`.
+pub fn frame_arena() -> Option<ssb_engine::memory::FrameArena<'static>> {
+    if FRAME_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag hands the buffer out once, so this is its only
+    // reference for the rest of the program.
+    Some(unsafe {
+        ssb_engine::memory::Arena::from_aligned(
+            core::ptr::addr_of_mut!(FRAME_BUF.0).cast::<u8>(),
+            FRAME_ARENA_BYTES,
+        )
+    })
 }

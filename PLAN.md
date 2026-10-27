@@ -138,7 +138,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Memory arenas | Wire `GameArena`/`FrameArena`/`ObjectPool` into `psp-runtime`; `AssetArena` done (`ssb_rom::loader_plan`); reads and memory unchanged | RE-571, [memory](docs/memory.md#allocators) |
+| Memory arenas | Wire `GameArena`/`ObjectPool` into `psp-runtime`; `AssetArena` (RE-571) and `FrameArena` (movie camera order) done; reads and memory unchanged | RE-571, [memory](docs/memory.md#allocators) |
 
 ## Completed
 
