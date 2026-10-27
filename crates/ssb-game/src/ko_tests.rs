@@ -55,6 +55,24 @@ fn a_side_ko_sets_off_one_explosion_and_the_flash() {
     assert_eq!(ko.flash_color(), None);
 }
 
+/// A battle's end pauses the effect link but runs the interface link: the
+/// flash clears while the explosion stays where it stopped (RE-458).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn at_the_battle_end_the_flash_runs_out_and_the_explosion_holds() {
+    let mut ko = KoEffects::default();
+    let mut f = fighter(2);
+    f.pos = Vec3::new(4001.0, 2500.0, 0.0);
+    assert!(dead::check(&mut f));
+    ko.observe(&mut f);
+    ko.tick();
+    for _ in 0..EXPLODE_TICKS {
+        ko.tick_flash();
+    }
+    assert_eq!(ko.flash_color(), None);
+    assert_eq!(ko.explosions[2].unwrap().ticks, 1);
+}
+
 #[test]
 fn a_down_ko_points_down_and_a_left_ko_left() {
     assert_eq!(ExplodeKind::Down.rotate_z_degrees(), 0.0);

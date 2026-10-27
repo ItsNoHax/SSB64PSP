@@ -39,7 +39,7 @@ fn zero_percent_is_centred_on_the_player_slot() {
     let d = shown(0, 0);
     // The first update settles 1.04 to 1.0.
     assert_eq!(d.scale, 1.0);
-    let g: Vec<Glyph> = d.glyphs(false, &SIZES).collect();
+    let g: Vec<Glyph> = d.glyphs(&SIZES).collect();
     assert_eq!(g.len(), 2);
     // "0%": 14 + 17 wide, centred on x 55 at the first frame's scale of
     // 1.04, which then settles to 1.0 without moving the glyphs.
@@ -63,7 +63,7 @@ fn a_hit_swells_and_flashes_then_settles() {
     d.update(30, false);
     // 30 new points: 1 + 30/300, the white flash for one frame.
     assert!((d.scale - 1.1).abs() < 1e-6);
-    let g: Vec<Glyph> = d.glyphs(false, &SIZES).collect();
+    let g: Vec<Glyph> = d.glyphs(&SIZES).collect();
     assert!(g.iter().all(|g| g.solid && g.color == [0xFF; 3]));
     assert_eq!(g.len(), 3);
     d.update(30, false);
@@ -85,11 +85,11 @@ fn a_hit_swells_and_flashes_then_settles() {
 #[test]
 fn damage_darkens_the_digits() {
     let d = shown(2, 150);
-    let c = d.glyphs(false, &SIZES).next().unwrap().color;
+    let c = d.glyphs(&SIZES).next().unwrap().color;
     // Halfway: (0xF0 - 100) / 2 + 100, (0xF0 - 20) / 2 + 20, (0xFF - 20) / 2 + 20.
     assert_eq!(c, [170, 130, 137]);
     let d = shown(0, 400);
-    assert_eq!(d.glyphs(false, &SIZES).next().unwrap().color, [100, 20, 20]);
+    assert_eq!(d.glyphs(&SIZES).next().unwrap().color, [100, 20, 20]);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn a_fall_breaks_the_digits_apart() {
     // The rebirth restores the digits at 0%.
     d.stop_break_anim();
     d.update(0, false);
-    let g: Vec<Glyph> = d.glyphs(false, &SIZES).collect();
+    let g: Vec<Glyph> = d.glyphs(&SIZES).collect();
     assert_eq!(g.len(), 2);
     assert_eq!(g[0].y, 210.0 - 8.0 * g[0].scale);
 }
@@ -118,12 +118,12 @@ fn a_fall_breaks_the_digits_apart() {
 #[test]
 fn hidden_until_shown_and_gone_after_the_last_stock() {
     let mut d = DamageDisplay::new(0, 0);
-    assert_eq!(d.glyphs(false, &SIZES).count(), 0);
+    assert_eq!(d.glyphs(&SIZES).count(), 0);
     d.is_show_interface = true;
     for _ in 0..180 {
         d.update(0, true);
     }
-    assert_eq!(d.glyphs(true, &SIZES).count(), 0);
+    assert_eq!(d.glyphs(&SIZES).count(), 0);
 }
 
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

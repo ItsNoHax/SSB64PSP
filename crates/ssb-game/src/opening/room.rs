@@ -313,7 +313,7 @@ impl Room {
     fn make_scene_cameras(&mut self, scene: usize) {
         let (main_view, fighter_links, near, far) = match scene {
             // Scene 1: `PerspFastF` and the reflecting roll (14); near 80.
-            0 => (View::Roll, link(27) | link(9), 80.0, 15000.0),
+            0 => (View::RollReflect, link(27) | link(9), 80.0, 15000.0),
             1 => (View::Roll, link(27) | link(9), 100.0, 12800.0),
             2 => (View::Roll, link(27) | link(9), 128.0, 16384.0),
             // Scene 4's main camera takes the default look-at; its fighter
@@ -688,6 +688,24 @@ mod tests {
             logo.kind,
             CameraKind::Persp { zbuffer: false, .. }
         ));
+    }
+
+    /// `mvOpeningRoomMakeScene1Cameras`: the main camera is kind 14
+    /// (`syMatrixModLookAtReflect`), the room's only `LookAt` load.
+    #[test]
+    fn scene_1_main_camera_loads_the_only_look_at() {
+        let r = Room::new(&mut counter());
+        let views: Vec<(u32, View)> = r
+            .world
+            .draw_order()
+            .into_iter()
+            .filter_map(|c| match c.kind {
+                CameraKind::Persp { persp, .. } => Some((c.priority, persp.view)),
+                _ => None,
+            })
+            .collect();
+        let loads: Vec<_> = views.iter().filter(|(_, v)| v.loads_look_at()).collect();
+        assert_eq!(loads, [&(80, View::RollReflect)]);
     }
 
     #[test]

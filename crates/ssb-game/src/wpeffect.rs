@@ -73,6 +73,18 @@ pub enum WeaponEffect {
     /// `grHyruleTwisterUpdateSubside`'s end:
     /// `lbParticleEjectStructID(twister_xf->generator_id, 1)`.
     TwisterEject,
+    /// `itNessPKFireCommonUpdateAllCheckDestroy`: the flame particle's
+    /// transform `xf` (`item_vars.pkfire.xf`) takes the flame's root scale
+    /// and position.
+    PKFireFollow {
+        xf: u8,
+        pos: Vec3,
+        scale: Vec3,
+    },
+    /// Its end: `lbParticleEjectStructID(xf->generator_id, 0)`.
+    PKFireEject {
+        xf: u8,
+    },
     /// `grPupupuWhispyLeavesMakeEffect`: Whispy's leaves, script 0 of the
     /// stage bank at the side `lr_players` names; the transform becomes
     /// [`crate::effect::Effects::leaves_xf`].
@@ -430,6 +442,15 @@ pub fn make(e: &WeaponEffect, effects: &mut Effects, p: &mut Particles, banks: &
                 let pos = p.transform(effects.twister_xf).translate;
                 effects.hyrule_twister(p, banks, pos, 7);
             }
+        }
+        WeaponEffect::PKFireFollow { xf, pos, scale } => {
+            let t = p.transform_mut(xf);
+            t.scale = scale;
+            t.translate = pos;
+        }
+        WeaponEffect::PKFireEject { xf } => {
+            let id = p.transform(xf).generator_id;
+            crate::particle::eject_struct_id(p, banks, effects, id, 0);
         }
         WeaponEffect::TwisterEject => {
             if effects.twister_xf != crate::particle::NIL {

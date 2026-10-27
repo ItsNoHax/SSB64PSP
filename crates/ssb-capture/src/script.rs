@@ -284,6 +284,7 @@ macro_rules! scripted_scene {
             | $crate::GameScene::FoxFire
             | $crate::GameScene::PikachuQuick
             | $crate::GameScene::NessJibaku
+            | $crate::GameScene::NessPKFire
             | $crate::GameScene::KirbyStoneSlope
             | $crate::GameScene::CaptainKickRoll
             | $crate::GameScene::KirbyCutter
@@ -403,6 +404,11 @@ pub const fn capture_tick(scene: GameScene) -> Option<u64> {
         // B at tick 45; PK Fire's spark appears near tick 70 and is in
         // flight here.
         Ness => 75,
+        // B at tick 45 on Peach's Castle; the spark hits the dummy at tick
+        // 72 and the flame item is made there (N64 t69: state T = t + 3,
+        // picture at T is the N64 frame drawn at t = T - 4). It has burned
+        // 13 frames here, with the Ness-bank sparks rising (RE-382).
+        NessPKFire => 85,
         // Up+B at tick 45; PK Thunder's head rises with its four trails
         // while Ness holds `SpecialHiHold`.
         NessThunder => 85,
@@ -484,7 +490,8 @@ fn buttons(scene: GameScene, tick: u64) -> u16 {
     match scene {
         Samus | SamusShot | SamusBomb | SamusSpark | Link | LinkSpin | LinkSword | Yoshi
         | YoshiBomb | Captain | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuSmash | Purin
-        | Donkey | Ness | NessThunder | NessMagnet | LinkBomb | FoxFire | PikachuQuick => {
+        | Donkey | Ness | NessPKFire | NessThunder | NessMagnet | LinkBomb | FoxFire
+        | PikachuQuick => {
             match tick {
                 4 | 8 => button::A,
                 // `linksword` jabs; `pikachusmash` taps forward with A. The A at
@@ -764,7 +771,8 @@ fn stick_x(scene: GameScene, tick: u64) -> i8 {
         }
         Samus | SamusShot | SamusSpark | Link | LinkSpin | LinkSword | Yoshi | YoshiBomb
         | Captain | CaptainKick | Kirby | KirbyJab | Pikachu | PikachuAir | Purin | Donkey
-        | Ness | NessThunder | NessMagnet | YoshiShield | YoshiShieldBreak | Shadows => 0,
+        | Ness | NessPKFire | NessThunder | NessMagnet | YoshiShield | YoshiShieldBreak
+        | Shadows => 0,
         SamusBomb => {
             if (105..125).contains(&tick) {
                 80

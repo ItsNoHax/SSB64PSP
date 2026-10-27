@@ -60,6 +60,14 @@ pub const PUPUPU_PARTICLE_BANK: u8 = 7;
 /// the fighter). Like the others it keeps a fixed id of its own.
 pub const KIRBY_PARTICLE_BANK: u8 = 3;
 
+/// Match bank for Ness's pair (`gFTNessParticleBankID`: the
+/// `particles_unk1` scripts and textures `dFTNessData` names, loaded with
+/// the fighter). Like the others it keeps a fixed id of its own.
+pub const NESS_PARTICLE_BANK: u8 = 4;
+
+/// `itNessPKFireMakeItem`'s script in Ness's bank.
+const PK_FIRE_FLAME_SCRIPT: u16 = 0;
+
 /// `efManagerKirbyInhaleWindMakeEffect`'s script in Kirby's bank.
 const KIRBY_INHALE_WIND_SCRIPT: u16 = 0xC;
 /// Its transform's offset from the fighter's `TopN`: `lr * 800` across,
@@ -957,6 +965,12 @@ pub trait HitEffectSink {
         None
     }
 
+    /// [`Effects::pk_fire_flame`]: the flame particle's transform, or
+    /// [`NIL`] without a runtime.
+    fn pk_fire_flame(&mut self, _pos: Vec3) -> u8 {
+        NIL
+    }
+
     /// `DObjGetStruct(effect_gobj)->translate.vec.f = *pos` on a display
     /// effect the caller made. Nothing happens once it is gone.
     fn move_display(&mut self, _seq: u32, _pos: Vec3) {}
@@ -1052,6 +1066,10 @@ impl HitEffectSink for EffectRuntime<'_> {
 
     fn twister_made(&mut self) -> bool {
         self.effects.twister_xf != NIL
+    }
+
+    fn pk_fire_flame(&mut self, pos: Vec3) -> u8 {
+        self.effects.pk_fire_flame(self.particles, self.banks, pos)
     }
 
     fn map_bounds(&mut self, bounds: crate::status::BlastZone) {
@@ -2367,6 +2385,29 @@ impl Effects {
                 t.translate = pos;
             },
         )
+    }
+
+    /// `itNessPKFireMakeItem`'s particle: Ness's script 0 (no
+    /// generator-link mask) under a default transform, processed once, then
+    /// placed at the flame's `pos`. The transform, or [`NIL`] when the make
+    /// failed or the first update left it no users (`item_vars.pkfire.xf`).
+    /// As in the source, a struct whose transform failed is ejected.
+    pub fn pk_fire_flame(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
+        let pc = lb::make_script_id(p, banks, NESS_PARTICLE_BANK, PK_FIRE_FLAME_SCRIPT);
+        if pc == NIL {
+            return NIL;
+        }
+        let xf = p.add_transform_for_struct(pc, TransformStatus::Default);
+        if xf == NIL {
+            lb::eject_struct(p, banks, self, pc);
+            return NIL;
+        }
+        lb::process_struct(p, banks, self, pc);
+        if p.transform(xf).users_num == 0 {
+            return NIL;
+        }
+        p.transform_mut(xf).translate = pos;
+        xf
     }
 
     /// `ftParamRunProcEffect` with `ftParamPauseEffect` (`paused`) or

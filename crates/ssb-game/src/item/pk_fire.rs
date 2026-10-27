@@ -37,17 +37,65 @@ mod stat_tests {
             &air,
         );
         assert_eq!(item.attack.stat, identity);
-        proc_update(&mut item, Status::Init);
+        proc_update(&mut item, Status::Init, &mut Emit::default());
         assert_eq!(item.attack.stat, identity);
         item.set_status(ItemStatus::PKFire(Status::Fall));
         assert_eq!(item.attack.stat.flags.id(), HitAttackId::Null);
         assert_ne!(item.attack.stat.count, identity.count);
+    }
+
+    /// `itNessPKFireCommonUpdateAllCheckDestroy`: the flame's particle
+    /// transform follows the item each frame; at death the item makes the
+    /// small dust and ejects its particle generator (RE-382).
+    #[test]
+    fn pk_fire_flame_particle_follows_and_ejects_at_death() {
+        let air = core::iter::empty::<crate::weapon::MapSurface>;
+        let mut item = make(
+            &crate::manager_counts::ManagerCounts::new(),
+            super::super::PKFireSpawn {
+                owner_port: 0,
+                team: 0,
+                pos: Vec3::new(705.4, 1528.0, 0.0),
+                weapon_pos: Vec3::ZERO,
+                weapon_coll: crate::ground::BodyColl::default(),
+                stale: crate::stale::WeaponStale::FRESH,
+            },
+            &air,
+        );
+        item.vars.pkfire_xf = Some(3);
+        item.lifetime = 1;
+        let mut fx = Emit::default();
+        assert!(proc_update(&mut item, Status::Wait, &mut fx));
+        let pos = item.pos;
+        assert_eq!(
+            fx.iter().collect::<alloc::vec::Vec<_>>(),
+            [WeaponEffect::PKFireFollow {
+                xf: 3,
+                pos,
+                scale: Vec3::splat(0.505)
+            }]
+        );
+        let mut fx = Emit::default();
+        assert!(!proc_update(&mut item, Status::Wait, &mut fx));
+        assert_eq!(
+            fx.iter().collect::<alloc::vec::Vec<_>>(),
+            [
+                WeaponEffect::PKFireFollow {
+                    xf: 3,
+                    pos,
+                    scale: Vec3::splat(0.5)
+                },
+                WeaponEffect::DustExpandSmall(pos),
+                WeaponEffect::PKFireEject { xf: 3 },
+            ]
+        );
     }
 }
 
 use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
 use crate::combat::AttackState;
 use crate::weapon::MapSurface;
+use crate::wpeffect::{Emit, WeaponEffect};
 
 /// `ITPKFIRE_*` (US).
 pub const LIFETIME: i32 = 100;
@@ -109,8 +157,10 @@ where
 }
 
 /// `itNessPKFireCommonUpdateAllCheckDestroy`: the flame's size follows its
-/// life, which runs out one tick at a time. Returns whether it is spent.
-fn update_all_check_destroy(item: &mut Item) -> bool {
+/// life, which runs out one tick at a time, and its particle's transform
+/// follows the flame. Returns whether it is spent; a spent flame makes
+/// small dust where it stood and ends its particle.
+fn update_all_check_destroy(item: &mut Item, fx: &mut Emit) -> bool {
     let half = 0.5_f32;
     let scale = ((item.lifetime as f32 * half) / 100.0) + half;
     item.scale = Vec3::new(scale, scale, scale);
@@ -120,8 +170,22 @@ fn update_all_check_destroy(item: &mut Item) -> bool {
     item.attack.size = attr.size * 0.5 * scale;
     item.damage_coll.offset = attr.damage_coll_offset * scale;
     item.damage_coll.size = attr.damage_coll_size * 0.5 * scale;
+    if let Some(xf) = item.vars.pkfire_xf {
+        fx.push(WeaponEffect::PKFireFollow {
+            xf,
+            pos: item.pos,
+            scale: item.scale,
+        });
+    }
     item.lifetime -= 1;
-    item.lifetime < 0
+    if item.lifetime < 0 {
+        fx.push(WeaponEffect::DustExpandSmall(item.pos));
+        if let Some(xf) = item.vars.pkfire_xf {
+            fx.push(WeaponEffect::PKFireEject { xf });
+        }
+        return true;
+    }
+    false
 }
 
 /// `itNessPKFireWaitSetStatus`: preserve the incoming weapon's stat identity.
@@ -146,16 +210,16 @@ fn fall_set_status(item: &mut Item) {
 }
 
 /// `proc_update`. Returns whether the flame lives on.
-pub(super) fn proc_update(item: &mut Item, status: Status) -> bool {
+pub(super) fn proc_update(item: &mut Item, status: Status, fx: &mut Emit) -> bool {
     match status {
         // `itNessPKFireCommonProcUpdate`.
         Status::Init => {
             fall_set_status(item);
             true
         }
-        Status::Wait => !update_all_check_destroy(item),
+        Status::Wait => !update_all_check_destroy(item, fx),
         Status::Fall => {
-            if update_all_check_destroy(item) {
+            if update_all_check_destroy(item, fx) {
                 return false;
             }
             item.apply_gravity_clamp_tvel(GRAVITY, TVEL);
@@ -187,13 +251,18 @@ where
 
 /// The flame's only hit callback is `itNessPKFireCommonProcDamage`, in
 /// both statuses.
-pub(super) fn hit_proc(item: &mut Item, status: Status, proc: HitProc) -> Option<bool> {
+pub(super) fn hit_proc(
+    item: &mut Item,
+    status: Status,
+    proc: HitProc,
+    fx: &mut Emit,
+) -> Option<bool> {
     match (status, proc) {
         (Status::Wait | Status::Fall, HitProc::Damage) => {
             if item.lifetime > 0 {
                 item.lifetime -= item.damage_highest * HURT_DAMAGE_MUL;
             }
-            Some(!update_all_check_destroy(item))
+            Some(!update_all_check_destroy(item, fx))
         }
         _ => None,
     }

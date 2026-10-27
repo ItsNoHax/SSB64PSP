@@ -666,6 +666,8 @@ impl Runtime {
         a: &Assets<'_, '_>,
         host: &mut dyn FnMut(&mut Gpu, &mut DrawState, &Camera, &Object, Head),
     ) {
+        let texgen_basis = st.texgen_basis;
+        let mut look_at = ssb_game::opening::movie::LookAtTracker::default();
         for cam in world.draw_order() {
             gpu.set_viewport_n64(cam.viewport);
             match &cam.kind {
@@ -714,6 +716,14 @@ impl Runtime {
                         gpu.clear_depth();
                     }
                     self.view(gpu, st, a, persp);
+                    // Kinds 6 and 8 load no `LookAt`: texgen reads the
+                    // task's zeroed default (RE-458).
+                    st.texgen_basis = match look_at.camera(persp.view) {
+                        ssb_game::opening::movie::TexgenLookAt::Task => {
+                            Some(ssb_game::opening::movie::TASK_LOOK_AT)
+                        }
+                        ssb_game::opening::movie::TexgenLookAt::Loaded => texgen_basis,
+                    };
                     st.set_scene_light(world.light);
                     for head in [Head::Zero, Head::One] {
                         st.heads = match head {
@@ -761,6 +771,7 @@ impl Runtime {
                 }
             }
         }
+        st.texgen_basis = texgen_basis;
         gpu.set_viewport_pillarboxed();
     }
 
@@ -977,7 +988,7 @@ fn rotate_about(dst: [f32; 3], dir: [f32; 3], angle: f32) -> [f32; 3] {
 pub fn view_matrix(eye: Vec3, at: Vec3, up_x: f32, view: View) -> ssb_engine::math::Mat4 {
     match view {
         View::LookAt => ssb_engine::math::Mat4::look_at(eye, at, Vec3::new(up_x, 1.0, 0.0)),
-        View::Roll => {
+        View::Roll | View::RollReflect => {
             use ssb_engine::math::sqrt;
             let mut look = [at.x - eye.x, at.y - eye.y, at.z - eye.z];
             let len = -1.0 / sqrt(look[0] * look[0] + look[1] * look[1] + look[2] * look[2]);

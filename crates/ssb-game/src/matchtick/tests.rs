@@ -562,3 +562,105 @@ fn the_camera_pass_frames_every_seat_through_the_leads_rig() {
         assert_ne!(expect.camera, rig.camera);
     }
 }
+
+/// A seat that logs its passes, by the serial of the fighter in it.
+struct Member {
+    fighter: Fighter,
+    serial: u8,
+    log: alloc::rc::Rc<core::cell::RefCell<Vec<(u8, char)>>>,
+}
+
+impl HasFighter for Member {
+    fn fighter(&self) -> &Fighter {
+        &self.fighter
+    }
+    fn fighter_mut(&mut self) -> &mut Fighter {
+        &mut self.fighter
+    }
+}
+
+impl Seat<NoGround> for Member {
+    fn interrupt(&mut self, _: &NoGround, _: &InputView<'_>) {
+        self.log.borrow_mut().push((self.serial, 'i'));
+    }
+    fn physics(&mut self, _: &NoGround) {
+        self.log.borrow_mut().push((self.serial, 'p'));
+    }
+    fn settle_catch(&mut self, _: &NoGround) {}
+    fn settle_capture(&mut self, _: &NoGround) {}
+    fn settle_status(&mut self, _: &NoGround) {}
+}
+
+/// `sc1PGameSpawnEnemyTeamNext` as a host does it: the next member in the
+/// seat, serials from 4.
+struct NextMember(u8);
+
+impl MatchHooks<Member> for NextMember {
+    fn next_member(
+        &mut self,
+        seat: &mut Member,
+        _: &[MapGroup],
+        _: Option<&mut crate::battle::Battle>,
+    ) -> bool {
+        seat.fighter = Fighter::new(FighterKind::Mario, seat.fighter.port, 3);
+        seat.serial = self.0;
+        self.0 += 1;
+        true
+    }
+}
+
+/// The N64 Polygon stage (RE-458): a member made in an enemy's interrupt
+/// runs its whole first frame in that frame, after the other fighters,
+/// and stays last in the link (fighter link `L0132` after port 2's
+/// replacement at t929). Two members replaced in one frame link in the
+/// order their predecessors ran.
+#[test]
+fn a_next_member_runs_its_first_frame_last_in_the_link() {
+    let log = alloc::rc::Rc::new(core::cell::RefCell::new(Vec::new()));
+    let mut members: Vec<Member> = (0..4u8)
+        .map(|i| Member {
+            fighter: Fighter::new(FighterKind::Mario, i, 3),
+            serial: i,
+            log: log.clone(),
+        })
+        .collect();
+    members[1].fighter.dead.enemy_next_pending = true;
+    members[2].fighter.dead.enemy_next_pending = true;
+    let mut weapons: Box<WeaponPool> = Box::default();
+    let mut items: Box<ItemPool> = Box::default();
+    let mut stage = Stage::none();
+    let mut effects = crate::effect::NoEffects;
+    let mut world = World {
+        weapons: &mut weapons,
+        items: &mut items,
+        stage: &mut stage,
+        effects: &mut effects,
+        bonus: None,
+        battle: None,
+        started: true,
+        locked: true,
+        go: false,
+        rumble: None,
+    };
+    let mut it = members.iter_mut();
+    let mut seats: Seats<'_, Member> = [it.next(), it.next(), it.next(), it.next()];
+    let mut hooks = NextMember(4);
+    step(
+        &mut Bare(NoGround, NoProps),
+        &mut seats,
+        &mut world,
+        &mut hooks,
+    );
+    let pass = |c: char| -> Vec<u8> {
+        log.borrow()
+            .iter()
+            .filter(|e| e.1 == c)
+            .map(|e| e.0)
+            .collect()
+    };
+    assert_eq!(pass('i'), [0, 1, 2, 3, 4, 5]);
+    assert_eq!(pass('p'), [0, 3, 4, 5]);
+    let ports: Vec<u8> = seats.iter().flatten().map(|s| s.fighter.port).collect();
+    assert_eq!(ports, [0, 3, 1, 2]);
+    assert!(seats[3].as_ref().unwrap().fighter.interface.control_disable);
+}

@@ -17,12 +17,15 @@ use crate::meshdraw::{self, DrawState, ParticleRect};
 /// `grhyrule`, its Twister; runtime bank 7 Dream Land's `grpupupu`, Whispy's
 /// leaves and dust. Runtime bank 3 is Kirby's `particles_unk0` (pack
 /// bank 1, `gFTDataKirbyParticleBankID`), whose wind the Inhale makes.
-/// The other stage banks stay unloaded.
+/// Runtime bank 4 is Ness's `particles_unk1` (pack bank 2,
+/// `gFTNessParticleBankID`), the PK Fire flame's. The other stage banks
+/// stay unloaded.
 pub struct PackBanks<'p, 'a> {
     pack: &'p Pack<'a>,
     common: ParticleBankDesc,
     yoshi: Option<ParticleBankDesc>,
     kirby: Option<ParticleBankDesc>,
+    ness: Option<ParticleBankDesc>,
     items: Option<ParticleBankDesc>,
     yoster: Option<ParticleBankDesc>,
     hyrule: Option<ParticleBankDesc>,
@@ -43,6 +46,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             common: pack.particle_bank(0)?,
             yoshi: pack.particle_bank(3),
             kirby: pack_bank(pack, "particles_unk0"),
+            ness: pack_bank(pack, "particles_unk1"),
             items: pack.particle_bank(4),
             yoster: pack_bank(pack, "gryoster"),
             hyrule: pack_bank(pack, "grhyrule"),
@@ -58,6 +62,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             common: pack_bank(pack, "mntitle")?,
             yoshi: None,
             kirby: None,
+            ness: None,
             items: None,
             yoster: None,
             hyrule: None,
@@ -70,6 +75,7 @@ impl<'p, 'a> PackBanks<'p, 'a> {
             0 => Some(self.common),
             ssb_game::effect::YOSHI_PARTICLE_BANK => self.yoshi,
             ssb_game::effect::KIRBY_PARTICLE_BANK => self.kirby,
+            ssb_game::effect::NESS_PARTICLE_BANK => self.ness,
             2 => self.items,
             ssb_game::effect::YOSTER_PARTICLE_BANK => self.yoster,
             ssb_game::effect::HYRULE_PARTICLE_BANK => self.hyrule,

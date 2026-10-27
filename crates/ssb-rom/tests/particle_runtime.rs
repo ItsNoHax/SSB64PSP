@@ -53,6 +53,12 @@ impl PackBanks<'_, '_> {
                     .position(|b| b.name == "particles_unk0")?;
                 self.pack.particle_bank(i as u32)
             }
+            effect::NESS_PARTICLE_BANK => {
+                let i = ssb_rom::particle::BANKS
+                    .iter()
+                    .position(|b| b.name == "particles_unk1")?;
+                self.pack.particle_bank(i as u32)
+            }
             _ => None,
         }
     }
@@ -844,5 +850,71 @@ fn kirbys_stone_bank_scripts_run_in_the_kirby_bank_and_end() {
         run_until_empty(&mut p, &mut e, &banks, &mut census);
         assert_eq!(p.xf_used_num, 0, "script {script}");
         eprintln!("Kirby bank script {script}: {census:?}");
+    }
+}
+
+/// Ness's PK Fire flame particle (`itNessPKFireMakeItem`: Ness's bank
+/// script 0, struct-less, under a default transform at the flame; RE-382),
+/// against the N64 (batch 57 ParaLLEl trace of `nesspkfire`, the flame
+/// made at t 69, its transform's scale 1). Its struct lives through the
+/// make frame and is gone the next; the generator then emits a rising
+/// texture-0 particle every 5 frames from frame 5 (y 59, 116, 171, 225,
+/// 278 above the flame, x random), each turning to texture 1 after 10.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_pk_fire_flame_particle_rises_as_on_the_n64() {
+    let _rng = rng_lock();
+    let Some(bytes) = pack_bytes() else { return };
+    let pack = open(&bytes);
+    let banks = PackBanks {
+        pack: &pack,
+        common: pack.particle_bank(0).unwrap(),
+    };
+    let mut p = Box::new(Particles::new());
+    let mut e = Effects::new(0);
+    ssb_game::rng::set_seed(1);
+    let pos = Vec3::new(705.4, 1528.0, 0.0);
+    let xf = e.pk_fire_flame(&mut p, &banks, pos);
+    assert_ne!(xf, lb::NIL);
+    assert_eq!(p.transform(xf).translate, pos);
+    let census = |p: &Particles| {
+        let mut v = Vec::new();
+        for link in 0..lb::LINKS_NUM {
+            for (_, pc) in p.list(link) {
+                if pc.bank_id & 7 == effect::NESS_PARTICLE_BANK {
+                    v.push((
+                        pc.texture_id,
+                        pc.pos.x.round() as i32,
+                        pc.pos.y.round() as i32,
+                    ));
+                }
+            }
+        }
+        v.sort_by_key(|&(t, _, y)| (t, -y));
+        v
+    };
+    // N64 counts of texture-0 particles at t 69 + frame.
+    let mut first_rise = Vec::new();
+    let mut prev = census(&p);
+    assert_eq!(prev.len(), 1, "the made struct, on its make frame");
+    for frame in 1..=30 {
+        lb::run(&mut p, &banks, &mut e);
+        let now = census(&p);
+        let tx0: Vec<_> = now.iter().filter(|c| c.0 == 0).collect();
+        assert_eq!(tx0.len(), frame / 5, "frame {frame}: {now:?}");
+        if (6..=9).contains(&frame) {
+            first_rise.push(tx0[0].2 - prev.iter().find(|c| c.0 == 0).unwrap().2);
+        }
+        // Texture 1 rises 50 a frame.
+        for c in now.iter().filter(|c| c.0 == 1) {
+            if let Some(o) = prev.iter().find(|o| o.0 == 1 && o.1 == c.1) {
+                assert_eq!(c.2 - o.2, 50, "frame {frame}");
+            }
+        }
+        prev = now;
+    }
+    // N64: 59, 116, 171, 225, 278.
+    for (d, n64) in first_rise.iter().zip([57, 55, 54, 53]) {
+        assert!((d - n64).abs() <= 1, "rise {first_rise:?}");
     }
 }

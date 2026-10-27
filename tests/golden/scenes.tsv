@@ -255,6 +255,7 @@ f1-training-select-held	psp-game	trainingselectpicked@30	pass	RE-411
 f1-training-fox-fire	psp-game	foxfire	pass	RE-503
 f1-training-pikachu-quick	psp-game	pikachuquick	pass	RE-503
 f1-training-ness-jibaku	psp-game	nessjibaku	pass	RE-503
+f1-training-ness-pkfire	psp-game	nesspkfire	pass	RE-352 RE-382
 f1-training-purin-throw	psp-game	purinthrow	pass	RE-503 RE-560
 f1-training-twister-spin	psp-game	trainingtwister@1760	pass	RE-503 RE-507
 f1-training-kirby-stone-slope	psp-game	kirbystoneslope	pass	RE-503
@@ -264,3 +265,8 @@ f1-training-kirby-star-bounce	psp-game	kirbystarbounce	pass	RE-503
 f1-training-catch-slope	psp-game	catchslope	pass	RE-510
 f1-onep-boss-defeat-zoom	psp-game	onepbosshit@2665	pass	RE-457
 f1-onep-boss-defeat-fade	psp-game	onepbosshit@2895	pass	RE-457
+f1-onep-zako-clear	psp-game	onepzako@2864	pass	RE-458
+f1-onep-intro-enter	psp-game	onepintro@115	pass	RE-548
+f1-onep-intro	psp-game	onepintro@256	pass	RE-548
+f1-onep-clear-tally	psp-game	onepclear@176	pass	RE-548
+f1-onep-game-clear	psp-game	onepgameclear@386	pass	RE-548

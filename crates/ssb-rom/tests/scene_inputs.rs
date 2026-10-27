@@ -39,7 +39,10 @@ fn scene_stage(scene: GameScene) -> u32 {
         // Kongo Jungle (`gkind::JUNGLE`).
         GameScene::KirbyStoneSlope | GameScene::CatchSlope => 6,
         // Peach's Castle (`gkind::CASTLE`).
-        GameScene::CaptainKickRoll | GameScene::KirbyCutter | GameScene::KirbyStarBounce => 4,
+        GameScene::CaptainKickRoll
+        | GameScene::KirbyCutter
+        | GameScene::KirbyStarBounce
+        | GameScene::NessPKFire => 4,
         _ => 0,
     }
 }
@@ -132,6 +135,7 @@ fn intents() -> Vec<Intent> {
         // No PK Thunder here, so no jibaku: the golden's capture log has
         // `SpecialAirHiJibaku` at 227.
         intent(S::NessJibaku, K::Ness, &["SpecialHi"], 140, &["SpecialHi"]),
+        intent(S::NessPKFire, K::Ness, &["SpecialN"], 45, &[]),
         intent(
             S::KirbyStoneSlope,
             K::Kirby,

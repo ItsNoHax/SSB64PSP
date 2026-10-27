@@ -5,7 +5,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use ssb_game::{
     fighter::FighterKind,
-    spgame::{self, frontend::Screen, Stage},
+    spgame::{self, frontend::Screen, intro::FighterLight, Stage},
 };
 use ssb_psp_runtime::{
     gu::Gpu,
@@ -47,9 +47,6 @@ struct Model {
     transn: [f32; 3],
     frozen: bool,
     priority: u8,
-    /// The intro's light angle: the scene's, or Master Hand's own
-    /// `colanim.light_angle` (-20, -30) from `sc1PIntroMakeVSFighter`.
-    light: [f32; 2],
 }
 
 impl Presentation {
@@ -388,8 +385,9 @@ impl Presentation {
                 // down: the sky's (80), the fighters' (70 to 40), the
                 // banners' (30), then the decals' and text's (20). Every
                 // fighter is cut off by the banners (N64 reference, RE-458).
+                let mut lights = spgame::intro::FighterLights::default();
                 for priority in [70, 60, 50, 40] {
-                    self.draw_intro_models(gpu, p, st, priority);
+                    self.draw_intro_models(gpu, p, st, priority, &mut lights);
                 }
                 sprite(
                     p,
@@ -467,8 +465,8 @@ impl Presentation {
                         m,
                         pos,
                         scale,
-                        (100.0, 15000.0),
-                        [45.0, 45.0],
+                        spgame::continue_scene::CAMERA_PROJECTION,
+                        FighterLight::Reflect([45.0, 45.0]),
                         RspCamera::Projection,
                     );
                 }
@@ -564,9 +562,11 @@ impl Presentation {
         p: &Pack<'_>,
         st: &mut DrawState,
         priority: u8,
+        lights: &mut spgame::intro::FighterLights,
     ) {
         for m in &self.models {
             if m.priority == priority && m.entrance.shown {
+                let light = lights.next(m.kind);
                 draw_model(
                     gpu,
                     p,
@@ -574,8 +574,8 @@ impl Presentation {
                     m,
                     [0.0, 0.0, m.entrance.z],
                     1.0,
-                    (128.0, 16384.0),
-                    m.light,
+                    spgame::intro::CAMERA_PROJECTION,
+                    light,
                     // `sc1PIntroMakeStageCamera` (kind 15) draws the frozen
                     // opponents; `sc1PIntroMakeFighterCamera` (kind 7) the
                     // player and allies.
@@ -620,11 +620,6 @@ fn make_model(
         transn: [0.0; 3],
         frozen,
         priority: if frozen { 40 } else { 50 },
-        light: if kind == FighterKind::Boss {
-            [-20.0, -30.0]
-        } else {
-            [-20.0, 30.0]
-        },
     });
     if let Some(anim) = p.fighter_anim(kind as u32, slot as u32) {
         m.skeleton
@@ -656,8 +651,8 @@ unsafe fn draw_model(
     m: &Model,
     pos: [f32; 3],
     scale: f32,
-    planes: (f32, f32),
-    light: [f32; 2],
+    (aspect, near, far): (f32, f32, f32),
+    light: FighterLight,
     rsp: RspCamera,
 ) {
     draw_model_ex(
@@ -667,11 +662,11 @@ unsafe fn draw_model(
         m,
         pos,
         scale,
-        planes,
+        (near, far),
         light,
         ModelView {
             camera: m.camera,
-            aspect: 300.0 / 220.0,
+            aspect,
             yaw: 0.0,
             fog: None,
             rsp,
@@ -722,7 +717,7 @@ unsafe fn draw_model_ex(
     pos: [f32; 3],
     scale: f32,
     planes: (f32, f32),
-    light: [f32; 2],
+    light: FighterLight,
     view: ModelView,
 ) {
     use ssb_engine::math::{Mat4, Vec3};
@@ -750,7 +745,10 @@ unsafe fn draw_model_ex(
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let n = m.skeleton.compose(p, &object, &mut posed);
     let base = crate::topn_base(pos, view.yaw, m.scale * scale, m.skeleton.locks.flagged);
-    st.configure_fighter_light(light);
+    match light {
+        FighterLight::Reflect(angles) => st.configure_fighter_light(angles),
+        FighterLight::Scene(dir) => st.configure_fighter_light_dir(dir),
+    }
     // `ftDisplayMainDrawAll`'s fog: the colour animation's mixed with the
     // shade, or the shade's own.
     let fog = p

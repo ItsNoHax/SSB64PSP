@@ -431,6 +431,9 @@ pub struct DamageDisplay {
     pub break_anim_frame: u8,
     pub dead_stopupdate_wait: u8,
     pub is_show_interface: bool,
+    /// `players[player].stock_count == -1` at the last [`Self::update`]:
+    /// what `ifCommonPlayerDamageProcDisplay` reads later that frame.
+    pub out_of_stocks: bool,
     /// `gIFCommonPlayerInterface.player_pos_x[player]`:
     /// [`POSITION_X`], or the 1P Game's
     /// (`sc1PGameSetPlayerInterfacePositions`).
@@ -535,6 +538,7 @@ impl DamageDisplay {
             break_anim_frame: 0,
             dead_stopupdate_wait: 180,
             is_show_interface: false,
+            out_of_stocks: false,
             pos_x,
             pos_y,
             is_boss,
@@ -543,9 +547,16 @@ impl DamageDisplay {
         d
     }
 
+    /// [`Self::update`] for fighter `f`'s port: its damage and
+    /// [`crate::dead::out_of_stocks`].
+    pub fn update_fighter(&mut self, f: &crate::fighter::Fighter) {
+        self.update(i32::from(f.damage), crate::dead::out_of_stocks(f));
+    }
+
     /// `ifCommonPlayerDamageProcUpdate`. `out_of_stocks` is
     /// `stock_count == -1`.
     pub fn update(&mut self, damage: i32, out_of_stocks: bool) {
+        self.out_of_stocks = out_of_stocks;
         if out_of_stocks {
             if self.dead_stopupdate_wait != 0 {
                 if self.is_update_anim {
@@ -695,8 +706,9 @@ impl DamageDisplay {
 
     /// `ifCommonPlayerDamageProcDisplay`: the glyphs this frame draws.
     /// `sizes[digit]` is each sprite's width and height.
-    pub fn glyphs(&self, out_of_stocks: bool, sizes: &[(u16, u16); 12]) -> GlyphIter<'_> {
-        let show = self.is_show_interface && (!out_of_stocks || self.dead_stopupdate_wait != 0);
+    pub fn glyphs(&self, sizes: &[(u16, u16); 12]) -> GlyphIter<'_> {
+        let show =
+            self.is_show_interface && (!self.out_of_stocks || self.dead_stopupdate_wait != 0);
         let solid = self.color_id == PLAYERS_MAX;
         let color = if solid {
             [

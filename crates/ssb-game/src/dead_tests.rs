@@ -19,6 +19,32 @@ fn one_player_enemy_uses_team_bounds_and_requests_replacement_after_dead_wait() 
     assert!(!f.dead.rebirth_pending);
 }
 
+/// `ifCommonPlayerDamageProcUpdate` and `ProcDisplay` read
+/// `players[].stock_count`, -1 from a 1P Game enemy's fall to its next
+/// member: its 180 frames of digits are spent over every member's fall,
+/// and the team's last fall hides them (RE-458).
+#[test]
+fn one_player_enemy_damage_digits_spend_the_dead_wait_while_out_of_stocks() {
+    let mut f = mario();
+    f.dead.spgame_rule = true;
+    f.dead.team_bounds = Some(stage().map);
+    f.stocks = -1;
+    assert!(out_of_stocks(&f));
+    let mut d = crate::hud::DamageDisplay::new(1, 0);
+    d.is_show_interface = true;
+    d.update_fighter(&f);
+    assert_eq!(d.dead_stopupdate_wait, 179);
+    for _ in 0..179 {
+        d.update_fighter(&f);
+    }
+    let sizes = [(8u16, 8u16); 12];
+    assert_eq!(d.glyphs(&sizes).count(), 0);
+    // The next member: stock 0, the digits again.
+    f.stocks = 0;
+    d.update_fighter(&f);
+    assert_eq!(d.glyphs(&sizes).count(), 2);
+}
+
 #[test]
 fn one_player_human_rebirths_with_stocks_and_sleeps_without_any() {
     for stock in [0, 1] {

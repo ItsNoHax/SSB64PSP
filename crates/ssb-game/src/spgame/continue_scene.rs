@@ -4,6 +4,12 @@
 use crate::sound::{self, id};
 use ssb_engine::input::{ControllerState, N64Buttons};
 
+/// `mnPlayers1PGameContinueSetupCamera`'s projection `(aspect, near, far)`;
+/// near and far are the function's own immediates. `persp.aspect` stays
+/// the generated default ([`crate::results_scene::PERSP_ASPECT`], 4:3) over
+/// the 300 x 220 viewport.
+pub const CAMERA_PROJECTION: (f32, f32, f32) = (crate::results_scene::PERSP_ASPECT, 100.0, 15000.0);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Choose,

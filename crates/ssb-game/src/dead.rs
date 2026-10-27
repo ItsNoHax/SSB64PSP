@@ -543,6 +543,14 @@ pub fn set_dead_up_fall(f: &mut Fighter) {
     f.model_parts.set_detail_all(crate::modelpart::Detail::High);
 }
 
+/// `players[player].stock_count == -1`: only `ftCommonDeadUpdateScore`'s
+/// stock and 1P Game rules count a fall down. A 1P Game enemy is at -1
+/// from its fall until its team's next member (`sc1PGameSpawnEnemyTeamNext`
+/// sets 0), or for good once the team is out.
+pub fn out_of_stocks(f: &Fighter) -> bool {
+    (f.dead.stock_rule || f.dead.spgame_rule) && f.stocks == -1
+}
+
 /// `ftCommonDeadCheckRebirth`: out of stocks the fighter sleeps; a 1P
 /// Game enemy is replaced by the host; otherwise the host respawns it.
 fn check_rebirth(f: &mut Fighter) {
@@ -550,7 +558,7 @@ fn check_rebirth(f: &mut Fighter) {
         f.dead.enemy_next_pending = true;
         return;
     }
-    if (f.dead.stock_rule || f.dead.spgame_rule) && f.stocks == -1 {
+    if out_of_stocks(f) {
         set_sleep(f);
         return;
     }

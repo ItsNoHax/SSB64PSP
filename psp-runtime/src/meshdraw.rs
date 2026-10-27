@@ -477,7 +477,18 @@ impl DrawState {
     /// None beyond the other `DrawState` entry points; kept `unsafe` with
     /// [`Self::finish_fighter_light`], which writes GE state.
     pub unsafe fn configure_fighter_light(&mut self, angles_degrees: [f32; 2]) {
-        self.fighter_light = ssb_engine::rsp_light::reflect_light_dir(angles_degrees);
+        self.configure_fighter_light_dir(ssb_engine::rsp_light::reflect_light_dir(angles_degrees));
+    }
+
+    /// As [`Self::configure_fighter_light`], from a light's direction bytes
+    /// as a scene's `Lights1` holds them (the 1P intro's
+    /// `dSC1PIntroLights1`, RE-458).
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::configure_fighter_light`].
+    pub unsafe fn configure_fighter_light_dir(&mut self, dir: [i8; 3]) {
+        self.fighter_light = dir;
         self.runtime_fighter_light = true;
         // A primitive that writes no ambient reads 0, as the GE path did.
         self.light_registers[1] = [0; 3];

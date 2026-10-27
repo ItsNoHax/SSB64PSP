@@ -627,7 +627,7 @@ fn fire_pillar_allocation_and_initial_fall_are_independent_of_a_full_weapon_pool
     pool.apply_hits(&mut target);
     crate::combat::resolve(&mut target);
     let mut items = ItemPool::default();
-    items.take_weapon_spawns(&mut pool, core::iter::empty);
+    items.take_weapon_spawns(&mut pool, core::iter::empty, &mut crate::effect::NoEffects);
     assert_eq!(items.active_count(), 1);
     assert!(pool.spawn(far));
     assert_eq!(pool.active_count(), crate::weapon::MAX_WEAPONS);
@@ -708,7 +708,7 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     assert_eq!(target.damage, 4);
     assert_eq!(pool.pk_fires().count(), 0);
     let mut items = ItemPool::default();
-    items.take_weapon_spawns(&mut pool, core::iter::empty);
+    items.take_weapon_spawns(&mut pool, core::iter::empty, &mut crate::effect::NoEffects);
     let p = items.items().next().unwrap();
     close((p.pos - spawn.position).length(), 160.0);
     target.pos = p.pos + Vec3::new(0.0, 100.0, 0.0);

@@ -753,6 +753,75 @@ pub(crate) fn log_boss_state(s: &Session, tick: u64) {
     }
 }
 
+/// `onepzako` per-tick state for the N64 comparison of the team's
+/// replacements and clear (RE-458): the team counters, every enemy and
+/// the player, then the stage-clear tally's values.
+#[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+pub(crate) fn log_zako_state(s: &Session, tick: u64) {
+    let Some(c) = s.campaign.as_ref() else { return };
+    let Some(sp) = c.frontend.session.as_ref() else { return };
+    let mut line = alloc::format!(
+        "zako tick={} clock={:?} gs={:?} tp={:?} end={:?} seed={:08x} score={} tr={} mask={:x}",
+        tick,
+        s.vs_battle.as_ref().map(|b| b.clock()),
+        s.vs_battle.as_ref().map(|b| b.status),
+        s.vs_battle.as_ref().map(|b| b.time_passed),
+        s.vs_battle.as_ref().and_then(|b| b.end),
+        ssb_game::rng::seed() as u32,
+        sp.data.score,
+        sp.data.time_remain,
+        sp.data.bonus_get_mask[0],
+    );
+    if let Some(g) = sp.game.as_ref() {
+        line.push_str(&alloc::format!(
+            " er={} tpr={} cv={} fl={:x} icons={} var={:?}",
+            g.enemy_stocks_remaining,
+            g.team_players_remaining,
+            g.current_variation,
+            g.enemy_stock_sprite_flags,
+            g.team_stock_icons().len(),
+            &g.variations[..usize::from(g.enemy_player_count).min(g.variations.len())],
+        ));
+    }
+    for d in s.dummies.iter().flatten() {
+        let f = &d.fighter;
+        line.push_str(&alloc::format!(
+            " E(p{} k{} st{} dmg{} pos={:.1},{:.1})",
+            f.port,
+            f.kind as u8,
+            f.status.status.id(),
+            f.damage,
+            f.pos.x,
+            f.pos.y
+        ));
+    }
+    if let Some(pl) = s.play_state.as_ref() {
+        let f = &pl.fighter;
+        line.push_str(&alloc::format!(" K(st{} dmg{} pos={:.1},{:.1})", f.status.status.id(), f.damage, f.pos.x, f.pos.y));
+    }
+    if let Scene1P::StageClear(sc) = &c.frontend.screen {
+        line.push_str(&alloc::format!(
+            " SC(t{} total{} shown{} sec{} dmg{} diff{:?} rows{:?} proceed{})",
+            sc.total_tics,
+            sc.total_score,
+            sc.shown_score,
+            sc.seconds,
+            sc.damage,
+            sc.difficulty,
+            sc.rows.iter().flatten().map(|r| (r.bonus_id, r.points, r.reveal_tic)).collect::<alloc::vec::Vec<_>>(),
+            sc.allow_proceed,
+        ));
+    }
+    line.push('\n');
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
+}
+
 /// Capture evidence for routing and the wait clock, including captures
 /// made before the battle creates fighters.
 #[cfg(feature = "headless_capture")]
@@ -968,85 +1037,117 @@ pub(crate) fn collect_fall(
     fell
 }
 
-/// `ftCommonDeadCheckRebirth`'s 1P Game branch: an enemy whose KO wait
-/// ended sleeps, or is replaced in its slot by the team's next member
-/// (`sc1PGameSpawnEnemyTeamNext`).
-#[inline(never)]
-pub(crate) fn replace_enemies(
-    p: &Pack<'_>,
-    stage: &ssb_rom::pack::StageDesc,
-    groups: &[ssb_game::map::MapGroup],
-    dummies: &mut Dummies,
-    sp: &mut Campaign1P,
-    battle: &mut Option<ssb_game::battle::Battle>,
-    hud: &mut Hud,
-) {
-    let points: alloc::vec::Vec<_> = p
-        .stage_points(stage)
-        .filter(|point| point.kind == spgame::setup::mapobj::ENEMY_TEAM)
-        .map(|point| ssb_engine::math::Vec3::new(f32::from(point.x), f32::from(point.y), 0.0))
-        .collect();
-    let team_bounds = ssb_game::status::BlastZone {
-        top: f32::from(stage.team_bounds.top),
-        bottom: f32::from(stage.team_bounds.bottom),
-        left: f32::from(stage.team_bounds.left),
-        right: f32::from(stage.team_bounds.right),
-    };
-    for slot in dummies.iter_mut() {
-        let Some(d) = slot.as_deref_mut() else {
-            continue;
-        };
-        if !d.fighter.dead.enemy_next_pending {
-            continue;
-        }
+/// `ftCommonDeadCheckRebirth`'s 1P Game branch, inside the step's
+/// interrupt pass ([`ssb_game::matchtick::MatchHooks::next_member`]): an
+/// enemy whose KO wait ended sleeps, or the team's next member takes its
+/// seat (`sc1PGameSpawnEnemyTeamNext`), links last and runs its first
+/// frame in this one (RE-458).
+pub(crate) struct NextMembers<'a, 'p> {
+    p: &'a Pack<'p>,
+    stage: &'a ssb_rom::pack::StageDesc,
+    sp: &'a mut Campaign1P,
+    /// The next member's [`play::Dummy::link`].
+    next_link: u32,
+    /// The ports whose member was made this frame.
+    made: [bool; 4],
+}
+
+impl<'a, 'p> NextMembers<'a, 'p> {
+    pub(crate) fn new(
+        p: &'a Pack<'p>,
+        stage: &'a ssb_rom::pack::StageDesc,
+        sp: &'a mut Campaign1P,
+        dummies: &Dummies,
+    ) -> Self {
+        let next_link = dummies.iter().flatten().map(|d| d.link + 1).fold(4, u32::max);
+        Self { p, stage, sp, next_link, made: [false; 4] }
+    }
+
+    #[inline(never)]
+    pub(crate) fn next_member(
+        &mut self,
+        d: &mut play::Dummy,
+        groups: &[ssb_game::map::MapGroup],
+        battle: &mut ssb_game::battle::Battle,
+    ) -> bool {
+        let (p, stage) = (self.p, self.stage);
+        let points: alloc::vec::Vec<_> = p
+            .stage_points(stage)
+            .filter(|point| point.kind == spgame::setup::mapobj::ENEMY_TEAM)
+            .map(|point| ssb_engine::math::Vec3::new(f32::from(point.x), f32::from(point.y), 0.0))
+            .collect();
         let port = d.fighter.port;
-        core::mem::swap(&mut sp.battle, battle);
-        let next = sp.next_enemy(
+        let next = self.sp.next_enemy_in(
+            battle,
             port,
             &points,
             f32::from(stage.camera.top),
             f32::from(stage.bounds.top),
         );
-        core::mem::swap(&mut sp.battle, battle);
-        match next {
+        let e = match next {
             spgame::setup::NextEnemy::Sleep => {
                 d.fighter.dead.enemy_next_pending = false;
                 ssb_game::dead::set_sleep(&mut d.fighter);
+                return false;
             }
-            spgame::setup::NextEnemy::Spawn(e) => {
-                // `ftManagerMakeFighter` draws from the battle's counts,
-                // which the outgoing member shares.
-                let counts = d.fighter.stats.counts.clone();
-                let mut n = play::Dummy::at_position(
-                    p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts, groups,
-                );
-                n.fighter.facing = e.facing;
-                n.fighter.team = d.fighter.team;
-                n.fighter.shade = e.shade;
-                let detail = if e.detail_high {
-                    ssb_game::modelpart::Detail::High
-                } else {
-                    ssb_game::modelpart::Detail::Low
-                };
-                n.fighter.model_parts.detail_curr = detail;
-                n.fighter.model_parts.detail_base = detail;
-                n.computer.behavior = ssb_game::computer::Behavior::Default;
-                n.computer.trait_kind = e.cp_trait;
-                n.is_1p_game = true;
-                let setup = sp.game.as_ref().expect("active game").setups[usize::from(port)];
-                configure(sp, &mut n, setup, team_bounds);
-                // `is_skip_entry`: wait or fall, unlocked at once.
-                ssb_game::status::set_wait_or_fall(&mut n.fighter);
-                // `ifCommonPlayerDamageStopBreakAnim`.
-                if let Some(h) = hud.damage.get_mut(usize::from(port)) {
-                    h.stop_break_anim();
-                }
-                *slot = Some(alloc::boxed::Box::new(n));
-            }
+            spgame::setup::NextEnemy::Spawn(e) => e,
+        };
+        let team_bounds = ssb_game::status::BlastZone {
+            top: f32::from(stage.team_bounds.top),
+            bottom: f32::from(stage.team_bounds.bottom),
+            left: f32::from(stage.team_bounds.left),
+            right: f32::from(stage.team_bounds.right),
+        };
+        // `ftManagerMakeFighter` draws from the battle's counts, which the
+        // outgoing member shares.
+        let counts = d.fighter.stats.counts.clone();
+        let mut n = play::Dummy::at_position(p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts, groups);
+        n.fighter.facing = e.facing;
+        n.fighter.team = d.fighter.team;
+        n.fighter.shade = e.shade;
+        let detail = if e.detail_high {
+            ssb_game::modelpart::Detail::High
+        } else {
+            ssb_game::modelpart::Detail::Low
+        };
+        n.fighter.model_parts.detail_curr = detail;
+        n.fighter.model_parts.detail_base = detail;
+        n.computer.behavior = ssb_game::computer::Behavior::Default;
+        n.computer.trait_kind = e.cp_trait;
+        n.is_1p_game = true;
+        let setup = self.sp.game.as_ref().expect("active game").setups[usize::from(port)];
+        configure(self.sp, &mut n, setup, team_bounds);
+        // `is_skip_entry`: wait or fall, unlocked at once.
+        ssb_game::status::set_wait_or_fall(&mut n.fighter);
+        n.link = self.next_link;
+        self.next_link += 1;
+        *d = n;
+        if let Some(m) = self.made.get_mut(usize::from(port)) {
+            *m = true;
         }
+        true
     }
-    // `sc1PGameTeamStockDisplayProcDisplay`'s icons, from this frame's
-    // remaining team (the Yoshi, Kirby and Polygon teams).
+
+    /// The ports whose member was made this frame, for [`members_hud`].
+    pub(crate) fn made(self) -> [bool; 4] {
+        self.made
+    }
+}
+
+/// `sc1PGameSpawnEnemyTeamNext`'s `ifCommonPlayerDamageStopBreakAnim` for
+/// each member made, in the fighter's process: before the interface
+/// processes' `ifCommonPlayerDamageProcUpdate`, whose break animation would
+/// otherwise draw the RNG once more in the spawn frame (RE-458).
+pub(crate) fn members_stop_break_anim(made: [bool; 4], damage: &mut [ssb_game::hud::DamageDisplay; 4]) {
+    for (h, _) in damage.iter_mut().zip(made).filter(|m| m.1) {
+        h.stop_break_anim();
+    }
+}
+
+/// After the frame's fighters: `sc1PGameTeamStockDisplayProcDisplay`'s
+/// icons from this frame's remaining team (the Yoshi, Kirby and Polygon
+/// teams).
+pub(crate) fn members_hud(sp: &Campaign1P, hud: &mut Hud) {
     hud.team_stocks = sp.game.as_ref().map(|g| (g.stage, g.team_stock_icons()));
 }
 
@@ -1242,11 +1343,17 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
             sp.data.score = 123456;
             sp.manager.scene = Scene::Continue;
         }
-        GameScene::OnePClear => {
+        GameScene::OnePClear | GameScene::OnePGameClear => {
             sp.data.score = 123456;
             sp.data.time_remain = 250;
             sp.state.players[sp.data.player as usize].total_damage_given = 321;
             sp.data.bonus_get_mask = [0x0018_0005, 0, 0];
+            if scene == GameScene::OnePGameClear {
+                // Master Hand's stage: `GAME CLEAR`, and the difficulty's
+                // clear bonus (`nSC1PGameBonusStageClear`, RE-548).
+                sp.data.stage = Stage::Boss as u8;
+                sp.data.bonus_get_mask[0] |= 1 << 22;
+            }
             sp.manager.scene = Scene::StageClear;
         }
         // The manager steps past the last stage before the ending

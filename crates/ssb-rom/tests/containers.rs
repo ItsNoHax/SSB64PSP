@@ -311,6 +311,76 @@ fn the_link_bomb_fuse_sparkles_in_the_n64_phase() {
     assert!(!at(294) && !at(297) && !at(330));
 }
 
+/// The PK Fire flame's node 2/3 scripts (file 336, 0xAF0) on the N64
+/// (RE-382, batch 57 ParaLLEl trace of `nesspkfire`): the flame is made by
+/// `wpNessPKFireProcHit` → `itManagerMakeItem` at t 69 with `GObj` frame 0,
+/// then frame `(t - 69) mod 8`. The hit runs after the item process, so the
+/// creation frame has one play (`Item::anim_ticks` 1). Node 2 turns 45° per
+/// frame and swells; node 3 squashes. Old `StageAnimator::start` ran one
+/// frame ahead.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_pk_fire_flame_burns_in_the_n64_phase() {
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak"),
+    )
+    .unwrap();
+    let p = Pack::open(&bytes).unwrap();
+    let object = (0..p.object_count())
+        .filter_map(|i| p.object(i))
+        .find(|o| (o.source_file, o.source_offset) == (336, 0xA08))
+        .unwrap();
+    // N64 RDRAM per GObj frame: node 2 (scale x/z, scale y), node 3 (scale x, y).
+    const N2: [(f32, f32); 8] = [
+        (1.0, 1.0),
+        (1.0391, 0.9688),
+        (1.125, 0.9),
+        (1.2109, 0.8313),
+        (1.25, 0.8),
+        (1.2109, 0.8313),
+        (1.125, 0.9),
+        (1.0391, 0.9688),
+    ];
+    const N3: [(f32, f32); 8] = [
+        (1.0, 0.8),
+        (0.9, 1.0),
+        (0.8, 1.2),
+        (0.9, 1.0),
+        (1.0, 0.8),
+        (0.9, 0.9),
+        (0.8, 1.0),
+        (0.9, 0.9),
+    ];
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    let anim = p.item_anim(AnimDesc::ITEM_ANIM_NESS_PK_FIRE).unwrap();
+    let script = p.anim_script(&anim).unwrap();
+    let mut players = StageAnimator::new();
+    players.start_item(&p, &anim);
+    for anim_ticks in 1..=24usize {
+        players.tick(script).unwrap();
+        let frame = (anim_ticks - 1) % 8;
+        let n2 = players.node_pose(object.first_node + 2).unwrap();
+        let n3 = players.node_pose(object.first_node + 3).unwrap();
+        let ry = std::f32::consts::FRAC_PI_4 * frame as f32;
+        assert!(
+            near(n2.rotate[1], ry),
+            "anim_ticks {anim_ticks}: ry {}",
+            n2.rotate[1]
+        );
+        assert!(
+            near(n2.scale[0], N2[frame].0) && near(n2.scale[2], N2[frame].0),
+            "anim_ticks {anim_ticks}: node 2 scale {:?}",
+            n2.scale
+        );
+        assert!(near(n2.scale[1], N2[frame].1), "anim_ticks {anim_ticks}");
+        assert!(
+            near(n3.scale[0], N3[frame].0) && near(n3.scale[1], N3[frame].1),
+            "anim_ticks {anim_ticks}: node 3 scale {:?}",
+            n3.scale
+        );
+    }
+}
+
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn egg_scale_animation_replays_the_rom_for_two_hundred_plays() {

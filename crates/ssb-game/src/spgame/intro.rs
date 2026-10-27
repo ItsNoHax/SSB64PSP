@@ -4,6 +4,62 @@ use crate::fighter::FighterKind;
 use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
+/// `sc1PIntroMakeStageCamera` and `sc1PIntroMakeFighterCamera`'s
+/// projection `(aspect, near, far)`; near and far are the functions' own
+/// immediates. Neither sets `persp.aspect`, so it stays the generated
+/// default ([`crate::results_scene::PERSP_ASPECT`], 4:3) over the 300 x 220
+/// viewport (N64 RDRAM: both cameras 1.3333, RE-458).
+pub const CAMERA_PROJECTION: (f32, f32, f32) = (crate::results_scene::PERSP_ASPECT, 128.0, 16384.0);
+
+/// How `ftDisplayMain` lights an intro fighter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FighterLight {
+    /// `ftDisplayLightsDrawReflect` from the angles, in degrees.
+    Reflect([f32; 2]),
+    /// The scene's `dSC1PIntroLights1`, which `sc1PIntroFuncLights` loads
+    /// before anything draws: its direction's signed bytes (RE-458).
+    Scene([i8; 3]),
+}
+
+/// `scSubsysFighterSetLightParams(-20, 30)` in `sc1PIntroFuncStart`: the
+/// light every `nFTPlayerKindDemo` fighter's `ftDisplayMain` reloads after
+/// drawing itself.
+pub const RESTORED_LIGHT: [f32; 2] = [-20.0, 30.0];
+
+/// Master Hand's `colanim.light_angle` (`sc1PIntroMakeVSFighter`), the
+/// only intro fighter with `colanim.is_use_light`.
+pub const BOSS_LIGHT: [f32; 2] = [-20.0, -30.0];
+
+/// The RSP's light through one intro frame's fighters, in draw order.
+///
+/// The frame starts with `dSC1PIntroLights1`. `ftDisplayMain` loads a
+/// fighter's own light only with `colanim.is_use_light`, and after drawing
+/// any Demo fighter reloads [`RESTORED_LIGHT`]: so only the first fighter
+/// drawn takes the scene light, every later one the restored light (N64
+/// RDRAM poke of the scene light moved the player only, RE-458).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FighterLights {
+    restored: bool,
+}
+
+impl FighterLights {
+    /// The light the next fighter drawn this frame takes.
+    pub fn next(&mut self, kind: FighterKind) -> FighterLight {
+        let light = if kind == FighterKind::Boss {
+            FighterLight::Reflect(BOSS_LIGHT)
+        } else if self.restored {
+            FighterLight::Reflect(RESTORED_LIGHT)
+        } else {
+            // `Lights1`: `Ambient` (8 bytes), then `Light` (`col`, pad,
+            // `colc`, pad, `dir`, pad).
+            let b = crate::d_arrays::SC_1P_INTRO_LIGHTS1;
+            FighterLight::Scene([b[16] as i8, b[17] as i8, b[18] as i8])
+        };
+        self.restored = true;
+        light
+    }
+}
+
 /// One of `sc1PIntroUpdateAnnounce`'s voices, which [`Intro::tick`] plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Announce {

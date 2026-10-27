@@ -28,10 +28,10 @@ Part of [rendering.md](../rendering.md).
 ## Battle camera texgen
 
 - Battle camera = LookAtReflect: texgen basis = `camera_basis(eye, at, Y)` (RE-458).
-- Movie camera (kinds 3 and 8) keeps the prior basis: open.
+- Camera kinds 6-9 (incl. movie 3+8) load no LookAt: texgen reads F3DEX2's zeroed task default (RE-458).
 - Fighter ENV: fog grey, or `colanim.color2` RGBA (RE-457). NOFOG joint parts skip fog (RE-453).
 - D-051: lighting/material state; reviewed rebaseline against N64 A/B.
-- Open: NOFOG under demo fade, 1P intro Metal Mario darkness (RE-458).
+- Open: NOFOG under demo fade; room scene 1 kind-14 camera basis (RE-458).
 
 ## Animated lights
 

@@ -5,7 +5,8 @@
 //! within a priority by link id (Ground 1, ItemActor 2, Fighter 3, Item 4,
 //! Weapon 5, Effect 6, Camera 9, Interface 10 and 11), then in link order.
 //! [`step`] runs the battle's processes in that order, over up to four
-//! fighter seats (port order is link order):
+//! fighter seats in link order (port order; a 1P Game team's next member
+//! links last, [`MatchHooks::next_member`]):
 //!
 //! | Priority | Link | Process | Here |
 //! |---|---|---|---|
@@ -87,7 +88,8 @@ impl HasFighter for Fighter {
     }
 }
 
-/// The match's fighters by slot, in port (link) order.
+/// The match's fighters by slot, in link order: port order, but a 1P
+/// Game team's next member links last ([`MatchHooks::next_member`]).
 pub type Seats<'s, S> = [Option<&'s mut S>; SEATS];
 
 /// The other fighters a CPU reads (`ftComputerProcessAll`).
@@ -264,6 +266,19 @@ pub trait MatchHooks<S: ?Sized> {
     /// fighter's interrupt): the entry focus's or the 1P wait thread's
     /// `ftCommonAppearSetStatus`, the countdown.
     fn interface(&mut self, _seats: &mut Seats<'_, S>, _battle: Option<&crate::battle::Battle>) {}
+    /// `sc1PGameSpawnEnemyTeamNext`, for a 1P Game enemy whose KO wait
+    /// ended in this interrupt ([`crate::dead::DeadState::enemy_next_pending`]):
+    /// puts it to sleep, or makes the team's next member in its seat and
+    /// returns `true` ([`step`] then runs it last, as the original links
+    /// it). The default leaves the flag to the host.
+    fn next_member(
+        &mut self,
+        _seat: &mut S,
+        _groups: &[MapGroup],
+        _battle: Option<&mut crate::battle::Battle>,
+    ) -> bool {
+        false
+    }
 }
 
 impl<S: ?Sized> MatchHooks<S> for () {}
@@ -349,7 +364,7 @@ where
     }
 }
 
-/// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in port order,
+/// Priority 5: every fighter's `ftMainProcUpdateInterrupt`, in link order,
 /// each from its seat's input against every other fighter as it stands.
 /// Each fighter's grab events land before the next one's half, matching
 /// the original's direct status writes ([`crate::grab`] module docs).
@@ -373,10 +388,12 @@ fn interrupt_pass<A, S, H>(
         }
         f.interface.control_disable = world.locked;
     }
-    for i in 0..SEATS {
+    let mut i = 0;
+    while i < SEATS {
         // Master Hand reads his target as it stands (`target_gobj`).
         refresh_boss_targets(seats);
         if seats[i].is_none() {
+            i += 1;
             continue;
         }
         hooks.phase(Phase::Interrupt(i as u8));
@@ -399,7 +416,49 @@ fn interrupt_pass<A, S, H>(
         exchange_from(seats, i);
         flush_fighter_effects(seats, world.effects);
         flush_rumble(seats, world.rumble.as_deref_mut());
+        if next_member(arena, seats, world, hooks, i) {
+            continue;
+        }
+        i += 1;
     }
+}
+
+/// `ftCommonDeadCheckRebirth`'s 1P Game branch, inside the enemy's
+/// interrupt: `sc1PGameSpawnEnemyTeamNext` destroys it and makes the
+/// team's next member ([`MatchHooks::next_member`]). `gcMakeGObjSPAfter`
+/// links the new fighter last, and `gcAddGObjProcess` queues each of its
+/// processes after the other fighters' of that priority (`objman.c:246`):
+/// it runs its first interrupt at the end of this pass and every later
+/// pass last. The seat moves to the end; seat `i` is then the next one.
+fn next_member<A, S, H>(
+    arena: &A,
+    seats: &mut Seats<'_, S>,
+    world: &mut World<'_>,
+    hooks: &mut H,
+    i: usize,
+) -> bool
+where
+    A: Arena,
+    S: Seat<A::Ground> + ?Sized,
+    H: MatchHooks<S>,
+{
+    let Some(seat) = seats[i].as_deref_mut() else {
+        return false;
+    };
+    if !seat.fighter().dead.enemy_next_pending
+        || !hooks.next_member(seat, arena.ground().groups(), world.battle.as_deref_mut())
+    {
+        return false;
+    }
+    seats[i..].rotate_left(1);
+    let eye = seats[0].as_deref().and_then(|s| s.camera()).map(|c| c.eye);
+    if let Some(f) = seats[SEATS - 1].as_deref_mut().map(|s| s.fighter_mut()) {
+        if let Some(eye) = eye {
+            f.dead.camera_eye = eye;
+        }
+        f.interface.control_disable = world.locked;
+    }
+    true
 }
 
 /// Bonus 2's board check, then priority 4 on the Ground link (the stage
@@ -820,7 +879,9 @@ where
     world.weapons.flush_effects(world.effects);
     let ground = arena.ground();
     let map = || ground.surfaces();
-    world.items.take_weapon_spawns(world.weapons, map);
+    world
+        .items
+        .take_weapon_spawns(world.weapons, map, world.effects);
     for f in seats.iter_mut().flatten() {
         world.items.record_landed(f.fighter_mut());
     }

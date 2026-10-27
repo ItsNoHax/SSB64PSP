@@ -196,6 +196,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
+        GameScene::OnePGameClear => 300,
         GameScene::OnePEnding => 400,
         GameScene::OnePStaffroll => 900,
         GameScene::OnePCongra => 200,
@@ -578,7 +579,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         (g, _) if opening_capture_kind(g).is_some() || g == GameScene::OpeningTitle => return N64Buttons(0),
         _ => {}
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -857,7 +858,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if capture_menu(scene).is_some() {
         return 0;
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::TrainingInterface {
@@ -979,7 +980,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if capture_menu(scene).is_some() {
         return 0;
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -1347,6 +1348,7 @@ fn log_capture_state(
         Some(
             GameScene::Donkey
                 | GameScene::Ness
+                | GameScene::NessPKFire
                 | GameScene::NessThunder
                 | GameScene::NessMagnet
                 | GameScene::NessJibaku
@@ -1534,7 +1536,7 @@ fn scenes_ref<'a>(pl: &'a play::FighterScene, dummies: &'a Dummies) -> [Option<&
 /// `run` stays inside MIPS branch range.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-unsafe fn training_step(
+unsafe fn training_step<'i>(
     p: &Pack<'_>,
     stage_index: u32,
     pl: &mut play::FighterScene,
@@ -1553,8 +1555,9 @@ unsafe fn training_step(
     bonus: Option<&mut ssb_game::spgame::bonus_stage::BonusStage>,
     battle: Option<&mut ssb_game::battle::Battle>,
     lead: &mut play::Lead,
-    interface: &mut InterfaceThreads<'_>,
+    interface: &mut InterfaceThreads<'i>,
     rumble: &mut ssb_game::rumble::Rumble,
+    next_member: Option<&mut NextMember<'i>>,
 ) {
     material_anim.tick(p);
     let Some(stage) = p.stage(stage_index) else {
@@ -1580,9 +1583,16 @@ unsafe fn training_step(
     fn dummy(d: &mut Option<alloc::boxed::Box<play::Dummy>>, controller: ControllerState) -> Option<play::Player<'_>> {
         d.as_deref_mut().map(|dummy| play::Player::Dummy { dummy, controller })
     }
+    // The seats in link order ([`play::Dummy::link`]).
+    let link = |d: &Option<alloc::boxed::Box<play::Dummy>>| d.as_ref().map_or(u32::MAX, |d| d.link);
+    let mut order = [0usize, 1, 2];
+    order.sort_by_key(|&i| [link(d0), link(d1), link(d2)][i]);
     let mut players = [dummy(d0, controller), dummy(d1, controller), dummy(d2, controller)];
-    let [p1, p2, p3] = &mut players;
-    let mut seats = [Some(&mut lead), p1.as_mut(), p2.as_mut(), p3.as_mut()];
+    let mut by_port = players.each_mut().map(|p| p.as_mut());
+    let mut seats = [Some(&mut lead), None, None, None];
+    for (seat, &i) in seats[1..].iter_mut().zip(&order) {
+        *seat = by_port[i].take();
+    }
     let mut world = ssb_game::matchtick::World {
         weapons,
         items,
@@ -1599,6 +1609,7 @@ unsafe fn training_step(
         stage: &stage,
         started_at: [0; 7],
         interface,
+        next_member,
     };
     ssb_game::matchtick::step(&mut arena, &mut seats, &mut world, &mut hooks);
 }
@@ -1608,13 +1619,19 @@ unsafe fn training_step(
 type InterfaceThreads<'a> =
     dyn FnMut(&mut [Option<&mut play::FighterScene>; 4], Option<&ssb_game::battle::Battle>) + 'a;
 
+/// A 1P Game team's next member ([`campaign::NextMembers::next_member`]).
+type NextMember<'a> =
+    dyn FnMut(&mut play::Dummy, &[ssb_game::map::MapGroup], &mut ssb_game::battle::Battle) -> bool + 'a;
+
 /// The PSP's half of [`ssb_game::matchtick::step`]: the profiler's spans,
-/// stack poisoning, the battle camera and the interface threads.
+/// stack poisoning, the battle camera, the interface threads and a 1P
+/// Game team's next members.
 struct MatchHooks<'a, 'i> {
     stage: &'a ssb_rom::pack::StageDesc,
     /// Each span's `profile::start`.
     started_at: [u32; 7],
     interface: &'a mut InterfaceThreads<'i>,
+    next_member: Option<&'a mut NextMember<'i>>,
 }
 
 impl MatchHooks<'_, '_> {
@@ -1660,6 +1677,18 @@ impl<'s> ssb_game::matchtick::MatchHooks<play::Player<'s>> for MatchHooks<'_, '_
     ) {
         let mut scenes = seats.each_mut().map(|s| s.as_deref_mut().map(play::Player::scene_mut));
         (self.interface)(&mut scenes, battle);
+    }
+
+    fn next_member(
+        &mut self,
+        seat: &mut play::Player<'s>,
+        groups: &[ssb_game::map::MapGroup],
+        battle: Option<&mut ssb_game::battle::Battle>,
+    ) -> bool {
+        match (self.next_member.as_deref_mut(), seat, battle) {
+            (Some(next), play::Player::Dummy { dummy, .. }, Some(battle)) => next(dummy, groups, battle),
+            _ => false,
+        }
     }
 }
 
@@ -1745,7 +1774,13 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(GameScene::Purin | GameScene::PurinBow | GameScene::PurinThrow) => ssb_game::fighter::FighterKind::Purin,
         Some(GameScene::PikachuHat) => ssb_game::fighter::FighterKind::Pikachu,
         Some(GameScene::Donkey) => ssb_game::fighter::FighterKind::Donkey,
-        Some(GameScene::Ness | GameScene::NessThunder | GameScene::NessMagnet | GameScene::NessJibaku) => {
+        Some(
+            GameScene::Ness
+            | GameScene::NessPKFire
+            | GameScene::NessThunder
+            | GameScene::NessMagnet
+            | GameScene::NessJibaku,
+        ) => {
             ssb_game::fighter::FighterKind::Ness
         }
         _ => ssb_game::fighter::FighterKind::Mario,
@@ -2136,6 +2171,7 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
             | GameScene::CaptainKickRoll
             | GameScene::KirbyCutter
             | GameScene::KirbyStarBounce
+            | GameScene::NessPKFire
             | GameScene::VsMagnify,
         ) => {
             ssb_game::stage_select::gkind::CASTLE
@@ -2410,7 +2446,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -2778,6 +2814,11 @@ unsafe fn training_frame(
                     h.update(i32::from(h.damage), false);
                 }
             }
+            // Both battle-end interface updates resume the interface link:
+            // the KO's screen flash runs on (`ifScreenFlashProcUpdate`).
+            if matches!(status, GameStatus::End | GameStatus::BossDefeat | GameStatus::Set) {
+                damage_hud.ko.tick_flash();
+            }
             // The rumble actor in the frame's `gcRunAll` while the rest
             // of the world stays paused (`ifcommon.c:2623`).
             if battle.as_ref().is_some_and(|b| b.rumble_runs(Frame::Frozen)) {
@@ -2839,7 +2880,10 @@ unsafe fn training_frame(
     // Game's wait thread), between the fighters' interrupts and their
     // physics. Neither runs on a bonus stage or in a title demo.
     let entry_stage = if bonus.is_none() { p.stage(stage_index) } else { None };
-    let wait = campaign.as_deref().and_then(|c| c.wait.as_ref());
+    // The wait leaves the campaign for the step, which lends the campaign
+    // to the team's next members ([`campaign::NextMembers`]).
+    let wait_held = campaign.as_deref_mut().and_then(|c| c.wait.take());
+    let wait = wait_held.as_ref();
     let in_campaign = campaign.is_some();
     let (countdown, entry_focus, entry_focus_pin) =
         (&mut damage_hud.countdown, &mut damage_hud.entry_focus, damage_hud.entry_focus_pin);
@@ -2855,6 +2899,16 @@ unsafe fn training_frame(
             (false, _) => {}
         }
     };
+    let member_stage = p.stage(stage_index);
+    let mut members = match (campaign.as_deref_mut(), member_stage.as_ref()) {
+        (Some(c), Some(stage)) => Some(campaign::NextMembers::new(p, stage, c, dummies)),
+        _ => None,
+    };
+    let mut next_member = members.as_mut().map(|m| {
+        move |d: &mut play::Dummy, g: &[ssb_game::map::MapGroup], b: &mut ssb_game::battle::Battle| {
+            m.next_member(d, g, b)
+        }
+    });
     training_step(
         p,
         stage_index,
@@ -2876,7 +2930,16 @@ unsafe fn training_frame(
         lead,
         &mut interface,
         &mut damage_hud.rumble,
+        next_member.as_mut().map(|n| n as &mut NextMember<'_>),
     );
+    drop(interface);
+    drop(next_member);
+    if let Some(made) = members.map(campaign::NextMembers::made) {
+        campaign::members_stop_break_anim(made, &mut damage_hud.damage);
+    }
+    if let Some(c) = campaign.as_deref_mut() {
+        c.wait = wait_held;
+    }
     // The effect and interface processes after the fighters': the KO
     // explosions (with their particles) and the screen flash.
     for f in scenes(pl, dummies).into_iter().flatten() {
@@ -2913,9 +2976,8 @@ unsafe fn training_frame(
     if let (Some(boss), Some(b)) = (boss.as_deref_mut(), battle.as_mut()) {
         campaign::boss_after_world(boss, pl, dummies, b);
     }
-    if let (Some(c), Some(stage)) = (campaign, p.stage(stage_index)) {
-        let groups = stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
-        campaign::replace_enemies(p, &stage, groups, dummies, c, battle, damage_hud);
+    if let Some(c) = campaign.as_deref() {
+        campaign::members_hud(c, damage_hud);
     }
     frame_end_audio(p, stage_index, pl, dummies, battle.as_ref());
     false
@@ -3433,7 +3495,7 @@ fn update_damage_hud(hud: &mut ssb_game::hud::DamageDisplay, f: &ssb_game::fight
         hud.stop_break_anim();
     }
     hud.is_show_interface |= shown;
-    hud.update(i32::from(f.damage), f.dead.stock_rule && f.stocks == -1);
+    hud.update_fighter(f);
 }
 
 /// `mnVSResults`' frame over the black of `mnVSResultsFuncStart`'s default
@@ -5220,6 +5282,10 @@ unsafe fn run() -> ! {
         #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
         if matches!(capture_spec, Some(GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit)) {
             campaign::log_boss_state(&s, sim_frame_index);
+        }
+        #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+        if capture_spec == Some(GameScene::OnePZako) {
+            campaign::log_zako_state(&s, sim_frame_index);
         }
         // `vspush`: the pushed CPU has no jumps left to come back with and
         // cannot catch the ledge.
@@ -8645,6 +8711,9 @@ unsafe fn draw_training(
             ssb_game::opening::movie::View::Roll,
         );
         gpu.set_view(&view);
+        // Kind 8 loads no `LookAt` and no opening camera before it loads
+        // one: texgen reads the task's zeroed default (RE-458).
+        draw_state.texgen_basis = Some(ssb_game::opening::movie::TASK_LOOK_AT);
         (proj * view).cols
     } else {
         let proj = ssb_engine::math::Mat4::sy_persp_fast(
@@ -9428,7 +9497,7 @@ fn draw_damage_hud(
                 meshdraw::draw_sprite(p, &sprite, &d, draw_state);
             }
         }
-        for g in d.glyphs(false, &sizes) {
+        for g in d.glyphs(&sizes) {
             let Some(sprite) = sprites[usize::from(g.digit)] else {
                 continue;
             };

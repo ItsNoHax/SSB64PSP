@@ -97,6 +97,7 @@ impl PackBanks<'_, '_> {
             effect::HYRULE_PARTICLE_BANK => named("grhyrule"),
             effect::PUPUPU_PARTICLE_BANK => named("grpupupu"),
             effect::KIRBY_PARTICLE_BANK => named("particles_unk0"),
+            effect::NESS_PARTICLE_BANK => named("particles_unk1"),
             _ => None,
         }
     }

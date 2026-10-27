@@ -1,6 +1,47 @@
 use super::*;
 use manager::{Manager, Scene};
 
+/// The intro and Continue cameras keep the default 4:3 aspect, not their
+/// 300 x 220 viewport's: on the PSP the latter narrowed every intro
+/// fighter towards the centre, Metal Mario by 3 px (RE-458).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn intro_and_continue_cameras_keep_the_default_aspect() {
+    assert_eq!(intro::CAMERA_PROJECTION, (4.0 / 3.0, 128.0, 16384.0));
+    assert_eq!(
+        continue_scene::CAMERA_PROJECTION,
+        (4.0 / 3.0, 100.0, 15000.0)
+    );
+}
+
+/// The first fighter an intro frame draws takes the scene's
+/// `dSC1PIntroLights1`; every later one the subsystem's (-20, 30) that
+/// `ftDisplayMain` reloads after each Demo fighter. Lighting the player with
+/// the latter lit Kirby from the opposite side (N64 RDRAM poke, RE-458).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn intro_fighters_take_the_scene_light_first() {
+    use intro::FighterLight::{Reflect, Scene};
+    let b = crate::d_arrays::SC_1P_INTRO_LIGHTS1;
+    assert_eq!(b[0..3], b[4..7], "ambient colc");
+    assert_eq!(b[8..11], b[12..15], "light colc");
+    assert_eq!([b[3], b[7], b[11], b[15], b[19]], [0; 5], "pads");
+    let dir = [b[16] as i8, b[17] as i8, b[18] as i8];
+    assert_ne!(dir, [0; 3]);
+    assert_ne!(
+        dir,
+        ssb_engine::rsp_light::reflect_light_dir(intro::RESTORED_LIGHT),
+        "the subsystem's light"
+    );
+    let mut lights = intro::FighterLights::default();
+    assert_eq!(lights.next(FighterKind::Kirby), Scene(dir));
+    assert_eq!(lights.next(FighterKind::Yoshi), Reflect([-20.0, 30.0]));
+    assert_eq!(lights.next(FighterKind::Yoshi), Reflect([-20.0, 30.0]));
+    let mut lights = intro::FighterLights::default();
+    assert_eq!(lights.next(FighterKind::Boss), Reflect([-20.0, -30.0]));
+    assert_eq!(lights.next(FighterKind::Mario), Reflect([-20.0, 30.0]));
+}
+
 #[test]
 fn stage_ordinals_and_ports_match_source_tables() {
     for (i, stage) in Stage::ALL.into_iter().enumerate() {

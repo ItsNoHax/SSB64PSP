@@ -130,7 +130,8 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 
 - `onepgame`: scripts 1P select START, intro, real Link battle (RE-450).
 - Other `onep*` specs: run the same real select, then seed their scene at a fixed global tick.
-  - `onepintro`, `onepbonus`, `onepcontinue`, `onepretry`, `onepclear`
+  - `onepintro`, `onepbonus`, `onepcontinue`, `onepretry`, `onepclear`, `onepgameclear`
+  - `onepintro@T`, `onepclear@T`: N64 scene tic T-106 (RE-548)
   - Break the Targets, Board the Platforms, Race to the Finish fixtures
   - `onepboss*`, `onepmetal`, `onepgiant`, `onepzako`, `onepyoshi`
   - `onepending`, `onepstaffroll`, `onepcongra`, `onepchallenger`, `onepmessage`, `onepfinale`

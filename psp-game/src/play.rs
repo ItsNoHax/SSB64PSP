@@ -44,6 +44,10 @@ pub struct Dummy {
     /// Capture only (`cpufx-*`): the fighter reads the player's pad, as
     /// the N64 reference ROM's humans all read controller 0.
     pub mirror: bool,
+    /// Its place in the fighter link, which orders every process
+    /// (`gcMakeGObjSPAfter`): the port for the battle's own fighters, then
+    /// increasing for a 1P Game team's next members, which link last.
+    pub link: u32,
 }
 
 impl Deref for Dummy {
@@ -131,6 +135,7 @@ impl Dummy {
             is_1p_game: false,
             key: None,
             mirror: false,
+            link: u32::from(port),
         }
     }
 

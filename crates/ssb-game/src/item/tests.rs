@@ -46,7 +46,11 @@ fn make_flame(pool: &mut ItemPool) -> u8 {
     }));
     let mut target = fighter(FighterKind::Mario, 1);
     weapons.apply_hits(&mut target);
-    pool.take_weapon_spawns(&mut weapons, core::iter::empty);
+    pool.take_weapon_spawns(
+        &mut weapons,
+        core::iter::empty,
+        &mut crate::effect::NoEffects,
+    );
     pool.tick(core::iter::empty, None, &[], &mut NoItemAnims);
     pool.order[0]
 }

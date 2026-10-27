@@ -10,7 +10,7 @@
 //! its 2D positions are halved onto the 320 x 240 grid, and its sprites at
 //! half their size.
 use super::{
-    draw_model_ex, make_model, sprite, DrawState, Gpu, ModelView, Pack, Presentation, RspCamera,
+    draw_model_ex, make_model, sprite, DrawState, FighterLight, Gpu, ModelView, Pack, Presentation, RspCamera,
 };
 use alloc::boxed::Box;
 use ssb_game::spgame::{
@@ -158,7 +158,7 @@ unsafe fn draw_ending(
                 m.pos,
                 1.0,
                 (movie::CAMERA_NEAR, movie::CAMERA_FAR),
-                movie::LIGHT_ANGLE,
+                FighterLight::Reflect(movie::LIGHT_ANGLE),
                 ModelView {
                     camera: [c[0], c[1], c[2], 0.0, c[3], c[4], c[5], 0.0, 0.0, c[6]],
                     aspect: ASPECT,
@@ -337,7 +337,7 @@ unsafe fn draw_challenger(
             m.pos,
             1.0,
             (100.0, 12800.0),
-            [-20.0, 30.0],
+            FighterLight::Reflect([-20.0, 30.0]),
             ModelView {
                 camera: m.camera,
                 aspect: ASPECT,

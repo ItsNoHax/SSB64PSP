@@ -323,6 +323,9 @@ pub enum GameScene {
     OnePContinue,
     OnePRetry,
     OnePClear,
+    /// `onepgameclear`: the Master Hand stage's tally, `GAME CLEAR` and the
+    /// red difficulty clear bonus (`nSC1PGameBonusStageClear`, RE-548).
+    OnePGameClear,
     /// `onepending`: the ending movie after the real select.
     OnePEnding,
     /// `onepstaffroll`: the staff roll, A pressed every 20 ticks from 400.
@@ -798,6 +801,11 @@ pub enum GameScene {
     /// (`SpecialAirHiJibaku`), his model pitched along the launch
     /// (`ftNessSpecialHiUpdateModelPitch`, RE-503).
     NessJibaku,
+    /// `nesspkfire`: Ness in Training on Peach's Castle, the `ness` scene's
+    /// script (B at tick 45): the spark crosses the roof and hits the
+    /// dummy on its spawn, and `wpNessPKFireProcHit` makes the flame item
+    /// (`itNessPKFireMakeItem`, RE-382). Matched to an N64 trace.
+    NessPKFire,
     /// `kirbystoneslope`: Kirby in Training on Kongo Jungle, Stone slid
     /// down the bowl's left slope, his TopN rolled to the floor
     /// (`ftKirbySpecialLwGetGroundAxisYaw`, RE-503).
@@ -839,7 +847,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 207] = [
+    pub const ALL: [GameScene; 209] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -863,6 +871,7 @@ impl GameScene {
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
+        GameScene::OnePGameClear,
         GameScene::OnePEnding,
         GameScene::OnePStaffroll,
         GameScene::OnePCongra,
@@ -1040,6 +1049,7 @@ impl GameScene {
         GameScene::FoxFire,
         GameScene::PikachuQuick,
         GameScene::NessJibaku,
+        GameScene::NessPKFire,
         GameScene::KirbyStoneSlope,
         GameScene::CaptainKickRoll,
         GameScene::KirbyCutter,
@@ -1074,6 +1084,7 @@ impl GameScene {
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",
+            GameScene::OnePGameClear => "onepgameclear",
             GameScene::OnePEnding => "onepending",
             GameScene::OnePStaffroll => "onepstaffroll",
             GameScene::OnePCongra => "onepcongra",
@@ -1252,6 +1263,7 @@ impl GameScene {
             GameScene::FoxFire => "foxfire",
             GameScene::PikachuQuick => "pikachuquick",
             GameScene::NessJibaku => "nessjibaku",
+            GameScene::NessPKFire => "nesspkfire",
             GameScene::KirbyStoneSlope => "kirbystoneslope",
             GameScene::CaptainKickRoll => "captainkickroll",
             GameScene::KirbyCutter => "kirbycutter",

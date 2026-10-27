@@ -124,6 +124,14 @@ impl KoEffects {
                 }
             }
         }
+        self.tick_flash();
+    }
+
+    /// `ifScreenFlashProcUpdate` alone: at a battle's end the interface
+    /// link runs on (`ifCommonBattleInterfaceProcUpdate`,
+    /// `sc1PGameBossDefeatInterfaceProcUpdate`) while the explosions'
+    /// effect link stays paused (RE-458).
+    pub fn tick_flash(&mut self) {
         if self.flash.update() {
             self.flash.reset();
         }

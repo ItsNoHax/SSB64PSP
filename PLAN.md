@@ -109,7 +109,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
-| 1P goldens | 1P intro, stage clear | RE-548 |
 | Fox ledge freeze | Host sweep green (`ledge_sweep.rs`, release full sweep); input recorder only if a playtest repro appears | RE-553 |
 | Kirby/Purin CliffEscapeQuick | Optional: N64 pose check of the two-lead (`0xC0000000`) clips 483/484; decomp and pack probe agree | RE-553 |
 
@@ -123,7 +122,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| PK Fire | PK Fire flame needs a route onto the dummy platform (PSP and N64); item tree now starts per itManagerMakeItem (one frame later), unobserved on N64 | RE-352, RE-382, RE-383 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
@@ -137,7 +135,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 |---|---|---|
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
-| Special fighters | Unobserved: 30-Polygon clear; 1P intro Metal Mario darkness (cameras 7/15); movie camera kinds 3+8 texgen basis | RE-458 |
+| Special fighters | Open: room scene 1 kind-14 camera texgen basis (N64); 1P intro to next battle after a clear N64 120 frames vs PSP 60; KO flash ramp ~1 frame phase; end-freeze damage HUD of non-boss ports; tally scene load delay (N64 11 frames, RE-501 class) | RE-458 |
+| Challenger/Continue fighter light | Only the first fighter drawn takes the scene light (found in the 1P intro); check Challenger and Continue against N64 | RE-458, RE-548 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 
 ### Architecture

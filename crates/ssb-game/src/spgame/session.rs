@@ -60,6 +60,21 @@ impl Session {
         camera_top: f32,
         map_top: f32,
     ) -> setup::NextEnemy {
+        let mut battle = self.battle.take().expect("active battle");
+        let next = self.next_enemy_in(&mut battle, player, points, camera_top, map_top);
+        self.battle = Some(battle);
+        next
+    }
+
+    /// [`Self::next_enemy`] on a battle the host holds outside the session.
+    pub fn next_enemy_in(
+        &mut self,
+        battle: &mut crate::battle::Battle,
+        player: u8,
+        points: &[Vec3],
+        camera_top: f32,
+        map_top: f32,
+    ) -> setup::NextEnemy {
         let next = self
             .game
             .as_mut()
@@ -75,7 +90,7 @@ impl Session {
         if matches!(next, setup::NextEnemy::Spawn(_)) {
             self.state.init_player_battle_stats(player);
             self.state.players[player as usize].stock_damage_all = 0;
-            let p = &mut self.battle.as_mut().expect("active battle").players[player as usize];
+            let p = &mut battle.players[player as usize];
             *p = crate::battle::Player {
                 present: true,
                 is_human: false,

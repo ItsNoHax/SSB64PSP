@@ -545,6 +545,9 @@ pub struct ItemVars {
     pub mball_open: bool,
     /// `mball.effect_gobj`: the rays the opened ball made.
     pub mball_rays: Option<u32>,
+    /// `pkfire.xf`: the flame particle's transform, which follows the
+    /// flame ([`crate::wpeffect::WeaponEffect::PKFireFollow`]).
+    pub pkfire_xf: Option<u8>,
     /// A Poké Ball Pokémon's.
     pub mmonster: mmonster::Vars,
 }
@@ -2093,16 +2096,28 @@ impl ItemPool {
         f.items.held = None;
     }
 
-    /// `itNessPKFireMakeItem` for each flame the weapon pool queued.
+    /// `itNessPKFireMakeItem` for each flame the weapon pool queued. A flame
+    /// that found an item slot makes its particle in `effects` at the
+    /// spawn position.
     #[inline(never)]
-    pub fn take_weapon_spawns<I, F>(&mut self, weapons: &mut crate::weapon::WeaponPool, surfaces: F)
-    where
+    pub fn take_weapon_spawns<I, F>(
+        &mut self,
+        weapons: &mut crate::weapon::WeaponPool,
+        surfaces: F,
+        effects: &mut dyn crate::effect::HitEffectSink,
+    ) where
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
         for spawn in weapons.take_item_spawns() {
+            let pos = spawn.pos;
             let item = pk_fire::make(&self.counts, spawn, &surfaces);
-            self.alloc(item);
+            if let Some(slot) = self.alloc(item) {
+                let xf = effects.pk_fire_flame(pos);
+                if let Some(item) = self.slots[usize::from(slot)].as_mut() {
+                    item.vars.pkfire_xf = (xf != crate::particle::NIL).then_some(xf);
+                }
+            }
         }
     }
 
@@ -2572,7 +2587,7 @@ where
                 false
             }
         },
-        ItemStatus::PKFire(s) => pk_fire::proc_update(item, s),
+        ItemStatus::PKFire(s) => pk_fire::proc_update(item, s, ctx.fx),
         ItemStatus::LinkBomb(s) => link_bomb::proc_update(item, s, ctx.owners, surfaces, effects),
         ItemStatus::GBumper(_) => gbumper::proc_update(item),
         ItemStatus::PowerBlock(s) => power_block::proc_update(item, s, ctx.anims, ctx.events),
@@ -2697,7 +2712,7 @@ fn run_hit_proc(
         ItemStatus::NBumper(s) => nbumper::hit_proc(item, s, proc, reflector_lr),
         ItemStatus::Shell(s) => shell::hit_proc(item, s, proc, reflector),
         ItemStatus::MBall(s) => mball::hit_proc(item, s, proc),
-        ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc),
+        ItemStatus::PKFire(s) => pk_fire::hit_proc(item, s, proc, ctx.fx),
         ItemStatus::LinkBomb(s) => link_bomb::hit_proc(item, s, proc, reflector_lr),
         ItemStatus::GBumper(_) => gbumper::hit_proc(item, proc),
         ItemStatus::PowerBlock(s) => {

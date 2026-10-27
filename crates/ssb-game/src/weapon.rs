@@ -5690,7 +5690,7 @@ mod tests {
                 stale: crate::stale::WeaponStale::FRESH,
             });
         }
-        items.take_weapon_spawns(&mut spawner, open_air);
+        items.take_weapon_spawns(&mut spawner, open_air, &mut crate::effect::NoEffects);
         items
     }
 
