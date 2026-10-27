@@ -126,7 +126,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
-| Stages | Sector Z Arwing laser/reflect N64 capture | RE-428, RE-321, RE-364, RE-519 |
+| Stages | Sector Z Arwing laser/reflect: capture scene forcing pattern, target_x and phase on PSP + matching N64 RDRAM write; natural volleys never enter the Training camera | RE-428, RE-321, RE-364, RE-519 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | Results wipe | Camera Shutter residuals: PSP aperture ~1% larger, blade seams tics 3-7 | RE-464 |
 | CPU | Countdown seed on Dream Land (Whispy +2 draws, N64 untraced); real menu boot (part B) infeasible | RE-568 |
@@ -136,8 +136,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
-| Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
 | Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; a hit-landing defeat fixture | RE-457 |
 | Special fighters | Unobserved: 30-Polygon clear; 1P intro Metal Mario darkness (cameras 7/15); movie camera kinds 3+8 texgen basis | RE-458 |

@@ -123,6 +123,7 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 - Scripted pad input and capture tick per scene: `crates/ssb-capture/src/script.rs`.
 - Scene behaviour (object, stage, light): in each binary, not `ssb-capture`.
 - `scene@tick` also serves N64 frame comparisons (RE-425).
+- `@T` is the global `sim_frame_index`: `op-title@T`, `op-room@T` ↔ N64 scene tic T-2 (RE-529, RE-467).
 
 ## Campaign diagnostic capture
 
