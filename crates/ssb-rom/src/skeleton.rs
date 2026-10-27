@@ -1739,14 +1739,21 @@ fn resolve_texture(
     (texture != crate::pack::TextureDesc::NO_ANIM).then_some(texture)
 }
 
-/// Distinct `MatAnimDesc` scripts one spawned effect's own primitives can
-/// reference at once. Many primitives on one effect commonly share a script
-/// (RE-175: Link Spin Attack's inner `AObjEvent32 *[5]` table names the same
-/// script from every non-null slot), so this is sized by distinct scripts,
-/// not primitives -- eight covers every manager-effect asset measured so
-/// far with headroom, the same relationship [`crate::pack::MatAnimDesc::
-/// MAX_TEXTURES`] has to its own measured maximum.
-pub const MAX_EFFECT_MAT_ANIMS: usize = 8;
+/// Distinct `MatAnimDesc` scripts (or stage `MObj`s) one
+/// [`EffectMaterialAnimator`] can play at once. Many primitives on one
+/// object share a script (RE-175), so this counts distinct scripts, not
+/// primitives. Measured over every pack object except the stage map layers
+/// (`StageDesc::layers`): the most is Link's Spin Attack band (file 324 at
+/// 0x11908), 9. A slot past the cap is dropped and plays the pack-lifetime
+/// clock instead; `tests/effect_mat_anim_capacity.rs` fails if any object
+/// outside the map layers exceeds it.
+///
+/// The map layers play [`MaterialAnimator`] (a `Vec`, restarted per ground
+/// creation by `start_stage`), never this player, so two of them exceed
+/// the cap without loss: Zebes' layer 1 (file 105 at 0x5AC0) has 18,
+/// Final Destination's (file 114 at 0x4D48) 13. Sizing to them would cost
+/// 4.6 KB per instance for objects nothing here plays.
+pub const MAX_EFFECT_MAT_ANIMS: usize = 9;
 
 /// Restarts and ticks only the `MatAnimDesc` entries one spawned effect's
 /// own primitives reference, instead of [`MaterialAnimator`]'s pack-lifetime
@@ -2007,6 +2014,79 @@ impl EffectMaterialAnimator {
             light1: j.track_color(crate::matanim::TRACK_LIGHT1_COLOR),
             light2: j.track_color(crate::matanim::TRACK_LIGHT2_COLOR),
         })
+    }
+}
+
+/// The `mat_anim` index of every primitive on `object`'s own meshes, in
+/// node then primitive order: the `MObj`s a made graphic's material
+/// scripts drive.
+pub fn object_mat_anims<'p>(
+    p: &'p Pack<'_>,
+    object: &ObjectDesc,
+) -> impl Iterator<Item = u32> + 'p {
+    let (first, count) = (object.first_node, object.node_count);
+    (0..count)
+        .filter_map(move |n| p.node(first + n))
+        .filter(|n| n.mesh != NodeDesc::NO_MESH)
+        .filter_map(move |n| p.mesh(n.mesh))
+        .flat_map(move |m| (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i)))
+        .map(|prim| prim.mat_anim)
+}
+
+/// A made weapon's or effect's transform and material players, driven by
+/// its count of `gcPlayAnimAll` calls since `gcAddAnimAll(gobj, ..., 0.0F)`.
+///
+/// `gcAddAnimAll` leaves every `DObj` and `MObj` at `AOBJ_ANIM_CHANGED`, so
+/// the first counted play only parses frame 0 (`objanim.c:277-282`): after
+/// `n` plays both players stand at frame `n - 1`.
+/// - Weapons: `wpManagerMakeWeapon` calls `gcAddAnimAll` and no
+///   `gcPlayAnimAll`. `wpProcessProcWeaponMain`, added there, makes the
+///   first play on the creation frame. The N64 shows the Spin Attack
+///   weapon's `GObj` frame 0 on its creation frame and 1 on the next
+///   (RE-540), the Thunder Jolts frame 0 on theirs (RE-543).
+/// - Effects: `efManagerMakeEffect`'s own `gcPlayAnimAll` is the first play
+///   (RE-540).
+#[derive(Default)]
+pub struct GraphicPlayers {
+    pub anim: StageAnimator,
+    pub materials: EffectMaterialAnimator,
+}
+
+impl GraphicPlayers {
+    /// `gcAddAnimAll`: restarts `anim`'s joints and, given `mat_anims`,
+    /// the material scripts, all at `AOBJ_ANIM_CHANGED`.
+    pub fn start(
+        &mut self,
+        pack: &Pack<'_>,
+        anim: Option<&AnimDesc>,
+        mat_anims: Option<impl Iterator<Item = u32>>,
+    ) {
+        if let Some(anim) = anim {
+            self.anim.start_changed(pack, anim);
+        }
+        if let Some(mat_anims) = mat_anims {
+            self.materials.start(pack, mat_anims);
+        }
+    }
+
+    /// One counted `gcPlayAnimAll` at `anim_speed` (`gcSetAllAnimSpeed`):
+    /// the transform script, given its bytes, then the materials when
+    /// `materials` is set.
+    pub fn play(&mut self, pack: &Pack<'_>, script: Option<&[u8]>, materials: bool, speed: f32) {
+        if let Some(script) = script {
+            let _ = if speed == 1.0 {
+                self.anim.tick(script)
+            } else {
+                self.anim.tick_speed(script, speed)
+            };
+        }
+        if materials {
+            if speed == 1.0 {
+                self.materials.tick(pack);
+            } else {
+                self.materials.tick_speed(pack, speed);
+            }
+        }
     }
 }
 

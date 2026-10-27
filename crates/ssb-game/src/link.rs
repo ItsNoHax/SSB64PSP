@@ -919,6 +919,25 @@ mod tests {
         assert!(active(&f));
     }
 
+    /// The weapon's play count runs with Link's figatree: on the creation
+    /// frame Link stands at frame 1 and `wpProcessProcWeaponMain` has made
+    /// the weapon's first `gcPlayAnimAll`, so the graphic shows that count
+    /// minus one (`ssb_rom::skeleton::GraphicPlayers`). The N64 trace
+    /// (`cpufx-u`, RE-540) logs Link 1 / weapon 0 at el 31 through Link
+    /// 32 / weapon 31 at el 62.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_spin_weapon_counts_one_play_per_link_frame_from_its_creation() {
+        let mut f = link(true);
+        set_special_hi(&mut f);
+        for _ in 0..32 {
+            let ticks = f.link.spin.as_ref().expect("the weapon lives").anim_ticks;
+            assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::SpecialHi));
+            assert_eq!(f32::from(ticks), f.status.anim_frame);
+            status::update(&mut f);
+        }
+    }
+
     /// `ftLinkSpecialHiProcMap` sets `proc_damage` again after its switch
     /// (`ftlinkspecialhi.c:277`), and `ftMainSetStatus` ran and cleared
     /// `ftLinkSpecialHiProcStatus` on the Spin Attack's own set

@@ -16,13 +16,13 @@
 
 ## Current work
 
+- Landed (batch 52): weapon graphics parse frame 0 on their first counted play (`GraphicPlayers`; Spin band, Boomerang, Final Cutter wave, PK Thunder head); `MAX_EFFECT_MAT_ANIMS` 9 (Spin band has 9 scripts); N64 confirmed Zebes offset (PSP T = t + 8) and wipe (Camera Shutter, timing exact); 6 goldens rebaselined (RE-540, RE-364, RE-464).
 - Landed (batch 51): Thunder Jolt burst area gap was RE-541's whole-image normalisation (2.3125 x 2.267 vs D-047 2.4727); re-measured within spread, no renderer change (RE-541).
 - Landed (batch 50): stage matanim clock restarts per ground creation and plays the creation-time `gcPlayAnimAll` once (`MaterialAnimator::start_stage`); 89 goldens rebaselined, pond water and Zebes acid only (RE-364, RE-321).
 - Landed (batch 49): guard-band CPU clip for battle stages (Zebes acid, Yoshi cloud hill; hardware-proven, +1.21 ms vs4, +1.75 ms Zebes); stage-select preview uses `dMNMapsLights1`; 105 goldens rebaselined (RE-519, RE-570, RE-364).
 - Landed (batch 48): battle and asset viewer use `set_scene_light`: lit stage/effect prims whose lists write both light colours shade under the stage direction with those colours (N64 RDRAM trace Meta Crystal, N64 framebuffer Board the Platforms beam 226 vs PSP 180 -> 221); Hyrule darker floor was a misaligned region script, not a gap; 31 goldens rebaselined (RE-065, RE-529, RE-570).
 - Landed (batch 47): Zebes acid two-tile blend lowered with premultiplied shade alpha (worst error 3 steps, held +698,624 B, pack v134); Spin Attack band drawn with `wpDisplayDrawNormal` state (no Z, XLU); `f1-training-link-spin` 172 px, `f1-training-zebes` 22 px rebaselined (RE-321, RE-364, RE-540).
-- Landed (batch 46): costume-set initial MObj texture id (Luigi eye sprite 1, N64 RDRAM-traced; tablegen `TEXTURE_PART_MADE`); `romtool costumes` exit 0; no golden moved (RE-569).
-- Open: Zebes warp tick offset vs N64 (RE-364); movie camera kinds 3+8 basis; NOFOG under demo fade; 1P intro Metal Mario darkness. Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
+- Open: movie camera kinds 3+8 basis; NOFOG under demo fade; 1P intro Metal Mario darkness. Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -35,7 +35,7 @@
 
 ## Verification
 
-Baseline: batch 51 (docs only; batch 50 run); deepest game stack 394128 B (f1-bonus-pause) of 524288.
+Baseline: batch 52; deepest game stack 395032 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

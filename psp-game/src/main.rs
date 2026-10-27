@@ -7265,19 +7265,14 @@ impl EffectVisuals {
     }
 }
 
-/// One effect's transform and material players: some 27 KB, so each
-/// [`FxSlot`] makes its own on the heap the first time its effect lives.
-#[derive(Default)]
-struct FxPlayers {
-    anim: ssb_rom::skeleton::StageAnimator,
-    materials: ssb_rom::skeleton::EffectMaterialAnimator,
-}
+/// One effect's or weapon's transform and material players: some 27 KB,
+/// so each [`FxSlot`] makes its own on the heap the first time its graphic
+/// lives.
+type FxPlayers = ssb_rom::skeleton::GraphicPlayers;
 
-impl FxPlayers {
-    #[inline(never)]
-    fn new_boxed() -> alloc::boxed::Box<FxPlayers> {
-        alloc::boxed::Box::default()
-    }
+#[inline(never)]
+fn new_fx_players() -> alloc::boxed::Box<FxPlayers> {
+    alloc::boxed::Box::default()
 }
 
 /// One effect's players and the play count they have reached.
@@ -7287,32 +7282,13 @@ struct FxSlot {
     players: Option<alloc::boxed::Box<FxPlayers>>,
 }
 
-/// How a slot's first plays line up with the game's play count.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PlayRule {
-    /// `wpManagerMakeWeapon` adds `wpProcessProcWeaponMain` as a process at
-    /// once, so a weapon made in a fighter process runs it that frame too:
-    /// the make's `gcPlayAnimAll` and one more play.
-    Weapon,
-    /// `efManagerMakeEffect` leaves `proc_update` to `efManagerFuncRun`,
-    /// which `gcRunAll`'s pre-pass first calls on the next frame, so the
-    /// creation frame shows only the make's `gcPlayAnimAll`: frame zero,
-    /// parsed without advancing (the N64 `GObj` and `MObj` frames of the
-    /// Magnet, Sing, Spin Attack and Falcon Kick effects, RE-540).
-    Effect,
-    /// The target already counts every `gcPlayAnimAll` since `gcAddAnimAll`,
-    /// the first of which only parses (`AOBJ_ANIM_CHANGED`): the Thunder
-    /// Jolts' `anim_ticks`. The N64 WP rows show frame 0 on each jolt's
-    /// creation frame (the aerial root's scale 1.15, the ground node 1's
-    /// `TraX` -390), RE-543.
-    ParsedFirst,
-}
-
 impl FxSlot {
-    /// Plays the effect up to `target` plays ([`catch_up`]): `anim`'s
-    /// transform script and, given its `object`, the material scripts on
-    /// the object's own primitives. `None` hides the effect. Returns whether
-    /// this call (re)made the effect.
+    /// Plays the graphic up to `target` counted `gcPlayAnimAll` calls
+    /// ([`catch_up`]): `anim`'s transform script and, given its `object`,
+    /// the material scripts on the object's own primitives. The first
+    /// counted play parses frame 0 for weapons and effects alike
+    /// ([`ssb_rom::skeleton::GraphicPlayers`]). `None` hides the graphic.
+    /// Returns whether this call (re)made it.
     #[inline(never)]
     fn sync(
         &mut self,
@@ -7321,50 +7297,17 @@ impl FxSlot {
         object: Option<&ssb_rom::pack::ObjectDesc>,
         anim: Option<&ssb_rom::pack::AnimDesc>,
         speed: f32,
-        rule: PlayRule,
     ) -> bool {
         let Some((restart, ticks)) = catch_up(&mut self.clock, target) else {
             return false;
         };
-        let players = self.players.get_or_insert_with(FxPlayers::new_boxed);
+        let players = self.players.get_or_insert_with(new_fx_players);
         if restart {
-            if let Some(anim) = anim {
-                match rule {
-                    PlayRule::Weapon => players.anim.start(p, anim),
-                    PlayRule::Effect | PlayRule::ParsedFirst => {
-                        players.anim.start_changed(p, anim)
-                    }
-                }
-            }
-            if let Some(object) = object {
-                players.materials.start(p, object_mat_anims(p, object));
-                // `gcPlayAnimAll` parses each `MObj` in the same play as its
-                // `DObj`. A weapon's transform player folds the creation
-                // play into its first tick, so the materials take that play
-                // here and stay in step with it (the Spin Attack weapon's
-                // fade against the N64's `MObj` trace). An effect's first
-                // tick is the creation play for both.
-                if anim.is_some() && rule == PlayRule::Weapon {
-                    players.materials.tick_speed(p, speed);
-                }
-            }
+            players.start(p, anim, object.map(|o| object_mat_anims(p, o)));
         }
         let script = anim.and_then(|a| p.anim_script(a));
         for _ in 0..ticks {
-            if let Some(script) = script {
-                let _ = if speed == 1.0 {
-                    players.anim.tick(script)
-                } else {
-                    players.anim.tick_speed(script, speed)
-                };
-            }
-            if object.is_some() {
-                if speed == 1.0 {
-                    players.materials.tick(p);
-                } else {
-                    players.materials.tick_speed(p, speed);
-                }
-            }
+            players.play(p, script, object.is_some(), speed);
         }
         restart
     }
@@ -7430,7 +7373,7 @@ impl ReflectorFx {
             self.clock = None;
             return;
         };
-        let players = self.players.get_or_insert_with(FxPlayers::new_boxed);
+        let players = self.players.get_or_insert_with(new_fx_players);
         let set = |players: &mut FxPlayers, index: &mut u8, id: u8| {
             let Some(anim) = anims.get(usize::from(id)) else {
                 return;
@@ -8134,20 +8077,9 @@ fn draw_screen_flash(gpu: &mut Gpu, draw_state: &mut meshdraw::DrawState, ko: &s
     draw_state.invalidate_all();
 }
 
-/// `gcAddAnimAll`'s material half: the material scripts bound to an
-/// effect object's own primitives (RE-175).
-fn object_mat_anims<'p>(
-    p: &'p Pack<'_>,
-    object: &ssb_rom::pack::ObjectDesc,
-) -> impl Iterator<Item = u32> + 'p {
-    let (first, count) = (object.first_node, object.node_count);
-    (0..count)
-        .filter_map(move |n| p.node(first + n))
-        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
-        .filter_map(move |n| p.mesh(n.mesh))
-        .flat_map(move |m| (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i)))
-        .map(|prim| prim.mat_anim)
-}
+// `gcAddAnimAll`'s material half: the material scripts bound to an
+// effect object's own primitives (RE-175).
+use ssb_rom::skeleton::object_mat_anims;
 
 /// The items whose players are material scripts, and the Shells' spin
 /// (RE-442): the Star's and the Ray Gun's `ITAttributes` tables from the
@@ -8386,32 +8318,31 @@ impl EffectVisuals {
             ) -> (Option<&ssb_rom::pack::ObjectDesc>, Option<&ssb_rom::pack::AnimDesc>) {
                 a.as_ref().map(|(o, a)| (o, a)).unzip()
             }
-            use PlayRule::Effect;
             let (object, anim) = pair(&assets.magnet);
-            v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0, Effect);
+            v.magnet.sync(p, f.and_then(ssb_game::ness::magnet_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.pk_wave);
-            v.pk_wave.sync(p, f.and_then(ssb_game::ness::pk_wave_effect_ticks), object, anim, 1.0, Effect);
+            v.pk_wave.sync(p, f.and_then(ssb_game::ness::pk_wave_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.sing);
-            v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0, Effect);
+            v.sing.sync(p, f.and_then(ssb_game::purin::sing_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.spin_effect);
-            v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0, Effect);
+            v.spin.sync(p, f.and_then(ssb_game::link::spin_effect_ticks), object, anim, 1.0);
             let (object, anim) = pair(&assets.spin_weapon);
             let ticks = f.and_then(ssb_game::link::spin_weapon_display).map(|(_, t)| t);
-            v.spin_weapon.sync(p, ticks, object, anim, 1.0, PlayRule::Weapon);
+            v.spin_weapon.sync(p, ticks, object, anim, 1.0);
             let punch = f.and_then(|f| {
                 ssb_game::captain::punch_effect_ticks(f)
                     .or_else(|| ssb_game::kirby_copy::punch_effect_ticks(f))
             });
-            v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0, Effect);
+            v.punch.sync(p, punch, assets.falcon_punch.as_ref(), None, 1.0);
             let (object, anim) = pair(&assets.falcon_kick);
-            v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0, Effect);
+            v.kick.sync(p, f.and_then(ssb_game::captain::kick_effect_ticks), object, anim, 1.0);
             for (i, kind) in ssb_game::kirby::CutterEffect::ALL.into_iter().enumerate() {
                 let (object, anim) = assets.kirby_cutter_fx[i]
                     .as_ref()
                     .map(|(o, a)| (o, a.as_ref()))
                     .unzip();
                 let ticks = f.and_then(|f| ssb_game::kirby::cutter_effect_ticks(f, kind));
-                v.cutter[i].sync(p, ticks, object, anim.flatten(), 1.0, Effect);
+                v.cutter[i].sync(p, ticks, object, anim.flatten(), 1.0);
             }
             v.reflector.sync(
                 p,
@@ -8443,7 +8374,6 @@ impl EffectVisuals {
             let anim_of = |a: &Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>| {
                 a.as_ref().map(|(_, a)| *a)
             };
-            let mut rule = PlayRule::Weapon;
             let (key, ticks, object, anim, speed) = match w {
                 W::Boomerang(b) => ((0, 0), b.anim_ticks, None, anim_of(&assets.boomerang), 1.0),
                 W::Cutter(c) => ((1, 0), c.anim_ticks, None, anim_of(&assets.cutter), 1.0),
@@ -8459,7 +8389,6 @@ impl EffectVisuals {
                     } else {
                         1.0
                     };
-                    rule = PlayRule::ParsedFirst;
                     (
                         (2, j.anim_epoch),
                         j.anim_ticks,
@@ -8481,7 +8410,7 @@ impl EffectVisuals {
                 v.key = Some(key);
                 v.fx.clock = None;
             }
-            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed, rule);
+            v.fx.sync(p, Some(ticks), object.as_ref(), anim.as_ref(), speed);
         }
         for (v, seen) in self.weapons.iter_mut().zip(seen) {
             if !seen {

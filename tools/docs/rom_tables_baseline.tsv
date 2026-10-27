@@ -190,3 +190,4 @@ crates/ssb-game/src/colanim_preserve.rs	PRESERVE_RUMBLE	port constant: status id
 crates/ssb-game/src/rumble.rs	PRIORITIES	port constant: decomp gmrumble.c source table (not read from the ROM); candidate for tablegen
 crates/ssb-game/src/rumble.rs	SCRIPTS	port constant: decomp gmrumble.c source script table (not read from the ROM); candidate for tablegen
 crates/ssb-engine/src/rdp_noise.rs	LEVELS	port constant: angrylion RDP noise levels (emulator model, not read from the ROM)
+crates/ssb-rom/tests/weapon_graphic_play.rs	SPIN_WEAPON_SOURCE	layout: a (file, offset) pair naming the Spin Attack weapon object in the pack
