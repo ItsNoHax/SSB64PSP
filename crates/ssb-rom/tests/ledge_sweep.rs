@@ -372,7 +372,7 @@ impl Run<'_> {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 #[cfg_attr(
-    debug_assertions,
+    all(debug_assertions, not(ssb64_stub_tables)),
     ignore = "about 10 minutes unoptimised: run with --release"
 )]
 fn every_vs_stage_ledge_leaves_its_cliff_statuses_in_time() {

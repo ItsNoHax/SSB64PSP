@@ -5,6 +5,7 @@
 # gone. Rows are layout, fixtures, tooling, port constants and function-body constants,
 # never ROM data: generate that with crates/ssb-tablegen instead.
 # path	item	reason
+crates/ssb-engine/src/audio/dsp.rs	LANE_FRAC	port constant: envmixer lane fractions of the n_aspMain microcode (RE-479)
 crates/ssb-engine/src/audio/fgm.rs	ZERO	port constant: the empty FGM player
 crates/ssb-engine/src/audio/golden.rs	FGMS	test fixture: the golden audio scenario's FGM calls
 crates/ssb-engine/src/audio/n64ref.rs	B_MENU	test fixture: N64 audio captures' call timelines (RE-479)

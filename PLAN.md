@@ -138,8 +138,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Runtime loader | Use `ssb_rom::reloc_link` (layout matches original) | RE-340, RE-341, [D-011](docs/decisions/D-011.md) |
-| Memory arenas | Wire `ssb_engine::memory` arenas, pools into `psp-runtime` | [memory](docs/memory.md#allocators) |
+| Runtime loader (L3) | `scene_files` on `reloc_link::closure` and `place_into(.., Order::Ascending)` `Placement::runs`, one block per run; acceptance: reads and memory unchanged, goldens match | RE-340, RE-341, RE-571, [D-011](docs/decisions/D-011.md) |
+| Memory arenas | Wire `ssb_engine::memory` arenas, pools into `psp-runtime`; `AssetArena` is the scene-scoped arena that owns and frees the per-run blocks (reads and memory unchanged) | RE-571, [memory](docs/memory.md#allocators) |
 
 ## Completed
 

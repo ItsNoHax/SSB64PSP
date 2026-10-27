@@ -16,12 +16,12 @@
 
 ## Current work
 
-- Landed (batch 63): Item Switch matches the N64 (golden `f1-item-switch`, RE-462); drawn Mew verified on the N64 (RE-566); attract audio vs LLE: port ~30 LSB DC low from floored Q15 products, reverb low-pass closed (RE-479). No existing golden moved.
+- Landed (batch 64): audio Q15 rounding is microcode-exact, 0 differing samples vs two LLE RSP cores (RE-479); `reloc_link` L0-L2: pack needs no slot patching, per-run blocks kept (RE-571). No golden moved.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. Implement the two architecture rows ("Runtime loader", "Memory arenas") as written before MS8 (owner decision).
+1. Runtime loader L3 (`scene_files` on `reloc_link`, per-run blocks), then memory arenas A1/A3/A2/A4 (owner decision).
 2. Remaining gameplay rows in `PLAN.md`; then MS8.
 
 ## Blockers
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 63; deepest game stack 395416 B (f1-bonus-pause) of 524288.
+Baseline: batch 64; deepest game stack 401688 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

@@ -23,6 +23,13 @@
 //! `base`. Nothing in the PSP build consumes raw `relocData` yet (the pack
 //! stores converted, position-independent assets); this gives a future
 //! runtime loader and host tools the original's layout to compare against.
+//!
+//! [`place_into`] is the same placement over any [`FileSource`] (the ROM
+//! closure through [`Files`], or the pack's file table) into a reusable,
+//! index-based [`Placement`]: [`Order::Original`] for the N64 placement,
+//! [`Order::Ascending`] for the pack's read runs (`scene_files`). The pack
+//! needs no slot patching: its scripts never reach an extern slot
+//! (`reloc_link_pack_tests.rs`), so only placement applies to it.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -180,24 +187,56 @@ pub fn link(files: &BTreeMap<u32, File>, roots: &[u32], base: u32) -> Result<Lin
         let at = at as usize;
         bytes[at..at + file.data.len()].copy_from_slice(&file.data);
     }
-    let write = |bytes: &mut [u8], file: u32, slot: u32, value: u32| {
-        let len = files[&file].data.len();
+    link_into(&mut bytes, files, &layout, base as usize, Endian::Big)?;
+    Ok(Linked { layout, bytes })
+}
+
+/// The byte order [`link_into`] writes slot words in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Endian {
+    /// The ROM's order: the image the original builds in RDRAM (RE-341).
+    Big,
+    /// The running CPU's order (little-endian on the PSP).
+    Native,
+}
+
+/// Step 3 in place: `dst` already holds every file of `layout` at its
+/// offset (read there, not copied); rewrites each intern slot to
+/// `base + file + target` and each extern slot to
+/// `base + target file + target offset`. `base` is the address of
+/// `dst[0]`; slot words are 32 bits (`TooLarge` past 4 GiB).
+pub fn link_into(
+    dst: &mut [u8],
+    files: &BTreeMap<u32, File>,
+    layout: &Layout,
+    base: usize,
+    endian: Endian,
+) -> Result<(), LinkError> {
+    let base = u32::try_from(base).map_err(|_| LinkError::TooLarge)?;
+    if dst.len() < layout.size as usize {
+        return Err(LinkError::TooLarge);
+    }
+    let write = |dst: &mut [u8], file: u32, slot: u32, value: u32| {
+        let len = files
+            .get(&file)
+            .ok_or(LinkError::MissingFile(file))?
+            .data
+            .len();
         if slot as usize + 4 > len {
             return Err(LinkError::SlotOutOfBounds { file, at: slot });
         }
         let at = (layout.offsets[&file] + slot) as usize;
-        bytes[at..at + 4].copy_from_slice(&value.to_be_bytes());
+        let bytes = match endian {
+            Endian::Big => value.to_be_bytes(),
+            Endian::Native => value.to_ne_bytes(),
+        };
+        dst[at..at + 4].copy_from_slice(&bytes);
         Ok(())
     };
     for (&id, &at) in &layout.offsets {
-        let file = &files[&id];
+        let file = files.get(&id).ok_or(LinkError::MissingFile(id))?;
         for r in &file.intern_relocs {
-            write(
-                &mut bytes,
-                id,
-                r.at,
-                base.wrapping_add(at).wrapping_add(r.target),
-            )?;
+            write(dst, id, r.at, base.wrapping_add(at).wrapping_add(r.target))?;
         }
         for r in &file.extern_relocs {
             let target = *layout
@@ -205,14 +244,351 @@ pub fn link(files: &BTreeMap<u32, File>, roots: &[u32], base: u32) -> Result<Lin
                 .get(&u32::from(r.target_file))
                 .ok_or(LinkError::MissingFile(u32::from(r.target_file)))?;
             write(
-                &mut bytes,
+                dst,
                 id,
                 r.at,
                 base.wrapping_add(target).wrapping_add(r.target_offset),
             )?;
         }
     }
-    Ok(Linked { layout, bytes })
+    Ok(())
+}
+
+/// A file table [`place_into`] lays out: files by dense index, each with a
+/// length and an ordered extern-ID list (duplicates kept: one per slot,
+/// the order `lbRelocLoadAndRelocFile` walks them in).
+///
+/// Implemented by [`Files`] (ROM `relocData`, decompressed sizes) and by
+/// [`crate::pack::Pack`] (the pack's file table: converted bytes,
+/// `FileDesc` deps).
+pub trait FileSource {
+    /// Files in the table; indices are `0..count`.
+    fn count(&self) -> u32;
+    /// `id`'s index, if the table has it.
+    fn index(&self, id: u32) -> Option<u32>;
+    /// The file ID at `index`.
+    fn id(&self, index: u32) -> u32;
+    /// The bytes file `index` occupies.
+    fn len(&self, index: u32) -> u32;
+    /// Entries in file `index`'s extern-ID list.
+    fn extern_count(&self, index: u32) -> u32;
+    /// Entry `k` of file `index`'s extern-ID list.
+    fn extern_id(&self, index: u32, k: u32) -> u32;
+    /// Where file `index`'s bytes start in the source's own storage, when
+    /// it has one (the pack's blob offset): files whose bytes are adjacent
+    /// there can share one read.
+    fn start(&self, _index: u32) -> Option<u32> {
+        None
+    }
+    /// Whether an ID the table lacks is a file with no bytes and no externs
+    /// (the pack omits those, RE-475) rather than a [`LinkError::MissingFile`].
+    fn absent_is_empty(&self) -> bool {
+        false
+    }
+}
+
+/// [`FileSource`] over a loaded closure ([`Archive::load_closure`]).
+pub struct Files<'a> {
+    ids: Vec<u32>,
+    files: Vec<&'a File>,
+}
+
+impl<'a> Files<'a> {
+    pub fn new(files: &'a BTreeMap<u32, File>) -> Self {
+        Self {
+            ids: files.keys().copied().collect(),
+            files: files.values().collect(),
+        }
+    }
+}
+
+impl FileSource for Files<'_> {
+    fn count(&self) -> u32 {
+        self.ids.len() as u32
+    }
+    fn index(&self, id: u32) -> Option<u32> {
+        self.ids.binary_search(&id).ok().map(|i| i as u32)
+    }
+    fn id(&self, index: u32) -> u32 {
+        self.ids[index as usize]
+    }
+    fn len(&self, index: u32) -> u32 {
+        self.files[index as usize].data.len() as u32
+    }
+    fn extern_count(&self, index: u32) -> u32 {
+        self.files[index as usize].extern_relocs.len() as u32
+    }
+    fn extern_id(&self, index: u32, k: u32) -> u32 {
+        u32::from(self.files[index as usize].extern_relocs[k as usize].target_file)
+    }
+}
+
+impl FileSource for crate::pack::Pack<'_> {
+    fn count(&self) -> u32 {
+        self.file_count()
+    }
+    fn index(&self, id: u32) -> Option<u32> {
+        self.file_index(id)
+    }
+    fn id(&self, index: u32) -> u32 {
+        self.file_at(index).map_or(u32::MAX, |d| d.file)
+    }
+    fn len(&self, index: u32) -> u32 {
+        self.file_at(index).map_or(0, |d| d.len)
+    }
+    fn extern_count(&self, index: u32) -> u32 {
+        self.file_at(index).map_or(0, |d| d.dep_count)
+    }
+    fn extern_id(&self, index: u32, k: u32) -> u32 {
+        self.file_at(index)
+            .and_then(|d| self.file_dep(&d, k))
+            .unwrap_or(u32::MAX)
+    }
+    fn start(&self, index: u32) -> Option<u32> {
+        self.file_at(index).map(|d| d.blob_start)
+    }
+    fn absent_is_empty(&self) -> bool {
+        true
+    }
+}
+
+/// `PSP_CACHE_LINE`: every read run starts on a line and is padded to whole
+/// lines, so no line holds bytes of two runs (RE-360, RE-476).
+pub const LINE: u32 = 64;
+
+/// The order [`place_into`] lays files out in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Order {
+    /// `lbRelocLoadFilesExtern`'s: depth first along each extern chain,
+    /// each file at the next 16-byte boundary (RE-341). A held file's
+    /// externs are not walked (`lbRelocFindStatusBufferFile`). No runs.
+    Original,
+    /// File-index order, grouped into read runs: files adjacent in the
+    /// source (`start`, 16-byte spacing, as `scene_files::load_missing`)
+    /// share a run of at most `max_run` bytes; each run starts on a
+    /// [`LINE`] and the next starts past its padded end; files keep the
+    /// source's spacing inside a run, so a run is one read. The closure is
+    /// walked through held files (their externs may have been dropped).
+    Ascending { max_run: u32 },
+}
+
+/// Files `first..=last` (indices) read together: source bytes
+/// `start..start + len` land at block offset `offset`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Run {
+    pub first: u32,
+    pub last: u32,
+    pub start: u32,
+    pub len: u32,
+    pub offset: u32,
+}
+
+/// [`Layout`] by file index, for a loader that must not build maps per
+/// scene: reuse one value across scenes and its vectors keep their
+/// capacity.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Placement {
+    /// File index → byte offset in the block, or [`Placement::NONE`]
+    /// (outside the closure, held, or with no bytes).
+    pub offset: Vec<u32>,
+    /// File index → in the closure (held files included).
+    pub want: Vec<bool>,
+    /// Indices placed, in placement order (files with no bytes included:
+    /// they take no space).
+    pub order: Vec<u32>,
+    /// [`Order::Ascending`]'s read runs, ascending.
+    pub runs: Vec<Run>,
+    /// Bytes the block needs.
+    pub size: u32,
+    stack: Vec<(u32, u32)>,
+    ids: Vec<u32>,
+}
+
+impl Placement {
+    pub const NONE: u32 = u32::MAX;
+
+    fn reset(&mut self, count: u32) {
+        self.offset.clear();
+        self.offset.resize(count as usize, Self::NONE);
+        self.want.clear();
+        self.want.resize(count as usize, false);
+        self.order.clear();
+        self.runs.clear();
+        self.stack.clear();
+        self.size = 0;
+    }
+
+    /// [`Layout`] form (file IDs), for comparison with [`layout`].
+    pub fn to_layout(&self, src: &impl FileSource) -> Layout {
+        let mut out = Layout {
+            size: self.size,
+            ..Layout::default()
+        };
+        for &i in &self.order {
+            out.order.push(src.id(i));
+            out.offsets.insert(src.id(i), self.offset[i as usize]);
+        }
+        out
+    }
+}
+
+/// `roots` and every file they reach through extern IDs, by index, into
+/// `want` (the `lbRelocGetAllocSize` walk). An ID the table lacks is an
+/// error unless the source says such files are empty.
+pub fn closure(
+    src: &impl FileSource,
+    roots: &[u32],
+    want: &mut Vec<bool>,
+    stack: &mut Vec<u32>,
+) -> Result<(), LinkError> {
+    want.clear();
+    want.resize(src.count() as usize, false);
+    stack.clear();
+    stack.extend_from_slice(roots);
+    while let Some(id) = stack.pop() {
+        let Some(i) = src.index(id) else {
+            if src.absent_is_empty() {
+                continue;
+            }
+            return Err(LinkError::MissingFile(id));
+        };
+        if core::mem::replace(&mut want[i as usize], true) {
+            continue;
+        }
+        stack.extend((0..src.extern_count(i)).map(|k| src.extern_id(i, k)));
+    }
+    Ok(())
+}
+
+/// [`layout_after`] over any [`FileSource`], in `order`, into `out`.
+/// `held(index)`: the file is already resident, so it takes no space.
+pub fn place_into(
+    src: &impl FileSource,
+    roots: &[u32],
+    held: impl Fn(u32) -> bool,
+    order: Order,
+    out: &mut Placement,
+) -> Result<(), LinkError> {
+    out.reset(src.count());
+    match order {
+        Order::Original => place_original(src, roots, &held, out),
+        Order::Ascending { max_run } => place_ascending(src, roots, &held, max_run, out),
+    }
+}
+
+fn place_original(
+    src: &impl FileSource,
+    roots: &[u32],
+    held: &impl Fn(u32) -> bool,
+    out: &mut Placement,
+) -> Result<(), LinkError> {
+    let mut stack = core::mem::take(&mut out.stack);
+    let visit = |id: u32, out: &mut Placement, stack: &mut Vec<(u32, u32)>| {
+        let Some(i) = src.index(id) else {
+            return if src.absent_is_empty() {
+                Ok(())
+            } else {
+                Err(LinkError::MissingFile(id))
+            };
+        };
+        if out.want[i as usize] {
+            return Ok(());
+        }
+        out.want[i as usize] = true;
+        if held(i) {
+            return Ok(());
+        }
+        let at = align(out.size);
+        out.size = at.checked_add(src.len(i)).ok_or(LinkError::TooLarge)?;
+        out.offset[i as usize] = at;
+        out.order.push(i);
+        stack.push((i, 0));
+        Ok(())
+    };
+    let mut result = Ok(());
+    'roots: for &root in roots {
+        if let Err(e) = visit(root, out, &mut stack) {
+            result = Err(e);
+            break;
+        }
+        while let Some(&mut (i, ref mut next)) = stack.last_mut() {
+            if *next < src.extern_count(i) {
+                let id = src.extern_id(i, *next);
+                *next += 1;
+                if let Err(e) = visit(id, out, &mut stack) {
+                    result = Err(e);
+                    break 'roots;
+                }
+            } else {
+                stack.pop();
+            }
+        }
+    }
+    stack.clear();
+    out.stack = stack;
+    result
+}
+
+fn place_ascending(
+    src: &impl FileSource,
+    roots: &[u32],
+    held: &impl Fn(u32) -> bool,
+    max_run: u32,
+    out: &mut Placement,
+) -> Result<(), LinkError> {
+    let mut want = core::mem::take(&mut out.want);
+    let mut ids = core::mem::take(&mut out.ids);
+    let walked = closure(src, roots, &mut want, &mut ids);
+    out.want = want;
+    out.ids = ids;
+    walked?;
+    let line = |x: u32| x.checked_next_multiple_of(LINE).ok_or(LinkError::TooLarge);
+    let mut run: Option<Run> = None;
+    for i in 0..src.count() {
+        if !out.want[i as usize] || held(i) {
+            continue;
+        }
+        let len = src.len(i);
+        if len == 0 {
+            out.order.push(i);
+            continue;
+        }
+        let start = src.start(i);
+        let joins = match (&run, start) {
+            (Some(r), Some(s)) => {
+                s == (r.start + r.len).next_multiple_of(ALIGN)
+                    && u64::from(s) + u64::from(len) - u64::from(r.start) <= u64::from(max_run)
+            }
+            _ => false,
+        };
+        if joins {
+            let r = run.as_mut().unwrap();
+            let s = start.unwrap();
+            r.len = s + len - r.start;
+            r.last = i;
+            out.offset[i as usize] = r.offset + (s - r.start);
+        } else {
+            if let Some(r) = run.take() {
+                out.size = line(r.offset + r.len)?;
+                out.runs.push(r);
+            }
+            let offset = line(out.size)?;
+            run = Some(Run {
+                first: i,
+                last: i,
+                start: start.unwrap_or(0),
+                len,
+                offset,
+            });
+            out.offset[i as usize] = offset;
+        }
+        out.order.push(i);
+    }
+    if let Some(r) = run {
+        out.size = line(r.offset + r.len)?;
+        out.runs.push(r);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -309,4 +685,179 @@ mod tests {
             Err(LinkError::SlotOutOfBounds { file: 30, at: 16 })
         );
     }
+
+    #[test]
+    fn original_order_over_a_file_source_equals_layout() {
+        let files = closure();
+        let src = Files::new(&files);
+        let mut p = Placement::default();
+        for roots in [&[10][..], &[30, 10], &[20]] {
+            place_into(&src, roots, |_| false, Order::Original, &mut p).unwrap();
+            assert_eq!(p.to_layout(&src), layout(&files, roots).unwrap());
+        }
+    }
+
+    #[test]
+    fn layout_after_skips_held() {
+        let files = closure();
+        let src = Files::new(&files);
+        let held = src.index(20).unwrap();
+        let mut p = Placement::default();
+        place_into(&src, &[10], |i| i == held, Order::Original, &mut p).unwrap();
+        let old = layout_after(&files, &[10], &[20].into_iter().collect()).unwrap();
+        assert_eq!(p.to_layout(&src), old);
+        assert_eq!(old.order, [10, 30], "20 is held; 30 is reached from 10");
+        assert_eq!(p.offset[held as usize], Placement::NONE);
+        assert!(p.want[held as usize]);
+        // Ascending walks through held files: 30 is wanted through 20 too.
+        place_into(
+            &src,
+            &[20],
+            |i| i == held,
+            Order::Ascending { max_run: 1 << 20 },
+            &mut p,
+        )
+        .unwrap();
+        assert_eq!(p.to_layout(&src).order, [10, 30]);
+    }
+
+    #[test]
+    fn native_endian_slot_roundtrip() {
+        let files = closure();
+        let big = link(&files, &[10], 0x0880_0000).unwrap();
+        let mut native = alloc::vec![0u8; big.layout.size as usize];
+        for (&id, &at) in &big.layout.offsets {
+            native[at as usize..][..files[&id].data.len()].copy_from_slice(&files[&id].data);
+        }
+        link_into(
+            &mut native,
+            &files,
+            &big.layout,
+            0x0880_0000,
+            Endian::Native,
+        )
+        .unwrap();
+        let slots: Vec<u32> = big
+            .layout
+            .offsets
+            .iter()
+            .flat_map(|(id, &at)| {
+                let f = &files[id];
+                f.intern_relocs
+                    .iter()
+                    .map(|r| r.at)
+                    .chain(f.extern_relocs.iter().map(|r| r.at))
+                    .map(move |slot| at + slot)
+            })
+            .collect();
+        assert_eq!(slots.len(), 6);
+        for at in slots {
+            let n = u32::from_ne_bytes(native[at as usize..][..4].try_into().unwrap());
+            assert_eq!(n, word(&big.bytes, at));
+        }
+        assert_eq!(
+            link_into(&mut native, &files, &big.layout, 1 << 40, Endian::Native),
+            Err(LinkError::TooLarge)
+        );
+    }
+
+    /// Files with a storage start: 1 and 2 adjacent (16-byte spacing),
+    /// 3 after a gap, 4 adjacent to 3, 5 empty.
+    struct Stored(&'static [(u32, u32, u32, &'static [u32])]);
+
+    impl FileSource for Stored {
+        fn count(&self) -> u32 {
+            self.0.len() as u32
+        }
+        fn index(&self, id: u32) -> Option<u32> {
+            self.0.iter().position(|f| f.0 == id).map(|i| i as u32)
+        }
+        fn id(&self, index: u32) -> u32 {
+            self.0[index as usize].0
+        }
+        fn len(&self, index: u32) -> u32 {
+            self.0[index as usize].2
+        }
+        fn extern_count(&self, index: u32) -> u32 {
+            self.0[index as usize].3.len() as u32
+        }
+        fn extern_id(&self, index: u32, k: u32) -> u32 {
+            self.0[index as usize].3[k as usize]
+        }
+        fn start(&self, index: u32) -> Option<u32> {
+            Some(self.0[index as usize].1)
+        }
+        fn absent_is_empty(&self) -> bool {
+            true
+        }
+    }
+
+    const STORED: Stored = Stored(&[
+        (1, 0x08, 0x24, &[3, 2, 99]),
+        (2, 0x30, 0x10, &[]),
+        (3, 0x100, 0x44, &[4, 5]),
+        (4, 0x150, 0x80, &[]),
+        (5, 0x1D0, 0, &[1]),
+    ]);
+
+    #[test]
+    fn ascending_runs_are_line_aligned_and_keep_source_spacing() {
+        let mut p = Placement::default();
+        place_into(
+            &STORED,
+            &[1],
+            |_| false,
+            Order::Ascending { max_run: 0x1000 },
+            &mut p,
+        )
+        .unwrap();
+        assert_eq!(p.order, [0, 1, 2, 3, 4]);
+        assert_eq!(
+            p.runs,
+            [
+                Run {
+                    first: 0,
+                    last: 1,
+                    start: 0x08,
+                    len: 0x38,
+                    offset: 0
+                },
+                Run {
+                    first: 2,
+                    last: 3,
+                    start: 0x100,
+                    len: 0xD0,
+                    offset: 0x40
+                },
+            ]
+        );
+        assert_eq!(&p.offset[..4], [0, 0x28, 0x40, 0x90]);
+        assert_eq!(p.size, 0x140, "the last run is padded to a line");
+        // A run limit splits 3 and 4; 2 held leaves 1 alone.
+        place_into(
+            &STORED,
+            &[1],
+            |i| i == 1,
+            Order::Ascending { max_run: 0x60 },
+            &mut p,
+        )
+        .unwrap();
+        assert_eq!(
+            p.runs
+                .iter()
+                .map(|r| (r.first, r.offset))
+                .collect::<Vec<_>>(),
+            [(0, 0), (2, 0x40), (3, 0xC0)]
+        );
+        assert_eq!(p.offset[1], Placement::NONE);
+        assert_eq!(p.size, 0x140);
+    }
 }
+
+#[cfg(test)]
+#[path = "reloc_link_pack_tests.rs"]
+mod pack_tests;
+
+#[cfg(test)]
+#[path = "reloc_link_sim_tests.rs"]
+mod sim_tests;

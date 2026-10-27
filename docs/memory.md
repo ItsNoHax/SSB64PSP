@@ -14,6 +14,7 @@
   - boot: header, tables, shared region
   - boot: audio section, never freed (audio thread reads it any time, [D-049](decisions/D-049.md))
   - scene start: each scene's files with extern closure
+  - `ssb_rom::reloc_link` (closure, placement, run planner) is host-tested; the runtime does not use `place_into` yet (RE-571)
 - Scene peaks, boot and XMB free bytes (PSP-2000): RE-475
   - XMB launch: 4 MiB less than PSPLink
 - Feature `memory_ballast`: reproduces any budget under PSPLink or PPSSPP
