@@ -357,6 +357,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingThrowable
         | GameScene::TrainingSlide
         | GameScene::TrainingBumperThrow
+        | GameScene::TrainingItemFlash
         | GameScene::TrainingPokemonA
         | GameScene::TrainingPokemonB
         | GameScene::TrainingPokemonC
@@ -472,6 +473,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingThrowable
             | GameScene::TrainingSlide
             | GameScene::TrainingBumperThrow
+            | GameScene::TrainingItemFlash
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
             | GameScene::TrainingPokemonC
@@ -784,6 +786,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingThrowable
             | GameScene::TrainingSlide
             | GameScene::TrainingBumperThrow
+            | GameScene::TrainingItemFlash
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
             | GameScene::TrainingPokemonC
@@ -815,6 +818,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
                 scene,
                 GameScene::TrainingHeavy | GameScene::TrainingUtility | GameScene::TrainingThrowable
                     | GameScene::TrainingSlide | GameScene::TrainingBumperThrow
+                    | GameScene::TrainingItemFlash
                     | GameScene::TrainingRayGun
                     | GameScene::TrainingFlower
                     | GameScene::TrainingStarRod
@@ -829,6 +833,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
                 GameScene::TrainingThrowable
                     | GameScene::TrainingSlide
                     | GameScene::TrainingBumperThrow
+                    | GameScene::TrainingItemFlash
                     | GameScene::TrainingRayGun
                     | GameScene::TrainingStarRod
                     | GameScene::TrainingSword
@@ -863,6 +868,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     }
     if scene == GameScene::TrainingInterface {
         return if tick == 68 || tick == 82 { 80 } else { 0 };
+    }
+    // Mario walks left into the thrown Bumper.
+    if scene == GameScene::TrainingItemFlash {
+        return if (165..=260).contains(&tick) { -80 } else { 0 };
     }
     // Mario walks left toward the Twister's floor before its summon.
     if scene == GameScene::TrainingTwister {
@@ -2334,14 +2343,17 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
     }
     if matches!(
         scene,
-        Some(GameScene::TrainingSlide | GameScene::TrainingBumperThrow)
+        Some(GameScene::TrainingSlide | GameScene::TrainingBumperThrow | GameScene::TrainingItemFlash)
     ) {
         if let Some(pl) = s.play_state.as_ref() {
-            // The thrown item in reach; the slide adds a Bob-omb that walks.
+            // The thrown item in reach; the slide adds a Bob-omb that walks,
+            // the item flash a Bob-omb on the left platform.
             let at = pl.fighter.pos;
             s.items.camera_at_x = pl.camera.at.x;
             let items: &[(u8, (f32, f32))] = if scene == Some(GameScene::TrainingSlide) {
                 &[(17, (75.0, 300.0)), (15, (750.0, 500.0))]
+            } else if scene == Some(GameScene::TrainingItemFlash) {
+                &[(16, (75.0, 300.0)), (15, (-1000.0, 1100.0))]
             } else {
                 &[(16, (75.0, 300.0))]
             };
@@ -2815,8 +2827,17 @@ unsafe fn training_frame(
                 }
             }
             // Both battle-end interface updates resume the interface link:
-            // the KO's screen flash runs on (`ifScreenFlashProcUpdate`).
-            if matches!(status, GameStatus::End | GameStatus::BossDefeat | GameStatus::Set) {
+            // every other port's damage display runs on, on its paused
+            // fighter's damage (RE-458), and the KO's screen flash
+            // (`ifScreenFlashProcUpdate`).
+            if status.end_runs_interface() {
+                let boss_port = boss.as_deref().map(|b| usize::from(b.port));
+                for f in scenes(pl, dummies).into_iter().flatten() {
+                    let port = usize::from(f.fighter.port);
+                    if let Some(h) = damage_hud.damage.get_mut(port).filter(|_| Some(port) != boss_port) {
+                        h.end_freeze_update(status, &f.fighter);
+                    }
+                }
                 damage_hud.ko.tick_flash();
             }
             // The rumble actor in the frame's `gcRunAll` while the rest

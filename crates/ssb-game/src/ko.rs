@@ -60,7 +60,7 @@ pub struct Explosion {
 }
 
 /// The match's KO effects.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KoEffects {
     /// By port. A fighter cannot die again before its explosion ends.
     pub explosions: [Option<Explosion>; 4],
@@ -69,6 +69,21 @@ pub struct KoEffects {
     /// `!is_allow_screenflash`: `ifScreenFlashMakeInterface` made no
     /// flash, so nothing sets or draws it.
     pub flash_disabled: bool,
+    /// `sIFScreenFlashAlpha`: `ifScreenFlashMakeInterface`'s argument,
+    /// 0xFF but in the 1P game, which passes its stage's
+    /// `dSC1PGameStageDesc[].screenflash_alpha` (`sc1pgame.c:2071`).
+    pub flash_alpha: u8,
+}
+
+impl Default for KoEffects {
+    fn default() -> Self {
+        KoEffects {
+            explosions: [None; 4],
+            flash: ColAnim::default(),
+            flash_disabled: false,
+            flash_alpha: 0xFF,
+        }
+    }
 }
 
 impl KoEffects {
@@ -137,10 +152,17 @@ impl KoEffects {
         }
     }
 
-    /// `ifScreenFlashProcDisplay`'s fill colour, with the interface's alpha
-    /// 0xFF (`ifScreenFlashMakeInterface`).
+    /// `ifScreenFlashProcDisplay`'s fill colour: `color1`, its alpha
+    /// scaled by the interface's ([`Self::flash_alpha`]).
     pub fn flash_color(&self) -> Option<[u8; 4]> {
-        self.flash.color()
+        self.flash.color().map(|[r, g, b, a]| {
+            [
+                r,
+                g,
+                b,
+                (u32::from(a) * u32::from(self.flash_alpha) / 0xFF) as u8,
+            ]
+        })
     }
 }
 

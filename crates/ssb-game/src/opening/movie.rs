@@ -58,31 +58,23 @@ impl View {
 /// is zero, so texgen reads one texel (N64 ParaLLEl, RE-458).
 pub const TASK_LOOK_AT: ([f32; 3], [f32; 3]) = ([0.0; 3], [0.0; 3]);
 
-/// Which `LookAt` the RSP holds as a frame's cameras draw in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TexgenLookAt {
-    /// [`TASK_LOOK_AT`]: no camera before it in this frame loaded one.
-    Task,
-    /// A reflecting camera's (this one's or an earlier one's); not modelled,
-    /// the prior basis stays.
-    Loaded,
-}
-
-/// Tracks [`TexgenLookAt`] across one frame's cameras in draw order.
+/// Tracks the `LookAt` the RSP holds across one frame's cameras in draw
+/// order: [`TASK_LOOK_AT`] until a reflecting camera loads its own, which
+/// stays for the cameras after it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LookAtTracker {
-    loaded: bool,
+    loaded: Option<([f32; 3], [f32; 3])>,
 }
 
 impl LookAtTracker {
-    /// Camera `view` draws next.
-    pub fn camera(&mut self, view: View) -> TexgenLookAt {
-        self.loaded |= view.loads_look_at();
-        if self.loaded {
-            TexgenLookAt::Loaded
-        } else {
-            TexgenLookAt::Task
+    /// Camera `view` draws next; `own` is its view's first two rows (world
+    /// right and up), `syMatrixModLookAtReflectF`'s `l[0]` and `l[1]` when
+    /// it loads them. Returns the `LookAt` texgen reads under it.
+    pub fn camera(&mut self, view: View, own: ([f32; 3], [f32; 3])) -> ([f32; 3], [f32; 3]) {
+        if view.loads_look_at() {
+            self.loaded = Some(own);
         }
+        self.loaded.unwrap_or(TASK_LOOK_AT)
     }
 }
 
@@ -521,23 +513,30 @@ mod tests {
 
     /// Kinds 6 and 8 (the opening's posed and movie cameras) load no
     /// `LookAt`: texgen reads the task's zeroed default until a reflecting
-    /// camera loads one (N64 ParaLLEl, opening Link's sword, RE-458).
+    /// camera loads one (N64 ParaLLEl, opening Link's sword, RE-458). Room
+    /// scene 1's kind 14 loads its own rolled right and up, which stay
+    /// (N64 ParaLLEl, the room's window at tic 330, RE-458).
     #[test]
     fn only_a_reflecting_camera_replaces_the_task_look_at() {
         assert_eq!(TASK_LOOK_AT, ([0.0; 3], [0.0; 3]));
+        let a = ([0.6, 0.0, -0.8], [0.1, 0.99, 0.0]);
+        let b = ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        let c = ([0.0, 1.0, 0.0], [1.0, 0.0, 0.0]);
         let mut t = LookAtTracker::default();
         assert_eq!(
-            [View::LookAt, View::Roll, View::LookAt].map(|v| t.camera(v)),
-            [TexgenLookAt::Task; 3]
+            [(View::LookAt, a), (View::Roll, b), (View::LookAt, c)].map(|(v, o)| t.camera(v, o)),
+            [TASK_LOOK_AT; 3]
         );
         let mut t = LookAtTracker::default();
         assert_eq!(
-            [View::LookAt, View::RollReflect, View::LookAt].map(|v| t.camera(v)),
             [
-                TexgenLookAt::Task,
-                TexgenLookAt::Loaded,
-                TexgenLookAt::Loaded
+                (View::LookAt, a),
+                (View::RollReflect, b),
+                (View::Roll, c),
+                (View::RollReflect, a)
             ]
+            .map(|(v, o)| t.camera(v, o)),
+            [TASK_LOOK_AT, b, b, a]
         );
     }
 

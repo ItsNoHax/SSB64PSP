@@ -553,6 +553,23 @@ impl DamageDisplay {
         self.update(i32::from(f.damage), crate::dead::out_of_stocks(f));
     }
 
+    /// One battle-end frozen frame of this display: through End,
+    /// BossDefeat and Set the interface link runs on with the fighters
+    /// paused (`ifCommonBattleEndUpdateInterface`'s `ProcUpdate`,
+    /// `sc1PGameBossDefeatInterfaceProcUpdate`), so every port's
+    /// `ifCommonPlayerDamageProcUpdate` does, on the paused fighter's
+    /// damage (N64: a display poked below its fighter's damage during
+    /// the freeze swells back, RE-458). A pause runs no interface.
+    pub fn end_freeze_update(
+        &mut self,
+        status: crate::battle::GameStatus,
+        f: &crate::fighter::Fighter,
+    ) {
+        if status.end_runs_interface() {
+            self.update_fighter(f);
+        }
+    }
+
     /// `ifCommonPlayerDamageProcUpdate`. `out_of_stocks` is
     /// `stock_count == -1`.
     pub fn update(&mut self, damage: i32, out_of_stocks: bool) {

@@ -73,6 +73,22 @@ fn congratulations_waits_eight_ticks_then_fades_ninety_and_ends_five_frames_afte
     assert_eq!(f.alpha(), 2);
 }
 
+/// `sc1PChallengerFuncLights` loads `dSC1PChallengerLights1` and the
+/// challenger colour animation sets no light, so the one fighter takes the
+/// scene's direction, not the subsystem's (-20, 30) reflect.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_challenger_takes_the_scene_light() {
+    use super::intro::FighterLight::Scene;
+    let b = crate::d_arrays::SC_1P_CHALLENGER_LIGHTS1;
+    assert_eq!(b[0..3], b[4..7], "ambient colc");
+    assert_eq!(b[8..11], b[12..15], "light colc");
+    assert_eq!([b[3], b[7], b[11], b[15], b[19]], [0; 5], "pads");
+    let dir = [b[16] as i8, b[17] as i8, b[18] as i8];
+    assert_ne!(dir, [0; 3]);
+    assert_eq!(super::challenger::fighter_light(), Scene(dir));
+}
+
 #[test]
 fn the_challenger_turns_two_degrees_a_tick_and_waits_two_seconds() {
     let mut c = Challenger::new(FighterKind::Ness);

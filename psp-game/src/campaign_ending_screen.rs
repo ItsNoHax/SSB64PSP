@@ -337,7 +337,7 @@ unsafe fn draw_challenger(
             m.pos,
             1.0,
             (100.0, 12800.0),
-            FighterLight::Reflect([-20.0, 30.0]),
+            challenger::fighter_light(),
             ModelView {
                 camera: m.camera,
                 aspect: ASPECT,

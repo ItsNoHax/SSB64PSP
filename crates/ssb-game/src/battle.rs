@@ -46,6 +46,21 @@ pub enum GameStatus {
     Set,
 }
 
+impl GameStatus {
+    /// End, BossDefeat or Set: both battle-end interface updates
+    /// (`ifCommonBattleEndUpdateInterface`'s `ProcUpdate`,
+    /// `sc1PGameBossDefeatInterfaceProcUpdate`) pause every object, then
+    /// resume the interface link, which each frame's `gcRunAll` runs
+    /// while the world stays paused: the damage displays and the screen
+    /// flash.
+    pub fn end_runs_interface(self) -> bool {
+        matches!(
+            self,
+            GameStatus::End | GameStatus::BossDefeat | GameStatus::Set
+        )
+    }
+}
+
 /// `SCBATTLE_GAMERULE_TIME` or `_STOCK`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {

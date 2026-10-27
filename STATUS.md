@@ -7,7 +7,7 @@
 | Item | Value | Refs |
 |---|---|---|
 | Pack | v136 | `crates/ssb-rom/src/pack.rs` |
-| Goldens | 257 of 257 goldens match by pixel hash | `tests/golden/hashes.tsv` |
+| Goldens | 262 of 262 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy) | Room 13.39 ms, Run 14.98, Yoster 15.58, Clash 13.17 | RE-530, RE-532, RE-539 |
@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed (batch 57): 1P intro and Continue aspect 4/3; movie camera kinds 6-9 texgen reads the zero LookAt (2 opening rows rebaselined, RE-458); 30-Polygon clear matches N64 (next member order, 1P damage digit rule, break-anim order, KO flash through battle end); intro scene light on the first fighter only; PK Fire flame particle, follow, death effects (RE-352, RE-382); 6 new goldens (RE-548).
-- Open: NOFOG under demo fade; Mew N64 read (RE-568); countdown RNG seed vs a real N64 VS boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
+- Landed (batch 58): 1P stage screen-flash alpha; end-freeze damage HUD for every port (RE-458); room scene 1 kind-14 texgen basis; Challenger scene light; Bumper, Bob-omb and Star flashes verified equal to N64; 5 new goldens; 2 results rows rebaselined (RE-409).
+- Open: KO-frame DeadDown beam (RE-458); NOFOG under demo fade; Mew N64 read (RE-568); countdown RNG seed vs a real N64 VS boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 57; deepest game stack 395368 B (f1-bonus-pause) of 524288.
+Baseline: batch 58; deepest game stack 395384 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|
@@ -38,7 +38,7 @@ Baseline: batch 57; deepest game stack 395368 B (f1-bonus-pause) of 524288.
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
 | Both PSP release builds | compile |
-| Goldens | full matrix verified (257 of 257) |
+| Goldens | full matrix verified (262 of 262) |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

@@ -715,15 +715,12 @@ impl Runtime {
                     if *zbuffer {
                         gpu.clear_depth();
                     }
-                    self.view(gpu, st, a, persp);
-                    // Kinds 6 and 8 load no `LookAt`: texgen reads the
-                    // task's zeroed default (RE-458).
-                    st.texgen_basis = match look_at.camera(persp.view) {
-                        ssb_game::opening::movie::TexgenLookAt::Task => {
-                            Some(ssb_game::opening::movie::TASK_LOOK_AT)
-                        }
-                        ssb_game::opening::movie::TexgenLookAt::Loaded => texgen_basis,
-                    };
+                    let view = self.view(gpu, st, a, persp);
+                    // Kinds 14 and 15 load `syMatrixModLookAtReflectF`'s
+                    // `LookAt`, which stays for the frame's later cameras;
+                    // kinds 6 and 8 load none, so texgen reads the task's
+                    // zeroed default until one does (RE-458).
+                    st.texgen_basis = Some(look_at.camera(persp.view, view_look_at(&view)));
                     st.set_scene_light(world.light);
                     for head in [Head::Zero, Head::One] {
                         st.heads = match head {
@@ -777,7 +774,13 @@ impl Runtime {
 
     /// The camera's view and projection: its animation's play where it has
     /// one.
-    unsafe fn view(&self, gpu: &mut Gpu, st: &mut DrawState, a: &Assets<'_, '_>, p: &Persp) {
+    unsafe fn view(
+        &self,
+        gpu: &mut Gpu,
+        st: &mut DrawState,
+        a: &Assets<'_, '_>,
+        p: &Persp,
+    ) -> ssb_engine::math::Mat4 {
         let (view, proj) = Self::persp_matrices(a, p);
         gpu.set_projection(&proj);
         gpu.reset_modelview();
@@ -786,6 +789,7 @@ impl Runtime {
         // The RSP clips what the GE would drop (`meshdraw::clip_submission`):
         // the room's floor and rug run under the camera.
         st.clip_view_proj = Some((proj * view).cols);
+        view
     }
 
     /// Camera `p`'s view and projection matrices this frame.
@@ -1021,6 +1025,13 @@ pub fn view_matrix(eye: Vec3, at: Vec3, up_x: f32, view: View) -> ssb_engine::ma
             }
         }
     }
+}
+
+/// A view's `LookAt` (`syMatrixModLookAtReflectF`'s `l[0]`, `l[1]`): its
+/// first two rows, the camera's world right and up.
+pub fn view_look_at(view: &ssb_engine::math::Mat4) -> ([f32; 3], [f32; 3]) {
+    let c = &view.cols;
+    ([c[0][0], c[1][0], c[2][0]], [c[0][1], c[1][1], c[2][1]])
 }
 
 /// `lbCommonPrepSObjDraw`'s whole-pixel corner.

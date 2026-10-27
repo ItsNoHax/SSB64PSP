@@ -21,6 +21,15 @@ pub const FIGHTER_POSITION: [f32; 3] = [610.0, -550.0, 0.0];
 /// `sc1PChallengerMakeFighterCamera`'s eye; it looks at the origin.
 pub const CAMERA_EYE: [f32; 3] = [0.0, 0.0, 3000.0];
 
+/// The challenger's light: `sc1PChallengerFuncLights` loads
+/// `dSC1PChallengerLights1` before anything draws, and the
+/// `FighterChallenger` colour animation sets no light, so the one fighter
+/// (drawn first) takes the scene's direction (RE-458).
+pub fn fighter_light() -> super::intro::FighterLight {
+    let b = crate::d_arrays::SC_1P_CHALLENGER_LIGHTS1;
+    super::intro::FighterLight::Scene([b[16] as i8, b[17] as i8, b[18] as i8])
+}
+
 /// `sc1PChallengerDecalsProcDisplay`'s dark blue panel behind the fighter
 /// (`G_RM_AA_XLU_SURF`, opaque).
 pub const PANEL_COLOR: [u8; 4] = [0x00, 0x00, 0x3B, 0xFF];

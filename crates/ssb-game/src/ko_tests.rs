@@ -487,3 +487,29 @@ fn a_fall_makes_its_interface_effects_in_its_own_process() {
     rt.fighter(&mut f);
     assert_eq!(p.list(3).count(), 3);
 }
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn the_1p_stage_flash_alpha_scales_the_fill() {
+    // N64 (batch 58, 30-Polygon clear, `sIFScreenFlashAlpha` 0x80): the
+    // KO flash's `color1.a` from the first frame, 0x12 up by 0x12 to
+    // 0x6C, then the second script's 0x69 down by 3.
+    let n64 = [0x12u32, 0x24, 0x36, 0x48, 0x5A, 0x6C, 0x69, 0x66];
+    let mut ko = KoEffects {
+        flash_alpha: 0x80,
+        ..KoEffects::default()
+    };
+    let mut f = fighter(1);
+    f.pos = Vec3::new(4001.0, 2500.0, 0.0);
+    assert!(dead::check(&mut f));
+    ko.observe(&mut f);
+    for a in n64 {
+        ko.tick_flash();
+        assert_eq!(
+            ko.flash_color(),
+            Some([0xFF, 0xFF, 0xFF, (a * 0x80 / 0xFF) as u8])
+        );
+    }
+    // VS and Training: `ifScreenFlashMakeInterface(0xFF)`.
+    assert_eq!(KoEffects::default().flash_alpha, 0xFF);
+}

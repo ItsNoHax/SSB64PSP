@@ -2,7 +2,8 @@
 
 use super::{DArray, Elem};
 use crate::source::{
-    MAIN, OVL1, OVL10, OVL2, OVL21, OVL24, OVL3, OVL30, OVL32, OVL59, OVL6, OVL62, OVL65, OVL7,
+    MAIN, OVL1, OVL10, OVL2, OVL21, OVL23, OVL24, OVL3, OVL30, OVL32, OVL59, OVL6, OVL62, OVL65,
+    OVL7,
 };
 
 pub const LIST: &[DArray] = &[
@@ -573,6 +574,16 @@ pub const LIST: &[DArray] = &[
         "dSC1PIntroLights1",
         OVL24,
         0x8013_4E00,
+        Elem::U8,
+        &[24],
+    ),
+    // `dSC1PChallengerLights1` (`gdSPDefLights1`), laid out as
+    // `SC_1P_INTRO_LIGHTS1`: its direction is bytes 16..19.
+    DArray::new(
+        "SC_1P_CHALLENGER_LIGHTS1",
+        "dSC1PChallengerLights1",
+        OVL23,
+        0x8013_2378,
         Elem::U8,
         &[24],
     ),

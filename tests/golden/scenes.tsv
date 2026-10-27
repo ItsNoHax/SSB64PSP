@@ -214,6 +214,9 @@ f1-training-interface-restored	psp-game	traininginterface@280	pass	RE-440
 f1-training-slide	psp-game	trainingslide@130	pass	RE-442
 f1-training-slide-walk	psp-game	trainingslide@233	pass	RE-442
 f1-training-bumper-throw	psp-game	trainingbumperthrow@160	pass	RE-442
+f1-training-item-bumper-lit	psp-game	trainingitemflash@202	pass	RE-434 RE-442
+f1-training-item-bombhei-flash	psp-game	trainingitemflash@232	pass	RE-434
+f1-training-utility-star-lit	psp-game	trainingutility@52	pass	RE-433 RE-442
 f1-training-link-bomb-bloat	psp-game	linkbomb@295	pass	RE-444
 f1-training-link-bomb-turn	psp-game	linkbomb@330	pass	RE-444
 f1-training-link-bomb-loose	psp-game	linkbomb@345	pass	RE-444
@@ -234,6 +237,7 @@ f1-opening-title-sparks	psp-game	op-title@70	pass	RE-467
 f1-opening-title-fire	psp-game	op-title@119	pass	RE-467
 f1-opening-title-logo	psp-game	op-title@152	pass	RE-467
 f1-opening-room-hand	psp-game	op-room@262	pass	RE-467
+f1-opening-room-window	psp-game	op-room@330	pass	RE-458
 f1-opening-cliff-exit	psp-game	op-cliff@170	pass	RE-467
 f1-training-link-sword	psp-game	linksword	pass	RE-512
 f1-training-sword	psp-game	trainingsword	pass	RE-512
@@ -265,6 +269,7 @@ f1-training-kirby-star-bounce	psp-game	kirbystarbounce	pass	RE-503
 f1-training-catch-slope	psp-game	catchslope	pass	RE-510
 f1-onep-boss-defeat-zoom	psp-game	onepbosshit@2665	pass	RE-457
 f1-onep-boss-defeat-fade	psp-game	onepbosshit@2895	pass	RE-457
+f1-onep-zako-ko-flash	psp-game	onepzako@2820	pass	RE-458
 f1-onep-zako-clear	psp-game	onepzako@2864	pass	RE-458
 f1-onep-intro-enter	psp-game	onepintro@115	pass	RE-548
 f1-onep-intro	psp-game	onepintro@256	pass	RE-548

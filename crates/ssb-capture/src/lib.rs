@@ -574,6 +574,12 @@ pub enum GameScene {
     /// `trainingbumperthrow`: a Bumper in Mario's reach; A at tick 60
     /// picks it up and A at 100 throws it onto the floor (RE-442).
     TrainingBumperThrow,
+    /// `trainingitemflash`: a Bumper in Mario's reach and a Bob-omb on the
+    /// left platform. A at 60 and 100 throw the Bumper onto the floor, then
+    /// Mario dashes left into it (its lit palette); the walking Bob-omb's
+    /// `multi` is forced from 2 to its flash wait (critical colour
+    /// animation), as the N64 reference build does (batch 58).
+    TrainingItemFlash,
     /// `trainingpokemona` / `...b`: Poké Ball Pokémon released beside
     /// Mario as if he had thrown the ball: Meowth, Chansey and Blastoise;
     /// Charizard, Starmie and Koffing (RE-435).
@@ -847,7 +853,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 209] = [
+    pub const ALL: [GameScene; 210] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -969,6 +975,7 @@ impl GameScene {
         GameScene::TrainingThrowable,
         GameScene::TrainingSlide,
         GameScene::TrainingBumperThrow,
+        GameScene::TrainingItemFlash,
         GameScene::TrainingPokemonA,
         GameScene::TrainingPokemonB,
         GameScene::TrainingPokemonC,
@@ -1182,6 +1189,7 @@ impl GameScene {
             GameScene::TrainingThrowable => "trainingthrowable",
             GameScene::TrainingSlide => "trainingslide",
             GameScene::TrainingBumperThrow => "trainingbumperthrow",
+            GameScene::TrainingItemFlash => "trainingitemflash",
             GameScene::TrainingPokemonA => "trainingpokemona",
             GameScene::TrainingPokemonB => "trainingpokemonb",
             GameScene::TrainingPokemonC => "trainingpokemonc",

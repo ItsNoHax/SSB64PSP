@@ -231,3 +231,27 @@ fn scores_and_snaps_sit_on_the_interface_position() {
     assert_eq!((s.x, s.y, s.z), (500.0, 892.0, 0.0));
     assert_eq!(steal_effect_position(265), (241.0, 190.0));
 }
+
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+#[test]
+fn the_end_freeze_runs_every_damage_display() {
+    use crate::battle::GameStatus;
+    // N64 (batch 58, 30-Polygon clear): port 0's display poked to 20 in
+    // the Set freeze, its fighter paused at 40, swells back the next
+    // frame: scale 1 + 20/300, held 4 frames, then 0.05 smaller.
+    let mut f = crate::fighter::Fighter::new(crate::fighter::FighterKind::Kirby, 0, 3);
+    f.damage = 40;
+    for status in [GameStatus::End, GameStatus::BossDefeat, GameStatus::Set] {
+        let mut d = shown(0, 40);
+        d.damage = 20;
+        d.end_freeze_update(status, &f);
+        assert_eq!(d.damage, 40, "{status:?}");
+        assert!((d.scale - (1.0 + 20.0 / 300.0)).abs() < 1e-6, "{status:?}");
+        assert_eq!(d.pos_adjust_wait, 3, "{status:?}");
+    }
+    // A pause runs no interface.
+    let mut d = shown(0, 40);
+    d.damage = 20;
+    d.end_freeze_update(GameStatus::Pause, &f);
+    assert_eq!(d.damage, 20);
+}

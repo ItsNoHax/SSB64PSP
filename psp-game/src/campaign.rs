@@ -253,6 +253,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
         });
     }
     let setups = game.setups;
+    let flash_alpha = game.screenflash_alpha();
     let single = sp.state.players.map(|b| b.is_single_stockicon);
     let switches = ssb_game::item::normal::Switches {
         appearance: sp.state.item_appearance,
@@ -319,6 +320,9 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
             *d = ssb_game::hud::DamageDisplay::at_kind(port, d.damage, positions[port], is_boss);
         }
     }
+    // `sc1PGameFuncStart`'s `ifScreenFlashMakeInterface`: the stage's
+    // flash alpha (0x80 on the Yoshi and Kirby teams' and the Polygons' stages).
+    s.damage_hud.ko.flash_alpha = flash_alpha;
     c.boss = None;
     if stage == Stage::Boss {
         c.boss = Some(BossScene::new_boxed(p, &desc, &mut s.dummies)?);
@@ -1393,6 +1397,50 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
 /// check; they do not set the task counter or the results directly.
 #[cfg(any(feature = "headless_capture", feature = "capture_scene_file"))]
 pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene: GameScene, tick: u64) {
+    // `trainingitemflash`: the walking Bob-omb's `multi` goes from 2 to
+    // `ITBOMBHEI_FLASH_WAIT` after its update, as the N64 reference build
+    // does, so its next update starts the critical flash (batch 58).
+    if scene == GameScene::TrainingItemFlash {
+        use ssb_game::item::{bombhei, ItemKind, ItemStatus};
+        for slot in 0..ssb_game::item::ITEM_ALLOC_MAX as u8 {
+            if let Some(it) = s.items.get_mut(slot) {
+                if it.kind == ItemKind::BombHei
+                    && it.status == ItemStatus::BombHei(bombhei::Status::Walk)
+                    && it.multi == 2
+                {
+                    it.multi = bombhei::FLASH_WAIT;
+                }
+            }
+        }
+        let mut line = alloc::format!("itemflash tick={}", tick);
+        if let Some(pl) = s.play_state.as_ref() {
+            line += &alloc::format!(
+                " P[{:?} x{:.1} y{:.1}]",
+                pl.fighter.status.status, pl.fighter.pos.x, pl.fighter.pos.y
+            );
+        }
+        for it in s.items.items() {
+            line += &alloc::format!(
+                " I[{:?} {:?} m{} pal{} col{} {:?} x{:.1} y{:.1}]",
+                it.kind,
+                it.status,
+                it.multi,
+                it.palette,
+                it.colanim.id.0,
+                it.colanim.color(),
+                it.pos.x,
+                it.pos.y
+            );
+        }
+        line += "\n";
+        unsafe {
+            psp::sys::sceIoWrite(
+                psp::sys::sceKernelStdout(),
+                line.as_ptr() as *const core::ffi::c_void,
+                line.len(),
+            );
+        }
+    }
     // Master Hand's hit points run out 100 ticks after "Go": the fixture
     // writes the damage, and `ftBossCommonUpdateDamageStats` runs the real
     // defeat from there.
