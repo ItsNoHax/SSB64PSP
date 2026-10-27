@@ -67,3 +67,63 @@ fn the_acid_is_a_two_tile_blend_times_the_shade_alpha() {
         .iter()
         .all(|&i| mesh.vertices[usize::from(i)].rgba[..3] == [0xFF; 3]));
 }
+
+/// Each battle's ground restarts the acid's material clock
+/// (`grZebesMakeAcid`: `gcAddAnimAll(..., 0.0F)` then `gcPlayAnimAll`,
+/// `grzebes.c:95-102`): after `n` updates the acid's `anim_frame` is `n`
+/// and its frames match a fresh ground's, whatever ran before.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_new_ground_restarts_the_acid_material_clock() {
+    use ssb_rom::pack::Pack;
+    use ssb_rom::skeleton::MaterialAnimator;
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let acid = (0..pack.mat_anim_count())
+        .find(|&i| {
+            pack.mat_anim(i)
+                .is_some_and(|a| (a.source_file, a.source_offset) == (ZEBES, ACID_MOBJ_SUB))
+        })
+        .expect("the acid's MatAnimDesc");
+    let frame = |m: &MaterialAnimator| m.joint(acid).unwrap().anim_frame();
+    let state = |m: &MaterialAnimator| {
+        let lod = m.resolved_lod_blend(&pack, acid);
+        (
+            m.resolved_texture(&pack, acid),
+            lod.map(|l| (l.texture, l.frac)),
+        )
+    };
+
+    let mut fresh = MaterialAnimator::new();
+    fresh.start_stage(&pack);
+    assert_eq!(frame(&fresh), 0.0, "the creation call does not advance");
+    // A previous battle (and the boot's own start) ran 7 + 1 updates.
+    let mut reused = MaterialAnimator::new();
+    reused.start(&pack);
+    for _ in 0..8 {
+        reused.tick(&pack);
+    }
+    assert_eq!(frame(&reused), 7.0);
+    reused.start_stage(&pack);
+    let mut flips = 0;
+    let mut last = state(&fresh);
+    for n in 1..=120u32 {
+        fresh.tick(&pack);
+        reused.tick(&pack);
+        assert_eq!(frame(&fresh), n as f32);
+        assert_eq!(frame(&reused), n as f32);
+        assert_eq!(state(&reused), state(&fresh), "update {n}");
+        if state(&fresh) != last {
+            flips += 1;
+            last = state(&fresh);
+        }
+    }
+    assert!(flips > 0, "the acid animates within 120 updates");
+}

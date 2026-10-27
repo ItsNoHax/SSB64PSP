@@ -1297,11 +1297,11 @@ impl StageAnimator {
 /// Ticks every `MatAnimDesc` the pack defines (RE-089–094), once per frame.
 ///
 /// Unlike [`Skeleton`]/[`StageAnimator`] above, a `MatAnimDesc` entry is a
-/// property of a *texture*, not a fighter or a stage layer — there is no
-/// per-object "start" boundary to restart on. [`Self::start`] runs once,
-/// when the pack loads, and [`Self::tick`] runs every frame after that for
-/// as long as the pack is loaded, independent of which stage or fighter is
-/// currently on screen (cheap either way: one short script per entry).
+/// property of a *texture*, not one fighter or stage layer, so every entry
+/// shares one clock. The battle restarts it at its ground's creation
+/// ([`Self::start_stage`]), and [`Self::tick`] runs on each world update
+/// after that, independent of which stage or fighter is on screen (cheap
+/// either way: one short script per entry).
 ///
 /// One joint per `MatAnimDesc`, sized from the pack at [`Self::start`]
 /// (RE-322). A fixed 64-slot array silently left the v33 pack's entries
@@ -1513,6 +1513,22 @@ impl MaterialAnimator {
             let script = pack.mat_anim(i).map_or(0, |a| a.script);
             crate::matanim::MaterialJoint::start(script, 0.0)
         }));
+    }
+
+    /// The battle ground's creation (`grDisplayMakeGeometryLayer`,
+    /// `grZebesMakeAcid`, ...): `gcAddAnimAll(..., 0.0F)` restarts every
+    /// MObj's `matanim_joint` (`anim_wait = AOBJ_ANIM_CHANGED`,
+    /// `anim_frame = 0`), then the maker calls `gcPlayAnimAll` once directly
+    /// (`grdisplay.c:208-210`, `grzebes.c:95-102`). That call's parse takes
+    /// the `CHANGED` branch (no clock advance, `objanim.c:842-845`) but its
+    /// play still adds `anim_speed` to every live track's length
+    /// (`objanim.c:1268-1271`): one [`Self::tick`]. The GObj's
+    /// `gcPlayAnimAll` process then runs one more per `gcRunAll`, so after
+    /// `n` battle updates every clock reads `anim_frame == n`, from the
+    /// ground's creation and not from boot.
+    pub fn start_stage(&mut self, pack: &Pack<'_>) {
+        self.start(pack);
+        self.tick(pack);
     }
 
     /// How many `MatAnimDesc` entries this animator ticks.
@@ -2573,6 +2589,102 @@ mod tests {
             ]),
             "a real script visits every one of its variants and loops, it does not freeze"
         );
+    }
+
+    /// A Zebes-acid-shaped stepped cycle: `PaletteID` 1 after 6 frames,
+    /// back to 0 after 6 more, looping (`Jump` to the start).
+    fn six_tick_flip_pack() -> (alloc::vec::Vec<u8>, u32) {
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_JUMP: u32 = 1;
+        const TRACK_PALETTE_ID: u32 = crate::matanim::TRACK_PALETTE_ID as u32;
+        let file_bytes = mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 6),
+            1.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 6),
+            0.0f32.to_bits(),
+            mat_cmd(OP_JUMP, 0, 0),
+            0,
+        ]);
+        let mut w = PackWriter::new();
+        let palettes = alloc::vec![
+            alloc::vec![0x1111_1111u32; 16],
+            alloc::vec![0x2222_2222u32; 16]
+        ];
+        let mat_anim = w.add_mat_anim(
+            157,
+            &file_bytes,
+            0,
+            0x8D8,
+            &palettes,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
+        (w.finish(), mat_anim)
+    }
+
+    /// `PaletteID` the joint holds after `updates` battle updates.
+    fn palette_after(m: &MaterialAnimator, mat_anim: u32) -> f32 {
+        let j = m.joint(mat_anim).unwrap();
+        j.track_value(crate::matanim::TRACK_PALETTE_ID).unwrap()
+    }
+
+    #[test]
+    fn start_stage_plays_the_creation_call_so_update_n_is_n64_update_n() {
+        // N64: `gcAddAnimAll` + the maker's `gcPlayAnimAll` (length 0),
+        // then update `n` reads length `n`: the value flips at updates 6,
+        // 12, 18, ... and `anim_frame == n`.
+        let (bytes, mat_anim) = six_tick_flip_pack();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let mut fixed = MaterialAnimator::new();
+        fixed.start_stage(&pack);
+        assert_eq!(palette_after(&fixed, mat_anim), 0.0);
+        let mut boot = MaterialAnimator::new();
+        boot.start(&pack);
+        let mut late = 0;
+        for n in 1..=36u32 {
+            fixed.tick(&pack);
+            boot.tick(&pack);
+            let n64 = ((n / 6) % 2) as f32;
+            assert_eq!(palette_after(&fixed, mat_anim), n64, "update {n}");
+            assert_eq!(fixed.joint(mat_anim).unwrap().anim_frame(), n as f32);
+            // Without the creation call every flip lands one update late.
+            if palette_after(&boot, mat_anim) != n64 {
+                late += 1;
+                assert_eq!(n % 6, 0, "update {n}");
+            }
+        }
+        assert_eq!(
+            late, 6,
+            "the unfixed clock trails by one update at every flip"
+        );
+    }
+
+    #[test]
+    fn start_stage_restarts_the_clock_whatever_ran_before() {
+        // A second battle's ground is made fresh: its phase must not carry
+        // the previous battle's (or the menus') ticks.
+        let (bytes, mat_anim) = six_tick_flip_pack();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let mut fresh = MaterialAnimator::new();
+        fresh.start_stage(&pack);
+        let mut reused = MaterialAnimator::new();
+        reused.start_stage(&pack);
+        for _ in 0..7 {
+            reused.tick(&pack);
+        }
+        reused.start_stage(&pack);
+        for n in 1..=24u32 {
+            fresh.tick(&pack);
+            reused.tick(&pack);
+            assert_eq!(
+                palette_after(&reused, mat_anim),
+                palette_after(&fresh, mat_anim),
+                "update {n}"
+            );
+            assert_eq!(reused.joint(mat_anim).unwrap().anim_frame(), n as f32);
+        }
     }
 
     #[test]

@@ -3413,6 +3413,7 @@ struct TrainingWorld<'w> {
     stage_map: &'w mut Option<alloc::boxed::Box<ssb_psp_runtime::scene::StageMap>>,
     stage_ctl: &'w mut ssb_game::stage::Stage,
     damage_hud: &'w mut Hud,
+    material_anim: &'w mut ssb_rom::skeleton::MaterialAnimator,
 }
 
 /// One fighter a battle makes (`FTDesc`): its fighter and costume, its CPU
@@ -3665,6 +3666,10 @@ fn enter_training(
         p, index, &stage,
     )));
     world.stage_objects.load(p, stage.source_file);
+    // The ground's MObj material clocks: `gcAddAnimAll` and the maker's own
+    // `gcPlayAnimAll` (`grdisplay.c:208-210`, `grzebes.c:95-102`). Each
+    // battle, Training reset and sudden death makes its ground afresh.
+    world.material_anim.start_stage(p);
     // `grMainSetupMakeGround`: any VS stage gets its controller; others run
     // an empty slot.
     // `gSCManagerBattleState`'s item switches: Training clears them
@@ -4435,6 +4440,7 @@ unsafe fn session_frame(
                         stage_map: &mut s.stage_map,
                         stage_ctl: &mut s.stage_ctl,
                         damage_hud: &mut s.damage_hud,
+                        material_anim: &mut s.material_anim,
                     },
                 )
             });
@@ -4706,6 +4712,7 @@ impl Session {
                 stage_map: &mut self.stage_map,
                 stage_ctl: &mut self.stage_ctl,
                 damage_hud: &mut self.damage_hud,
+                material_anim: &mut self.material_anim,
             },
         );
         self.make_wallpaper(pack, gkind, rules.is_none());
@@ -4967,9 +4974,9 @@ unsafe fn run() -> ! {
     };
     // On the heap, built in `new_session`'s frame rather than `run`'s.
     let mut s = new_session(backup, save);
-    // Stage MObj material joints are process-lifetime clocks in the original
-    // layer setup. Start once with this pack and advance in the same simulation
-    // branch as the stage/fighter tick; draw only reads the resulting state.
+    // Stage MObj material joints: sized for this pack here; each battle's
+    // ground restarts them (`enter_training`), and they advance in the same
+    // simulation branch as the stage/fighter tick; draw only reads them.
     if let Some(p) = pack.as_ref() {
         s.material_anim.start(p);
     }
