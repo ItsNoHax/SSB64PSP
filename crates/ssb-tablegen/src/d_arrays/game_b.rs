@@ -1,7 +1,9 @@
 //! `ssb-game`'s small `d*` arrays, part B (see [`super`]).
 
 use super::{DArray, Elem};
-use crate::source::{MAIN, OVL1, OVL10, OVL2, OVL21, OVL3, OVL32, OVL59, OVL6, OVL62, OVL65, OVL7};
+use crate::source::{
+    MAIN, OVL1, OVL10, OVL2, OVL21, OVL3, OVL30, OVL32, OVL59, OVL6, OVL62, OVL65, OVL7,
+};
 
 pub const LIST: &[DArray] = &[
     // `mn/mndata/mnsoundtest.c`.
@@ -562,5 +564,16 @@ pub const LIST: &[DArray] = &[
         0x8003_B8D0,
         Elem::F32,
         &[3],
+    ),
+    // `mn/mnmaps/mnmaps.c`: the stage select's `Lights1` (`gdSPDefLights1`):
+    // ambient `col`/`colc` and pads (0..8), the light's `col`/`colc` and
+    // pads (8..16), its `dir` and pad (16..20), and the struct's tail.
+    DArray::new(
+        "MN_MAPS_LIGHTS1",
+        "dMNMapsLights1",
+        OVL30,
+        0x8013_4590,
+        Elem::U8,
+        &[24],
     ),
 ];

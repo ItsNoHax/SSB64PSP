@@ -261,13 +261,13 @@ pub struct DrawState {
     /// The scene's stage light direction for this frame, set by
     /// [`Self::set_stage_light`]. Only primitives whose `LIGHT_1`/`LIGHT_2`
     /// register is animated (`LIGHT1_ANIM`/`LIGHT2_ANIM`, RE-322) light with
-    /// it, plus, under [`Self::static_lights`], those that write both
-    /// colours; every other primitive keeps its baked shade.
+    /// it, plus those [`Self::scene_lights`] reaches; every other primitive
+    /// keeps its baked shade.
     stage_light: Option<[i8; 3]>,
-    /// Set by [`Self::set_scene_light`]: a lit primitive whose own list
-    /// writes both light colours is lit by [`Self::stage_light`] too
-    /// (`ssb_rom::anim_color::light_scope`, RE-529).
-    static_lights: bool,
+    /// Which other lit primitives [`Self::stage_light`] reaches
+    /// (`ssb_rom::anim_color::light_scope`): set by [`Self::set_scene_light`]
+    /// (RE-529) and [`Self::set_known_lights`] (RE-570).
+    scene_lights: ssb_rom::anim_color::SceneLights,
     /// `Some` while an item colour animation's draw has installed its
     /// constant fog ([`crate::gu::Gpu::set_constant_fog`]): only
     /// [`flags::ENV_LERP`] primitives, whose second combiner cycle blends
@@ -434,7 +434,7 @@ impl DrawState {
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
         self.stage_light = None;
-        self.static_lights = false;
+        self.scene_lights = ssb_rom::anim_color::SceneLights::AnimatedOnly;
         self.node_light = None;
         self.env_lerp_fog = None;
         self.draws = 0;
@@ -507,7 +507,19 @@ impl DrawState {
     /// 0x80 before each part), instead of the pack's fixed-direction bake.
     pub fn set_scene_light(&mut self, angles_degrees: [f32; 2]) {
         self.set_stage_light(angles_degrees);
-        self.static_lights = true;
+        self.scene_lights = ssb_rom::anim_color::SceneLights::ListColours;
+    }
+
+    /// Records a scene light whose registers the scene loaded itself before
+    /// anything drew (RE-570): the stage select's `mnMapsFuncLights` runs
+    /// `gsSPSetLights1(dMNMapsLights1)`. Every lit primitive is then lit, a
+    /// primitive that writes no colour reading the last value written, and
+    /// every list's colour write updates the registers, lit or not, as on
+    /// the RSP.
+    pub fn set_known_lights(&mut self, dir: [i8; 3], light1: [u8; 3], light2: [u8; 3]) {
+        self.stage_light = Some(dir);
+        self.light_registers = [light1, light2];
+        self.scene_lights = ssb_rom::anim_color::SceneLights::Known;
     }
 
     /// The world light a lit primitive of the current scope reads: the
@@ -1493,7 +1505,7 @@ unsafe fn apply_material(
         p.flags,
         st.runtime_fighter_light && (!st.authored_lights_only || p.flags & authored == authored),
         st.stage_light.is_some(),
-        st.static_lights,
+        st.scene_lights,
     );
     if let Some(on) = st.env_lerp_fog {
         let want = p.flags & flags::ENV_LERP != 0;
@@ -1528,7 +1540,9 @@ unsafe fn apply_material(
     // retaining the same flags. Presence is carried explicitly because
     // RGB=0 is an authored light state, not an absent write (RE-166). The
     // registers feed the CPU shade of [`draw_mesh_vertices`] (RE-514).
-    if light_scope != ssb_rom::anim_color::LightScope::Off {
+    if light_scope != ssb_rom::anim_color::LightScope::Off
+        || st.scene_lights == ssb_rom::anim_color::SceneLights::Known
+    {
         let colors = ssb_rom::anim_color::light_registers(effect_colors, p);
         for (register, color) in st.light_registers.iter_mut().zip([colors.0, colors.1]) {
             if let Some(color) = color {

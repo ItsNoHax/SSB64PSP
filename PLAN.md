@@ -57,6 +57,8 @@
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
+| Stage clip cost | Battle-stage guard-band clip costs +1.21 ms vs4, +1.75 ms Zebes: run the noclip-timer A/B to split clip from layout; reduce per-vertex test | RE-519 |
+| vs4 link order | `vs4@2400` busy 18.3 ms vs RE-539 16.92: re-search the link order | RE-539 |
 | 1P intro | Kirby vs Yoshi team ~21 FPS on PSP-2000 → profile | RE-537, RE-539 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
 | Acid tile-0 duplicates | Zebes acid `textures[1..3]` duplicate the TEXEL1 images (~520 KiB): drop the duplicate slots | RE-364 |
@@ -126,7 +128,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | PK Fire, Bomb | PK Fire flame needs a route onto the dummy platform (PSP and N64); Bomb fuse sparkle phase (N64 big at el287, none at 322; PSP small at 295, big at 330) and brown tone slightly greyer → per-frame-aligned captures | RE-352, RE-382, RE-383, RE-444 |
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); Bumper lit palette, Star flicker, bomb flashes; lit primitives without authored light colours | RE-431–RE-444, RE-566 |
-| Stages | Sector Z Arwing laser/reflect N64 capture; N64 Zebes acid frame unverified (warp ROM harness no longer boots `zebes.z64`) | RE-428, RE-321, RE-364 |
+| Stages | Sector Z Arwing laser/reflect N64 capture; Zebes stage matanim phase runs 6-8 ticks behind the N64 in its 18-tick cycle (check `MaterialAnimator` clock start vs `grZebesMakeGround`) | RE-428, RE-321, RE-364, RE-519 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | Results wipe | N64 view | RE-464 |
 | CPU | Countdown seed on Dream Land (Whispy +2 draws, N64 untraced); real menu boot (part B) infeasible | RE-568 |
@@ -137,7 +139,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Title fire, colour grade | Slightly green after fade vs Rice (tic 152: PSP (189,177,117), N64 (193,171,105), equal luma). Open until accurate N64 reference (GLideN64 segfaults in `PluginStartup(gfx)`, 18/18 runs) | RE-529 |
-| Battle-stage lights | Lit stage prims without list colours (Final Destination 7, Yoshi's Island 1, small Yoshi's Island 1) need an N64 trace; stage-select preview should use `dMNMapsLights1`; Meta Crystal unlit girder bar darker (PSP (98,73,55), N64 (155,132,106)) | RE-065, RE-529 |
 | Opening movie | Room falling-figure pose, spotlight cone, close-up overlay shade; N64 refs from accurate video plugin | RE-467, RE-468 |
 | 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
 | Master Hand | N64 checks of the damage 90/180 and defeat wallpapers; a hit-landing defeat fixture | RE-457 |

@@ -8566,34 +8566,37 @@ unsafe fn draw_training(
     // Its default is 38 degrees; entry/pause zooms ease to their source FOV.
     // `dGMCameraPerspDefault` supplies near 256 and far 39,936 (RE-421/440).
     let (viewport_w, viewport_h) = pl.camera.viewport_size();
-    if let Some(m) = pl.camera.movie {
+    // The stage's clip transform (RE-519): the RSP clips what the GE would
+    // drop, as the movies do (`movie.rs`).
+    let stage_clip = if let Some(m) = pl.camera.movie {
         // An opening scene's movie camera (RE-467): its own viewport,
         // aspect and planes, its view rolled by `up.x`.
         gpu.set_viewport_n64(m.viewport);
-        gpu.set_perspective(pl.camera.fovy_degrees, m.aspect, m.near, m.far);
+        let proj = ssb_engine::math::Mat4::sy_persp_fast(pl.camera.fovy_degrees, m.aspect, m.near, m.far);
+        gpu.set_projection(&proj);
         gpu.reset_modelview();
         draw_state.begin_frame();
-        gpu.set_view(&ssb_psp_runtime::movie::view_matrix(
+        let view = ssb_psp_runtime::movie::view_matrix(
             pl.camera.eye,
             pl.camera.at,
             m.up_x,
             ssb_game::opening::movie::View::Roll,
-        ));
+        );
+        gpu.set_view(&view);
+        (proj * view).cols
     } else {
-        gpu.set_perspective(
+        let proj = ssb_engine::math::Mat4::sy_persp_fast(
             pl.camera.fovy_degrees,
             viewport_w / viewport_h,
             ssb_game::camera::DEFAULT_NEAR,
             ssb_game::camera::DEFAULT_FAR,
         );
+        gpu.set_projection(&proj);
         gpu.reset_modelview();
         draw_state.begin_frame();
 
-        gpu.set_view(&ssb_engine::math::Mat4::look_at(
-            pl.camera.eye,
-            pl.camera.at,
-            ssb_engine::math::Vec3::Y,
-        ));
+        let view = ssb_engine::math::Mat4::look_at(pl.camera.eye, pl.camera.at, ssb_engine::math::Vec3::Y);
+        gpu.set_view(&view);
         // `gmCameraMakeBattleCamera`'s kind 0x4C is `gmCameraLookAtFuncMatrix`
         // (`syMatrixLookAtReflectF`, `cobj->vec.up` (0, 1, 0)): the view
         // multiplies the projection and `gmCameraPrepLookAtFuncMatrix` loads
@@ -8605,7 +8608,8 @@ unsafe fn draw_training(
             [0.0, 1.0, 0.0],
         );
         draw_state.texgen_basis = Some((basis[0], basis[1]));
-    }
+        (proj * view).cols
+    };
     gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
     let base = gpu.model_matrix();
 
@@ -8628,6 +8632,11 @@ unsafe fn draw_training(
     let mut pose_cache = meshdraw::StagePoseCache::default();
     let mut stage_pass = |links: core::ops::RangeInclusive<u8>, heads, draw_state: &mut meshdraw::DrawState| {
         draw_state.heads = heads;
+        // The RSP clips the stage against the near plane and the guard band
+        // where the GE would drop whole triangles: Zebes' risen acid runs
+        // under the camera (RE-519). Fighters and effects keep the packed
+        // submissions.
+        draw_state.clip_view_proj = Some(stage_clip);
         // All twelve courses put empty yakumono parents 1..10 before
         // their other layer-1 nodes. Draw their inserted children there.
         if links.contains(&6) {
@@ -8646,6 +8655,7 @@ unsafe fn draw_training(
             links.clone(),
             Some(&mut pose_cache),
         );
+        draw_state.clip_view_proj = None;
         draw_state.heads = meshdraw::Heads::Both;
     };
     use meshdraw::Heads::{Head0, Head1};

@@ -16,13 +16,13 @@
 
 ## Current work
 
+- Landed (batch 49): guard-band CPU clip for battle stages (Zebes acid, Yoshi cloud hill; hardware-proven, +1.21 ms vs4, +1.75 ms Zebes); stage-select preview uses `dMNMapsLights1`; 105 goldens rebaselined (RE-519, RE-570, RE-364).
 - Landed (batch 48): battle and asset viewer use `set_scene_light`: lit stage/effect prims whose lists write both light colours shade under the stage direction with those colours (N64 RDRAM trace Meta Crystal, N64 framebuffer Board the Platforms beam 226 vs PSP 180 -> 221); Hyrule darker floor was a misaligned region script, not a gap; 31 goldens rebaselined (RE-065, RE-529, RE-570).
 - Landed (batch 47): Zebes acid two-tile blend lowered with premultiplied shade alpha (worst error 3 steps, held +698,624 B, pack v134); Spin Attack band drawn with `wpDisplayDrawNormal` state (no Z, XLU); `f1-training-link-spin` 172 px, `f1-training-zebes` 22 px rebaselined (RE-321, RE-364, RE-540).
 - Landed (batch 46): costume-set initial MObj texture id (Luigi eye sprite 1, N64 RDRAM-traced; tablegen `TEXTURE_PART_MADE`); `romtool costumes` exit 0; no golden moved (RE-569).
 - Landed (batch 45): select CPU colanim fog, locked-portrait NOISE shadow (CPU angrylion model, `noise` span ~1.0 ms PPSSPP), `romtool costumes` (2068 readings, 0 differences; Luigi eye gap open), Pikachu SpecialN colanim confirmed N64-faithful; 5 select goldens rebaselined (RE-541, RE-569).
 - Landed (batch 44): motion-event pass audit (All, Forward, ForwardEffect vs `ftmain.c`, two readings agree): Forward now skips SET_AFTER_IMAGE (status entered part-way keeps after-image off); skip sets pinned by tests; no golden moved.
-- Landed (batch 43): Rumble Pak port (`crates/ssb-game/src/rumble.rs`: decomp scripts, priorities, fighter/item/match call sites, results winner pulse; PSP `MOTOR` sink is a no-op); no golden moved; stack +1096 B.
-- Open: stage light N64 trace for lit stage prims without list colours; movie camera kinds 3+8 basis; NOFOG under demo fade; 1P intro Metal Mario darkness. Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
+- Open: Zebes matanim phase 6-8 ticks behind N64; movie camera kinds 3+8 basis; NOFOG under demo fade; 1P intro Metal Mario darkness. Mew N64 read (costly, RE-568). Countdown RNG seed vs a real N64 VS boot. Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). PK Fire flame route (RE-352); Bomb fuse sparkle (RE-444). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -35,7 +35,7 @@
 
 ## Verification
 
-Baseline: batch 48; deepest game stack 394128 B (f1-bonus-pause) of 524288.
+Baseline: batch 49; deepest game stack 394128 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

@@ -57,27 +57,48 @@ pub enum LightScope {
     StageAnimated,
 }
 
+/// Which lit primitives the scene's light reaches beyond those whose light
+/// colours animate (RE-322), by what the caller knows of the RSP's
+/// `G_MW_LIGHTCOL` registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SceneLights {
+    /// Only animated light colours: every other lit primitive keeps the
+    /// pack's fixed-direction bake (`pack::shade_normal`).
+    #[default]
+    AnimatedOnly,
+    /// Also a primitive whose own list writes both registers with literal
+    /// values (the movies and the battle, RE-529, RE-570); one that inherits
+    /// a register keeps the bake, since earlier lists left it unknown.
+    ListColours,
+    /// Every lit primitive: the scene loaded both registers itself before
+    /// anything drew (the stage select's `dMNMapsLights1`, RE-570), so an
+    /// inherited value is known.
+    Known,
+}
+
 /// Decides [`LightScope`]. `stage_light` is whether the caller installed the
-/// scene's stage light direction for this frame. `static_lights` extends it
-/// to a lit primitive whose own list writes both `G_MW_LIGHTCOL` registers
-/// with literal values: the RSP lights it with the scene's light like any
-/// other, and the pack's fixed-direction bake (`pack::shade_normal`) knows
-/// neither that light nor those colours. The movies and the battle set it
-/// (RE-529); a lit primitive that writes neither register keeps the bake.
+/// scene's stage light direction for this frame; `scene` which lit
+/// primitives it reaches. The RSP lights every lit primitive with the
+/// scene's light; the pack's bake knows neither that light nor the list's
+/// colours, so the bake stays only where the registers are unknown.
 pub fn light_scope(
     prim_flags: u32,
     fighter_light: bool,
     stage_light: bool,
-    static_lights: bool,
+    scene: SceneLights,
 ) -> LightScope {
     let authored = flags::LIGHT1_COLOR | flags::LIGHT2_COLOR;
+    let reached = match scene {
+        SceneLights::AnimatedOnly => false,
+        SceneLights::ListColours => prim_flags & authored == authored,
+        SceneLights::Known => true,
+    };
     if prim_flags & flags::LIT == 0 {
         LightScope::Off
     } else if fighter_light {
         LightScope::Fighter
     } else if stage_light
-        && (prim_flags & (flags::LIGHT1_ANIM | flags::LIGHT2_ANIM) != 0
-            || static_lights && prim_flags & authored == authored)
+        && (prim_flags & (flags::LIGHT1_ANIM | flags::LIGHT2_ANIM) != 0 || reached)
     {
         LightScope::StageAnimated
     } else {
@@ -328,57 +349,99 @@ mod tests {
     fn light_scope_is_stage_animated_only_for_lit_animated_primitives() {
         let lit = flags::LIT | flags::LIGHT1_ANIM;
         assert_eq!(
-            light_scope(lit, false, true, false),
+            light_scope(lit, false, true, SceneLights::AnimatedOnly),
             LightScope::StageAnimated
         );
         assert_eq!(
-            light_scope(flags::LIT | flags::LIGHT2_ANIM, false, true, false),
+            light_scope(
+                flags::LIT | flags::LIGHT2_ANIM,
+                false,
+                true,
+                SceneLights::AnimatedOnly
+            ),
             LightScope::StageAnimated
         );
         assert_eq!(
-            light_scope(lit, false, false, false),
+            light_scope(lit, false, false, SceneLights::AnimatedOnly),
             LightScope::Off,
             "no stage light installed"
         );
         assert_eq!(
-            light_scope(flags::LIGHT1_ANIM, false, true, false),
+            light_scope(flags::LIGHT1_ANIM, false, true, SceneLights::AnimatedOnly),
             LightScope::Off,
             "unlit"
         );
         assert_eq!(
-            light_scope(flags::LIT, false, true, false),
+            light_scope(flags::LIT, false, true, SceneLights::AnimatedOnly),
             LightScope::Off,
             "static stage shade"
         );
-        assert_eq!(light_scope(lit, true, true, false), LightScope::Fighter);
+        assert_eq!(
+            light_scope(lit, true, true, SceneLights::AnimatedOnly),
+            LightScope::Fighter
+        );
     }
 
     #[test]
     fn static_lights_light_only_primitives_that_write_both_colours() {
         let statics = flags::LIT | flags::LIGHT1_COLOR | flags::LIGHT2_COLOR;
         assert_eq!(
-            light_scope(statics, false, true, true),
+            light_scope(statics, false, true, SceneLights::ListColours),
             LightScope::StageAnimated
         );
         assert_eq!(
-            light_scope(statics, false, true, false),
+            light_scope(statics, false, true, SceneLights::AnimatedOnly),
             LightScope::Off,
             "the battle stages keep the bake"
         );
         assert_eq!(
-            light_scope(flags::LIT | flags::LIGHT1_COLOR, false, true, true),
+            light_scope(
+                flags::LIT | flags::LIGHT1_COLOR,
+                false,
+                true,
+                SceneLights::ListColours
+            ),
             LightScope::Off,
             "an inherited ambient is unknown"
         );
         assert_eq!(
-            light_scope(statics, false, false, true),
+            light_scope(statics, false, false, SceneLights::ListColours),
             LightScope::Off,
             "no scene light installed"
         );
         assert_eq!(
-            light_scope(flags::LIGHT1_COLOR | flags::LIGHT2_COLOR, false, true, true),
+            light_scope(
+                flags::LIGHT1_COLOR | flags::LIGHT2_COLOR,
+                false,
+                true,
+                SceneLights::ListColours
+            ),
             LightScope::Off,
             "unlit"
+        );
+    }
+
+    #[test]
+    fn known_registers_light_every_lit_primitive() {
+        assert_eq!(
+            light_scope(flags::LIT, false, true, SceneLights::Known),
+            LightScope::StageAnimated,
+            "an inherited colour is the scene's own"
+        );
+        assert_eq!(
+            light_scope(
+                flags::LIGHT1_COLOR | flags::LIGHT2_COLOR,
+                false,
+                true,
+                SceneLights::Known
+            ),
+            LightScope::Off,
+            "unlit"
+        );
+        assert_eq!(
+            light_scope(flags::LIT, false, false, SceneLights::Known),
+            LightScope::Off,
+            "no scene light installed"
         );
     }
 

@@ -185,7 +185,11 @@ unsafe fn draw_model(
     gpu.set_view(&ssb_engine::math::Mat4::look_at(cam.eye, cam.at, cam.up));
     gpu.model_transform([0.0; 3], [0.0; 3], meshdraw::MODEL_SCALE * model.scale);
     let base = gpu.model_matrix();
-    draw_state.set_stage_light(stage.light_angle_xy);
+    // `mnMapsFuncLights`: the menu's own `dMNMapsLights1`, not the stage's
+    // `light_angle`. The camera's `LookAt` sits in the projection, so the
+    // direction is world space (RE-570).
+    let light = ssb_game::stage_select_layer::preview_light();
+    draw_state.set_known_lights(light.dir, light.color, light.ambient);
     meshdraw::draw_stage_preview(
         p,
         &stage,
