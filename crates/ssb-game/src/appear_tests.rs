@@ -182,6 +182,19 @@ fn the_entry_focus_draw_matches_the_n64_seed() {
     assert_eq!(crate::rng::seed() as u32, 0xC823_F683);
 }
 
+/// Dream Land's `grPupupuInitAll` draws Whispy's wind and blink waits
+/// before the fighters exist. The N64 (Mupen, the same four-fighter warp
+/// boot on Dream Land, batch 59) shows 0x18BE873A on the first fighter frame,
+/// 0xE7847115 after the draw, and entries at 91, 151, 211 and 271 (id 2).
+#[test]
+fn the_entry_focus_draw_on_dream_land_follows_whispys_two_draws() {
+    crate::rng::set_seed(0x0029_E2C0);
+    let _ = crate::stage::pupupu::Pupupu::new();
+    assert_eq!(crate::rng::seed() as u32, 0x18BE_873A);
+    assert_eq!(crate::rng::rand_int_range(3), 2);
+    assert_eq!(crate::rng::seed() as u32, 0xE784_7115);
+}
+
 /// The clock skips the frame the effect is made on: `efManagerFuncRun`
 /// adds its process in the next frame's link pass. The N64 (ParaLLEl, Fox
 /// vs Captain Falcon on Dream Land) shows the Arwing at anim frame 0 on the

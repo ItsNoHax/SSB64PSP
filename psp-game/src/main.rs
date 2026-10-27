@@ -2808,6 +2808,11 @@ unsafe fn training_frame(
                     }
                     ssb_game::particle::run(&mut damage_hud.particles, b, &mut damage_hud.effects);
                 }
+                // The KO blasts' special effect link (8) runs with them:
+                // `ifCommonBattleInterfaceProcUpdate` resumes it, Master
+                // Hand's defeat does not, its `ProcSet` resumes every
+                // object (RE-458).
+                damage_hud.ko.tick_explosions();
             }
             // `sc1PGameBossDefeatInterfaceProcUpdate` resumes the effect
             // link (6, before the camera's and the interface's): the
@@ -8084,8 +8089,11 @@ impl EffectVisuals {
                 catch_up(&mut v.explode_ticks, blast.map(|e| e.ticks)),
                 assets.dead_explode.as_ref(),
             ) {
+                // `efManagerMakeEffect`'s own `gcPlayAnimAll` poses the blast
+                // on the frame it is made (frame 0, time not advanced): the
+                // clock counts the later plays (RE-458).
                 if restart {
-                    v.explode.start(p, anim);
+                    v.explode.start_changed(p, anim);
                     v.explode_materials.start(p, object_mat_anims(p, object));
                     // `dEFManagerDeadExplodeEffectDesc.o_matanim_joint =
                     // dEFManagerDeadExplodeMatAnimJoints[player]`.
@@ -8096,7 +8104,7 @@ impl EffectVisuals {
                     }
                 }
                 if let Some(script) = p.anim_script(anim) {
-                    for _ in 0..ticks {
+                    for _ in 0..ticks + u16::from(restart) {
                         let _ = v.explode.tick(script);
                         v.explode_materials.tick(p);
                     }

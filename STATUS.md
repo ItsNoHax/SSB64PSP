@@ -16,8 +16,8 @@
 
 ## Current work
 
-- Landed (batch 58): 1P stage screen-flash alpha; end-freeze damage HUD for every port (RE-458); room scene 1 kind-14 texgen basis; Challenger scene light; Bumper, Bob-omb and Star flashes verified equal to N64; 5 new goldens; 2 results rows rebaselined (RE-409).
-- Open: KO-frame DeadDown beam (RE-458); NOFOG under demo fade; Mew N64 read (RE-568); countdown RNG seed vs a real N64 VS boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
+- Landed (batch 59): KO-frame DeadDown blast (frame-0 make frame, runs through End/Set; RE-458); 1P ending length and Staffroll handoff verified on N64 (RE-459); Camera Shutter edge offset documented as deviation (RE-464); Dream Land countdown seed equals N64 (RE-568); 2 rows rebaselined.
+- Open: 1P tag at KO frames (RE-458); ending desk corner (RE-459); NOFOG under demo fade; Mew N64 read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Verification
 
-Baseline: batch 58; deepest game stack 395384 B (f1-bonus-pause) of 524288.
+Baseline: batch 59; deepest game stack 395384 B (f1-bonus-pause) of 524288.
 
 | Check | Result |
 |---|---|

@@ -57,6 +57,11 @@ pub struct Explosion {
     pub player: u8,
     /// `gcPlayAnimAll` calls so far.
     pub ticks: u16,
+    /// `efManagerFuncRun` has run. The maker leaves the effect's process
+    /// to its `func_run`, which the next frame's `gcRunAll` calls before
+    /// the processes: the frame that makes the explosion draws only the
+    /// frame-0 pose of the maker's own `gcPlayAnimAll` (RE-458).
+    pub running: bool,
 }
 
 /// The match's KO effects.
@@ -96,6 +101,7 @@ impl KoEffects {
                 kind,
                 player,
                 ticks: 0,
+                running: false,
             });
         }
         let dead = core::mem::take(&mut f.dead.flash);
@@ -131,21 +137,34 @@ impl KoEffects {
     /// One frame of the effect and interface processes: each explosion's
     /// `efManagerHaveStructProcUpdate`, then `ifScreenFlashProcUpdate`.
     pub fn tick(&mut self) {
+        self.tick_explosions();
+        self.tick_flash();
+    }
+
+    /// Each explosion's frame on the special effect link
+    /// (`EFFECT_FLAG_SPECIALLINK`, link 8): `efManagerFuncRun` adds the
+    /// process the frame after the make, which plays it that frame
+    /// (`efManagerHaveStructProcUpdate`). The blast is the only effect on
+    /// that link, which `ifCommonBattleInterfaceProcUpdate` resumes: it
+    /// runs on through a battle's End, BossDefeat and Set (RE-458).
+    pub fn tick_explosions(&mut self) {
         for slot in &mut self.explosions {
             if let Some(e) = slot {
+                if !e.running {
+                    e.running = true;
+                    continue;
+                }
                 e.ticks += 1;
                 if e.ticks >= EXPLODE_TICKS {
                     *slot = None;
                 }
             }
         }
-        self.tick_flash();
     }
 
-    /// `ifScreenFlashProcUpdate` alone: at a battle's end the interface
-    /// link runs on (`ifCommonBattleInterfaceProcUpdate`,
-    /// `sc1PGameBossDefeatInterfaceProcUpdate`) while the explosions'
-    /// effect link stays paused (RE-458).
+    /// `ifScreenFlashProcUpdate` alone: the interface link runs on through
+    /// a battle's end (`ifCommonBattleInterfaceProcUpdate`,
+    /// `sc1PGameBossDefeatInterfaceProcUpdate`), RE-458.
     pub fn tick_flash(&mut self) {
         if self.flash.update() {
             self.flash.reset();

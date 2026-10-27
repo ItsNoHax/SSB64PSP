@@ -125,17 +125,16 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568); lit primitives without authored light colours | RE-431–RE-444, RE-566 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
-| Results wipe | Camera Shutter residuals: PSP aperture ~1% larger, blade seams tics 3-7 | RE-464 |
-| CPU | Countdown seed on Dream Land (Whispy +2 draws, N64 untraced); real menu boot (part B) infeasible | RE-568 |
+| CPU | Real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| 1P ending | N64 Ending warp does not advance: Ending to Staffroll handoff and ending length unobserved; heart tag N64 visual; challenger blender leak not emulated | RE-459 |
+| 1P ending | Tic-91 close-up desk corner missing on PSP (not near clip, not background); wall/curtain greyer than N64 at tic 336; challenger blender leak not emulated | RE-459 |
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
-| Special fighters | Open: the battle-ending KO frame's DeadDown explosion beam (N64 one frame on the KO frame, absent on PSP) | RE-458 |
+| Special fighters | N64 draws Kirby's 1P tag at KO frames t1002-1003, t2357-2362, PSP does not (camera eye.z vs harness fixture, unconfirmed) | RE-458 |
 | Item Switch | No N64 reference (locked on new save) | RE-462 |
 
 ### Architecture

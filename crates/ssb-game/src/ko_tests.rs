@@ -40,37 +40,46 @@ fn a_side_ko_sets_off_one_explosion_and_the_flash() {
     // Taken once.
     assert_eq!(f.dead.explode, None);
     assert!(!f.dead.flash);
+    // The make's frame: `efManagerFuncRun` has not added the process yet,
+    // so the blast draws unplayed (RE-458).
     ko.tick();
-    assert_eq!(ko.explosions[2].unwrap().ticks, 1);
+    assert_eq!(ko.explosions[2].unwrap().ticks, 0);
     assert_eq!(ko.flash_color(), Some([0xFF, 0xFF, 0xFF, 18]));
-    for _ in 1..EXPLODE_TICKS - 1 {
+    for _ in 0..EXPLODE_TICKS - 1 {
         ko.tick();
     }
     assert_eq!(ko.explosions[2].unwrap().ticks, EXPLODE_TICKS - 1);
+    // On screen 36 frames: the make's and 35 played.
     ko.tick();
     assert_eq!(ko.explosions[2], None);
-    // The flash outlasts it by one frame, then clears.
-    assert_eq!(ko.flash_color().map(|c| c[3]), Some(18));
-    ko.tick();
+    // The flash ran out the frame before.
     assert_eq!(ko.flash_color(), None);
 }
 
-/// A battle's end pauses the effect link but runs the interface link: the
-/// flash clears while the explosion stays where it stopped (RE-458).
+/// A battle's end pauses the world but resumes the interface link and
+/// the special effect link (8), where the blast is
+/// (`ifCommonBattleInterfaceProcUpdate`): both run out (RE-458). N64 30-Polygon
+/// clear: the last KO's blast draws unplayed on the KO frame, then plays
+/// under GAME SET.
 #[test]
-#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
-fn at_the_battle_end_the_flash_runs_out_and_the_explosion_holds() {
+fn at_the_battle_end_the_flash_and_the_explosion_run_out() {
     let mut ko = KoEffects::default();
     let mut f = fighter(2);
     f.pos = Vec3::new(4001.0, 2500.0, 0.0);
     assert!(dead::check(&mut f));
     ko.observe(&mut f);
     ko.tick();
-    for _ in 0..EXPLODE_TICKS {
+    assert_eq!(ko.explosions[2].unwrap().ticks, 0);
+    // The frozen frames: the end's two links.
+    ko.tick_explosions();
+    ko.tick_flash();
+    assert_eq!(ko.explosions[2].unwrap().ticks, 1);
+    for _ in 1..EXPLODE_TICKS {
+        ko.tick_explosions();
         ko.tick_flash();
     }
     assert_eq!(ko.flash_color(), None);
-    assert_eq!(ko.explosions[2].unwrap().ticks, 1);
+    assert_eq!(ko.explosions[2], None);
 }
 
 #[test]
