@@ -72,15 +72,25 @@ fn round_up(n: usize, a: usize) -> usize {
     (n + a - 1) & !(a - 1)
 }
 
-/// `ENVMIX_STATE`, as the interpreter keeps it between calls.
+/// `ENVMIX_STATE`, as `n_aspMain` keeps it between calls (0x50 bytes):
+/// each side's volume as eight lanes, one per sample of an 8-sample
+/// vector, each a Q16.16 value (`v20`:`v21` left, `v18`:`v19` right),
+/// then the `A_SETVOL` registers the voice was started with.
+///
+/// The port keeps each lane unclamped (saturating) and one block ahead
+/// (the values of the next call's first block); the volume of a lane is
+/// its integer part clamped to the target ([`lane_vol`]). That gives the
+/// same volumes as the microcode, which clamps the integer part in place
+/// once per block (`vlt`/`vge` at IMEM 0x1BC8): a lane past the target
+/// stays past it, so its clamped volume stays the target.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EnvMixState {
+    pub lanes: [[i32; 8]; 2],
+    pub target: [i16; 2],
+    /// Q16.16 per 8 samples: `rate_m << 16 | rate_l`.
+    pub rate: [i32; 2],
     pub wet: i16,
     pub dry: i16,
-    /// Q16.16 ramps: left, right.
-    pub value: [i32; 2],
-    pub target: [i32; 2],
-    pub step: [i32; 2],
 }
 
 /// The `A_SETVOL` registers an `A_INIT` envmixer reads.
@@ -97,11 +107,18 @@ pub struct EnvMixInit {
 /// The emulated workspace.
 pub struct Dmem {
     pub w: [i16; WORDS],
+    /// [`Dmem::envmix`]'s per-sample volumes, left and right: scratch kept
+    /// here so a call does not zero a local array (a byte-wise `memset` on
+    /// the PSP).
+    vols: [[i16; COUNT / 2]; 2],
 }
 
 impl Default for Dmem {
     fn default() -> Self {
-        Self { w: [0; WORDS] }
+        Self {
+            w: [0; WORDS],
+            vols: [[0; COUNT / 2]; 2],
+        }
     }
 }
 
@@ -255,17 +272,21 @@ impl Dmem {
         if in_range {
             #[cfg(target_arch = "mips")]
             {
+                debug_assert!(taps_fit(table));
                 (inp, acc) = allegrex::resample(w, inp, o, COUNT / 2, acc, incr, table);
             }
         } else {
             for i in 0..COUNT / 2 {
                 let t = &table[((acc * 64) >> 16) as usize & 63];
-                let v = (w[inp & MASK] as i32 * t[0] as i32
-                    + w[(inp + 1) & MASK] as i32 * t[1] as i32
-                    + w[(inp + 2) & MASK] as i32 * t[2] as i32
-                    + w[(inp + 3) & MASK] as i32 * t[3] as i32)
-                    >> 15;
-                w[(o + i) & MASK] = clamp16(v);
+                w[(o + i) & MASK] = taps4(
+                    [
+                        w[inp & MASK],
+                        w[(inp + 1) & MASK],
+                        w[(inp + 2) & MASK],
+                        w[(inp + 3) & MASK],
+                    ],
+                    t,
+                );
                 acc += incr;
                 inp += (acc >> 16) as usize;
                 acc &= 0xFFFF;
@@ -282,119 +303,85 @@ impl Dmem {
         state[8..16].copy_from_slice(&self.w[inp..inp + 8]);
     }
 
-    /// `A_ENVMIXER` (N_MICRO): mixes the 184 samples at [`TEMP_0`] into the
-    /// dry and wet buses with per-sample Q16.16 volume ramps.
+    /// `A_ENVMIXER` (N_MICRO, IMEM 0x1A64): mixes the 184 samples at
+    /// [`TEMP_0`] into the dry and wet buses, both sides, with volumes that
+    /// ramp per lane ([`EnvMixState`]). Each sample's gain is `vmulf(vol,
+    /// amount)` and each bus gets [`mixq`] of it: all four buses, a zero
+    /// gain included.
     pub fn envmix(&mut self, init: Option<&EnvMixInit>, state: &mut EnvMixState) {
-        let mut st = match init {
-            Some(i) => {
-                let rate = |k: usize| ((i.rate_m[k] as i32) << 16) | i.rate_l[k] as i32;
-                EnvMixState {
-                    wet: i.wet,
-                    dry: i.dry,
-                    value: [(i.vol[0] as i32) << 16, (i.vol[1] as i32) << 16],
-                    target: [(i.tgt[0] as i32) << 16, (i.tgt[1] as i32) << 16],
-                    step: [rate(0) / 8, rate(1) / 8],
-                }
-            }
-            None => *state,
-        };
+        if let Some(i) = init {
+            *state = EnvMixState::init(i);
+        }
+        let st = state;
         let (dry, wet) = (st.dry as i32, st.wet as i32);
-        // Each side's volume (`value >> 16`) per sample: plain sums of the
-        // step for the ramp's first samples, then constant (`Ramp`).
-        let l = ramp_run(&mut st, 0);
-        let r = ramp_run(&mut st, 1);
+        let vols = &mut self.vols;
+        let (sl, tl) = side_run(&mut st.lanes[0], st.target[0], st.rate[0], &mut vols[0]);
+        let (sr, tr) = side_run(&mut st.lanes[1], st.target[1], st.rate[1], &mut vols[1]);
+        let m = sl.max(sr);
+        for v in &mut vols[0][sl..m] {
+            *v = tl;
+        }
+        for v in &mut vols[1][sr..m] {
+            *v = tr;
+        }
+        let g = [
+            gain(tl as i32, dry),
+            gain(tr as i32, dry),
+            gain(tl as i32, wet),
+            gain(tr as i32, wet),
+        ];
         #[cfg(target_arch = "mips")]
-        self.envmix_allegrex(l, r, dry, wet);
+        // SAFETY: the input (TEMP_0) and the four buses are disjoint ranges
+        // of `w` (asserted below); every range is in bounds.
+        unsafe {
+            const _: () = assert!(
+                MAIN_R - MAIN_L == COUNT
+                    && AUX_L - MAIN_L == 2 * COUNT
+                    && AUX_R - MAIN_L == 3 * COUNT
+            );
+            let input = self.w.as_ptr();
+            let bus = self.w.as_mut_ptr().add(MAIN_L / 2);
+            let vols = &self.vols;
+            allegrex::env4_vols(input, bus, m, vols[0].as_ptr(), vols[1].as_ptr(), dry, wet);
+            allegrex::env4_const(input.add(m), bus.add(m), COUNT / 2 - m, g);
+        }
         #[cfg(not(target_arch = "mips"))]
-        self.envmix_buses(l, r, dry, wet);
-        *state = st;
+        self.envmix_buses(m, g, dry, wet);
     }
 
-    /// The envmixer's four bus passes: each bus is independent, and a zero
-    /// amount (gain 0 on every sample) adds nothing.
+    /// The envmixer's four buses: per-sample gains for the first `m`
+    /// samples, then the constant gains `g`.
     #[cfg(not(target_arch = "mips"))]
-    fn envmix_buses(&mut self, l: Ramp, r: Ramp, dry: i32, wet: i32) {
+    fn envmix_buses(&mut self, m: usize, g: [i32; 4], dry: i32, wet: i32) {
+        let vols = &self.vols;
         let (head, rest) = self.w.split_at_mut(MAIN_L / 2);
         let input = &head[..COUNT / 2];
         let (main, aux) = rest.split_at_mut((AUX_L - MAIN_L) / 2);
         let (ml, mr) = main.split_at_mut(COUNT / 2);
         let (al, ar) = aux.split_at_mut(COUNT / 2);
         let n = COUNT / 2;
-        for (bus, ramp, amt) in [
-            (&mut ml[..n], l, dry),
-            (&mut mr[..n], r, dry),
-            (&mut al[..n], l, wet),
-            (&mut ar[..n], r, wet),
+        for (bus, side, amt, gc) in [
+            (&mut ml[..n], 0, dry, g[0]),
+            (&mut mr[..n], 1, dry, g[1]),
+            (&mut al[..n], 0, wet, g[2]),
+            (&mut ar[..n], 1, wet, g[3]),
         ] {
-            if amt != 0 {
-                env_bus(bus, &input[..n], ramp, amt);
+            for k in 0..m {
+                bus[k] = mixq(
+                    bus[k] as i32,
+                    input[k] as i32,
+                    gain(vols[side][k] as i32, amt),
+                );
             }
+            mix_gain(&mut bus[m..], &input[m..], gc);
         }
     }
 
-    /// [`Dmem::envmix_buses`] as Allegrex kernels that run all four buses
-    /// per sample: while both volumes ramp, while one does (the other held
-    /// at its final volume, a step-0 ramp), then with constant gains.
-    #[cfg(target_arch = "mips")]
-    fn envmix_allegrex(&mut self, l: Ramp, r: Ramp, dry: i32, wet: i32) {
-        const _: () = assert!(
-            MAIN_R - MAIN_L == COUNT && AUX_L - MAIN_L == 2 * COUNT && AUX_R - MAIN_L == 3 * COUNT
-        );
-        let n = COUNT / 2;
-        let gain = |v: i32, amt: i32| clamp16((v * amt + 0x4000) >> 15) as i32;
-        let both = l.sums.min(r.sums).min(n);
-        let one = l.sums.max(r.sums).min(n);
-        // SAFETY: the input (TEMP_0) and the four buses are disjoint ranges
-        // of `w` (the layout is asserted above); every range is in bounds.
-        unsafe {
-            let input = self.w.as_ptr();
-            let bus = self.w.as_mut_ptr().add(MAIN_L / 2);
-            let (mut lv, mut rv) =
-                allegrex::env4_ramp(input, bus, both, l.value, l.step, r.value, r.step, dry, wet);
-            if one > both {
-                let (ls, rs) = (
-                    if l.sums > both { l.step } else { 0 },
-                    if r.sums > both { r.step } else { 0 },
-                );
-                if ls == 0 {
-                    lv = l.then << 16;
-                }
-                if rs == 0 {
-                    rv = r.then << 16;
-                }
-                let _ = allegrex::env4_ramp(
-                    input.add(both),
-                    bus.add(both),
-                    one - both,
-                    lv,
-                    ls,
-                    rv,
-                    rs,
-                    dry,
-                    wet,
-                );
-            }
-            let g = [
-                gain(l.then, dry),
-                gain(r.then, dry),
-                gain(l.then, wet),
-                gain(r.then, wet),
-            ];
-            allegrex::env4_const(input.add(one), bus.add(one), n - one, g);
-        }
-    }
-
-    /// `A_MIX` over 184 samples: `out += (in * gain) >> 15`, saturating;
-    /// gain -0x8000 is a plain subtract.
+    /// `A_MIXER` over 184 samples: [`mixq`] per sample (gain -0x8000
+    /// included: no special case in the microcode).
     pub fn mix(&mut self, gain: i16, input: usize, out: usize) {
         let (i, o) = (input / 2, out / 2);
         let n = COUNT / 2;
-        if gain == i16::MIN {
-            for k in 0..n {
-                self.w[o + k] = clamp16(self.w[o + k] as i32 - self.w[i + k] as i32);
-            }
-            return;
-        }
         let g = gain as i32;
         if i + n <= o || o + n <= i {
             let (a, b) = if i < o {
@@ -407,7 +394,7 @@ impl Dmem {
             mix_gain(b, a, g);
         } else {
             for k in 0..n {
-                self.w[o + k] = clamp16(self.w[o + k] as i32 + ((self.w[i + k] as i32 * g) >> 15));
+                self.w[o + k] = mixq(self.w[o + k] as i32, self.w[i + k] as i32, g);
             }
         }
     }
@@ -494,122 +481,125 @@ fn adpcm_8(c: &[i16; 16], i: &[i32; 8], p2: i32, p1: i32, out: &mut [i16; 8]) {
     out[7] = clamp16((c0[7] * p2 + c1[7] * p1 + (i[7] << 11) + c1[6] * i[0] + c1[5] * i[1] + c1[4] * i[2] + c1[3] * i[3] + c1[2] * i[4] + c1[1] * i[5] + c1[0] * i[6]) >> 11);
 }
 
-/// `out += (in * g) >> 15`, saturating.
+/// One `A_MIXER` sample as `n_aspMain` computes it (IMEM 0x1CA8):
+/// `vmulf` of `out` by 0x7FFF (`v31[5]`, rounded with 0x8000), then
+/// `vmacf` of `in * g`, saturated once: `(out * 0x7FFF + in * g + 0x4000)
+/// >> 15`. Not `out + (in * g >> 15)`: the 0x7FFF and the rounding both
+/// show (RE-479). The sum fits an `i32` for every input.
+#[inline(always)]
+pub(crate) fn mixq(o: i32, i: i32, g: i32) -> i16 {
+    clamp16((o * 0x7FFF + i * g + 0x4000) >> 15)
+}
+
+/// One `A_RESAMPLE` output as `n_aspMain` computes it (IMEM 0x199C): each
+/// tap a `vmulf` (rounded, `(s * c + 0x4000) >> 15`, saturated), then two
+/// saturating `vadd`s: `(t0 + t1) + (t2 + t3)`.
+#[inline(always)]
+pub(crate) fn taps4(s: [i16; 4], c: &[i16; 4]) -> i16 {
+    let t = |k: usize| clamp16((s[k] as i32 * c[k] as i32 + 0x4000) >> 15) as i32;
+    let a = clamp16(t(0) + t(1)) as i32;
+    let b = clamp16(t(2) + t(3)) as i32;
+    clamp16(a + b)
+}
+
+/// Whether no pair clamp in [`taps4`] can act with `table`: a rounded tap
+/// is never larger than its coefficient (`|s * c / 0x8000| <= |c|`), so a
+/// pair whose coefficients sum to at most 0x7FFF in magnitude never
+/// saturates, and neither does a tap. The ROM table does (its pairs reach
+/// 29414); the Allegrex resampler relies on it.
+#[cfg(any(test, target_arch = "mips"))]
+pub(crate) fn taps_fit(table: &[[i16; 4]; 64]) -> bool {
+    let m = |c: i16| (c as i32).abs();
+    table
+        .iter()
+        .all(|c| m(c[0]) + m(c[1]) <= 0x7FFF && m(c[2]) + m(c[3]) <= 0x7FFF)
+}
+
+/// `A_MIXER` over a slice: [`mixq`] per sample.
 #[inline(always)]
 pub(crate) fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
     #[cfg(target_arch = "mips")]
     return allegrex::mix_gain(out, input, g);
     #[cfg(not(target_arch = "mips"))]
     for (d, s) in out.iter_mut().zip(input) {
-        *d = clamp16(*d as i32 + ((*s as i32 * g) >> 15));
+        *d = mixq(*d as i32, *s as i32, g);
     }
 }
 
-/// One envmixer bus: `bus += (in * clamp16((v * amt + 0x4000) >> 15)) >>
-/// 15`, saturating, with `v` per sample from `ramp`.
-#[cfg(not(target_arch = "mips"))]
+/// An envmixer gain: `vmulf(vol, amount)` (IMEM 0x1B48), rounded and
+/// saturated.
 #[inline(always)]
-fn env_bus(bus: &mut [i16], input: &[i16], ramp: Ramp, amt: i32) {
-    let gain = |v: i32| clamp16((v * amt + 0x4000) >> 15) as i32;
-    let n = bus.len().min(input.len());
-    let sums = ramp.sums.min(n);
-    let mut val = ramp.value;
-    for k in 0..sums {
-        val += ramp.step;
-        let g = gain(val >> 16);
-        bus[k] = clamp16(bus[k] as i32 + ((input[k] as i32 * g) >> 15));
-    }
-    if sums < n {
-        let g = gain(ramp.then);
-        if g != 0 {
-            mix_gain(&mut bus[sums..n], &input[sums..n], g);
-        }
-    }
+fn gain(vol: i32, amt: i32) -> i32 {
+    clamp16((vol * amt + 0x4000) >> 15) as i32
 }
 
-/// A ramp over one envmixer call: `sums` samples of `value + k * step`
-/// (`k` from 1), then `then` (a volume, `>> 16` applied) for the rest.
-#[derive(Clone, Copy)]
-struct Ramp {
-    value: i32,
-    step: i32,
-    sums: usize,
-    then: i32,
-}
+/// The `v30` lane fractions (DMEM 0xA0): lane `j` of the first block is
+/// `(j + 1) / 8` of the rate past the start volume; the last is 0xFFFF,
+/// not 0x10000.
+const LANE_FRAC: [i64; 8] = [
+    0x2000, 0x4000, 0x6000, 0x8000, 0xA000, 0xC000, 0xE000, 0xFFFF,
+];
 
-/// Runs ramp `k` over a whole call ([`ramp`] once per sample), updating
-/// the state, and returns the volumes it gave.
-///
-/// A ramp adds `step` until a sum reaches the target (`>=` for a positive
-/// step, `<=` otherwise), which snaps it to the target with step 0; a
-/// saturating sum always reaches it. So the sample that snaps is the first
-/// `m >= 1` with `value + m * step` past the target in exact arithmetic,
-/// and the samples before it are plain sums.
-#[inline(always)]
-fn ramp_run(st: &mut EnvMixState, k: usize) -> Ramp {
-    let n = COUNT / 2;
-    let (value, step, target) = (st.value[k], st.step[k], st.target[k]);
-    // The distance and the step as non-negative i64s; i64 division is a
-    // library call, so it only runs when the snap could fall in this call.
-    let to_snap = |dist: i64, s: i64| -> usize {
-        if dist <= 0 {
-            1
-        } else if dist > s * n as i64 {
-            n + 1
-        } else {
-            ((dist + s - 1) / s) as usize
-        }
-    };
-    let m = if step > 0 {
-        to_snap(target as i64 - value as i64, step as i64)
-    } else if step < 0 {
-        to_snap(value as i64 - target as i64, -(step as i64))
-    } else if value <= target {
-        1
-    } else {
-        // Step 0 above the target: never moves.
-        return Ramp {
-            value,
-            step: 0,
-            sums: 0,
-            then: value >> 16,
+impl EnvMixState {
+    /// An `A_INIT` envmixer's state: lane `j` is `vol << 16` plus
+    /// `LANE_FRAC[j] * rate >> 16` (`vmudl`, `vmadn`, `vmadh` at IMEM
+    /// 0x1AFC), saturated to 32 bits as the accumulator clamp does.
+    fn init(i: &EnvMixInit) -> Self {
+        let mut st = Self {
+            wet: i.wet,
+            dry: i.dry,
+            target: i.tgt,
+            ..Self::default()
         };
-    };
-    // Samples 1..m-1 are sums; sample m snaps.
-    let sums = (m - 1).min(n);
-    if sums < n {
-        st.value[k] = target;
-        st.step[k] = 0;
-    } else {
-        st.value[k] = value.wrapping_add(step.wrapping_mul(n as i32));
-    }
-    Ramp {
-        value,
-        step,
-        sums,
-        then: target >> 16,
+        for k in 0..2 {
+            let rate = ((i.rate_m[k] as i32) << 16) | i.rate_l[k] as i32;
+            st.rate[k] = rate;
+            for (lane, f) in st.lanes[k].iter_mut().zip(LANE_FRAC) {
+                let v = ((i.vol[k] as i64) << 16) + ((f * rate as i64) >> 16);
+                *lane = v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
+        }
+        st
     }
 }
 
-/// One envmixer ramp step: `value += step` saturating, snapping to the
-/// target once reached (BattleShip's `ramp_step`). [`ramp_run`] is the
-/// same over a whole call.
-#[cfg(test)]
-fn ramp(st: &mut EnvMixState, k: usize) -> i16 {
-    let step = st.step[k];
-    let v = st.value[k].saturating_add(step);
-    let reached = if step <= 0 {
-        v <= st.target[k]
+/// A lane's volume: its integer part, clamped to the target from the
+/// side the ramp moves to (`vlt` for a rate `>= 0`, else `vge`).
+#[inline(always)]
+fn lane_vol(lane: i32, tgt: i16, rate: i32) -> i16 {
+    let h = (lane >> 16) as i16;
+    if rate >= 0 {
+        h.min(tgt)
     } else {
-        v >= st.target[k]
-    };
-    if reached {
-        st.value[k] = st.target[k];
-        st.step[k] = 0;
-    } else {
-        st.value[k] = v;
+        h.max(tgt)
     }
-    (st.value[k] >> 16) as i16
+}
+
+/// Runs one side's lanes over a call (23 blocks of 8 samples; each block
+/// adds the rate to every lane, `vaddc`/`vadd` at IMEM 0x1BA8). Writes the
+/// volume of each sample to `vols` until the side settles and returns
+/// `(s, v)`: from sample `s` on, the volume stays `v`. A side has settled
+/// when its lanes all give one volume that no later block changes: a rate
+/// of 0, or every lane at the target. The lanes of a settled side are not
+/// advanced further (their volume is the target from then on).
+#[inline(always)]
+fn side_run(
+    lanes: &mut [i32; 8],
+    tgt: i16,
+    rate: i32,
+    vols: &mut [i16; COUNT / 2],
+) -> (usize, i16) {
+    for (b, block) in vols.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+        let v0 = lane_vol(lanes[0], tgt, rate);
+        if (rate == 0 || v0 == tgt) && lanes.iter().all(|&l| lane_vol(l, tgt, rate) == v0) {
+            return (8 * b, v0);
+        }
+        for (v, lane) in block.iter_mut().zip(lanes.iter_mut()) {
+            *v = lane_vol(*lane, tgt, rate);
+            *lane = lane.saturating_add(rate);
+        }
+    }
+    (COUNT / 2, 0)
 }
 
 /// Allegrex kernels for the hottest DSP loops (PSP only). Each computes
@@ -621,7 +611,9 @@ fn ramp(st: &mut EnvMixState, k: usize) -> i16 {
 pub(crate) mod allegrex {
     use core::arch::asm;
 
-    /// `out[k] = clamp16(out[k] + ((input[k] * g) >> 15))`.
+    /// [`mixq`](super::mixq) per sample, as `o + ((in * g - o + 0x4000) >> 15)`:
+    /// `o * 0x7FFF` is `(o << 15) - o` and `o << 15` passes the shift
+    /// whole, so one multiply does.
     #[inline(always)]
     pub fn mix_gain(out: &mut [i16], input: &[i16], g: i32) {
         let n = out.len().min(input.len());
@@ -641,6 +633,8 @@ pub(crate) mod allegrex {
                 "addiu $4, $4, 2",
                 "addiu $5, $5, 2",
                 "mflo $8",
+                "subu $8, $8, $9",
+                "addiu $8, $8, 0x4000",
                 "sra $8, $8, 15",
                 "addu $9, $9, $8",
                 ".word 0x012a482c", // max $9, $9, $10
@@ -1048,7 +1042,9 @@ pub(crate) mod allegrex {
 
     /// The `A_RESAMPLE` loop over `n` outputs from `w[inp..]` to `w[o..]`
     /// (`Dmem::resample`); returns the final `(inp, acc)`. The caller has
-    /// checked that every index stays inside `w`.
+    /// checked that every index stays inside `w`. Each tap is rounded on
+    /// its own and the four are clamped once: [`taps4`](super::taps4)'s
+    /// pair clamps never act on a table that [`taps_fit`](super::taps_fit).
     #[inline(always)]
     pub fn resample(
         w: &mut [i16],
@@ -1072,28 +1068,41 @@ pub(crate) mod allegrex {
                 ".set noreorder",
                 "1:",
                 "srl $10, $8, 7",
-                "lh $11, 0($4)",
                 "andi $10, $10, 0x1F8",
                 "addu $10, $10, $7",
+                "lh $11, 0($4)",
                 "lh $12, 0($10)",
                 "lh $13, 2($4)",
                 "lh $14, 2($10)",
                 "mult $11, $12",
                 "lh $11, 4($4)",
                 "lh $12, 4($10)",
-                ".word 0x01ae001c", // madd $13, $14
+                "mflo $15",
+                "mult $13, $14",
                 "lh $13, 6($4)",
                 "lh $14, 6($10)",
-                ".word 0x016c001c", // madd $11, $12
+                "addiu $15, $15, 0x4000",
+                "sra $15, $15, 15",
+                "mflo $24",
+                "mult $11, $12",
+                "addiu $24, $24, 0x4000",
+                "sra $24, $24, 15",
+                "addu $15, $15, $24",
+                "mflo $24",
+                "mult $13, $14",
+                "addiu $24, $24, 0x4000",
+                "sra $24, $24, 15",
+                "addu $15, $15, $24",
                 "addu $8, $8, $9",
                 "srl $25, $8, 16",
                 "sll $25, $25, 1",
                 "andi $8, $8, 0xFFFF",
-                ".word 0x01ae001c", // madd $13, $14
+                "mflo $24",
+                "addiu $24, $24, 0x4000",
+                "sra $24, $24, 15",
+                "addu $15, $15, $24",
                 "addu $4, $4, $25",
                 "addiu $5, $5, 2",
-                "mflo $15",
-                "sra $15, $15, 15",
                 ".word 0x01e2782c", // max $15, $15, $2
                 ".word 0x01e3782d", // min $15, $15, $3
                 "bne $5, $6, 1b",
@@ -1122,8 +1131,8 @@ pub(crate) mod allegrex {
     }
 
     /// `A_ENVMIXER` over `n` samples with constant gains `g` (left dry,
-    /// right dry, left wet, right wet): `bus += (in * g) >> 15`, saturating,
-    /// on the four buses at `bus`, `bus + 184`, `bus + 368`, `bus + 552`
+    /// right dry, left wet, right wet): `bus = mixq(bus, in, g)` (as in
+    /// [`mix_gain`]), on the four buses at `bus`, `bus + 184`, `bus + 368`, `bus + 552`
     /// (MAIN_L, MAIN_R, AUX_L, AUX_R).
     ///
     /// # Safety
@@ -1146,6 +1155,8 @@ pub(crate) mod allegrex {
                 "lh $24, 1104($5)",
                 "mflo $25",
                 "mult $12, $8",
+                "subu $25, $25, $13",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $13, $13, $25",
                 ".word 0x01a2682c", // max $13, $13, $2
@@ -1153,6 +1164,8 @@ pub(crate) mod allegrex {
                 "sh $13, 0($5)",
                 "mflo $25",
                 "mult $12, $9",
+                "subu $25, $25, $14",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $14, $14, $25",
                 ".word 0x01c2702c", // max $14, $14, $2
@@ -1160,6 +1173,8 @@ pub(crate) mod allegrex {
                 "sh $14, 368($5)",
                 "mflo $25",
                 "mult $12, $10",
+                "subu $25, $25, $15",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $15, $15, $25",
                 ".word 0x01e2782c", // max $15, $15, $2
@@ -1167,6 +1182,8 @@ pub(crate) mod allegrex {
                 "sh $15, 736($5)",
                 "addiu $4, $4, 2",
                 "mflo $25",
+                "subu $25, $25, $24",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $24, $24, $25",
                 ".word 0x0302c02c", // max $24, $24, $2
@@ -1195,45 +1212,40 @@ pub(crate) mod allegrex {
         }
     }
 
-    /// `A_ENVMIXER` over `n` samples with ramping volumes: per sample
-    /// `lval += lstep`, `rval += rstep`, then each bus's gain is
-    /// `clamp16(((val >> 16) * amt + 0x4000) >> 15)` and the bus gets
-    /// `(in * gain) >> 15`, saturating (bus layout as [`env4_const`]).
-    /// Returns the final `(lval, rval)`.
+    /// `A_ENVMIXER` over `n` samples with per-sample volumes `vl[k]`,
+    /// `vr[k]`: each bus's gain is `vmulf(vol, amt)`, rounded and
+    /// saturated (`gain`), and the bus gets `mixq(bus, in, gain)` (bus
+    /// layout as [`env4_const`]).
     ///
     /// # Safety
-    /// As [`env4_const`].
+    /// As [`env4_const`]; `vl[..n]` and `vr[..n]` are valid.
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    pub unsafe fn env4_ramp(
+    pub unsafe fn env4_vols(
         input: *const i16,
         bus: *mut i16,
         n: usize,
-        lval: i32,
-        lstep: i32,
-        rval: i32,
-        rstep: i32,
+        vl: *const i16,
+        vr: *const i16,
         dry: i32,
         wet: i32,
-    ) -> (i32, i32) {
+    ) {
         if n == 0 {
-            return (lval, rval);
+            return;
         }
-        let (l, r): (i32, i32);
         unsafe {
             asm!(
                 ".set push",
                 ".set noreorder",
                 "1:",
-                "addu $7, $7, $8",
-                "addu $9, $9, $10",
-                "sra $14, $7, 16",
+                "lh $14, 0($7)",
+                "lh $15, 0($8)",
                 "mult $14, $11",
-                "sra $15, $9, 16",
                 "lh $13, 0($4)",
-                "lh $24, 0($5)",
+                "addiu $7, $7, 2",
+                "addiu $8, $8, 2",
                 "mflo $16",
-                "mult $14, $12",
+                "mult $15, $11",
                 "addiu $16, $16, 0x4000",
                 "sra $16, $16, 15",
                 ".word 0x0202802c", // max $16, $16, $2
@@ -1244,45 +1256,54 @@ pub(crate) mod allegrex {
                 "sra $17, $17, 15",
                 ".word 0x0222882c", // max $17, $17, $2
                 ".word 0x0223882d", // min $17, $17, $3
+                "lh $24, 0($5)",
                 "mflo $25",
-                "mult $15, $11",
+                "mult $13, $17",
+                "subu $25, $25, $24",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $24, $24, $25",
                 ".word 0x0302c02c", // max $24, $24, $2
                 ".word 0x0303c02d", // min $24, $24, $3
                 "sh $24, 0($5)",
-                "lh $24, 736($5)",
-                "mflo $16",
-                "mult $13, $17",
-                "addiu $16, $16, 0x4000",
-                "sra $16, $16, 15",
-                ".word 0x0202802c", // max $16, $16, $2
-                ".word 0x0203802d", // min $16, $16, $3
+                "lh $24, 368($5)",
                 "mflo $25",
-                "mult $15, $12",
+                "mult $14, $12",
+                "subu $25, $25, $24",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $24, $24, $25",
                 ".word 0x0302c02c", // max $24, $24, $2
                 ".word 0x0303c02d", // min $24, $24, $3
-                "sh $24, 736($5)",
-                "lh $24, 368($5)",
+                "sh $24, 368($5)",
+                "mflo $16",
+                "mult $15, $12",
+                "addiu $16, $16, 0x4000",
+                "sra $16, $16, 15",
+                ".word 0x0202802c", // max $16, $16, $2
+                ".word 0x0203802d", // min $16, $16, $3
                 "mflo $17",
                 "mult $13, $16",
                 "addiu $17, $17, 0x4000",
                 "sra $17, $17, 15",
                 ".word 0x0222882c", // max $17, $17, $2
                 ".word 0x0223882d", // min $17, $17, $3
+                "lh $24, 736($5)",
                 "mflo $25",
                 "mult $13, $17",
+                "subu $25, $25, $24",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $24, $24, $25",
                 ".word 0x0302c02c", // max $24, $24, $2
                 ".word 0x0303c02d", // min $24, $24, $3
-                "sh $24, 368($5)",
+                "sh $24, 736($5)",
                 "lh $24, 1104($5)",
                 "addiu $4, $4, 2",
                 "addiu $5, $5, 2",
                 "mflo $25",
+                "subu $25, $25, $24",
+                "addiu $25, $25, 0x4000",
                 "sra $25, $25, 15",
                 "addu $24, $24, $25",
                 ".word 0x0302c02c", // max $24, $24, $2
@@ -1293,10 +1314,8 @@ pub(crate) mod allegrex {
                 inout("$4") input => _,
                 inout("$5") bus => _,
                 in("$6") input.add(n),
-                inout("$7") lval => l,
-                in("$8") lstep,
-                inout("$9") rval => r,
-                in("$10") rstep,
+                inout("$7") vl => _,
+                inout("$8") vr => _,
                 in("$11") dry,
                 in("$12") wet,
                 out("$13") _,
@@ -1311,7 +1330,6 @@ pub(crate) mod allegrex {
                 options(nostack),
             );
         }
-        (l, r)
     }
 
     /// [`section`] two samples per iteration, the second sample's multiplies
@@ -1337,6 +1355,8 @@ pub(crate) mod allegrex {
                 "addiu $5, $5, 4",
                 "mflo $11",
                 "mult $2, $12",
+                "subu $11, $11, $9",
+                "addiu $11, $11, 0x4000",
                 "sra $11, $11, 15",
                 "addu $9, $9, $11",
                 ".word 0x012f482c", // max $9, $9, $15
@@ -1345,6 +1365,8 @@ pub(crate) mod allegrex {
                 "addiu $6, $6, 4",
                 "mflo $16",
                 "mult $9, $13",
+                "subu $16, $16, $3",
+                "addiu $16, $16, 0x4000",
                 "sra $16, $16, 15",
                 "addu $3, $3, $16",
                 ".word 0x006f182c", // max $3, $3, $15
@@ -1352,6 +1374,8 @@ pub(crate) mod allegrex {
                 "sh $3, -2($5)",
                 "mflo $11",
                 "mult $3, $13",
+                "subu $11, $11, $8",
+                "addiu $11, $11, 0x4000",
                 "sra $11, $11, 15",
                 "addu $8, $8, $11",
                 ".word 0x010f402c", // max $8, $8, $15
@@ -1359,6 +1383,8 @@ pub(crate) mod allegrex {
                 "sh $8, -4($4)",
                 "mflo $16",
                 "mult $9, $14",
+                "subu $16, $16, $2",
+                "addiu $16, $16, 0x4000",
                 "sra $16, $16, 15",
                 "addu $2, $2, $16",
                 ".word 0x004f102c", // max $2, $2, $15
@@ -1366,12 +1392,16 @@ pub(crate) mod allegrex {
                 "sh $2, -2($4)",
                 "mflo $11",
                 "mult $3, $14",
+                "subu $11, $11, $10",
+                "addiu $11, $11, 0x4000",
                 "sra $11, $11, 15",
                 "addu $10, $10, $11",
                 ".word 0x014f502c", // max $10, $10, $15
                 ".word 0x0158502d", // min $10, $10, $24
                 "sh $10, -4($6)",
                 "mflo $16",
+                "subu $16, $16, $25",
+                "addiu $16, $16, 0x4000",
                 "sra $16, $16, 15",
                 "addu $25, $25, $16",
                 ".word 0x032fc82c", // max $25, $25, $15
@@ -1401,17 +1431,28 @@ pub(crate) mod allegrex {
         }
     }
 
-    /// One plain reverb section (`reverb::section`): `y += x * ff`, then
-    /// `x += y * fb`, then `out += y * gain`, saturating, per sample.
+    /// One plain reverb section (`reverb::section`): `y = mixq(y, x, ff)`,
+    /// then `x = mixq(x, y, fb)`, then `out = mixq(out, y, gain)`, per
+    /// sample, each mix skipped when its coefficient is zero.
     #[inline(always)]
     pub fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain: i32) {
         let n = out.len().min(x.len()).min(y.len());
         if n == 0 {
             return;
         }
-        if ff == 0 && gain == 0 {
-            // `y` and `out` stay as they are: only `x += y * fb`.
-            mix_gain(&mut x[..n], &y[..n], fb);
+        if ff == 0 || fb == 0 || gain == 0 {
+            // A zero coefficient's mix is skipped (`mixq` with gain 0 is
+            // not the identity); the others run as whole passes, which
+            // equal the per-sample order since the slices are disjoint.
+            if ff != 0 {
+                mix_gain(&mut y[..n], &x[..n], ff);
+            }
+            if fb != 0 {
+                mix_gain(&mut x[..n], &y[..n], fb);
+            }
+            if gain != 0 {
+                mix_gain(&mut out[..n], &y[..n], gain);
+            }
             return;
         }
         let pairs = n & !1;
@@ -1458,6 +1499,8 @@ pub(crate) mod allegrex {
                 "addiu $4, $4, 2",
                 "addiu $5, $5, 2",
                 "mflo $11",
+                "subu $11, $11, $9",
+                "addiu $11, $11, 0x4000",
                 "sra $11, $11, 15",
                 "addu $9, $9, $11",
                 ".word 0x012f482c", // max $9, $9, $15
@@ -1466,6 +1509,8 @@ pub(crate) mod allegrex {
                 "sh $9, -2($5)",
                 "addiu $6, $6, 2",
                 "mflo $11",
+                "subu $11, $11, $8",
+                "addiu $11, $11, 0x4000",
                 "sra $11, $11, 15",
                 "addu $8, $8, $11",
                 ".word 0x010f402c", // max $8, $8, $15
@@ -1473,6 +1518,8 @@ pub(crate) mod allegrex {
                 "mult $9, $14",
                 "sh $8, -2($4)",
                 "mflo $11",
+                "subu $11, $11, $10",
+                "addiu $11, $11, 0x4000",
                 "sra $11, $11, 15",
                 "addu $10, $10, $11",
                 ".word 0x014f502c", // max $10, $10, $15
@@ -1550,6 +1597,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn rom_resample_table_never_saturates_a_pair() {
+        let Some(data) = crate::audio::testdata::data() else {
+            return;
+        };
+        assert!(taps_fit(&data.resample));
+        assert!(!taps_fit(&[[0x4000, 0x4000, 0, 0]; 64]));
+    }
+
+    #[test]
     fn resample_unity_is_the_filtered_input() {
         let mut d = Dmem::default();
         let mut table = [[0i16; 4]; 64];
@@ -1560,9 +1617,10 @@ mod tests {
         let mut st = [0i16; 16];
         d.resample(A_INIT, 0x8000, &mut st, TEMP_1, TEMP_0, &table);
         let out = d.get(TEMP_0, COUNT);
-        // An impulse comes out as the filter row reversed, delayed.
+        // An impulse comes out as the filter row reversed, delayed, each
+        // tap rounded (`vmulf`).
         let expect: [i16; 4] =
-            [-33, 3398, 26285, 3129].map(|t: i16| ((10000 * t as i32) >> 15) as i16);
+            [-33, 3398, 26285, 3129].map(|t: i16| ((10000 * t as i32 + 0x4000) >> 15) as i16);
         assert_eq!(&out[11..15], &expect);
         // 184 inputs consumed: the state holds the last four.
         assert_eq!(st[4], 0);
@@ -1573,85 +1631,234 @@ mod tests {
         assert!(d.get(TEMP_0, COUNT)[8..].iter().all(|&s| s == 1000));
     }
 
-    #[test]
-    fn envmix_ramps_reach_their_targets() {
-        let mut d = Dmem::default();
-        d.w[..COUNT / 2].fill(0x4000);
-        let mut st = EnvMixState::default();
-        // Count 0 (`_getRate`'s 0x7FFF/0xFFFF): jump to the target at once.
-        let init = EnvMixInit {
-            vol: [1, 1],
-            tgt: [0x7FFF, 0x4000],
-            rate_m: [0x7FFF, 0x7FFF],
-            rate_l: [0xFFFF, 0xFFFF],
-            dry: 0x7FFF,
-            wet: 0,
-        };
-        d.envmix(Some(&init), &mut st);
-        assert_eq!(st.value, [0x7FFF << 16, 0x4000 << 16]);
-        assert_eq!(st.step, [0, 0]);
-        // The step is rate/8 per sample: the left ramp saturates at its
-        // 8th sample.
-        let l = d.get(MAIN_L, COUNT)[7] as i32;
-        let r = d.get(MAIN_R, COUNT)[7] as i32;
-        assert!(d.get(MAIN_L, COUNT)[6] < l as i16);
-        assert_eq!(l, (0x4000 * ((0x7FFF * 0x7FFF + 0x4000) >> 15)) >> 15);
-        assert_eq!(r, (0x4000 * ((0x4000 * 0x7FFF + 0x4000) >> 15)) >> 15);
-        assert!(d.get(AUX_L, COUNT).iter().all(|&s| s == 0));
-        // A slow ramp continues across calls from the saved state.
-        let init = EnvMixInit {
-            vol: [0, 0],
-            tgt: [1000, 1000],
-            rate_m: [0, 0],
-            rate_l: [0x8000, 0x8000],
-            dry: 0x7FFF,
-            wet: 0x7FFF,
-        };
-        d.envmix(Some(&init), &mut st);
-        assert_eq!(st.value[0], 184 * (0x8000 / 8));
-        d.envmix(None, &mut st);
-        assert_eq!(st.value[0], 2 * 184 * (0x8000 / 8));
+    /// `n_aspMain`'s `A_ENVMIXER` as the vector unit runs it, written
+    /// from the disassembly (IMEM 0x1A64-0x1C80) without the port's
+    /// shortcuts: lanes as `hi`/`lo` halves, `vaddc`/`vadd` with the carry
+    /// and a saturating `hi`, `vlt`/`vge` on `hi` in place, the state
+    /// stored after the last block, and every bus through `vmulf` by
+    /// 0x7FFF then `vmacf`.
+    struct RspEnv {
+        hi: [[i16; 8]; 2],
+        lo: [[u16; 8]; 2],
+        p: EnvMixInit,
     }
 
-    /// `ramp_run` equals `ramp` sample by sample, saturation included.
+    /// `vmulf` then `vmacf` on the 48-bit accumulator, as the RSP does.
+    fn rsp_mac(o: i16, i: i16, g: i16) -> i16 {
+        let acc = 2 * o as i64 * 0x7FFF + 0x8000 + 2 * i as i64 * g as i64;
+        (acc >> 16).clamp(-32768, 32767) as i16
+    }
+
+    fn rsp_vmulf(a: i16, b: i16) -> i16 {
+        ((2 * a as i64 * b as i64 + 0x8000) >> 16).clamp(-32768, 32767) as i16
+    }
+
+    impl RspEnv {
+        fn clamp(&mut self) {
+            for s in 0..2 {
+                let (tgt, rhi) = (self.p.tgt[s], self.p.rate_m[s]);
+                for h in &mut self.hi[s] {
+                    *h = if rhi >= 0 {
+                        (*h).min(tgt)
+                    } else {
+                        (*h).max(tgt)
+                    };
+                }
+            }
+        }
+
+        fn step(&mut self) {
+            for s in 0..2 {
+                for j in 0..8 {
+                    let lo = self.lo[s][j] as u32 + self.p.rate_l[s] as u32;
+                    let hi = self.hi[s][j] as i32 + self.p.rate_m[s] as i32 + (lo >> 16) as i32;
+                    self.lo[s][j] = lo as u16;
+                    self.hi[s][j] = hi.clamp(-32768, 32767) as i16;
+                }
+            }
+            self.clamp();
+        }
+
+        fn run(&mut self, init: bool, w: &mut [i16]) {
+            if init {
+                for s in 0..2 {
+                    for (j, &f) in LANE_FRAC.iter().enumerate() {
+                        let acc = ((f * self.p.rate_l[s] as i64) >> 16)
+                            + f * self.p.rate_m[s] as i64
+                            + ((self.p.vol[s] as i64) << 16);
+                        let (h, l) = if acc >> 16 > 32767 {
+                            (32767, 0xFFFF)
+                        } else if acc >> 16 < -32768 {
+                            (-32768, 0)
+                        } else {
+                            ((acc >> 16) as i16, acc as u16)
+                        };
+                        self.hi[s][j] = h;
+                        self.lo[s][j] = l;
+                    }
+                }
+                self.clamp();
+            } else {
+                self.step();
+            }
+            let buses = [MAIN_L / 2, MAIN_R / 2, AUX_L / 2, AUX_R / 2];
+            for b in 0..COUNT / 16 {
+                if b > 0 {
+                    self.step();
+                }
+                for j in 0..8 {
+                    let k = 8 * b + j;
+                    let i = w[k];
+                    for (n, &bus) in buses.iter().enumerate() {
+                        let amt = if n < 2 { self.p.dry } else { self.p.wet };
+                        let g = rsp_vmulf(self.hi[n & 1][j], amt);
+                        w[bus + k] = rsp_mac(w[bus + k], i, g);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The port's envmixer equals the literal microcode model on random
+    /// ramps (up, down, flat, jumps, saturating, across calls).
     #[test]
-    fn ramp_run_matches_per_sample_ramp() {
-        let mut x: u32 = 1;
+    fn envmix_matches_the_microcode_model() {
+        let mut x: u32 = 7;
         let mut rnd = || {
             x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             x
         };
-        let pick = |r: u32, small: i32| -> i32 {
-            match r % 6 {
-                0 => i32::MAX - (r >> 8) as i32 % 1000,
-                1 => i32::MIN + (r >> 8) as i32 % 1000,
-                2 => 0,
-                3 => ((r >> 4) as i32 % small) - small / 2,
-                _ => (r as i32) >> (r % 16),
+        for case in 0..3000 {
+            let mut p = EnvMixInit::default();
+            for s in 0..2 {
+                let r = rnd();
+                p.vol[s] = (rnd() >> 17) as i16;
+                p.tgt[s] = if r % 5 == 0 {
+                    p.vol[s]
+                } else {
+                    (rnd() >> 17) as i16
+                };
+                let (m, l) = match r % 4 {
+                    0 => (0x7FFF, 0xFFFF),
+                    1 => ((rnd() >> 16) as i16 as i32, (rnd() >> 16) as u16),
+                    _ => {
+                        let span = (p.tgt[s] as i32 - p.vol[s] as i32) << 16;
+                        let rate = span / (1 + (rnd() % 400) as i32);
+                        (rate >> 16, rate as u16)
+                    }
+                };
+                p.rate_m[s] = m as i16;
+                p.rate_l[s] = l;
             }
-        };
-        for _ in 0..200_000 {
-            let (a, b, c) = (rnd(), rnd(), rnd());
-            let mut st = EnvMixState {
-                value: [pick(a, 1 << 20), 0],
-                target: [pick(b, 1 << 20), 0],
-                step: [pick(c, 1 << 16), 0],
+            p.dry = (rnd() >> 16) as i16;
+            p.wet = if case % 3 == 0 {
+                0
+            } else {
+                (rnd() >> 16) as i16
+            };
+            let mut a = Dmem::default();
+            for v in a.w.iter_mut() {
+                *v = (rnd() >> 16) as i16;
+            }
+            let mut b = Dmem {
+                w: a.w,
                 ..Default::default()
             };
-            let mut want = st;
-            let r = ramp_run(&mut st, 0);
-            let mut val = r.value;
-            for k in 0..COUNT / 2 {
-                let got = if k < r.sums {
-                    val += r.step;
-                    val >> 16
-                } else {
-                    r.then
-                };
-                assert_eq!(got, ramp(&mut want, 0) as i32, "{k} {a} {b} {c}");
+            let mut st = EnvMixState::default();
+            let mut rsp = RspEnv {
+                hi: [[0; 8]; 2],
+                lo: [[0; 8]; 2],
+                p,
+            };
+            for call in 0..6 {
+                a.envmix((call == 0).then_some(&p), &mut st);
+                rsp.run(call == 0, &mut b.w);
+                assert_eq!(a.w, b.w, "case {case} call {call}");
             }
-            assert_eq!((st.value, st.step), (want.value, want.step));
         }
+    }
+
+    /// The first block's lanes: `(j + 1) / 8` of the rate, the last lane
+    /// at 0xFFFF / 0x10000 (one volume step short on a full-scale jump).
+    #[test]
+    fn envmix_first_block_lanes() {
+        let mut d = Dmem::default();
+        d.w[..COUNT / 2].fill(0x4000);
+        let mut st = EnvMixState::default();
+        let init = EnvMixInit {
+            vol: [0, 0],
+            tgt: [0x7FFF, 0x7FFF],
+            rate_m: [0x0800, 0x0800],
+            rate_l: [0, 0],
+            dry: 0x7FFF,
+            wet: 0,
+        };
+        d.envmix(Some(&init), &mut st);
+        // Volumes 0x100, 0x200, .., 0x700, then 0x7FF (not 0x800).
+        let want = |v: i32| mixq(0, 0x4000, gain(v, 0x7FFF));
+        let got = &d.get(MAIN_L, COUNT)[..9];
+        let vols = [
+            0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700, 0x7FF, 0x8FF,
+        ];
+        for (g, v) in got.iter().zip(vols) {
+            assert_eq!(*g, want(v), "vol {v:#x}");
+        }
+    }
+
+    /// `A_MIXER` is `vmulf(out, 0x7FFF)` then `vmacf(in, gain)`: a gain of
+    /// 0 still moves a sample above 0x4000, and the rounding shows.
+    #[test]
+    fn mix_is_vmulf_then_vmacf() {
+        let mut x: u32 = 3;
+        for _ in 0..1_000_000 {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let (o, i, g) = ((x >> 16) as i16, x as i16, (x >> 8) as i16);
+            assert_eq!(mixq(o as i32, i as i32, g as i32), rsp_mac(o, i, g));
+        }
+        for g in [-0x8000, 0x7FFF] {
+            for (o, i) in [
+                (-0x8000, -0x8000),
+                (0x7FFF, 0x7FFF),
+                (-0x8000, 0x7FFF),
+                (0x7FFF, -0x8000),
+            ] {
+                assert_eq!(mixq(o, i, g), rsp_mac(o as i16, i as i16, g as i16));
+            }
+        }
+        let mut d = Dmem::default();
+        d.w[MAIN_L / 2..MAIN_L / 2 + 184].fill(20000);
+        d.mix(0, AUX_L, MAIN_L);
+        assert!(d.get(MAIN_L, COUNT).iter().all(|&s| s == 19999));
+        // 100 * 0x2000 / 0x8000 = 25 exactly; 0x2001 rounds 25.003 down.
+        d.w[AUX_L / 2..AUX_L / 2 + 184].fill(100);
+        d.w[MAIN_L / 2..MAIN_L / 2 + 184].fill(0);
+        d.mix(0x2001, AUX_L, MAIN_L);
+        assert!(d.get(MAIN_L, COUNT).iter().all(|&s| s == 25));
+        d.w[AUX_L / 2..AUX_L / 2 + 184].fill(-3);
+        d.w[MAIN_L / 2..MAIN_L / 2 + 184].fill(0);
+        // -3 * 0x4000 / 0x8000 = -1.5: the RSP rounds to -1, a floor to -2.
+        d.mix(0x4000, AUX_L, MAIN_L);
+        assert!(d.get(MAIN_L, COUNT).iter().all(|&s| s == -1));
+    }
+
+    /// `A_RESAMPLE` rounds each tap (`vmulf`) and sums them with
+    /// saturating `vadd`s.
+    #[test]
+    fn resample_taps_round_each_product() {
+        let c = [0x0C39, 0x66AD, 0x0D46, -0x21];
+        // Each product a quarter past its half: rounded per tap.
+        let s = [3, -5, 7, 1000];
+        let t: i32 = (0..4)
+            .map(|k| (s[k] as i32 * c[k] as i32 + 0x4000) >> 15)
+            .sum();
+        assert_eq!(taps4(s, &c) as i32, t);
+        let floor_sum = (0..4).map(|k| s[k] as i32 * c[k] as i32).sum::<i32>() >> 15;
+        assert_ne!(taps4(s, &c) as i32, floor_sum);
+        assert_eq!(taps4([32767; 4], &[0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF]), 32767);
+        assert_eq!(
+            taps4([-32768; 4], &[0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF]),
+            -32768
+        );
     }
 
     #[test]
@@ -1661,8 +1868,10 @@ mod tests {
         d.w[AUX_L / 2..AUX_L / 2 + 184].fill(30000);
         d.mix(0x7FFF, AUX_L, MAIN_L);
         assert!(d.get(MAIN_L, COUNT).iter().all(|&s| s == 32767));
+        // Gain -0x8000 has no special case: (32767 * 0x7FFF - 30000 *
+        // 0x8000 + 0x4000) >> 15 = 2766.
         d.mix(i16::MIN, AUX_L, MAIN_L);
-        assert!(d.get(MAIN_L, COUNT).iter().all(|&s| s == 2767));
+        assert!(d.get(MAIN_L, COUNT).iter().all(|&s| s == 2766));
     }
 
     #[test]

@@ -322,8 +322,8 @@ impl Fx {
             let g1 = 0xDA83u16 as i16 as i32;
             for k in 0..FIXED_SAMPLE {
                 let a = l[k] as i32;
-                let a = clamp16(a + ((a * g1) >> 15)) as i32;
-                l[k] = clamp16(a + ((r[k] as i32 * 0x5A82) >> 15));
+                let a = dsp::mixq(a, a, g1) as i32;
+                l[k] = dsp::mixq(a, r[k] as i32, 0x5A82);
             }
             let at = self.input;
             let first = (len - at).min(FIXED_SAMPLE);
@@ -427,14 +427,9 @@ impl Fx {
     }
 }
 
-#[inline(always)]
-fn clamp16(v: i32) -> i16 {
-    dsp::clamp16(v)
-}
-
-/// One plain section over disjoint windows, sample by sample: `y += x *
-/// ff`, then `x += y * fb`, then `out += y * gain` (each `n_aMix`,
-/// saturating; a zero coefficient adds exactly 0, as skipping the mix does).
+/// One plain section over disjoint windows, sample by sample: `y = mixq(y,
+/// x, ff)`, then `x = mixq(x, y, fb)`, then `out = mixq(out, y, gain)` (each
+/// an `n_aMix`, issued only for a nonzero coefficient).
 #[inline(always)]
 fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain: i32) {
     #[cfg(target_arch = "mips")]
@@ -443,11 +438,21 @@ fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain
     {
         let n = out.len();
         let (x, y) = (&mut x[..n], &mut y[..n]);
+        // A zero coefficient's mix is not issued: with the RSP's rounding
+        // (`dsp::mixq`) a gain-0 mix is not the identity.
         for k in 0..n {
-            let yv = clamp16(y[k] as i32 + ((x[k] as i32 * ff) >> 15)) as i32;
+            let yv = if ff != 0 {
+                dsp::mixq(y[k] as i32, x[k] as i32, ff)
+            } else {
+                y[k]
+            } as i32;
             y[k] = yv as i16;
-            x[k] = clamp16(x[k] as i32 + ((yv * fb) >> 15));
-            out[k] = clamp16(out[k] as i32 + ((yv * gain) >> 15));
+            if fb != 0 {
+                x[k] = dsp::mixq(x[k] as i32, yv, fb);
+            }
+            if gain != 0 {
+                out[k] = dsp::mixq(out[k] as i32, yv, gain);
+            }
         }
     }
 }

@@ -11,10 +11,10 @@ use super::{AudioError, AudioSystem, FRAME_SAMPLES_MAX};
 
 /// The scenario's per-segment FNV-1a hashes of the interleaved samples.
 pub const HASHES: [u64; SEGMENTS] = [
-    0x5ce6_7f15_a071_11f1,
-    0x3e70_06a2_223c_7aa0,
-    0x73ea_c1cc_68ee_83f5,
-    0xdb9d_797b_e79b_0a13,
+    0xad7d_f1bb_282d_b6d7,
+    0x6cc4_89cd_fa30_cd64,
+    0x9329_7e57_4474_d5f5,
+    0x2ec2_8838_c926_ef35,
 ];
 
 /// Number of segments.

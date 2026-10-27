@@ -115,7 +115,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Audio Q15 rounding | Round Q15 products as the RSP does (mix, envmix, reverb, resampler; host + Allegrex); regenerate `audio::n64ref` hashes from LLE references; locate remaining +-1 (1.6% at onset) | RE-479 |
+| LLE audio harness | Land `~/ppsspp-test/b64a/lle_harness/` as `--core/--rsp` options of `tools/n64-headless` (RMG core, parallel-RSP/cxd4) so `audio::n64ref` re-records from the repo | RE-479 |
 
 ### Match systems (`MS5`)
 
