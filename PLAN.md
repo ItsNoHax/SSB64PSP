@@ -16,7 +16,7 @@
 | Asset pipeline | ROM tables generated at build time by `ssb-tablegen` ([D-048](docs/decisions/D-048.md)); `romtool` packs all 2,132 archive files, every reachable asset and the audio section; scenes load their own files ([D-046](docs/decisions/D-046.md)) | Trimmed wallpaper padding |
 | Rendering | Build-time display-list conversion; GE lowering with measured deviations; original display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Remaining effect draws and N64 comparisons |
 | Gameplay | 12 fighters, Master Hand, Metal Mario, Giant DK, Polygon Team; How to Play matches an N64 trace every frame (RE-472, RE-473) | Fidelity items below |
-| Items | 20 normal items, 13 Poké Ball Pokémon, stage items and hazards (RE-431–RE-446) | Event-aligned N64 comparisons |
+| Items | Unobserved: Mew catcher flag on the N64 (needs a 1P route with a Poké Ball spawn and pickup; 0x801936ad is ovl65 BSS; drawn Mew verified, RE-566) | RE-431–RE-444, RE-566 |
 | CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447, RE-568) | N64 trait checks |
 | Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | Fidelity items below |
 | Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | opening differences |
@@ -115,14 +115,14 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Attract audio | Reverb's unapplied low-pass vs hardware recording; 85 isolated samples before 66.5 s (frames 3049-3990, max 5001) | RE-479 |
+| Audio Q15 rounding | Round Q15 products as the RSP does (mix, envmix, reverb, resampler; host + Allegrex); regenerate `audio::n64ref` hashes from LLE references; locate remaining +-1 (1.6% at onset) | RE-479 |
 
 ### Match systems (`MS5`)
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
-| Items | Unobserved: Mew N64 read (1P route, Poke Ball throw, `NEWCOMERS` poke, steered RNG; several harness runs at ~1-in-5 stalls, RE-566, RE-568) | RE-431–RE-444, RE-566 |
+| Items | Unobserved: Mew catcher flag on the N64 (needs a 1P route with a Poké Ball spawn and pickup; 0x801936ad is ovl65 BSS; drawn Mew verified, RE-566) | RE-431–RE-444, RE-566 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | Cutout over a later surface | TEX_EDGE edge mix blends over the clear where the surface behind draws later (opening-room antenna: wall is head-1 XLU); candidate: stencil "drawn" mask, raw colour where empty; needs hardware proof (D-051) | RE-424, RE-459 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
@@ -133,7 +133,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
-| Item Switch | No N64 reference (locked on new save) | RE-462 |
 
 ### Architecture
 
