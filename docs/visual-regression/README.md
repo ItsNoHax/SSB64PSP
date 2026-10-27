@@ -103,6 +103,7 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
 - CPU-match rows `f1-vs-four`, `f1-vs-cpu`, `f1-vs-team`: expected to move on gameplay changes; rebaseline with a traced cause.
 - Subject scenes `f1-vs-magnify` (`vsmagnify`), `f1-training-purin-throw` (`purinthrow`): scripted, no CPU AI; subjects asserted by host replay ([RE-561](../evidence/re/RE-561.md)).
 - `f1-training-kirby-star-bounce` (`kirbystarbounce`): N64 trace route; star tick, quake and wave positions asserted by host replay ([RE-503](../evidence/re/RE-503.md)).
+- `f1-training-laser` (`traininglaser`), `f1-training-reflect` (`trainingreflect`): capture-only scenes forcing the Sector Z Arwing pattern; N64 match ([RE-428](../evidence/re/RE-428.md)).
 - `f1-training-catch-slope` (`catchslope`): motion_id -2 hold on a slope (CatchWait legs); host replay `catch_wait_holds_the_slope_legs`; no N64 trace ([RE-510](../evidence/re/RE-510.md)).
 
 ## Scene specs

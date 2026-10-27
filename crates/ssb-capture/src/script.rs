@@ -107,6 +107,36 @@ pub const REBIRTH_KO_TICK: u64 = 185;
 /// fighters read the pad.
 pub const VS_GO_TICK: u64 = 398;
 
+/// `traininglaser` (RE-428): Training on Sector Z, standing still after the
+/// Training scenes' confirm (whose A, on the first battle tick, starts a jab;
+/// the N64 reference presses A on its first frame to match). On the first
+/// pattern's first frame (`arwing_status` Patrol, `arwing_appear_timer` 0,
+/// `arwing_type_cycle` 2: `grSectorArwingUpdateWait` has picked and
+/// `func_ovl2_80107D50` added the pick), `psp-game` writes these into the
+/// controller, as the N64 reference writes them into
+/// `gGRCommonStruct.sector`; the next frame adds [`PATTERN`]. The long
+/// `arwing_state_timer` keeps the pilot manoeuvres (and their RNG) out.
+pub mod training_laser {
+    /// `arwing_flight_pattern`: a plane pattern whose 2D volleys
+    /// (`dGRSectorArwingLaserCounts` 2) fire at the fighters' height.
+    pub const PATTERN: i8 = 4;
+    /// `arwing_target_x`.
+    pub const TARGET_X: f32 = 0.0;
+    /// `arwing_state_timer`.
+    pub const STATE_TIMER: u16 = 3000;
+    /// The second volley's two lasers (z ±213.5) in flight beside the
+    /// player, the frame before both hit (N64 frame 947: PSP tick = N64
+    /// frame + 7 in this warp).
+    pub const CAPTURE_TICK: u64 = 954;
+    /// `trainingreflect`: Down+B from this tick, B held to the capture: Fox's
+    /// Reflector is up before the second volley reaches him.
+    pub const REFLECT_FROM: u64 = 940;
+    /// `trainingreflect`'s capture: the second volley reflected at tick 955,
+    /// flying back past the Reflector's hit hexagon (N64 frame 955 in the Fox
+    /// warp, whose frame count starts 4 frames earlier: PSP tick = frame + 3).
+    pub const REFLECT_CAPTURE_TICK: u64 = 958;
+}
+
 /// `vsmagnify`'s script, a VS scene's and so outside [`fighter_pad`]:
 /// `psp-game` presses these, and `scene_inputs` replays them. The
 /// player's Kirby, on Peach's Castle's spawn 0, runs left from "Go" off

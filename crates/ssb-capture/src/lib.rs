@@ -532,6 +532,14 @@ pub enum GameScene {
     /// `trainingarwing`: `trainingsector` at tick 1800, the Arwing's wing
     /// passing over the stage (RE-428).
     TrainingArwing,
+    /// `traininglaser`: `trainingsector` with the first pattern forced
+    /// after its pick ([`script::training_laser`]): an Arwing 2D volley
+    /// crosses Training's camera (RE-428).
+    TrainingLaser,
+    /// `trainingreflect`: `traininglaser` with Fox, whose Reflector
+    /// ([`script::training_laser::REFLECT_FROM`]) meets the second volley
+    /// (RE-428).
+    TrainingReflect,
     /// `trainingcastle`: Training on Peach's Castle (RE-423).
     TrainingCastle,
     /// `trainingbumper`: Castle at tick 240, camera centered on its Bumper
@@ -827,7 +835,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 204] = [
+    pub const ALL: [GameScene; 206] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -934,6 +942,8 @@ impl GameScene {
         GameScene::TrainingYoster,
         GameScene::TrainingSector,
         GameScene::TrainingArwing,
+        GameScene::TrainingLaser,
+        GameScene::TrainingReflect,
         GameScene::TrainingCastle,
         GameScene::TrainingBumper,
         GameScene::TrainingPlants,
@@ -1142,6 +1152,8 @@ impl GameScene {
             GameScene::TrainingYoster => "trainingyoster",
             GameScene::TrainingSector => "trainingsector",
             GameScene::TrainingArwing => "trainingarwing",
+            GameScene::TrainingLaser => "traininglaser",
+            GameScene::TrainingReflect => "trainingreflect",
             GameScene::TrainingCastle => "trainingcastle",
             GameScene::TrainingBumper => "trainingbumper",
             GameScene::TrainingPlants => "trainingplants",

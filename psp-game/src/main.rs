@@ -338,6 +338,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::TrainingTwister => 1700,
         // RE-428: the first pattern's low pass, its wing in the top right.
         GameScene::TrainingArwing => 1800,
+        // RE-428: the forced pattern's volley crosses the camera.
+        GameScene::TrainingLaser => ssb_capture::script::training_laser::CAPTURE_TICK,
+        GameScene::TrainingReflect => ssb_capture::script::training_laser::REFLECT_CAPTURE_TICK,
         GameScene::TrainingBumper | GameScene::TrainingPlants => 240,
         // The CPU has jumped to the Bat's platform and holds it.
         GameScene::TrainingCpuItem => 200,
@@ -454,6 +457,8 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingYoster
             | GameScene::TrainingSector
             | GameScene::TrainingArwing
+            | GameScene::TrainingLaser
+            | GameScene::TrainingReflect
             | GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
@@ -757,6 +762,8 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingYoster
             | GameScene::TrainingSector
             | GameScene::TrainingArwing
+            | GameScene::TrainingLaser
+            | GameScene::TrainingReflect
             | GameScene::TrainingCastle
             | GameScene::TrainingBumper
             | GameScene::TrainingPlants
@@ -790,6 +797,11 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
+            t if scene == GameScene::TrainingReflect
+                && t >= ssb_capture::script::training_laser::REFLECT_FROM =>
+            {
+                N64Buttons(N64Buttons::B)
+            }
             60 if matches!(
                 scene,
                 GameScene::TrainingHeavy | GameScene::TrainingUtility | GameScene::TrainingThrowable
@@ -969,6 +981,14 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     }
     if scene == GameScene::TrainingInterface {
         return if tick == 62 || tick == 64 || tick == 66 {
+            -80
+        } else {
+            0
+        };
+    }
+    if scene == GameScene::TrainingReflect {
+        // Down with B: Fox's Reflector (`ftFoxSpecialLwStart`).
+        return if tick >= ssb_capture::script::training_laser::REFLECT_FROM {
             -80
         } else {
             0
@@ -1669,6 +1689,7 @@ fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter:
         Some(
             GameScene::Fox
             | GameScene::FoxFire
+            | GameScene::TrainingReflect
             | GameScene::Costume1
             | GameScene::Costume2
             | GameScene::Costume3,
@@ -1843,6 +1864,67 @@ fn exit_audio() {
 /// (RE-469): both fighters'
 /// positions, statuses and damage, the CPU's stocks and the player's score,
 /// and the stack's deepest use so far.
+/// `traininglaser`: the Sector Z controller, node 0 and the lasers, to
+/// compare with the N64 reference's `gGRCommonStruct.sector` trace.
+#[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+fn log_sector_state(s: &Session, tick: u64) {
+    let ssb_game::stage::Controller::Sector(c) = &s.stage_ctl.controller else {
+        return;
+    };
+    let n0 = s.stage_objects.arwing.as_ref().map_or([0.0; 3], |a| a.translate(0));
+    let n1 = s.stage_objects.arwing.as_ref().map_or([0.0; 3], |a| a.translate(1));
+    let mut line = alloc::format!(
+        "sector tick={} st={:?} pat={} tx={:.0} at={} stt={} tc={} ammo={} w4e={} lt={} c52={} pc={} lc={} zn={} la={} n0=({:.2},{:.2},{:.2}) n1y={:.2}",
+        tick,
+        c.status,
+        c.flight_pattern,
+        c.target_x,
+        c.appear_timer,
+        c.state_timer,
+        c.type_cycle,
+        c.laser_ammo,
+        c.volley_wait,
+        c.laser_timer,
+        c.charged,
+        c.pilot_curr,
+        c.laser_count,
+        u8::from(c.is_z_near),
+        u8::from(c.is_line_active),
+        n0[0],
+        n0[1],
+        n0[2],
+        n1[1],
+    );
+    for l in s.weapons.arwing_lasers() {
+        line.push_str(&alloc::format!(
+            " L({:.1},{:.1},{:.1} o{} x{})",
+            l.position.x,
+            l.position.y,
+            l.position.z,
+            l.owner_port,
+            u8::from(l.exploded)
+        ));
+    }
+    if let Some(pl) = s.play_state.as_ref() {
+        line.push_str(&alloc::format!(" F({:.1},{:.1}) dmg={}", pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.damage));
+    }
+    if let Some(d) = s.dummies[0].as_deref() {
+        line.push_str(&alloc::format!(" C({:.1},{:.1}) dmg={}", d.fighter.pos.x, d.fighter.pos.y, d.fighter.damage));
+    }
+    line.push('\n');
+    profile::log(line.as_bytes());
+    if profile::ENABLED {
+        return;
+    }
+    unsafe {
+        psp::sys::sceIoWrite(
+            psp::sys::sceKernelStdout(),
+            line.as_ptr() as *const core::ffi::c_void,
+            line.len(),
+        );
+    }
+}
+
 #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
 fn log_push_state(s: &Session, tick: u64) {
     let (Some(pl), Some(d)) = (s.play_state.as_ref(), s.dummies[0].as_deref()) else {
@@ -2032,7 +2114,12 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
             ssb_game::stage_select::gkind::INISHIE
         }
         Some(GameScene::TrainingYoster) => ssb_game::stage_select::gkind::YOSTER,
-        Some(GameScene::TrainingSector | GameScene::TrainingArwing) => {
+        Some(
+            GameScene::TrainingSector
+            | GameScene::TrainingArwing
+            | GameScene::TrainingLaser
+            | GameScene::TrainingReflect,
+        ) => {
             ssb_game::stage_select::gkind::SECTOR
         }
         Some(
@@ -5090,6 +5177,26 @@ unsafe fn run() -> ! {
             if let Some(d) = s.dummies[0].as_deref_mut() {
                 d.fighter.damage = VS_KNOCK_DAMAGE as u16;
             }
+        }
+        // `traininglaser`: the first pattern, on its first frame (after the
+        // pick and its anim add), becomes `training_laser`'s; the next
+        // frame's `func_ovl2_80107D50` adds it. The N64 reference writes the
+        // same fields into `gGRCommonStruct.sector` on the same frame (RE-428).
+        if matches!(capture_spec, Some(GameScene::TrainingLaser | GameScene::TrainingReflect)) {
+            if let ssb_game::stage::Controller::Sector(c) = &mut s.stage_ctl.controller {
+                use ssb_capture::script::training_laser as laser;
+                if c.status == ssb_game::stage::sector::ArwingStatus::Patrol
+                    && c.appear_timer == 0
+                    && c.type_cycle == 2
+                {
+                    c.flight_pattern = laser::PATTERN;
+                    c.target_x = laser::TARGET_X;
+                    c.state_timer = laser::STATE_TIMER;
+                    c.pilot_curr = -1;
+                }
+            }
+            #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
+            log_sector_state(&s, sim_frame_index);
         }
         // `vspush`: the pushed CPU has no jumps left to come back with and
         // cannot catch the ledge.
