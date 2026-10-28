@@ -49,8 +49,15 @@ pub const CAMERA_FOVY: f32 = 30.0;
 pub const CAMERA_NEAR: f32 = 100.0;
 pub const CAMERA_FAR: f32 = 12800.0;
 
-impl BossEffects {
-    pub fn new(pack: &Pack<'_>) -> Self {
+/// What [`BossEffects::write_new`] reads from the pack, found before the
+/// effects' slot exists: the object list is its one allocation.
+pub struct BossEffectFiles {
+    script: Option<(u32, u32)>,
+    objects: alloc::vec::Vec<ObjectDesc>,
+}
+
+impl BossEffectFiles {
+    pub fn find(pack: &Pack<'_>) -> Self {
         // Every animation packed from file 114 carries the whole file.
         let script = (0..pack.anim_count())
             .filter_map(|i| pack.anim(i))
@@ -60,10 +67,35 @@ impl BossEffects {
             .filter_map(|i| pack.object(i))
             .filter(|o| o.source_file == EFFECT_FILE)
             .collect();
-        BossEffects {
+        BossEffectFiles { script, objects }
+    }
+}
+
+impl BossEffects {
+    /// The effects with no visual live, written into `dst` slot by slot:
+    /// by value the visuals land on the stack and are copied (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned; its old contents are
+    /// overwritten without being dropped.
+    #[inline(never)]
+    pub unsafe fn write_new(dst: *mut BossEffects, files: BossEffectFiles) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(BossEffects {
             script,
             objects,
-            visuals: core::array::from_fn(|_| None),
+            visuals
+        });
+        // SAFETY: every field of `*dst` is written once, through raw
+        // pointers.
+        unsafe {
+            addr_of_mut!((*dst).script).write(files.script);
+            addr_of_mut!((*dst).objects).write(files.objects);
+            let visuals = addr_of_mut!((*dst).visuals).cast::<Option<Visual>>();
+            for i in 0..MAX_EFFECTS {
+                visuals.add(i).write(None);
+            }
         }
     }
 
@@ -198,7 +230,7 @@ impl BossEffects {
 }
 
 /// A new effect's visual. `objects` are file 114's objects and `data` its
-/// animation script ([`BossEffects::new`]).
+/// animation script ([`BossEffectFiles::find`]).
 fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Option<&[u8]>, e: &Effect) -> Option<Visual> {
     let asset = EFFECT_ASSETS
         .get(usize::from(e.wallpaper))?

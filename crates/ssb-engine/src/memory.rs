@@ -31,7 +31,9 @@ use alloc::vec::Vec;
 use core::mem::{align_of, needs_drop, size_of, MaybeUninit};
 
 mod game;
+mod inline_option;
 pub use game::{scene_bytes, GameArena, GameArenaError, GameArenaUsage, SceneBox, GROW_BLOCKS};
+pub use inline_option::InlineOption;
 
 /// Fails to compile unless the listed names are exactly the struct's
 /// fields: the guard on a field-by-field in-place initialiser

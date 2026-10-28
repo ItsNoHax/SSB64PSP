@@ -170,7 +170,8 @@ impl TitleOpening {
         for tree in [&mut slash, &mut fire].into_iter().flatten() {
             tree.play(main, data);
         }
-        let mut particles = Box::new(Particles::new());
+        // Built in its box: by value it is a 22 KB stack temporary.
+        let mut particles = Particles::new_boxed();
         let generator = match ssb_psp_runtime::particles::PackBanks::title(main) {
             Some(banks) => lb::make_generator(&mut particles, &banks, 0, 0),
             None => lb::NIL,

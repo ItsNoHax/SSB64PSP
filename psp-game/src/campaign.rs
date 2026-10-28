@@ -345,7 +345,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
 pub(crate) struct BossScene {
     pub wallpaper: spgame::boss::BossWallpaper,
     /// The effects' trees and joint clocks on the PSP.
-    pub effects: Option<ssb_psp_runtime::boss::BossEffects>,
+    pub effects: ssb_psp_runtime::boss::BossEffects,
     intro_camera: ssb_psp_runtime::scene::CameraAnim,
     defeat_camera: ssb_psp_runtime::scene::CameraAnim,
     /// `sSC1PGameBossDefeatZoomPosition`.
@@ -358,25 +358,17 @@ pub(crate) struct BossScene {
 }
 
 impl BossScene {
-    /// [`Self::new`] on the heap, out of line: the scene is too large for
-    /// `enter_battle`'s frame on the game thread's 512 KiB stack (RE-469).
+    /// `sc1PGameBossInitWallpaper`, and `ftManagerInitFighter`'s Boss
+    /// case for the enemy (`ftBossCommonSetNextAttackWait`,
+    /// `...SetDefaultLineID`). On the heap, out of line and built in its
+    /// box: the effects' visuals are tens of KB, and by value they land on
+    /// the game thread's stack and are copied (RE-469).
     #[inline(never)]
     fn new_boxed(
         p: &Pack<'_>,
         stage: &ssb_rom::pack::StageDesc,
         dummies: &mut Dummies,
     ) -> Result<alloc::boxed::Box<Self>, Blocked> {
-        Self::new(p, stage, dummies).map(alloc::boxed::Box::new)
-    }
-
-    /// `sc1PGameBossInitWallpaper`, and `ftManagerInitFighter`'s Boss
-    /// case for the enemy (`ftBossCommonSetNextAttackWait`,
-    /// `...SetDefaultLineID`).
-    fn new(
-        p: &Pack<'_>,
-        stage: &ssb_rom::pack::StageDesc,
-        dummies: &mut Dummies,
-    ) -> Result<Self, Blocked> {
         let missing = Blocked::Assets(Stage::Boss);
         let intro_camera = ssb_psp_runtime::scene::CameraAnim::load(
             p,
@@ -400,21 +392,28 @@ impl BossScene {
             port = Some(d.fighter.port);
         }
         let port = port.ok_or(missing)?;
-        Ok(BossScene {
-            wallpaper: spgame::boss::BossWallpaper::new(),
-            effects: Some(ssb_psp_runtime::boss::BossEffects::new(p)),
-            intro_camera,
-            defeat_camera,
+        // The values, the effects' object list among them, before the box,
+        // as `Box::new` had them.
+        let wallpaper = spgame::boss::BossWallpaper::new();
+        let files = ssb_psp_runtime::boss::BossEffectFiles::find(p);
+        Ok(ssb_engine::box_in_place!(BossScene {
+            wallpaper: wallpaper,
+            intro_camera: intro_camera,
+            defeat_camera: defeat_camera,
             zoom: ssb_engine::math::Vec3::ZERO,
-            port,
+            port: port,
             extents: spgame::boss::Extents {
                 left: bounds.left,
                 right: bounds.right,
                 map_top: f32::from(stage.bounds.top),
                 map_bottom: f32::from(stage.bounds.bottom),
             },
-            defeat_update: false,
-        })
+            defeat_update: false;
+            effects => |slot: *mut ssb_psp_runtime::boss::BossEffects| {
+                // SAFETY: `slot` is the box's effects field.
+                unsafe { ssb_psp_runtime::boss::BossEffects::write_new(slot, files) }
+            },
+        }))
     }
 
     /// The camera animation `gmCameraSetStatusAnim` last started: the

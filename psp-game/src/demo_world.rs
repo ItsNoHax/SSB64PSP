@@ -41,14 +41,8 @@ pub struct Stand {
 impl DemoWorld {
     #[inline(never)]
     pub fn new() -> Self {
-        let mut b = Box::<Particles>::new_uninit();
-        // SAFETY: `write_new` initialises every field.
-        let particles = unsafe {
-            Particles::write_new(b.as_mut_ptr());
-            b.assume_init()
-        };
         DemoWorld {
-            particles: RefCell::new(particles),
+            particles: RefCell::new(Particles::new_boxed()),
             effects: Effects::new(0),
         }
     }

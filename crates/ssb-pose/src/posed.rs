@@ -241,32 +241,97 @@ impl PosedFighter {
 
     /// Everything [`Self::place_played_spawn`]'s aside play may change.
     pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            skeleton: self.skeleton.clone(),
-            started: self.started,
-            clip_restarts_seen: self.clip_restarts_seen,
-            root_motion_before_tick: self.root_motion_before_tick,
-            shield_yrotn: self.shield_yrotn,
-            joint_transforms: self.fighter.joint_transforms,
-            joint4_rotate_x: self.fighter.joint4_rotate_x,
-            joint_parents: self.fighter.joint_parents,
-            is_use_animlocks: self.fighter.is_use_animlocks,
-            thrown_part4: self.fighter.grab.thrown_part4,
+        let mut s = core::mem::MaybeUninit::<Snapshot>::uninit();
+        // SAFETY: a local slot, which `write_snapshot` fills.
+        unsafe {
+            self.write_snapshot(s.as_mut_ptr());
+            s.assume_init()
+        }
+    }
+
+    /// [`Self::snapshot`] written into `dst` field by field: built by value,
+    /// its 26 KB skeleton is cloned into a stack temporary and copied
+    /// (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned; its old contents are
+    /// overwritten without being dropped.
+    unsafe fn write_snapshot(&self, dst: *mut Snapshot) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(Snapshot {
+            skeleton,
+            started,
+            clip_restarts_seen,
+            root_motion_before_tick,
+            shield_yrotn,
+            joint_transforms,
+            joint4_rotate_x,
+            joint_parents,
+            is_use_animlocks,
+            thrown_part4
+        });
+        // SAFETY: every field of `*dst` is written once, through raw
+        // pointers.
+        unsafe {
+            ssb_rom::skeleton::Skeleton::write_clone(addr_of_mut!((*dst).skeleton), &self.skeleton);
+            addr_of_mut!((*dst).started).write(self.started);
+            addr_of_mut!((*dst).clip_restarts_seen).write(self.clip_restarts_seen);
+            addr_of_mut!((*dst).root_motion_before_tick).write(self.root_motion_before_tick);
+            addr_of_mut!((*dst).shield_yrotn).write(self.shield_yrotn);
+            addr_of_mut!((*dst).joint_transforms).write(self.fighter.joint_transforms);
+            addr_of_mut!((*dst).joint4_rotate_x).write(self.fighter.joint4_rotate_x);
+            addr_of_mut!((*dst).joint_parents).write(self.fighter.joint_parents);
+            addr_of_mut!((*dst).is_use_animlocks).write(self.fighter.is_use_animlocks);
+            addr_of_mut!((*dst).thrown_part4).write(self.fighter.grab.thrown_part4);
         }
     }
 
     /// Puts back what [`Self::snapshot`] saved.
     pub fn restore(&mut self, s: Snapshot) {
-        self.skeleton = s.skeleton;
-        self.started = s.started;
-        self.clip_restarts_seen = s.clip_restarts_seen;
-        self.root_motion_before_tick = s.root_motion_before_tick;
-        self.shield_yrotn = s.shield_yrotn;
-        self.fighter.joint_transforms = s.joint_transforms;
-        self.fighter.joint4_rotate_x = s.joint4_rotate_x;
-        self.fighter.joint_parents = s.joint_parents;
-        self.fighter.is_use_animlocks = s.is_use_animlocks;
-        self.fighter.grab.thrown_part4 = s.thrown_part4;
+        self.restore_from(&s);
+    }
+
+    /// [`Self::restore`] from a reference: the skeleton is copied straight
+    /// back.
+    fn restore_from(&mut self, s: &Snapshot) {
+        let Snapshot {
+            skeleton,
+            started,
+            clip_restarts_seen,
+            root_motion_before_tick,
+            shield_yrotn,
+            joint_transforms,
+            joint4_rotate_x,
+            joint_parents,
+            is_use_animlocks,
+            thrown_part4,
+        } = s;
+        self.skeleton.clone_from_in_place(skeleton);
+        self.started = *started;
+        self.clip_restarts_seen = *clip_restarts_seen;
+        self.root_motion_before_tick = *root_motion_before_tick;
+        self.shield_yrotn = *shield_yrotn;
+        self.fighter.joint_transforms = *joint_transforms;
+        self.fighter.joint4_rotate_x = *joint4_rotate_x;
+        self.fighter.joint_parents = *joint_parents;
+        self.fighter.is_use_animlocks = *is_use_animlocks;
+        self.fighter.grab.thrown_part4 = *thrown_part4;
+    }
+
+    /// Runs `f` aside: what it changes of [`Snapshot`] is put back after.
+    /// The snapshot is written once, in this frame, and restored from
+    /// there.
+    fn aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        // Never dropped, only forgotten: it owns nothing.
+        const { assert!(!core::mem::needs_drop::<Snapshot>()) };
+        let mut saved = core::mem::MaybeUninit::<Snapshot>::uninit();
+        // SAFETY: a local slot, which `write_snapshot` fills.
+        unsafe { self.write_snapshot(saved.as_mut_ptr()) };
+        let r = f(self);
+        // SAFETY: written above.
+        self.restore_from(unsafe { saved.assume_init_ref() });
+        r
     }
 
     /// `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`, for
@@ -274,11 +339,11 @@ impl PosedFighter {
     /// `Wait` both play `Wait` from frame 0), sampled aside, sets
     /// `damage_coll_size`. Call once, after the spawn status is set.
     pub fn set_damage_detect_size(&mut self, pack: &Pack<'_>) {
-        let saved = self.snapshot();
-        self.tick_animation(pack);
-        self.sample_gameplay_joints(pack);
-        let size = ssb_game::computer::behave::damage_detect_size(&self.fighter);
-        self.restore(saved);
+        let size = self.aside(|p| {
+            p.tick_animation(pack);
+            p.sample_gameplay_joints(pack);
+            ssb_game::computer::behave::damage_detect_size(&p.fighter)
+        });
         self.fighter.damage_coll_size = Some(size);
     }
 
@@ -294,10 +359,10 @@ impl PosedFighter {
         let Some(played) = ssb_game::spawn_pose::played_status(&self.fighter) else {
             return;
         };
-        let saved = self.snapshot();
-        self.play_aside(pack, played);
-        ssb_game::spawn_pose::place_played(&mut self.fighter);
-        self.restore(saved);
+        self.aside(|p| {
+            p.play_aside(pack, played);
+            ssb_game::spawn_pose::place_played(&mut p.fighter);
+        });
     }
 
     /// `played`'s play this frame and its joint sample, with the fighter's

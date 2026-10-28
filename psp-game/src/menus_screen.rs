@@ -235,10 +235,11 @@ impl Menus {
         }
         if let (Active::Characters(m), Some(p)) = (&active, host.pack) {
             self.emblem = make_emblem(p, m.kind());
-            let mut world = crate::demo_world::DemoWorld::new();
+            // Stored first, then filled: one 9 KB copy, not a local and its
+            // copy.
+            let world = self.world.insert(crate::demo_world::DemoWorld::new());
             let mut fighter = make_fighter(p, &m.fighter);
-            make_effects(p, &mut world, &m.fighter, &mut fighter);
-            self.world = Some(world);
+            make_effects(p, world, &m.fighter, &mut fighter);
             self.fighter = Some(fighter);
         }
         self.active = Some(active);

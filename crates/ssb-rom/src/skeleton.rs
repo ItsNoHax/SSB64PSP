@@ -276,6 +276,57 @@ impl Skeleton {
         unsafe { Self::write_new(self) }
     }
 
+    /// Writes a clone of `src` into `dst` one joint at a time: `clone()`
+    /// builds the 26 KB value on the stack and copies it (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes, aligned and not overlap `src`. Its
+    /// old contents are overwritten without being dropped.
+    pub unsafe fn write_clone(dst: *mut Skeleton, src: &Skeleton) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(Skeleton {
+            nodes,
+            anims,
+            joints32,
+            anim_joint,
+            gobj_frame,
+            poses,
+            joint_count,
+            speed,
+            lead_xrotn,
+            lead_transn,
+            locks
+        });
+        // SAFETY: every field of `*dst` is written once, through raw
+        // pointers, before anything reads it.
+        unsafe {
+            addr_of_mut!((*dst).nodes).write(src.nodes);
+            let anims = addr_of_mut!((*dst).anims).cast::<JointAnim>();
+            for (i, a) in src.anims.iter().enumerate() {
+                anims.add(i).write(a.clone());
+            }
+            addr_of_mut!((*dst).joints32).write(src.joints32);
+            addr_of_mut!((*dst).anim_joint).write(src.anim_joint);
+            addr_of_mut!((*dst).gobj_frame).write(src.gobj_frame);
+            addr_of_mut!((*dst).poses).write(src.poses);
+            addr_of_mut!((*dst).joint_count).write(src.joint_count);
+            addr_of_mut!((*dst).speed).write(src.speed);
+            addr_of_mut!((*dst).lead_xrotn).write(src.lead_xrotn);
+            addr_of_mut!((*dst).lead_transn).write(src.lead_transn);
+            addr_of_mut!((*dst).locks).write(src.locks);
+        }
+    }
+
+    /// `*self = src.clone()` in place, with no stack temporary.
+    pub fn clone_from_in_place(&mut self, src: &Skeleton) {
+        // The old value is overwritten, not dropped: it owns nothing.
+        const { assert!(!core::mem::needs_drop::<Skeleton>()) };
+        // SAFETY: `self` is valid for writes and aligned, and a `&mut`
+        // cannot overlap `src`.
+        unsafe { Self::write_clone(self, src) }
+    }
+
     /// [`Skeleton::default`] in its own heap box, built there.
     pub fn new_boxed() -> alloc::boxed::Box<Self> {
         let mut slot = alloc::boxed::Box::<Self>::new_uninit();
@@ -2305,6 +2356,27 @@ mod tests {
             alloc::format!("{built:?}"),
             alloc::format!("{:?}", Skeleton::default())
         );
+    }
+
+    #[test]
+    fn clone_from_in_place_matches_clone() {
+        let mut src = Skeleton::new_boxed();
+        src.nodes[2] = 7;
+        src.anims[3].flags = 5;
+        src.joints32[1] = Some(crate::objanim::StageJoint::start(4, 2.0));
+        src.anim_joint = true;
+        src.gobj_frame = 3.5;
+        src.poses[4].translate = [1.0, 2.0, 3.0];
+        src.joint_count = 9;
+        src.speed = 0.5;
+        src.lead_xrotn = true;
+        src.lead_transn = true;
+        src.locks.mask = 0x30;
+        let mut dst = Skeleton::new_boxed();
+        dst.clone_from_in_place(&src);
+        let want = alloc::format!("{:?}", src.clone());
+        assert_eq!(alloc::format!("{dst:?}"), want);
+        assert_ne!(want, alloc::format!("{:?}", Skeleton::default()));
     }
 
     /// Link's entry leads with `TransN`, then `XRotN`: the interposed pose

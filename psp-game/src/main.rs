@@ -4343,9 +4343,7 @@ unsafe fn draw_frame(
                 s.wallpaper.update(pl.camera.eye, pl.camera.at);
             }
             if let (Some(p), Some(b)) = (pack.as_ref(), s.campaign.as_mut().and_then(|c| c.boss.as_deref_mut())) {
-                if let Some(effects) = b.effects.as_mut() {
-                    effects.sync(p, &b.wallpaper);
-                }
+                b.effects.sync(p, &b.wallpaper);
             }
             // The boss wallpaper's fades step once per drawn frame.
             w.damage_hud.boss_fade = s
@@ -4389,7 +4387,7 @@ unsafe fn draw_frame(
                 s.campaign
                     .as_ref()
                     .and_then(|c| c.boss.as_deref())
-                    .and_then(|b| b.effects.as_ref().map(|e| (e, &b.wallpaper))),
+                    .map(|b| (&b.effects, &b.wallpaper)),
                 frame,
             );
             if let Some(demo) = s.demo.as_ref() {
@@ -5767,9 +5765,8 @@ macro_rules! menus_host {
 #[inline(never)]
 fn enter_menus(s: &mut Session, pack: Option<&Pack<'_>>, scene: ssb_game::menu::Scene, prev: ssb_game::menu::Scene, capture: bool) {
     let mut selections = selections(s);
-    let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
-    menus.enter(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
-    s.menus = menus;
+    // The host borrows other fields of `s`: the 9 KB menus stay in place.
+    s.menus.enter(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
     s.screen = Screen::Menus;
 }
 
@@ -5783,9 +5780,7 @@ fn menus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: ControllerS
         stick_y: controller.stick_y,
     };
     let mut selections = selections(s);
-    let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
-    let exit = menus.frame(&pad, &mut menus_host!(s, pack, &mut selections, capture));
-    s.menus = menus;
+    let exit = s.menus.frame(&pad, &mut menus_host!(s, pack, &mut selections, capture));
     apply_selections(s, selections);
     if let Some(scene) = exit {
         let prev = s.menus.scene_prev;
@@ -5877,9 +5872,7 @@ fn go_scene(s: &mut Session, pack: Option<&Pack<'_>>, scene: MScene, prev: MScen
     load_scene(s, scene);
     if menus_screen::Menus::is_menu(scene) || matches!(scene, MScene::Explain | MScene::AutoDemo) {
         let mut selections = selections(s);
-        let mut menus = core::mem::replace(&mut s.menus, menus_screen::Menus::new());
-        let next = menus.go(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
-        s.menus = menus;
+        let next = s.menus.go(scene, prev, &mut menus_host!(s, pack, &mut selections, capture));
         apply_selections(s, selections);
         match next {
             Some(scene) => start_scene(s, pack, scene, prev, capture),

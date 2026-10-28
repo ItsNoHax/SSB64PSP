@@ -34,16 +34,52 @@ impl Transition {
     /// added at frame 0 (`gcAddAnimJointAll`) and played once
     /// (`gcPlayAnimAll`). `None` if the pack lacks the wipe.
     pub fn make(pack: &Pack<'_>, id: u32) -> Option<Self> {
-        let anim = pack.transition_anim(id)?;
-        let object = pack.transition_object(&anim)?;
-        let mut player = StageAnimator::new();
-        player.start_changed(pack, &anim);
-        player.tick(pack.anim_script(&anim)?).ok()?;
-        Some(Transition {
+        let mut t = core::mem::MaybeUninit::<Transition>::uninit();
+        // SAFETY: a local slot; `write_make` initialises it whole when it
+        // returns `true`.
+        unsafe { Self::write_make(t.as_mut_ptr(), pack, id).then(|| t.assume_init()) }
+    }
+
+    /// [`Self::make`] built in `dst`, field by field, so the 23 KB
+    /// animator is never a stack temporary (RE-469). `true` if `dst` now
+    /// holds the wipe; on `false` it holds nothing to drop.
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned. Its old contents are
+    /// overwritten without being dropped.
+    #[inline(never)]
+    pub unsafe fn write_make(dst: *mut Transition, pack: &Pack<'_>, id: u32) -> bool {
+        use core::ptr::addr_of_mut;
+        // A failed make leaves fields written: they own nothing.
+        const { assert!(!core::mem::needs_drop::<Transition>()) };
+        ssb_engine::all_fields!(Transition {
             anim,
             object,
-            player,
-        })
+            player
+        });
+        let Some(anim) = pack.transition_anim(id) else {
+            return false;
+        };
+        let Some(object) = pack.transition_object(&anim) else {
+            return false;
+        };
+        // SAFETY: `dst` is valid and aligned (the caller's contract); each
+        // field is written before it is read.
+        unsafe {
+            let player = addr_of_mut!((*dst).player);
+            StageAnimator::write_new(player);
+            (*player).start_changed(pack, &anim);
+            let Some(script) = pack.anim_script(&anim) else {
+                return false;
+            };
+            if (*player).tick(script).is_err() {
+                return false;
+            }
+            addr_of_mut!((*dst).anim).write(anim);
+            addr_of_mut!((*dst).object).write(object);
+        }
+        true
     }
 
     /// `lbTransitionProcUpdate`: plays one frame; `false` once its

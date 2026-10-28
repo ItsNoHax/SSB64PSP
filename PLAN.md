@@ -52,7 +52,7 @@
 - Link orders: searched with `tools/icache/`, chosen on hardware by busy time
   (`tools/hw-link-order.sh`). Hot code changes size → re-search
   (RE-494–RE-500, RE-539).
-- Stack: `set_damage_detect_size` frame (41136 B, via `enter_training`) is the deepest leaf: 130,296 B static (battle entry 126,976 B measured; deepest 163,860 B, f1-onep-boss-defeat-zoom); shrink options in RE-568.
+- Stack: deepest 126,888 B measured (f1-training-fighter-select); frames over 16 KB listed in `docs/memory.md`; shrink options in RE-568.
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
@@ -79,7 +79,7 @@
 | CPU/GE overlap | Double-buffered display lists: +1 frame display latency, never a game tick. `vs4` already overlaps ≥4.8 ms GE; no bus-contention relief. Measure GE time first | RE-469, RE-486, [D-047](docs/decisions/D-047.md) |
 | `meshdraw` audit | Indexed draws, transformed-vertex reuse. sf64-psp: non-indexed rebatching beat reuse. Lit primitives stay indexed | RE-514, RE-530 |
 | I-cache locality | 16 KB I + 16 KB D; per-mesh path of `draw_object_posed_nodes` dominates misses. Outline only cold blocks. Rejected: per-primitive outlining, `opt-level = "s"`, `#[optimize(size)]`, shadowed render-state table; LTO re-inlines single-call helpers | RE-481, RE-487, RE-488, RE-493, RE-495 |
-| Stack depth | Deepest 164 KB of 512 KiB, battle entry 127 KB (`set_damage_detect_size` 41 KB leaf) | RE-469 |
+| Stack depth | Deepest 127 KB of 512 KiB (`set_damage_detect_size` 29 KB leaf) | RE-469 |
 | `run` branch range | Keep within 128 KiB MIPS reach | RE-431 |
 | Debug HUD | `sceGuDebugFlush` (PPSSPP software rasterizer only; faults on PSP) → GE geometry | RE-014, RE-202 |
 | Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
@@ -136,7 +136,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Stack temporaries | Build in place the remaining scene-entry frames: `results_screen::start` 73 KB (`Option<Transition>` StageAnimator), `Menus::enter` 58 KB (Title, DemoWorld); deepest stack 163,860 B of 524,288 | [memory](docs/memory.md) |
 
 ## Completed
 

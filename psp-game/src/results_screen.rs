@@ -9,6 +9,7 @@
 
 use alloc::boxed::Box;
 
+use ssb_engine::memory::InlineOption;
 use ssb_game::fighter::FighterKind;
 use ssb_game::results::Results;
 use ssb_game::results_layer::{self, Draw, Layer, Player, Sprite, SpriteFile};
@@ -47,7 +48,7 @@ pub struct Fighters {
     world: crate::demo_world::DemoWorld,
     /// `lbTransitionMakeTransition`'s wipe over the battle's last frame,
     /// after a contest (RE-464).
-    wipe: Option<Transition>,
+    wipe: InlineOption<Transition>,
     /// `lbTransitionSetupTransition`'s photo, still to be copied from the
     /// screen before the scene's first frame opens.
     pub photo_pending: bool,
@@ -67,28 +68,63 @@ pub struct Emblem {
 #[inline(never)]
 pub fn start(pack: Option<&Pack<'_>>, r: &Results, entrants: [Option<(FighterKind, u8)>; 4]) -> Box<Fighters> {
     let scene = Scene::start(r);
-    let wipe = scene
-        .transition
-        .and_then(|id| pack.and_then(|p| Transition::make(p, id as u32)));
+    let transition = scene.transition;
     let winner_kind = r
         .winner
         .and_then(|w| entrants.get(w).copied().flatten())
         .map(|(kind, _)| kind);
-    let emblem = winner_kind
+    // The wipe and the emblem are built in the box (neither allocates):
+    // the box is still allocated after `Layer::new` and `DemoWorld::new`,
+    // as `Box::new` was.
+    let mut has_wipe = false;
+    ssb_engine::box_in_place!(Fighters {
+        scene: scene,
+        layer: Layer::new(),
+        models: [None, None, None, None],
+        world: crate::demo_world::DemoWorld::new();
+        wipe => |slot: *mut InlineOption<Transition>| {
+            let make = |t: *mut Transition| match (transition, pack) {
+                // SAFETY: `t` is the box's payload slot.
+                (Some(id), Some(p)) => unsafe { Transition::write_make(t, p, id as u32) },
+                _ => false,
+            };
+            // SAFETY: `slot` is the box's wipe field; `write_make` leaves
+            // nothing to drop when it fails.
+            has_wipe = unsafe { InlineOption::write_with(slot, make) };
+        },
+        emblem => |slot: *mut Option<Emblem>| {
+            // SAFETY: `slot` is the box's emblem field.
+            unsafe { write_emblem(slot, pack, r, winner_kind) }
+        },
+        photo_pending => |slot: *mut bool| {
+            // SAFETY: the box's flag.
+            unsafe { slot.write(has_wipe) }
+        },
+    })
+}
+
+/// The winner's emblem (`mnVSResultsMakeEmblem`) written into `dst`, out
+/// of line so the caller's frame holds no copy of it.
+///
+/// # Safety
+///
+/// `dst` must be valid for writes and aligned; its old contents are
+/// overwritten without being dropped.
+#[inline(never)]
+unsafe fn write_emblem(
+    dst: *mut Option<Emblem>,
+    pack: Option<&Pack<'_>>,
+    r: &Results,
+    kind: Option<FighterKind>,
+) {
+    let emblem = kind
         .and_then(|kind| results_emblem::Emblem::make(r, kind))
         .map(|state| Emblem {
             state,
             model: pack.and_then(|p| make_emblem(p, &state)),
         });
-    Box::new(Fighters {
-        scene,
-        layer: Layer::new(),
-        models: [None, None, None, None],
-        emblem,
-        world: crate::demo_world::DemoWorld::new(),
-        photo_pending: wipe.is_some(),
-        wipe,
-    })
+    // SAFETY: the caller's contract.
+    unsafe { dst.write(emblem) }
 }
 
 /// `gcSetupCommonDObjs`, `gcAddMObjAll`, `gcAddMatAnimJointAll(..., color)`
@@ -131,7 +167,7 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
     // `lbTransitionProcUpdate`, a link-0 process made after
     // `mnVSResultsFuncRun`'s: the wipe ends when its clock does.
     if f.wipe.as_mut().is_some_and(|w| !w.update(p)) {
-        f.wipe = None;
+        f.wipe.clear();
     }
     // Link 0 again: `mnVSResultsFuncRun`'s confetti, then the particles'
     // `func_run`s, made after it (RE-420).

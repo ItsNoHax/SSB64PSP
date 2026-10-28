@@ -410,6 +410,18 @@ impl Particles {
         (*dst).reset();
     }
 
+    /// [`Self::new`] in its own heap box, built there: by value the
+    /// runtime lands on the stack and is copied (RE-469).
+    pub fn new_boxed() -> alloc::boxed::Box<Particles> {
+        let mut b = alloc::boxed::Box::<Particles>::new_uninit();
+        // SAFETY: the box is valid and aligned; `write_new` initialises
+        // every field.
+        unsafe {
+            Self::write_new(b.as_mut_ptr());
+            b.assume_init()
+        }
+    }
+
     /// `efParticleInitAll`: every pool free, every list empty.
     pub fn reset(&mut self) {
         // `lbParticleAllocStructs`: pushed from the last, so the free list
