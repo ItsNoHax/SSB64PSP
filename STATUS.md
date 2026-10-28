@@ -10,14 +10,14 @@
 | Goldens | 266 of 266 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy, ms0) | Room 12.80 ms, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 (120-frame reports) | RE-578 |
-| PSP-2000 `vs4@2400` | 17.60 ms busy (Zebes 11.92) | RE-578 |
-| PSP-2000 1P intro | 18.5 ms (31.7 FPS); 1P battle 16.8 ms; opening all 1-39 9.15 ms | RE-578 |
+| PSP-2000 opening (busy, ms0) | opening 1-39 9.05 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579 |
+| PSP-2000 `vs4@2400` | 17.03 ms busy (Zebes 11.38) | RE-579 |
+| PSP-2000 1P intro | 18.01 ms; 1P battle 16.36 ms | RE-579 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
-- Landed (batch 82): animator ticks read only a mat_anim entry's file range (-3.9% vs4 instructions); `Plan::safe_point` skips its scan when nothing is leaving; trace and timer builds compile identical code and parse the override lines (old trace builds ignored `onepstage=`); order re-searched on vs4 + 1P battle + 1P intro. Slim ms0: vs4 18.10 to 17.60, 1P intro 19.44 to 18.47, battle 17.62 to 16.76, Zebes 12.41 to 11.92, opening 9.48 to 9.15. Goldens 266/266; golden-build low_free -8,960 B (capture-only code), release .text -1,936 B (RE-578).
+- Landed (batch 83): memcpy/hash cuts, bit-exact `Mat4::mul` affine path, order re-searched. Slim ms0: vs4 17.62 to 17.03, 1P intro 18.44 to 18.01, battle 16.79 to 16.36, Zebes 11.94 to 11.38, opening 9.17 to 9.05 (RE-579). Batch 82: mat_anim range read, `safe_point` skip (RE-578).
 - Landed (batch 80): frozen-model vertex replay in the 1P intro: 38.3 to 23.0 ms busy on the Slim; vs4, 1P battle, opening unchanged; low_free -6,656 B code size; goldens 266/266 (RE-576).
 - Batch 77: results, menus, boss scene built in place; deepest stack 126,888 B; peak 14,615,040 B.
 - Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
@@ -36,7 +36,7 @@
 
 ## Verification
 
-Baseline: batch 82 (hardware: RE-578); deepest game stack 126,840 B of 524288.
+Baseline: batch 83 (hardware: RE-579); deepest game stack 126,840 B of 524288.
 
 | Check | Result |
 |---|---|

@@ -41,9 +41,11 @@ impl CpuSight {
     /// The view of the CPU on `port`.
     pub fn observe(port: u8, items: &ItemPool, weapons: &WeaponPool, stage: &Stage) -> Self {
         let flat = |v: Vec3| Vec2::new(v.x, v.y);
-        CpuSight {
-            items: items.cpu_sights().collect(),
-            weapons: weapons.cpu_threats().collect(),
+        // Filled in place: a collected `ArrayVec` moves its whole capacity
+        // on each hand-over, about 1.4 KB per CPU per frame several times.
+        let mut sight = CpuSight {
+            items: ArrayVec::new(),
+            weapons: ArrayVec::new(),
             team_rules: items.team_rules,
             twister: match &stage.controller {
                 Controller::Hyrule(h) => h.visible_position().map(flat),
@@ -54,7 +56,10 @@ impl CpuSight {
                 _ => None,
             },
             pk_thunder_trail: weapons.own_pk_trail(port).map(flat),
-        }
+        };
+        sight.items.extend(items.cpu_sights());
+        sight.weapons.extend(weapons.cpu_threats());
+        sight
     }
 }
 

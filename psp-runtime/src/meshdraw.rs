@@ -357,7 +357,7 @@ pub struct DrawState {
     /// normal, so the node's own world transform has to be folded into the
     /// texture matrix. `None` means no node has been placed yet, in which
     /// case object and world space coincide.
-    texgen_model: Option<ScePspFMatrix4>,
+    texgen_model: ModelSlot,
     /// [`ssb_engine::math::camera_basis`] of a camera whose matrix kind loads
     /// its view into the RSP's *modelview* rather than its projection (the
     /// 1P intro's kinds 7 and 15, `gcPrepCameraMatrix`), or `None` for the
@@ -468,20 +468,44 @@ impl TapeKey {
         u64::from(self.0) << 32 | u64::from(self.1)
     }
 
-    fn float(&mut self, f: f32) {
-        self.word(f.to_bits());
-    }
-
+    /// [`Self::word`] per float, the lanes kept in registers: a call per
+    /// word was 7.5 % of the 1P intro's instructions (a posed model hashes
+    /// every matrix each frame).
+    #[inline(never)]
     fn floats(&mut self, fs: &[f32]) {
+        let (mut a, mut b) = (self.0, self.1);
         for &f in fs {
-            self.float(f);
+            let w = f.to_bits();
+            a = (a ^ w).wrapping_mul(0x9e37_79b1).rotate_left(13);
+            b = (b ^ w).wrapping_mul(0x85eb_ca77).rotate_left(17);
         }
+        (self.0, self.1) = (a, b);
     }
 
-    fn bytes(&mut self, bs: &[u8]) {
-        for &b in bs {
-            self.word(u32::from(b));
+    /// [`Self::floats`] over every matrix in turn, in one call.
+    #[inline(never)]
+    fn matrices(&mut self, ms: &[ssb_rom::scene::Mat4]) {
+        let (mut a, mut b) = (self.0, self.1);
+        for m in ms {
+            for &f in &m.0 {
+                let w = f.to_bits();
+                a = (a ^ w).wrapping_mul(0x9e37_79b1).rotate_left(13);
+                b = (b ^ w).wrapping_mul(0x85eb_ca77).rotate_left(17);
+            }
         }
+        (self.0, self.1) = (a, b);
+    }
+
+    /// [`Self::word`] per byte; as [`Self::floats`].
+    #[inline(never)]
+    fn bytes(&mut self, bs: &[u8]) {
+        let (mut a, mut b) = (self.0, self.1);
+        for &w in bs {
+            let w = u32::from(w);
+            a = (a ^ w).wrapping_mul(0x9e37_79b1).rotate_left(13);
+            b = (b ^ w).wrapping_mul(0x85eb_ca77).rotate_left(17);
+        }
+        (self.0, self.1) = (a, b);
     }
 
     fn option(&mut self, some: bool) {
@@ -591,9 +615,7 @@ impl DrawState {
             key.floats(&[v.x, v.y, v.z, v.w]);
         }
         key.word(posed.len() as u32);
-        for m in posed {
-            key.floats(&m.0);
-        }
+        key.matrices(posed);
         key.option(billboard_scales.is_some());
         for s in billboard_scales.unwrap_or(&[]) {
             key.floats(s);
@@ -715,7 +737,7 @@ impl DrawState {
         self.last_flags = None;
         self.last_texture_func = None;
         self.last_texture_mapping = None;
-        self.texgen_model = None;
+        self.texgen_model.set = false;
         self.modelview_camera = None;
         self.runtime_fighter_light = false;
         self.authored_lights_only = false;
@@ -841,7 +863,8 @@ impl DrawState {
         let object = ssb_engine::rsp_light::object_light_dir(
             self.rsp_rows(
                 self.texgen_model
-                    .map_or(IDENTITY_ROWS, |m| light_rows(matrix_rows(&m))),
+                    .get()
+                    .map_or(IDENTITY_ROWS, |m| light_rows(matrix_rows(m))),
             ),
             world,
         );
@@ -975,7 +998,7 @@ impl DrawState {
     /// Called once per node, from the same place the matrix is loaded, so
     /// the texgen path never has to reconstruct it.
     pub fn set_model_matrix(&mut self, m: ScePspFMatrix4) {
-        self.texgen_model = Some(m);
+        self.texgen_model = ModelSlot { m, set: true };
         self.node_light = None;
         // The matrix is part of the generated-coordinate mapping, so a node
         // change has to reinstall it even when nothing else about the
@@ -1007,8 +1030,8 @@ impl DrawState {
         let (right, up) = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
         let right = ssb_engine::math::quantize_lookat_basis(right);
         let up = ssb_engine::math::quantize_lookat_basis(up);
-        let columns = match self.texgen_model {
-            Some(m) => self.rsp_rows(matrix_rows(&m)),
+        let columns = match self.texgen_model.get() {
+            Some(m) => self.rsp_rows(matrix_rows(m)),
             None if self.modelview_camera.is_some() => self.rsp_rows(IDENTITY_ROWS),
             None => return (right, up),
         };
@@ -1016,6 +1039,39 @@ impl DrawState {
             ssb_engine::math::transform_lookat_basis(columns, right),
             ssb_engine::math::transform_lookat_basis(columns, up),
         )
+    }
+}
+
+/// `Option<ScePspFMatrix4>` as a matrix and a flag: storing a whole
+/// `Option` copies 79 bytes from offset 1, byte by byte (compiler-builtins
+/// `memcpy` on unaligned ends), once per node; this stores aligned words.
+#[derive(Clone, Copy)]
+struct ModelSlot {
+    m: ScePspFMatrix4,
+    set: bool,
+}
+
+impl Default for ModelSlot {
+    fn default() -> Self {
+        let zero = ScePspFVector4 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 0.0,
+        };
+        let m = ScePspFMatrix4 {
+            x: zero,
+            y: zero,
+            z: zero,
+            w: zero,
+        };
+        ModelSlot { m, set: false }
+    }
+}
+
+impl ModelSlot {
+    fn get(&self) -> Option<&ScePspFMatrix4> {
+        self.set.then_some(&self.m)
     }
 }
 
@@ -2292,7 +2348,7 @@ unsafe fn draw_mesh_vertices(
         .filter(|_| !replay)
         .and_then(|vp| {
             let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
-            guard_clip(&vp, band, st.texgen_model.as_ref()?, verts)
+            guard_clip(&vp, band, st.texgen_model.get()?, verts)
         });
     if taped && clip.is_some() {
         st.spoil_tape();
@@ -4158,9 +4214,10 @@ unsafe fn draw_node_mesh(
                 let light = st.active_light();
                 let model = st
                     .texgen_model
-                    .map_or(ssb_rom::scene::Mat4::IDENTITY, |m| mat4_of(&m));
+                    .get()
+                    .map_or(ssb_rom::scene::Mat4::IDENTITY, mat4_of);
                 // Only a node matrix carries `MODEL_SCALE`.
-                let scaled_model = st.texgen_model.is_some();
+                let scaled_model = st.texgen_model.set;
                 // One source joint's matrices (and light) serve its run of vertices.
                 let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose, [i8; 3])> = None;
                 for index in 0..count {
@@ -5911,15 +5968,46 @@ impl LayerPose {
 pub struct StagePoseCache {
     /// The object each entry of `layers` was posed for, or `NO_LAYER`.
     keys: [u32; 4],
-    layers: [LayerPose; 4],
+    /// Initialised exactly when its `keys` entry is not `NO_LAYER`: a fresh
+    /// cache is made every frame, and building four rest poses up front cost
+    /// two 18 KB copies per frame for layers mostly never drawn.
+    layers: [core::mem::MaybeUninit<LayerPose>; 4],
 }
 
 impl Default for StagePoseCache {
     fn default() -> Self {
         StagePoseCache {
             keys: [ssb_rom::pack::StageDesc::NO_LAYER; 4],
-            layers: [const { LayerPose::new() }; 4],
+            layers: [const { core::mem::MaybeUninit::uninit() }; 4],
         }
+    }
+}
+
+impl StagePoseCache {
+    /// `layer`'s pose for the object `slot`, posed by `anim` the first time
+    /// it is asked for.
+    fn pose(
+        &mut self,
+        layer: usize,
+        slot: u32,
+        anim: &ssb_rom::skeleton::StageAnimator,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+    ) -> &LayerPose {
+        let entry = &mut self.layers[layer];
+        if self.keys[layer] != slot {
+            if self.keys[layer] == ssb_rom::pack::StageDesc::NO_LAYER {
+                // All-zero bits are a valid `LayerPose`; `compose` then writes
+                // every entry the draw reads (`..node_count`, `..scale_count`).
+                // SAFETY: the pointer is valid for one `LayerPose`.
+                unsafe { core::ptr::write_bytes(entry.as_mut_ptr(), 0, 1) };
+            }
+            // SAFETY: initialised above or by an earlier pose of this layer.
+            unsafe { entry.assume_init_mut() }.compose(anim, pack, object);
+            self.keys[layer] = slot;
+        }
+        // SAFETY: `keys[layer]` is a real object, so the entry is initialised.
+        unsafe { entry.assume_init_ref() }
     }
 }
 
@@ -6009,11 +6097,8 @@ pub unsafe fn draw_stage_links(
             if let Some(object) = object {
                 tris += match (anim, pose_cache.as_deref_mut()) {
                     (Some(a), Some(cache)) => {
-                        if cache.keys[layer] != slot {
-                            cache.layers[layer].compose(a, pack, &object);
-                            cache.keys[layer] = slot;
-                        }
-                        draw_layer_posed(pack, &object, base, a, &cache.layers[layer], st, mat_anim)
+                        let pose = cache.pose(layer, slot, a, pack, &object);
+                        draw_layer_posed(pack, &object, base, a, pose, st, mat_anim)
                     }
                     _ => draw_layer_uncached(pack, &object, base, anim, st, mat_anim),
                 };

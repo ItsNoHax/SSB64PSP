@@ -1113,7 +1113,18 @@ pub fn sy_persp_cot_exact(fovy_degrees: f32) -> f32 {
 }
 
 fn lb_angle_index(angle: f32) -> u16 {
-    ((angle * 651.898_6) as i32 as u16) & 0x0fff
+    let v = angle * 651.898_6;
+    // `v as i32`, with its saturation folded through the mask: `i32::MAX`
+    // keeps `0x0fff`, `i32::MIN` and NaN give 0. Inside `i32`'s range the
+    // cast is a plain truncation.
+    if (-2_147_483_648.0..2_147_483_648.0).contains(&v) {
+        // SAFETY: `v` is not NaN and truncates into `i32`'s range.
+        (unsafe { v.to_int_unchecked::<i32>() } as u16) & 0x0fff
+    } else if v > 0.0 {
+        0x0fff
+    } else {
+        0
+    }
 }
 
 fn lb_sin_index(index: u16) -> f32 {
@@ -1703,6 +1714,43 @@ mod persp_f_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lb_angle_index_matches_the_saturating_cast() {
+        let reference = |a: f32| ((a * 651.898_6) as i32 as u16) & 0x0fff;
+        let mut angles = alloc::vec![
+            0.0,
+            -0.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            f32::MIN,
+            f32::MIN_POSITIVE,
+            3_294_197.5,
+            -3_294_198.0,
+            3_294_199.0,
+            -3_294_199.0,
+        ];
+        // Every float around the `i32` boundaries, and a sweep of turns.
+        for edge in [2_147_483_648.0f32, -2_147_483_648.0] {
+            let e = edge / 651.898_6;
+            let mut a = e;
+            for _ in 0..64 {
+                a = f32::from_bits(a.to_bits() - 1);
+            }
+            for _ in 0..128 {
+                angles.push(a);
+                a = f32::from_bits(a.to_bits() + 1);
+            }
+        }
+        for k in -200_000..200_000 {
+            angles.push(k as f32 * 0.000_731);
+        }
+        for a in angles {
+            assert_eq!(super::lb_angle_index(a), reference(a), "angle {a:e}");
+        }
+    }
+
     use super::*;
 
     fn close(a: f32, b: f32) -> bool {

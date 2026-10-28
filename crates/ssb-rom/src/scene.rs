@@ -638,6 +638,56 @@ impl Mat4 {
 
     /// `self * rhs`, i.e. `rhs` applied first.
     pub fn mul(&self, rhs: &Mat4) -> Mat4 {
+        match self.mul_affine(rhs) {
+            Some(out) => out,
+            None => self.mul_general(rhs),
+        }
+    }
+
+    /// [`Self::mul`] of two affine matrices (bottom row `(0, 0, 0, 1)`),
+    /// the bit-exact result without the products by the bottom rows'
+    /// zeros and ones; `None` for any other pair.
+    ///
+    /// Exact: [`Self::mul_general`] sums from `+0.0`, so its accumulator is
+    /// never `-0.0` and adding a `±0` product leaves it unchanged; a product
+    /// by `1.0` is its other factor. Both hold for finite factors, so a pair
+    /// whose skipped factors may not be finite is left to the general
+    /// product. Every such factor reaches one of the six outputs checked
+    /// (a non-finite term makes its sum non-finite), and the check reads
+    /// bits, so it does not trap where the general product would not.
+    #[inline(always)]
+    fn mul_affine(&self, rhs: &Mat4) -> Option<Mat4> {
+        let (a, b) = (&self.0, &rhs.0);
+        // Zero where the bottom row is `(±0, ±0, ±0, 1)`; one branch for both.
+        let off = |m: &[f32; 16]| {
+            ((m[3].to_bits() | m[7].to_bits() | m[11].to_bits()) << 1)
+                | (m[15].to_bits() ^ 1f32.to_bits())
+        };
+        if off(a) | off(b) != 0 {
+            return None;
+        }
+        let mut out = [0f32; 16];
+        for col in 0..4 {
+            for row in 0..3 {
+                let c = col * 4;
+                let acc = 0.0 + a[row] * b[c];
+                let acc = acc + a[4 + row] * b[c + 1];
+                let acc = acc + a[8 + row] * b[c + 2];
+                out[c + row] = if col == 3 { acc + a[12 + row] } else { acc };
+            }
+        }
+        out[15] = 1.0;
+        // Bit 31 set where the exponent is all ones; one branch for all six.
+        let inf_or_nan = |f: f32| (f.to_bits() & 0x7f80_0000) + 0x0080_0000;
+        let checked = [out[0], out[4], out[8], out[12], out[13], out[14]];
+        let bad = checked.iter().fold(0, |acc, &f| acc | inf_or_nan(f));
+        (bad & 0x8000_0000 == 0).then_some(Mat4(out))
+    }
+
+    /// [`Self::mul`] for any pair: every product, in column order.
+    #[cold]
+    #[inline(never)]
+    fn mul_general(&self, rhs: &Mat4) -> Mat4 {
         let mut out = [0f32; 16];
         for col in 0..4 {
             for row in 0..4 {
@@ -1045,6 +1095,81 @@ mod tests {
     use super::*;
     use crate::archive::InternReloc;
     use alloc::vec;
+
+    /// The affine fast path is bit-identical to the general product, for
+    /// affine pairs (with `-0.0` bottom rows, zero and non-finite entries)
+    /// and for pairs it must refuse.
+    #[test]
+    fn mul_matches_the_general_product_bit_for_bit() {
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+            fn value(&mut self, special: bool) -> f32 {
+                const SPECIALS: [f32; 11] = [
+                    0.0,
+                    -0.0,
+                    1.0,
+                    -1.0,
+                    f32::INFINITY,
+                    f32::NEG_INFINITY,
+                    f32::NAN,
+                    f32::MAX,
+                    f32::MIN_POSITIVE,
+                    1.0e-40,
+                    3.0e38,
+                ];
+                let r = self.next();
+                if special && r.is_multiple_of(4) {
+                    SPECIALS[(r >> 8) as usize % SPECIALS.len()]
+                } else if r.is_multiple_of(3) {
+                    0.0
+                } else {
+                    ((r >> 16) as i32 as f32) / 4096.0 * (1.0 + ((r >> 8) & 0xff) as f32 / 256.0)
+                }
+            }
+            fn matrix(&mut self, special: bool, affine: bool) -> Mat4 {
+                let mut m = [0f32; 16];
+                for (i, v) in m.iter_mut().enumerate() {
+                    let pick = i % 7 == (self.next() % 7) as usize;
+                    *v = self.value(special && pick);
+                }
+                if affine {
+                    let r = self.next();
+                    m[3] = if r & 1 != 0 { -0.0 } else { 0.0 };
+                    m[7] = if r & 2 != 0 { -0.0 } else { 0.0 };
+                    m[11] = if r & 4 != 0 { -0.0 } else { 0.0 };
+                    m[15] = 1.0;
+                    // Now and then, one bottom entry off by an ulp.
+                    if r % 16 == 8 {
+                        let i = [3, 7, 11, 15][(r >> 8) as usize % 4];
+                        m[i] = f32::from_bits(m[i].to_bits() + 1);
+                    }
+                }
+                Mat4(m)
+            }
+        }
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut fast = 0;
+        for i in 0..200_000 {
+            let special = i % 2 == 0;
+            let a = rng.matrix(special, i % 5 != 0);
+            let b = rng.matrix(special, i % 7 != 0);
+            fast += usize::from(a.mul_affine(&b).is_some());
+            let got = a.mul(&b).0.map(f32::to_bits);
+            let want = a.mul_general(&b).0.map(f32::to_bits);
+            assert_eq!(got, want, "{a:?} * {b:?}");
+        }
+        // The fast path is taken, and refused, often enough to be tested.
+        assert!(
+            fast > 50_000 && fast < 150_000,
+            "fast path taken {fast} times"
+        );
+    }
 
     /// `tools/r4300/matrix_hashes.py`'s input set: `(r, p, y, sx, sy, sz)`.
     fn display_inputs() -> Vec<[f32; 6]> {

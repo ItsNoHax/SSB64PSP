@@ -58,8 +58,8 @@
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| vs4 to 16.7 ms | `vs4@2400` 17.60 ms busy (ms0): 0.9 ms left; next: audio `render_frame` (13% of vs4 trace words), `Mat4::mul` (3%), `from_trs_ncs`; re-search the order after hot-code changes (RE-494 procedure; train vs4 + 1P battle + 1P intro; trace builds now honour overrides and share the timer layout, RE-578) | RE-519, RE-577, RE-578 |
-| 1P intro | 18.5 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state | RE-576, RE-578 |
+| vs4 to 16.7 ms | `vs4@2400` 17.03 ms busy (ms0): 0.33 ms left; next: audio reverb `madd` (needs `audio_selftest` on target, ~0.05 ms), PartLocals/CollisionLocals moves (`hand_transform`, `tick_fight`, ~0.7% of vs4 words), weapon clash copies (~0.3%); re-search the order after hot-code changes (RE-494 procedure; train vs4 + 1P battle + 1P intro) | RE-519, RE-578, RE-579 |
+| 1P intro | 18.01 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |

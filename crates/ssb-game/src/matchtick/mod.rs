@@ -1184,6 +1184,11 @@ pub fn flush_rumble<S: HasFighter + ?Sized>(
 ) {
     let others = rumble_others(seats);
     for f in seats.iter_mut().flatten() {
+        // An empty queue has nothing to take: `take` copies and clears the
+        // whole 384-byte queue (as `flush_item_rumble` does).
+        if f.fighter().rumble.is_empty() {
+            continue;
+        }
         for cmd in f.fighter_mut().rumble.take() {
             if let Some(r) = rumble.as_deref_mut() {
                 r.apply(cmd, &others);
