@@ -2,9 +2,14 @@
 # Writes psp-game/link-order.txt (read by tools/psp-link.py, RE-482): the
 # functions of LOOP (loop.py's output; those taking at least 28 bytes an
 # iteration) in its order, then every other function the I-cache model saw
-# run, by line fetches. Names are v0-mangled with the crate hashes removed.
+# run, by line fetches. Names as tools/psp-link.py matches them (`stable`).
 # usage: order.py elf dump.txt loop.txt > psp-game/link-order.txt
-import bisect, collections, os, re, subprocess, sys
+import bisect, collections, importlib.util, os, subprocess, sys
+
+sys.dont_write_bytecode = True
+_spec = importlib.util.spec_from_file_location('psp_link', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'psp-link.py'))
+_link = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_link)
 
 BASE = 0x08804000
 elf, dump, loop = sys.argv[1:4]
@@ -51,4 +56,4 @@ for a, c in fetch.most_common():
         seen.add(a)
 print('# Function order for tools/psp-link.py (RE-482), from tools/icache/order.py.')
 for a in order:
-    print(re.sub(r'Cs[0-9A-Za-z]*_(?=\d)', 'C', mangled[a]))
+    print(_link.stable(mangled[a]))

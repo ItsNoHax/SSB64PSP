@@ -13,10 +13,13 @@
 #          mod 8 KB)
 # nm.txt: psp-nm -S --defined-only elf | awk '$3 ~ /^[tTwW]$/' | sort
 # Names compare without crate hashes, as tools/psp-link.py matches them.
-import re, struct, subprocess, sys
+import importlib.util, os, re, struct, subprocess, sys
 
-def stable(n):
-    return re.sub(r'Cs[0-9A-Za-z]*_(?=\d)', 'C', n)
+sys.dont_write_bytecode = True
+_spec = importlib.util.spec_from_file_location('psp_link', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'psp-link.py'))
+_link = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_link)
+stable = _link.stable
 
 def parse(lines, kinds):
     d = {}

@@ -10,13 +10,14 @@
 | Goldens | 266 of 266 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy, ms0) | Room 13.84 ms, Run 15.21-15.29, Yoster 13.40, Clash 12.63-12.70 (120-frame reports) | RE-575 |
-| PSP-2000 `vs4@2400` | 19.64 ms busy | RE-576 |
-| PSP-2000 1P intro | 23.0 ms (30.6 FPS); 1P battle 19.4 ms; opening all 1-39 10.21 ms | RE-576 |
+| PSP-2000 opening (busy, ms0) | Room 13.08 ms, Run 13.52-13.59, Yoster 11.94-11.97, Clash 11.15-11.19 (120-frame reports) | RE-577 |
+| PSP-2000 `vs4@2400` | 18.20 ms busy (Zebes 12.46) | RE-577 |
+| PSP-2000 1P intro | 19.6 ms (30.9 FPS); 1P battle 17.5 ms; opening all 1-39 9.48 ms | RE-577 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 81): vs4 link order re-searched on HEAD code; `tools/psp-link.py` matches names without hash-dependent back-references. Slim ms0: vs4 19.87 to 18.20 ms, 1P intro 24.95 to 19.58, 1P battle 19.45 to 17.51, opening 10.20 to 9.48. Bounding-box guard test rejected (slower). Goldens unchanged (RE-577).
 - Landed (batch 80): frozen-model vertex replay in the 1P intro: 38.3 to 23.0 ms busy on the Slim; vs4, 1P battle, opening unchanged; low_free -6,656 B code size; goldens 266/266 (RE-576).
 - Landed (batch 79): loader background reads run on the sample streamer's thread, up to 4 x 64 KiB per frame; a game-thread read holds them after the chunk in flight. Opening scenes read their `FuncStart` clips with the scene. Slim ms0: prefetch 1.15 to 3.2 MB/s; opening figatree misses 71 to 47 (max 8 to 2 per frame); audio misses 0; low_free -3,328 B code size, opening scenes up to +494,848 B (RE-575).
 - Batch 77: results, menus, boss scene built in place; deepest stack 126,888 B; peak 14,615,040 B.
@@ -36,7 +37,7 @@
 
 ## Verification
 
-Baseline: batch 80 (hardware: RE-576); deepest game stack 126,888 B of 524288.
+Baseline: batch 81 (hardware: RE-577); deepest game stack 126,888 B of 524288.
 
 | Check | Result |
 |---|---|

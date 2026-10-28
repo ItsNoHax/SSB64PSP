@@ -180,7 +180,7 @@ Scene file lines:
 - `psp-game` links via `tools/psp-link.py`: functions in `psp-game/link-order.txt` placed first
 - An order fits only the build it was searched on
   - hot code changes size → search again on the shipped configuration
-  - `tools/icache/layout.c`: replays a model trace per candidate
+  - `tools/icache/layout.c` (nm input: `psp-nm -S ... | tools/psp-link.py --stable`): replays a model trace per candidate
 - `tools/icache/relink.py`: relinks a saved build with a new order in seconds, for hardware A/B (procedure: RE-494)
 - Model ranks orders weakly (RE-500) → pick on the PSP
 - `tools/hw-link-order.sh` (`prep`/`run`/`rank`, `DRY_RUN=1`):

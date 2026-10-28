@@ -7,7 +7,8 @@
 // order: compiler_builtins) keep their linked address. HELDOUT, a second
 // trace, is only scored, to show the order generalises.
 // usage: layout trace.bin nm.txt orderable.txt ITERS SEED out.txt [heldout.bin [initial-order.txt]]
-//   nm.txt: psp-nm -S --defined-only elf | awk '$3 ~ /^[tTwW]$/' | sort
+//   nm.txt: psp-nm -S --defined-only elf | awk '$3 ~ /^[tTwW]$/' | sort |
+//     tools/psp-link.py --stable   (names as psp-link.py matches them)
 //   orderable.txt: tools/icache/relink.py --functions DIR
 // LAYOUT_TAIL=file names hot functions whose code differs between the traced
 // build and the shipped one (capture-only code, feature-gated paths); they go
@@ -20,8 +21,9 @@
 #include <math.h>
 #define BASE 0x08804000u
 typedef struct { uint32_t a, s; char *n; } F;
-// A name as tools/psp-link.py matches it: v0 crate hashes (`Cs<base62>_`
-// before the crate name's length) become `C`.
+// v0 crate hashes (`Cs<base62>_` before the crate name's length) become `C`:
+// a no-op on nm.txt from `psp-link.py --stable`, which also re-points the
+// back-references.
 static char *stable(const char *n) {
   char *r = malloc(strlen(n) + 1), *o = r;
   for (const char *p = n; *p; p++) {

@@ -51,15 +51,15 @@
 - Figures: STATUS (PSP-2000).
 - Link orders: searched with `tools/icache/`, chosen on hardware by busy time
   (`tools/hw-link-order.sh`). Hot code changes size → re-search
-  (RE-494–RE-500, RE-539).
+  (RE-494–RE-500, RE-539, RE-577: names hash-independent).
 - Stack: deepest 126,888 B measured (f1-training-fighter-select); frames over 16 KB listed in `docs/memory.md`; shrink options in RE-568.
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Stage clip cost | Battle-stage guard-band clip costs +1.21 ms vs4, +1.75 ms Zebes: run the noclip-timer A/B to split clip from layout; reduce per-vertex test | RE-519 |
+| Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; a per-mesh box pre-test costs as much as it saves (RE-577); next: cheaper per-vertex test or batch clip | RE-519, RE-577 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| vs4 link order | `vs4@2400` busy 19.71 ms (ms0) vs RE-539 16.92: re-search the link order; new hot-path branches go in cold never-inline helpers (code placement moves vs4 up to +0.9 ms) | RE-539, RE-574, RE-576 |
-| 1P intro | 23 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms; next: replay compose output for frozen models or cache per-model material state | RE-576 |
+| vs4 to 16.7 ms | `vs4@2400` 18.20 ms busy (ms0): 1.5 ms left; guard clip 0.94 ms CPU; re-search the order after hot-code changes or when `cmpaddr.py` shows unmatched entries (RE-494 procedure); new hot-path branches in cold never-inline helpers | RE-519, RE-577 |
+| 1P intro | 19.6 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state | RE-576 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
