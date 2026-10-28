@@ -22,6 +22,7 @@ pub mod osc;
 pub mod prof;
 pub mod reverb;
 mod shared;
+pub mod stream;
 pub mod synth;
 mod system;
 #[cfg(test)]

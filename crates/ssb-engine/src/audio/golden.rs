@@ -39,9 +39,11 @@ impl Report {
     }
 }
 
-struct Runner<C: FnMut() -> u32> {
+struct Runner<C: FnMut() -> u32, H: FnMut()> {
     sys: AudioSystem,
     clock: C,
+    /// Called after every frame (a host test's streamer).
+    between: H,
     hash: u64,
     ticks: u32,
     frames: u32,
@@ -49,7 +51,7 @@ struct Runner<C: FnMut() -> u32> {
     buf: [i16; FRAME_SAMPLES_MAX * 2],
 }
 
-impl<C: FnMut() -> u32> Runner<C> {
+impl<C: FnMut() -> u32, H: FnMut()> Runner<C, H> {
     fn frame(&mut self, n: usize) {
         let t = (self.clock)();
         self.sys.render_frame(&mut self.buf, n);
@@ -59,6 +61,7 @@ impl<C: FnMut() -> u32> Runner<C> {
             self.hash = (self.hash ^ (*s as u16 as u64)).wrapping_mul(0x0100_0000_01B3);
         }
         self.max_voices = self.max_voices.max(self.sys.active_voices());
+        (self.between)();
     }
 
     fn end(&mut self, r: &mut Report, k: usize) {
@@ -74,6 +77,11 @@ impl<C: FnMut() -> u32> Runner<C> {
 /// Runs the scenario on a fresh [`AudioSystem`] over `section`, timing each
 /// render with `clock`.
 pub fn run(section: &'static [u8], clock: impl FnMut() -> u32) -> Result<Report, AudioError> {
+    Ok(run_with(AudioSystem::new(section)?, clock, || {}))
+}
+
+/// Runs the scenario on `sys` (fresh), calling `between` after every frame.
+pub fn run_with(sys: AudioSystem, clock: impl FnMut() -> u32, between: impl FnMut()) -> Report {
     let mut r = Report {
         hashes: [0; SEGMENTS],
         ticks: [0; SEGMENTS],
@@ -81,8 +89,9 @@ pub fn run(section: &'static [u8], clock: impl FnMut() -> u32) -> Result<Report,
         max_voices: 0,
     };
     let mut x = Runner {
-        sys: AudioSystem::new(section)?,
+        sys,
         clock,
+        between,
         hash: 0xCBF2_9CE4_8422_2325,
         ticks: 0,
         frames: 0,
@@ -142,5 +151,5 @@ pub fn run(section: &'static [u8], clock: impl FnMut() -> u32) -> Result<Report,
         x.frame(FRAME_SAMPLES_MAX);
     }
     x.end(&mut r, 3);
-    Ok(r)
+    r
 }

@@ -2007,7 +2007,7 @@ fn start_audio(pack: &[u8], path: &'static str) {
         Ok(Some(s)) => s,
         Ok(None) => {
             audio_log(format_args!("audio: the pack has no audio section"));
-            &[]
+            audio::Section::Resident(&[])
         }
         Err(e) => {
             audio_log(format_args!("audio: section not loaded ({}); no audio", e.as_str()));
@@ -2017,9 +2017,13 @@ fn start_audio(pack: &[u8], path: &'static str) {
     match audio::start(section) {
         Ok(api) => {
             ssb_game::sound::install(api);
+            let (kind, streamed) = match section {
+                audio::Section::Resident(_) => ("resident", 0),
+                audio::Section::Streamed { cache, .. } => ("streamed", cache.pages()),
+            };
             audio_log(format_args!(
-                "audio: started, section={} bytes, block={} prio={:#x}",
-                section.len(),
+                "audio: started, {kind} section, resident={} bytes, streamed pages={streamed}, block={} prio={:#x}",
+                section.resident_bytes(),
                 audio::BLOCK,
                 audio::PRIORITY
             ));
@@ -2042,6 +2046,13 @@ fn audio_log(args: core::fmt::Arguments<'_>) {
 /// channel released.
 #[cfg(feature = "headless_capture")]
 fn exit_audio() {
+    #[cfg(not(feature = "no_audio"))]
+    if let Some(c) = ssb_psp_runtime::audio::sample_stats() {
+        audio_log(format_args!(
+            "audio: samples misses={} miss_bytes={} fetched={} evicted={} errors={} queue_full={} queue_max={}",
+            c.misses, c.miss_bytes, c.fetched, c.evicted, c.errors, c.queue_full, c.queue_max
+        ));
+    }
     ssb_psp_runtime::audio::dump_flush(true);
     ssb_psp_runtime::audio::stop();
 }

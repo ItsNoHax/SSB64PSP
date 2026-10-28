@@ -108,6 +108,25 @@ impl AudioSystem {
     /// (audio.c:880-988) in its final boot configuration.
     pub fn new(section: &'static [u8]) -> Result<Self, AudioError> {
         let data = AudioData::new(section).map_err(|_| AudioError::BadSection)?;
+        Ok(Self::with_data(data))
+    }
+
+    /// [`Self::new`] over a section's resident prefix, the samples
+    /// streamed through `cache` ([`super::stream`]).
+    pub fn new_streamed(
+        prefix: &'static [u8],
+        cache: &'static super::stream::PageCache,
+    ) -> Result<Self, AudioError> {
+        let data = AudioData::new_streamed(prefix, cache).map_err(|_| AudioError::BadSection)?;
+        Ok(Self::with_data(data))
+    }
+
+    /// The streamed samples, if the system streams them.
+    pub fn streamed(&self) -> Option<&super::stream::Streamed> {
+        self.data.samples.streamed()
+    }
+
+    pub(crate) fn with_data(data: AudioData) -> Self {
         let fx_type = reverb::AL_FX_CUSTOM;
         let fx = Fx::new(
             reverb::params_for(fx_type, &data.custom_fx, &data.presets),
@@ -116,7 +135,7 @@ impl AudioSystem {
         let mut synth = Synth::new(N64_OUTPUT_RATE, Some(fx));
         let fgm = Fgm::new(&mut synth, &data);
         let csp = Csp::new(&mut synth, &data);
-        Ok(Self {
+        Self {
             data,
             synth,
             csp,
@@ -131,7 +150,7 @@ impl AudioSystem {
             bgm_volume_rate: 0.0,
             bgm_priority: BGM_PRIORITY,
             sound_players: [None; SOUND_PLAYERS],
-        })
+        }
     }
 
     /// `syAudioThreadMain`'s frame-length choice (audio.c:1004-1018):
@@ -154,6 +173,7 @@ impl AudioSystem {
     /// sequencer, FGM and `syAudio` work. Applies the mono option.
     pub fn render_frame(&mut self, out: &mut [i16], samples: usize) {
         let t_total = super::prof::start();
+        self.data.samples.frame();
         let out = &mut out[..samples * 2];
         let mut players = Players {
             csp: &mut self.csp,

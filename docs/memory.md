@@ -12,7 +12,7 @@
 
 - Pack loading (`psp_runtime::scene_files`; RE-475, [D-046](decisions/D-046.md)):
   - boot: header, tables, shared region
-  - boot: audio section, never freed (audio thread reads it any time, [D-049](decisions/D-049.md))
+  - boot: audio heads + 48-slot page cache (1.94 MB), never freed; samples stream from the pack ([D-049](decisions/D-049.md), RE-573)
   - scene start: each scene's files with extern closure
   - runs `ssb_rom::loader_plan::Plan`: closure, `reloc_link::place_runs` Ascending runs, per-run blocks (RE-571)
 - Scene peaks, boot and XMB free bytes (PSP-2000): RE-475

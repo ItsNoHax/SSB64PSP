@@ -63,8 +63,38 @@ struct PspIo {
     /// failed read reopens it once (a descriptor does not survive standby).
     fd: Option<sys::SceUid>,
     sync_fd: Option<sys::SceUid>,
-    /// The background read in flight's length.
-    pending: u32,
+    /// The background read in flight, issued in [`CHUNK`]-byte pieces.
+    bg: Background,
+}
+
+/// The longest single `sceIoRead`/`sceIoReadAsync` (RE-573): the Memory
+/// Stick driver serves one request at a time, so a long read would hold the
+/// sample streamer's page reads ([`crate::sample_stream`]) behind it. 64 KiB
+/// is about 7 ms on a PSP-1000.
+const CHUNK: usize = 64 * 1024;
+
+/// The async I/O thread's priority for the background reads (RE-573): at
+/// the default it sits below the game's main thread (0x20) and makes no
+/// progress while a frame is busy. Equal to the sample streamer's.
+const ASYNC_PRIORITY: i32 = 0x1E;
+
+/// A background read: `len` bytes into `dst`, `done` of them read, the
+/// chunk in flight `chunk` long.
+#[derive(Clone, Copy)]
+struct Background {
+    dst: *mut u8,
+    len: usize,
+    done: usize,
+    chunk: usize,
+}
+
+impl Background {
+    const IDLE: Self = Self {
+        dst: core::ptr::null_mut(),
+        len: 0,
+        done: 0,
+        chunk: 0,
+    };
 }
 
 struct Loader {
@@ -102,7 +132,7 @@ pub fn boot(resident: &'static [u8], path: &'static str) -> Result<(), LoadError
                 blob,
                 fd: None,
                 sync_fd: None,
-                pending: 0,
+                bg: Background::IDLE,
             },
         });
         residency::install(resident.as_ptr(), Some(on_miss));
@@ -233,7 +263,8 @@ fn on_miss(offset: u32, _len: u32) -> bool {
 }
 
 impl PspIo {
-    /// Reads `len` bytes at pack offset `at` into `dst`, waiting.
+    /// Reads `len` bytes at pack offset `at` into `dst`, waiting, in
+    /// [`CHUNK`]-byte reads.
     fn read_sync(&mut self, at: i64, dst: *mut u8, len: usize) -> Result<(), LoadError> {
         for attempt in 0..2 {
             if attempt == 1 {
@@ -242,16 +273,48 @@ impl PspIo {
             let Some(fd) = open_fd(&mut self.sync_fd, self.path) else {
                 return Err(LoadError::NotFound);
             };
-            // SAFETY: `dst` holds `len` bytes.
-            let ok = unsafe {
-                sys::sceIoLseek(fd, at, sys::IoWhence::Set) == at
-                    && sys::sceIoRead(fd, dst as *mut core::ffi::c_void, len as u32) as usize == len
-            };
+            // SAFETY: `dst` holds `len` bytes; each read stays inside it.
+            let ok = unsafe { sys::sceIoLseek(fd, at, sys::IoWhence::Set) == at }
+                && (0..len).step_by(CHUNK).all(|done| {
+                    let n = (len - done).min(CHUNK);
+                    unsafe {
+                        sys::sceIoRead(fd, dst.add(done) as *mut core::ffi::c_void, n as u32)
+                            as usize
+                            == n
+                    }
+                });
             if ok {
                 return Ok(());
             }
         }
         Err(LoadError::ShortRead)
+    }
+
+    /// The async descriptor, opened at [`ASYNC_PRIORITY`].
+    fn async_fd(&mut self) -> Option<sys::SceUid> {
+        let fresh = self.fd.is_none();
+        let fd = open_fd(&mut self.fd, self.path)?;
+        if fresh {
+            // SAFETY: an open descriptor with no read in flight. A failure
+            // leaves the default priority, which still reads.
+            unsafe { sys::sceIoChangeAsyncPriority(fd, ASYNC_PRIORITY) };
+        }
+        Some(fd)
+    }
+
+    /// Issues the background read's next chunk.
+    fn next_chunk(&mut self, fd: sys::SceUid) -> bool {
+        let b = &mut self.bg;
+        b.chunk = (b.len - b.done).min(CHUNK);
+        // SAFETY: the block holds `len` bytes and stays allocated, in the
+        // arena, until the read completes; the chunk stays inside it.
+        unsafe {
+            sys::sceIoReadAsync(
+                fd,
+                b.dst.add(b.done) as *mut core::ffi::c_void,
+                b.chunk as u32,
+            ) >= 0
+        }
     }
 }
 
@@ -273,50 +336,66 @@ impl Io<AlignedBuf> for PspIo {
 
     fn start(&mut self, block: &AlignedBuf, start: u32, len: u32) -> bool {
         let at = self.blob + i64::from(start);
+        self.bg = Background {
+            dst: block.as_mut_ptr(),
+            len: len as usize,
+            done: 0,
+            chunk: 0,
+        };
         for attempt in 0..2 {
             if attempt == 1 {
                 close_fd(&mut self.fd);
             }
-            let Some(fd) = open_fd(&mut self.fd, self.path) else {
+            let Some(fd) = self.async_fd() else {
                 return false;
             };
-            // SAFETY: the block holds `len` bytes and stays allocated, in
-            // the arena, until the read completes.
-            let ok = unsafe {
-                sys::sceIoLseek(fd, at, sys::IoWhence::Set) == at
-                    && sys::sceIoReadAsync(fd, block.as_mut_ptr() as *mut core::ffi::c_void, len)
-                        >= 0
-            };
-            if ok {
-                self.pending = len;
+            // SAFETY: an open descriptor with no read in flight.
+            if unsafe { sys::sceIoLseek(fd, at, sys::IoWhence::Set) } == at && self.next_chunk(fd) {
                 return true;
             }
         }
         false
     }
 
+    /// Completes the chunk in flight and issues the next; `Some` once the
+    /// whole read is done or one chunk failed.
     fn finish(&mut self, wait: bool) -> Option<bool> {
         let Some(fd) = self.fd else {
             return Some(false);
         };
-        let mut res: i64 = 0;
-        // SAFETY: `fd` has the read in flight.
-        let status = unsafe {
-            if wait {
-                sys::sceIoWaitAsync(fd, &mut res)
-            } else {
-                sys::sceIoPollAsync(fd, &mut res)
+        loop {
+            let mut res: i64 = 0;
+            // SAFETY: `fd` has a chunk in flight.
+            let status = unsafe {
+                if wait {
+                    sys::sceIoWaitAsync(fd, &mut res)
+                } else {
+                    sys::sceIoPollAsync(fd, &mut res)
+                }
+            };
+            if status == 1 {
+                return None;
             }
-        };
-        if status == 1 {
-            return None;
-        }
-        let ok = status >= 0 && res == i64::from(self.pending);
-        if !ok {
+            let ok = status >= 0 && res == self.bg.chunk as i64;
+            if ok {
+                self.bg.done += self.bg.chunk;
+                if self.bg.done == self.bg.len {
+                    self.bg = Background::IDLE;
+                    return Some(true);
+                }
+                // The descriptor's position follows the last chunk.
+                if self.next_chunk(fd) {
+                    if wait {
+                        continue;
+                    }
+                    return None;
+                }
+            }
             // The descriptor is reopened for the next read.
+            self.bg = Background::IDLE;
             close_fd(&mut self.fd);
+            return Some(false);
         }
-        Some(ok)
     }
 
     fn flush(&mut self, block: &AlignedBuf) {

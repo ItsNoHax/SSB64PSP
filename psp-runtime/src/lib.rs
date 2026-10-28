@@ -31,6 +31,7 @@ pub mod particles;
 pub mod profile;
 pub mod savedata;
 pub mod scene;
+pub mod sample_stream;
 pub mod scene_files;
 #[cfg(feature = "sqrt_selftest")]
 pub mod sqrt_selftest;

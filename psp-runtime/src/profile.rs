@@ -476,6 +476,24 @@ mod imp {
             crate::audio::dump_dropped(),
         );
         emit(&line.buf[..line.len]);
+        // The sample cache (RE-573), totals since boot.
+        if let Some(c) = crate::audio::sample_stats() {
+            let mut line = Line { buf: [0; 1024], len: 0 };
+            let _ = writeln!(
+                line,
+                "asample n={} misses={} miss_bytes={} fetched={} evicted={} errors={} queue_full={} queue_max={} last_err={:#x}",
+                s.reports,
+                c.misses,
+                c.miss_bytes,
+                c.fetched,
+                c.evicted,
+                c.errors,
+                c.queue_full,
+                c.queue_max,
+                crate::sample_stream::last_error()
+            );
+            emit(&line.buf[..line.len]);
+        }
         // Renderer stages in microseconds per second (pulls: voice
         // sub-frames per second; ns_pull: the per-voice stages' cost per
         // pull).

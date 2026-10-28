@@ -490,7 +490,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 136 grows `LodBlendDesc` to 56 bytes with `origin_delta`, tile 0's static
 // origin less tile 1's: the two-tile blend accepts tiles whose origins
 // differ (Master Hand's Fall wallpaper, RE-321).
-pub const VERSION: u32 = 136;
+// 137 lays the audio section out for streaming (section version 2,
+// RE-572 A): a resident prefix with each wave's first 2 KiB
+// (`ssb_engine::audio::stream::HEAD`), then both tbl parts from a 16 KiB
+// page boundary; the section starts on a page boundary in the file
+// ([`AUDIO_ALIGN`]). No table layout change.
+pub const VERSION: u32 = 137;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -4135,9 +4140,11 @@ pub fn audio_range(head: &[u8]) -> Option<(usize, usize)> {
     (len != 0).then(|| (u32_at(head, 116) as usize, len))
 }
 
-/// The audio section's file alignment: a cache line, so the boot read can
-/// land in an aligned buffer without a copy.
-pub const AUDIO_ALIGN: usize = 64;
+/// The audio section's file alignment: a streamed page
+/// (`ssb_engine::audio::stream::PAGE`), so every page read starts on a
+/// sector and stays in one 32 KiB cluster (RE-573); also a cache line, so
+/// the boot read lands in an aligned buffer without a copy.
+pub const AUDIO_ALIGN: usize = ssb_engine::audio::stream::PAGE;
 
 /// Zero-copy view over a loaded pack.
 ///

@@ -12,6 +12,7 @@ use super::data::{AudioData, WaveRef, AL_ADPCM_WAVE};
 use super::dsp::{self, Dmem, EnvMixInit, EnvMixState, State16};
 use super::prof;
 use super::reverb::Fx;
+use super::stream;
 
 pub const MAX_PVOICES: usize = 16;
 pub const MAX_UPDATES: usize = 128;
@@ -233,6 +234,9 @@ pub struct Synth {
     /// `n_syn->auxBus->fx`; `None` is `AL_FX_NONE`.
     pub fx: Option<Fx>,
     dmem: Dmem,
+    /// The chunk buffer a streamed read copies into (`syAudioDma`'s
+    /// buffer, [`stream::FETCH_MAX`]).
+    fetch: [u8; stream::FETCH_MAX],
     /// `ALParam` allocations that found the pool empty.
     pub params_dropped: u32,
     /// Physical voices stolen by `_allocatePVoice` (diagnostic).
@@ -262,6 +266,7 @@ impl Synth {
             samples_left: [None; 3],
             fx,
             dmem: Dmem::default(),
+            fetch: [0; stream::FETCH_MAX],
             params_dropped: 0,
             steals: 0,
         };
@@ -905,7 +910,7 @@ impl Synth {
         let Some(table) = f.dc_table else {
             return;
         };
-        let (wt, bank, tbl) = data.wave(table);
+        let (wt, bank) = data.wave(table);
         let book = wt
             .book
             .map_or(&[0i16; 64][..], |b| &bank.books[b as usize].book[..]);
@@ -914,6 +919,12 @@ impl Synth {
 
         let looped = (out_count as u32).wrapping_add(f.dc_sample as u32) > f.dc_loop.end
             && f.dc_loop.count != 0;
+        if f.dc_loop.count != 0 {
+            // PSP: queue the loop start's pages before the voice wraps
+            // (`stream`; a no-op for resident samples).
+            let at = base + ADPCMFBYTES * ((f.dc_loop.start >> LFSAMPLES) as i32 + 1);
+            data.samples.prefetch(table, wt, at);
+        }
         let mut n_sam = if looped {
             f.dc_loop.end as i32 - f.dc_sample
         } else {
@@ -930,7 +941,17 @@ impl Synth {
 
         if looped {
             let first = f.dc_first as u32;
-            decode_chunk(&mut self.dmem, f, tbl, book, tsam, nbytes, *outp, first);
+            decode_chunk(
+                &mut self.dmem,
+                &mut self.fetch,
+                f,
+                data,
+                book,
+                tsam,
+                nbytes,
+                *outp,
+                first,
+            );
             let f = &mut self.pvoices[i];
             if f.dc_lastsam != 0 {
                 *outp += (f.dc_lastsam << 1) as usize;
@@ -956,8 +977,9 @@ impl Synth {
                 let flags = f.dc_first as u32 | dsp::A_LOOP;
                 decode_chunk(
                     &mut self.dmem,
+                    &mut self.fetch,
                     f,
-                    tbl,
+                    data,
                     book,
                     tsam,
                     nbytes,
@@ -991,8 +1013,9 @@ impl Synth {
             let first = f.dc_first as u32;
             decode_chunk(
                 &mut self.dmem,
+                &mut self.fetch,
                 f,
-                tbl,
+                data,
                 book,
                 n_sam - n_over,
                 nbytes,
@@ -1025,24 +1048,26 @@ impl Synth {
     }
 }
 
-/// `_decodeChunk`: decode `tsam` samples from `dc_memin` to `outp`.
+/// `_decodeChunk`: decode `tsam` samples from `dc_memin` to `outp`. The
+/// chunk comes through [`stream::Samples::read`] (`syAudioDma`).
 #[allow(clippy::too_many_arguments)]
 fn decode_chunk(
     dmem: &mut Dmem,
+    fetch: &mut [u8; stream::FETCH_MAX],
     f: &mut PVoice,
-    tbl: &[u8],
+    data: &AudioData,
     book: &[i16],
     tsam: i32,
     nbytes: i32,
     outp: usize,
     flags: u32,
 ) {
-    let input = if nbytes > 0 {
-        let start = (f.dc_memin.max(0) as usize).min(tbl.len());
-        let end = (start + nbytes as usize).min(tbl.len());
-        &tbl[start..end]
-    } else {
-        &[][..]
+    let input = match f.dc_table {
+        Some(w) if nbytes > 0 => {
+            let (wt, _) = data.wave(w);
+            data.samples.read(w, wt, f.dc_memin, nbytes, fetch)
+        }
+        _ => &[][..],
     };
     let lstate = f.dc_lstate;
     let t = prof::start();
@@ -1063,7 +1088,7 @@ fn decode_chunk(
 /// the shared `ALWaveTable::len` to whole frames; [`Synth::adpcm_pull`]
 /// does that on use.
 fn load_wavetable(a: &mut PVoice, data: &AudioData, w: WaveRef) {
-    let (wt, bank, _) = data.wave(w);
+    let (wt, bank) = data.wave(w);
     a.dc_table = Some(w);
     a.dc_memin = wt.base as i32;
     a.dc_sample = 0;
@@ -1096,7 +1121,7 @@ fn envmixer_reset(e: &mut PVoice, data: &AudioData) {
     e.dc_first = 1;
     e.dc_sample = 0;
     if let Some(w) = e.dc_table {
-        let (wt, bank, _) = data.wave(w);
+        let (wt, bank) = data.wave(w);
         e.dc_memin = wt.base as i32;
         if let Some(l) = wt.loop_ {
             e.dc_loop.count = bank.loops[l as usize].count;

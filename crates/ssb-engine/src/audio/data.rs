@@ -13,12 +13,16 @@ use alloc::vec::Vec;
 
 /// `"SAUD"`, little-endian.
 pub const SECTION_MAGIC: u32 = u32::from_le_bytes(*b"SAUD");
-/// Bumped when the section's part list changes.
-pub const SECTION_VERSION: u32 = 1;
+/// Bumped when the section's part list or layout changes. 2: the
+/// [`Part::Heads`] part, and the two tbl parts laid out last on a
+/// [`stream::PAGE`] boundary ([`Section::build`]).
+pub const SECTION_VERSION: u32 = 2;
 /// Header: magic, version, part count, then `(offset, len)` per part.
 pub const SECTION_HEADER: usize = 12 + PART_COUNT * 8;
 /// Every part starts on this boundary inside the section.
 pub const PART_ALIGN: usize = 16;
+
+use super::stream;
 
 /// The section's parts, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,9 +52,17 @@ pub enum Part {
     Presets,
     /// `gSYSinTable`: 2048 `u16`, `sin(x) * 32768` over `[0, pi)`.
     SinTable,
+    /// Not a ROM file: the first bytes of every wave of both banks
+    /// ([`stream::build_heads`]), resident so a voice starts while its
+    /// page streams in (PSP deviation, RE-572 A).
+    Heads,
 }
 
-pub const PART_COUNT: usize = 13;
+pub const PART_COUNT: usize = 14;
+
+/// The parts read from the pack on demand ([`stream`]); every other part is
+/// the resident prefix.
+pub const STREAMED_PARTS: [Part; 2] = [Part::MusicTbl, Part::SfxTbl];
 
 /// Byte sizes of the fixed-size parts.
 pub const RESAMPLE_TABLE_LEN: usize = 64 * 4 * 2;
@@ -83,10 +95,83 @@ fn byte(d: &[u8], at: usize) -> Result<u8, ParseError> {
 #[derive(Debug, Clone, Copy)]
 pub struct Section<'a> {
     parts: [&'a [u8]; PART_COUNT],
+    /// `(offset, len)` per part, from the header.
+    ranges: [(usize, usize); PART_COUNT],
+}
+
+/// Where a section's streamed tbl parts lie ([`Section::stream_layout`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamLayout {
+    /// Bytes from the section's start that hold every resident part (and
+    /// the header): the boot read.
+    pub resident_len: usize,
+    /// Section offset of the streamed region (the music tbl), a multiple of
+    /// [`stream::PAGE`].
+    pub region_offset: usize,
+    pub region_len: usize,
 }
 
 impl<'a> Section<'a> {
     pub fn open(data: &'a [u8]) -> Result<Self, ParseError> {
+        Self::open_with(data, false)
+    }
+
+    /// Opens the resident prefix of a section laid out for streaming
+    /// ([`Self::stream_layout`]): the tbl parts may lie past `data`'s end;
+    /// they open empty, with their header lengths in [`Self::part_len`].
+    pub fn open_resident(data: &'a [u8]) -> Result<Self, ParseError> {
+        Self::open_with(data, true)
+    }
+
+    /// Reads the streamed layout from a section's header (its first
+    /// [`SECTION_HEADER`] bytes are enough). `None` for a section whose tbl
+    /// parts are not last, contiguous and page-aligned.
+    pub fn stream_layout(header: &[u8]) -> Option<StreamLayout> {
+        let le = |at: usize| -> Option<usize> {
+            header
+                .get(at..at + 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        };
+        if le(0)? != SECTION_MAGIC as usize
+            || le(4)? != SECTION_VERSION as usize
+            || le(8)? != PART_COUNT
+        {
+            return None;
+        }
+        let range = |p: Part| Some((le(12 + p as usize * 8)?, le(16 + p as usize * 8)?));
+        let (music, music_len) = range(Part::MusicTbl)?;
+        let (sfx, sfx_len) = range(Part::SfxTbl)?;
+        let mut resident_len = SECTION_HEADER;
+        for i in 0..PART_COUNT {
+            if STREAMED_PARTS.iter().any(|&p| p as usize == i) {
+                continue;
+            }
+            let (off, len) = (le(12 + i * 8)?, le(16 + i * 8)?);
+            resident_len = resident_len.max(off.checked_add(len)?);
+        }
+        let ok = music % stream::PAGE == 0
+            && music >= resident_len
+            && sfx >= music + music_len
+            && sfx - (music + music_len) < PART_ALIGN;
+        ok.then_some(StreamLayout {
+            resident_len,
+            region_offset: music,
+            region_len: sfx + sfx_len - music,
+        })
+    }
+
+    /// A part's length from the header (also for a part
+    /// [`Self::open_resident`] left out).
+    pub fn part_len(&self, part: Part) -> usize {
+        self.ranges[part as usize].1
+    }
+
+    /// A part's section offset from the header.
+    pub fn part_offset(&self, part: Part) -> usize {
+        self.ranges[part as usize].0
+    }
+
+    fn open_with(data: &'a [u8], resident: bool) -> Result<Self, ParseError> {
         let le = |at: usize| -> Result<u32, ParseError> {
             data.get(at..at + 4)
                 .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -96,12 +181,16 @@ impl<'a> Section<'a> {
             return Err(ParseError("not an audio section"));
         }
         let mut parts = [&data[..0]; PART_COUNT];
+        let mut ranges = [(0, 0); PART_COUNT];
         for (i, part) in parts.iter_mut().enumerate() {
             let off = le(12 + i * 8)? as usize;
             let len = le(16 + i * 8)? as usize;
-            *part = data
-                .get(off..off.checked_add(len).ok_or(ParseError("part overflows"))?)
-                .ok_or(ParseError("part out of range"))?;
+            ranges[i] = (off, len);
+            let end = off.checked_add(len).ok_or(ParseError("part overflows"))?;
+            if resident && STREAMED_PARTS.iter().any(|&p| p as usize == i) {
+                continue;
+            }
+            *part = data.get(off..end).ok_or(ParseError("part out of range"))?;
         }
         let fixed = [
             (Part::ResampleTable, RESAMPLE_TABLE_LEN),
@@ -113,21 +202,32 @@ impl<'a> Section<'a> {
         if fixed.iter().any(|&(p, n)| parts[p as usize].len() != n) {
             return Err(ParseError("constant table has the wrong size"));
         }
-        Ok(Self { parts })
+        Ok(Self { parts, ranges })
     }
 
     pub fn part(&self, part: Part) -> &'a [u8] {
         self.parts[part as usize]
     }
 
-    /// Lays `parts` (in [`Part`] order) out as a section.
+    /// Lays `parts` (in [`Part`] order) out as a section: the resident
+    /// parts in order, then the music tbl on a [`stream::PAGE`] boundary
+    /// and the sfx tbl right after it ([`Self::stream_layout`]).
     pub fn build(parts: &[&[u8]; PART_COUNT]) -> Vec<u8> {
         let mut out = alloc::vec![0u8; SECTION_HEADER];
         out[0..4].copy_from_slice(&SECTION_MAGIC.to_le_bytes());
         out[4..8].copy_from_slice(&SECTION_VERSION.to_le_bytes());
         out[8..12].copy_from_slice(&(PART_COUNT as u32).to_le_bytes());
-        for (i, p) in parts.iter().enumerate() {
-            let at = out.len().next_multiple_of(PART_ALIGN);
+        let resident =
+            (0..PART_COUNT).filter(|i| !STREAMED_PARTS.iter().any(|&p| p as usize == *i));
+        let streamed = STREAMED_PARTS.iter().map(|&p| p as usize);
+        for (k, i) in resident.chain(streamed).enumerate() {
+            let align = if k == PART_COUNT - STREAMED_PARTS.len() {
+                stream::PAGE
+            } else {
+                PART_ALIGN
+            };
+            let p = parts[i];
+            let at = out.len().next_multiple_of(align);
             out.resize(at, 0);
             out[12 + i * 8..16 + i * 8].copy_from_slice(&(at as u32).to_le_bytes());
             out[16 + i * 8..20 + i * 8].copy_from_slice(&(p.len() as u32).to_le_bytes());
@@ -514,10 +614,11 @@ pub fn fgm_unk_count(file: &[u8]) -> Result<usize, ParseError> {
 pub struct AudioData {
     /// `B1_sounds1`: the sequence player's bank. [`WaveRef::bank`] 0.
     pub music: Bank,
-    pub music_tbl: &'static [u8],
     /// `B1_sounds2`: the FGM engine's sounds. [`WaveRef::bank`] 1.
     pub sfx: Bank,
-    pub sfx_tbl: &'static [u8],
+    /// Both banks' wave data (the tbl files): resident, or streamed from
+    /// the pack through a page cache ([`stream`]).
+    pub samples: stream::Samples,
     pub sbk: &'static [u8],
     pub seqs: Vec<SeqEntry>,
     /// `fgm.unk` records (16 bytes each, from file offset 4).
@@ -545,10 +646,51 @@ pub struct WaveRef {
 }
 
 impl AudioData {
+    /// Parses a whole section, tbl parts included (resident samples).
     pub fn new(section: &'static [u8]) -> Result<Self, ParseError> {
         let s = Section::open(section)?;
-        let music_tbl = s.part(Part::MusicTbl);
-        let sfx_tbl = s.part(Part::SfxTbl);
+        let samples = stream::Samples::Resident([s.part(Part::MusicTbl), s.part(Part::SfxTbl)]);
+        Self::parse(&s, samples)
+    }
+
+    /// Parses a section's resident prefix ([`Section::stream_layout`]);
+    /// the samples stream through `cache`, which covers the section's
+    /// streamed region.
+    pub fn new_streamed(
+        prefix: &'static [u8],
+        cache: &'static stream::PageCache,
+    ) -> Result<Self, ParseError> {
+        Self::new_streamed_with_head(prefix, cache, stream::HEAD)
+    }
+
+    /// [`Self::new_streamed`] for a section whose heads are `head` bytes
+    /// (sizing tests).
+    pub(crate) fn new_streamed_with_head(
+        prefix: &'static [u8],
+        cache: &'static stream::PageCache,
+        head: usize,
+    ) -> Result<Self, ParseError> {
+        let s = Section::open_resident(prefix)?;
+        let music = s.part_offset(Part::MusicTbl);
+        let tbl_at = [0, (s.part_offset(Part::SfxTbl) - music) as u32];
+        let tbl_len = [
+            s.part_len(Part::MusicTbl) as u32,
+            s.part_len(Part::SfxTbl) as u32,
+        ];
+        let mut d = Self::parse(&s, stream::Samples::Resident([&[], &[]]))?;
+        let streamed = stream::Streamed::with_head(
+            s.part(Part::Heads),
+            [&d.music, &d.sfx],
+            tbl_at,
+            tbl_len,
+            cache,
+            head,
+        )?;
+        d.samples = stream::Samples::Streamed(streamed);
+        Ok(d)
+    }
+
+    fn parse(s: &Section<'static>, samples: stream::Samples) -> Result<Self, ParseError> {
         let mut resample = [[0i16; 4]; 64];
         let flat: [i16; 256] = be_i16s(s.part(Part::ResampleTable));
         for (row, c) in resample.iter_mut().zip(flat.as_chunks::<4>().0) {
@@ -565,10 +707,9 @@ impl AudioData {
             *o = u16::from_be_bytes([b[0], b[1]]);
         }
         Ok(Self {
-            music: Bank::parse(s.part(Part::MusicCtl), music_tbl.len())?,
-            music_tbl,
-            sfx: Bank::parse(s.part(Part::SfxCtl), sfx_tbl.len())?,
-            sfx_tbl,
+            music: Bank::parse(s.part(Part::MusicCtl), s.part_len(Part::MusicTbl))?,
+            sfx: Bank::parse(s.part(Part::SfxCtl), s.part_len(Part::SfxTbl))?,
+            samples,
             sbk: s.part(Part::Sbk),
             seqs: parse_sbk(s.part(Part::Sbk))?,
             fgm_unk: s.part(Part::FgmUnk),
@@ -585,14 +726,10 @@ impl AudioData {
         })
     }
 
-    /// The bank and wave data a [`WaveRef`] names.
+    /// The wave table a [`WaveRef`] names and its bank.
     #[inline]
-    pub fn wave(&self, w: WaveRef) -> (&WaveTable, &Bank, &'static [u8]) {
-        let (bank, tbl) = if w.bank == 0 {
-            (&self.music, self.music_tbl)
-        } else {
-            (&self.sfx, self.sfx_tbl)
-        };
-        (&bank.wavetables[w.index as usize], bank, tbl)
+    pub fn wave(&self, w: WaveRef) -> (&WaveTable, &Bank) {
+        let bank = if w.bank == 0 { &self.music } else { &self.sfx };
+        (&bank.wavetables[w.index as usize], bank)
     }
 }

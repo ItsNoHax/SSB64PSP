@@ -48,7 +48,9 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use psp::sys::{self, SceUid};
+use ssb_engine::audio::stream::{self, CacheStats, PageCache};
 use ssb_engine::audio::{
+    data,
     mem,
     AudioApi, AudioError, AudioSystem, FgmHandle, RawLock, SharedAudio, FRAME_SAMPLES_MAX,
     N64_OUTPUT_RATE,
@@ -93,6 +95,14 @@ pub struct SemaLock(SceUid);
 impl SemaLock {
     /// A binary semaphore, initially free. `Err` with the kernel's error.
     pub fn new() -> Result<Self, i32> {
+        create_sema(b"ssb_audio_lock\0", 1, 1).map(Self)
+    }
+}
+
+/// `sceKernelCreateSema(name, 0, init, max, NULL)`. `name` is
+/// NUL-terminated. `Err` with the kernel's error.
+pub(crate) fn create_sema(name: &'static [u8], init: u32, max: u32) -> Result<SceUid, i32> {
+    {
         // rust-psp declares `sceKernelCreateSema` (5 arguments) without its
         // `i5` ABI mapper, so a plain call leaves the option pointer in `$t0`
         // unset (PPSSPP logs `deadbeef`, "invalid options parameter"). The
@@ -123,12 +133,12 @@ impl SemaLock {
             let stub: extern "C" fn(u32, u32, u32, u32, u32) -> u32 = core::mem::transmute(
                 __sceKernelCreateSema_stub as unsafe extern "C" fn(u32, u32, u32, u32, u32) -> u32,
             );
-            i5(b"ssb_audio_lock\0".as_ptr() as u32, 0, 1, 1, 0, stub) as i32
+            i5(name.as_ptr() as u32, 0, init, max, 0, stub) as i32
         };
         if id < 0 {
             Err(id)
         } else {
-            Ok(Self(SceUid(id)))
+            Ok(SceUid(id))
         }
     }
 }
@@ -390,12 +400,65 @@ pub enum StartError {
     Thread(i32),
 }
 
+/// The sample cache's slots: 48 pages, 768 KiB (RE-573 proposes
+/// 0.75-1 MiB; `ssb_engine::audio::stream`'s `head_sizing` test: 32 slots
+/// miss, 48 and 64 do not).
+pub const CACHE_SLOTS: usize = 48;
+
+/// The pack's audio section as loaded at boot.
+#[derive(Clone, Copy)]
+pub enum Section {
+    /// The whole section in RAM (a section not laid out for streaming).
+    Resident(&'static [u8]),
+    /// The resident prefix; the samples stream through `cache`
+    /// ([`crate::sample_stream`]).
+    Streamed {
+        prefix: &'static [u8],
+        cache: &'static PageCache,
+    },
+}
+
+impl Section {
+    /// Bytes the section keeps in RAM: the prefix (or the whole section)
+    /// and the cache's slots.
+    pub fn resident_bytes(&self) -> usize {
+        match self {
+            Section::Resident(s) => s.len(),
+            Section::Streamed { prefix, cache } => prefix.len() + cache.slots() * stream::PAGE,
+        }
+    }
+}
+
+/// Reads `len` bytes at file offset `at` into `dst`.
+fn read_at(fd: SceUid, at: usize, dst: *mut u8, len: usize) -> bool {
+    // SAFETY: `dst` holds `len` bytes.
+    unsafe {
+        sys::sceIoLseek(fd, at as i64, sys::IoWhence::Set) == at as i64
+            && sys::sceIoRead(fd, dst as *mut c_void, len as u32) as usize == len
+    }
+}
+
+/// Reads one leaked 64-byte-aligned buffer of `len` bytes at `at`.
+fn read_leaked(fd: SceUid, at: usize, len: usize) -> Result<&'static [u8], LoadError> {
+    let buf = AlignedBuf::cache_lines(len).ok_or(LoadError::OutOfMemory)?;
+    if !read_at(fd, at, buf.as_mut_ptr(), len) {
+        return Err(LoadError::ShortRead);
+    }
+    // SAFETY: the buffer is leaked below, so the slice lives forever.
+    let bytes = unsafe { core::slice::from_raw_parts(buf.as_ptr(), len) };
+    core::mem::forget(buf);
+    Ok(bytes)
+}
+
 /// Reads the pack's audio section (`ssb_rom::pack::audio_range`, from the
 /// header in `head`) from `path` (NUL-terminated, as `assets::c_path`
-/// returns) into one 64-byte-aligned buffer that is never freed: the audio
-/// thread reads it for the life of the process. `Ok(None)` when the pack
-/// has no audio section (a pack built before it existed).
-pub fn load_section(path: &'static str, head: &[u8]) -> Result<Option<&'static [u8]>, LoadError> {
+/// returns). A section laid out for streaming
+/// (`ssb_engine::audio::data::Section::stream_layout`) loads its resident
+/// prefix and starts the sample streamer over a [`CACHE_SLOTS`]-page cache;
+/// another loads whole. Buffers are never freed: the audio thread reads
+/// them for the life of the process. `Ok(None)` when the pack has no audio
+/// section (a pack built before it existed).
+pub fn load_section(path: &'static str, head: &[u8]) -> Result<Option<Section>, LoadError> {
     let Some((offset, len)) = ssb_rom::pack::audio_range(head) else {
         return Ok(None);
     };
@@ -407,32 +470,39 @@ pub fn load_section(path: &'static str, head: &[u8]) -> Result<Option<&'static [
     if fd.0 < 0 {
         return Err(LoadError::NotFound);
     }
-    let Some(buf) = AlignedBuf::cache_lines(len) else {
-        unsafe { sys::sceIoClose(fd) };
-        return Err(LoadError::OutOfMemory);
+    let mut header = [0u8; data::SECTION_HEADER];
+    let layout = if read_at(fd, offset, header.as_mut_ptr(), header.len().min(len)) {
+        data::Section::stream_layout(&header)
+            .filter(|l| l.resident_len <= len && l.region_offset + l.region_len <= len)
+    } else {
+        None
     };
-    let read = unsafe {
-        sys::sceIoLseek(fd, offset as i64, sys::IoWhence::Set);
-        let n = sys::sceIoRead(fd, buf.as_mut_ptr() as *mut c_void, len as u32);
-        sys::sceIoClose(fd);
-        n
+    let loaded = match layout {
+        Some(l) => read_leaked(fd, offset, l.resident_len).and_then(|prefix| {
+            let mem = crate::sample_stream::slots(CACHE_SLOTS * stream::PAGE)
+                .ok_or(LoadError::OutOfMemory)?;
+            let cache = crate::sample_stream::new_cache(l.region_len, mem);
+            crate::sample_stream::start(path, (offset + l.region_offset) as i64, cache)
+                .map_err(|_| LoadError::OutOfMemory)?;
+            Ok(Section::Streamed { prefix, cache })
+        }),
+        None => read_leaked(fd, offset, len).map(Section::Resident),
     };
-    if read < 0 || read as usize != len {
-        return Err(LoadError::ShortRead);
-    }
-    // SAFETY: the buffer is leaked below, so the slice lives forever.
-    let bytes = unsafe { core::slice::from_raw_parts(buf.as_ptr(), len) };
-    core::mem::forget(buf);
-    Ok(Some(bytes))
+    unsafe { sys::sceIoClose(fd) };
+    loaded.map(Some)
 }
 
 /// Builds the audio system over `section`, reserves the SRC channel and
 /// starts the audio thread. Returns the [`AudioApi`] to install with
 /// `ssb_game::sound::install`. Called once, on the game thread, at boot.
-pub fn start(section: &'static [u8]) -> Result<&'static GameAudio, StartError> {
+pub fn start(section: Section) -> Result<&'static GameAudio, StartError> {
     #[cfg(feature = "audio_selftest")]
     selftest(section);
-    let sys_ = AudioSystem::new(section).map_err(StartError::System)?;
+    let sys_ = match section {
+        Section::Resident(s) => AudioSystem::new(s),
+        Section::Streamed { prefix, cache } => AudioSystem::new_streamed(prefix, cache),
+    }
+    .map_err(StartError::System)?;
     #[cfg(feature = "profile")]
     ssb_engine::audio::prof::set_clock(now);
     let lock = SemaLock::new().map_err(StartError::Sema)?;
@@ -485,7 +555,7 @@ pub fn start(section: &'static [u8]) -> Result<&'static GameAudio, StartError> {
 /// its hashes (`ok` when they match the host's) and per-segment render
 /// times to `selftest.log` beside the executable.
 #[cfg(feature = "audio_selftest")]
-fn selftest(section: &'static [u8]) {
+fn selftest(section: Section) {
     use core::fmt::Write;
     use ssb_engine::audio::golden;
     struct Buf([u8; 512], usize);
@@ -498,7 +568,20 @@ fn selftest(section: &'static [u8]) {
         }
     }
     let mut b = Buf([0; 512], 0);
-    match golden::run(section, now) {
+    let sys_ = match section {
+        Section::Resident(s) => AudioSystem::new(s),
+        Section::Streamed { prefix, cache } => AudioSystem::new_streamed(prefix, cache),
+    };
+    // Streamed: each frame waits for the pages it queued, as the host's
+    // `streamed_golden_matches_resident` serves them.
+    let settle = || {
+        if let Section::Streamed { cache, .. } = section {
+            while cache.pending() {
+                unsafe { sys::sceKernelDelayThread(500) };
+            }
+        }
+    };
+    match sys_.map(|s| golden::run_with(s, now, settle)) {
         Ok(r) => {
             let _ = write!(b, "selftest ok={} voices={}", r.ok(), r.max_voices);
             for k in 0..golden::SEGMENTS {
@@ -549,6 +632,12 @@ pub fn stop() {
         sys::sceKernelDeleteThread(SceUid(id));
         sys::sceAudioSRCChRelease();
     }
+    crate::sample_stream::stop();
+}
+
+/// The sample cache's counters, when the samples stream.
+pub fn sample_stats() -> Option<CacheStats> {
+    crate::sample_stream::cache().map(|c| c.stats())
 }
 
 /// Whether the audio thread is running.

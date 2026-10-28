@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v136 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v137 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 266 of 266 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 70): Maps loads the cursor preview like the N64 (RE-572). VS select peak 19.78 to 15.18 MB. Highest peaks: `f1-onep-zako-*` 19,945,472 B, `f1-opening-clash` 17,749,760, `f1-vs-results` 17,680,896, `f1-training-fighter-select` 17,597,696. Boot free 52,671,232 B.
+- Landed (batch 72): audio samples stream through a 16 KiB page cache (RE-572, RE-573). Resident audio 4,428,816 to 1,941,342 B (1.15 MB heads + 0.79 MB cache); streamer and loader async priority 0x1E; `low_free` +2.21..+2.47 MB on all rows. Highest peak `f1-onep-zako-ko-flash` 17,474,560 B. Unit measured: 64 MB Slim/Brite.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. Hardware small-read latency on PSP-2000 (PSPLink).
-2. A audio sample streaming, C per-status figatree streaming, then MS8.
+1. C per-status figatree LRU (RE-572, RE-573), then MS8.
+2. Hardware: audio streamer smoke (misses=0, under=0), loader load times with async prio 0x1E.
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 70; deepest game stack 399,856 B of 524288.
+Baseline: batch 72; deepest game stack 367,536 B of 524288.
 
 | Check | Result |
 |---|---|

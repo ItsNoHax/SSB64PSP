@@ -13,6 +13,7 @@ use ssb_engine::audio::data::{
     self as fmt, Bank, ParseError, Part, Section, CUSTOM_FX_LEN, EQPOWER_LEN, PART_COUNT,
     PRESETS_LEN, RESAMPLE_TABLE_LEN, SIN_TABLE_LEN,
 };
+use ssb_engine::audio::stream;
 
 /// A ROM range: `(offset, len)`.
 pub type Range = (usize, usize);
@@ -42,8 +43,12 @@ pub const PRESETS: Range = (0x3_DC80, PRESETS_LEN);
 /// `gSYSinTable`.
 pub const SIN_TABLE: Range = (0x3_C550, SIN_TABLE_LEN);
 
-/// Every part, in [`Part`] order.
-pub const PARTS: [Range; PART_COUNT] = [
+/// The parts copied from the ROM: every [`Part`] but the last
+/// ([`Part::Heads`], built from the banks).
+pub const ROM_PART_COUNT: usize = PART_COUNT - 1;
+
+/// Every ROM part, in [`Part`] order.
+pub const PARTS: [Range; ROM_PART_COUNT] = [
     SBK,
     MUSIC_CTL,
     MUSIC_TBL,
@@ -80,7 +85,7 @@ pub enum AudioBuildError {
 /// Copies the audio files and tables out of `rom` (big-endian, as the N64
 /// reads them) and checks that they parse.
 pub fn build_section(rom: &[u8]) -> Result<Vec<u8>, AudioBuildError> {
-    const NAMES: [&str; PART_COUNT] = [
+    const NAMES: [&str; ROM_PART_COUNT] = [
         "sbk",
         "music ctl",
         "music tbl",
@@ -101,6 +106,17 @@ pub fn build_section(rom: &[u8]) -> Result<Vec<u8>, AudioBuildError> {
             .get(off..off + len)
             .ok_or(AudioBuildError::Truncated(NAMES[i]))?;
     }
+    let bank = |ctl: Part, tbl: Part, name| {
+        Bank::parse(parts[ctl as usize], parts[tbl as usize].len())
+            .map_err(|e| AudioBuildError::Parse(name, e))
+    };
+    let music = bank(Part::MusicCtl, Part::MusicTbl, "music bank")?;
+    let sfx = bank(Part::SfxCtl, Part::SfxTbl, "sfx bank")?;
+    let heads = stream::build_heads(
+        [&music, &sfx],
+        [parts[Part::MusicTbl as usize], parts[Part::SfxTbl as usize]],
+    );
+    parts[Part::Heads as usize] = &heads;
     let section = Section::build(&parts);
     let counts = check(&section)?;
     let want = [
@@ -122,10 +138,26 @@ pub fn build_section(rom: &[u8]) -> Result<Vec<u8>, AudioBuildError> {
 pub fn check(section: &[u8]) -> Result<[usize; 5], AudioBuildError> {
     let s = Section::open(section).map_err(|e| AudioBuildError::Parse("section", e))?;
     let seqs = fmt::parse_sbk(s.part(Part::Sbk)).map_err(|e| AudioBuildError::Parse("sbk", e))?;
-    Bank::parse(s.part(Part::MusicCtl), s.part(Part::MusicTbl).len())
+    let music = Bank::parse(s.part(Part::MusicCtl), s.part(Part::MusicTbl).len())
         .map_err(|e| AudioBuildError::Parse("music bank", e))?;
     let sfx = Bank::parse(s.part(Part::SfxCtl), s.part(Part::SfxTbl).len())
         .map_err(|e| AudioBuildError::Parse("sfx bank", e))?;
+    let heads = stream::build_heads(
+        [&music, &sfx],
+        [s.part(Part::MusicTbl), s.part(Part::SfxTbl)],
+    );
+    if heads != s.part(Part::Heads) {
+        return Err(AudioBuildError::Parse(
+            "heads",
+            ParseError("heads differ from the tbl"),
+        ));
+    }
+    if Section::stream_layout(section).is_none() {
+        return Err(AudioBuildError::Parse(
+            "layout",
+            ParseError("tbl parts not streamable"),
+        ));
+    }
     let fgm_sounds = sfx
         .inst_array
         .first()
