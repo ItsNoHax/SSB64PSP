@@ -10,15 +10,15 @@
 | Goldens | 266 of 266 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy, ms0) | Room 13.84 ms, Run 15.54, Yoster 12.99, Clash 12.80 (120-frame reports) | RE-574 |
-| PSP-2000 `vs4@2400` | 19.71 ms busy, BFPS 50.7, 44.8 FPS (ms0) | RE-574 |
+| PSP-2000 opening (busy, ms0) | Room 13.84 ms, Run 15.21-15.29, Yoster 13.40, Clash 12.63-12.70 (120-frame reports) | RE-575 |
+| PSP-2000 `vs4@2400` | 19.77 ms busy (same-session HEAD 19.94; RE-574 19.71) | RE-575 |
 | PSP-2000 1P intro | 38.2 ms (~21 FPS); 1P battle 19.4 ms | RE-574 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
-- Landed (batch 77): results, menus and boss scene built in place (`InlineOption`); deepest stack 163,860 to 126,888 B; low_free +3,584 B (code size); peak 14,615,040 B unchanged.
-- Batch 76: scene state built in place (`enter_training` 176,248 to 24,672 B).
+- Landed (batch 79): loader background reads run on the sample streamer's thread, up to 4 x 64 KiB per frame; a game-thread read holds them after the chunk in flight. Opening scenes read their `FuncStart` clips with the scene. Slim ms0: prefetch 1.15 to 3.2 MB/s; opening figatree misses 71 to 47 (max 8 to 2 per frame); audio misses 0; low_free -3,328 B code size, opening scenes up to +494,848 B (RE-575).
+- Batch 77: results, menus, boss scene built in place; deepest stack 126,888 B; peak 14,615,040 B.
 - Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
 - Batch 74: `golden.sh verify --ballast BYTES`; goldens 266/266 at 18.0 and 17.5 MB, min headroom 3.58 MB (f1-training-fighter-select); failures begin at 15.0 MB (RE-572). PPSSPP-side PSP-1000 acceptance passed.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
@@ -35,7 +35,7 @@
 
 ## Verification
 
-Baseline: batch 77 (hardware: HEAD 02593043, RE-574); deepest game stack 126,888 B of 524288.
+Baseline: batch 79 (hardware: RE-575); deepest game stack 126,888 B of 524288.
 
 | Check | Result |
 |---|---|

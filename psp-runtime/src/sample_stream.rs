@@ -12,6 +12,11 @@
 //!   loader chunk in flight ([`crate::scene_files`]).
 //! - Woken by a counting semaphore the audio thread signals per request;
 //!   it drains the queue, then waits again.
+//! - The same thread reads the scene loader's background reads
+//!   ([`crate::scene_files::read_chunk`]), one 64 KiB chunk at a time, each
+//!   after every page queued before it: a page waits for at most one chunk.
+//!   The loader starts it at boot ([`start_reader`]), before the audio
+//!   attaches its cache ([`start`]).
 
 use alloc::boxed::Box;
 use core::ffi::c_void;
@@ -108,22 +113,37 @@ impl PageSource for PackPages {
 /// (NUL-terminated) with the region at file offset `base`. `Err` with the
 /// kernel's error.
 pub fn start(path: &'static str, base: i64, cache: &'static PageCache) -> Result<(), i32> {
-    if THREAD.load(Ordering::Acquire) >= 0 {
+    if running() && cache_attached() {
         return Ok(());
     }
-    let sema = crate::audio::create_sema(b"ssb_audio_pages\0", 0, 0x7FFF_FFFF)?;
-    SEMA.store(sema.0, Ordering::Release);
-    CACHE.store(
-        cache as *const PageCache as *mut PageCache,
-        Ordering::Release,
-    );
     // SAFETY: `path` is NUL-terminated.
     let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777) };
     if fd.0 < 0 {
         return Err(fd.0);
     }
-    // SAFETY: written before the thread that reads it starts.
+    if let Err(e) = start_reader() {
+        unsafe { sys::sceIoClose(fd) };
+        return Err(e);
+    }
+    // SAFETY: written before `CACHE`, whose release store publishes it to
+    // the thread.
     unsafe { SOURCE = (path, base, fd.0) };
+    CACHE.store(
+        cache as *const PageCache as *mut PageCache,
+        Ordering::Release,
+    );
+    wake();
+    Ok(())
+}
+
+/// Starts the thread, with no cache yet: the loader's reads only. `Err`
+/// with the kernel's error.
+pub fn start_reader() -> Result<(), i32> {
+    if running() {
+        return Ok(());
+    }
+    let sema = crate::audio::create_sema(b"ssb_audio_pages\0", 0, 0x7FFF_FFFF)?;
+    SEMA.store(sema.0, Ordering::Release);
     STOP.store(false, Ordering::Release);
     // SAFETY: a NUL-terminated name and an `extern "C"` entry.
     let id = unsafe {
@@ -137,19 +157,24 @@ pub fn start(path: &'static str, base: i64, cache: &'static PageCache) -> Result
         )
     };
     if id.0 < 0 {
-        unsafe { sys::sceIoClose(fd) };
         return Err(id.0);
     }
     let r = unsafe { sys::sceKernelStartThread(id, 0, core::ptr::null_mut()) };
     if r < 0 {
-        unsafe {
-            sys::sceKernelDeleteThread(id);
-            sys::sceIoClose(fd);
-        }
+        unsafe { sys::sceKernelDeleteThread(id) };
         return Err(r);
     }
     THREAD.store(id.0, Ordering::Release);
     Ok(())
+}
+
+/// Whether the thread runs.
+pub fn running() -> bool {
+    THREAD.load(Ordering::Acquire) >= 0
+}
+
+fn cache_attached() -> bool {
+    !CACHE.load(Ordering::Acquire).is_null()
 }
 
 /// Stops the streamer after its current read.
@@ -174,25 +199,32 @@ pub fn cache() -> Option<&'static PageCache> {
 }
 
 unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
-    let Some(cache) = cache() else {
-        return 0;
-    };
-    // SAFETY: set by `start` before this thread began.
-    let (path, base, fd) = unsafe { *core::ptr::addr_of!(SOURCE) };
-    let mut src = PackPages {
-        path,
-        base,
-        fd: Some(SceUid(fd)),
-    };
+    let mut src: Option<PackPages> = None;
     let sema = SceUid(SEMA.load(Ordering::Acquire));
     while !STOP.load(Ordering::Acquire) {
-        // SAFETY: the semaphore `start` created; no timeout.
+        // SAFETY: the semaphore `start_reader` created; no timeout.
         unsafe { sys::sceKernelWaitSema(sema, 1, core::ptr::null_mut()) };
-        while cache.pending() && !STOP.load(Ordering::Acquire) {
-            cache.service(&mut src, 1);
+        loop {
+            if let Some(cache) = cache() {
+                let src = src.get_or_insert_with(|| {
+                    // SAFETY: set by `start` before it published `CACHE`.
+                    let (path, base, fd) = unsafe { *core::ptr::addr_of!(SOURCE) };
+                    PackPages {
+                        path,
+                        base,
+                        fd: Some(SceUid(fd)),
+                    }
+                });
+                while cache.pending() && !STOP.load(Ordering::Acquire) {
+                    cache.service(src, 1);
+                }
+            }
+            if STOP.load(Ordering::Acquire) || !crate::scene_files::read_chunk() {
+                break;
+            }
         }
     }
-    if let Some(f) = src.fd.take() {
+    if let Some(f) = src.and_then(|mut s| s.fd.take()) {
         unsafe { sys::sceIoClose(f) };
     }
     0

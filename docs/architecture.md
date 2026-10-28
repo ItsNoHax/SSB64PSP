@@ -127,7 +127,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 |---|---|
 | `osCreateThread` / `osStartThread` | `sceKernelCreateThread` / `sceKernelStartThread` |
 | VI retrace | `sceDisplayWaitVblankStart` |
-| PI cart DMA | file reads of the pack (`sceIoRead`, `sceIoReadAsync`) |
+| PI cart DMA | file reads of the pack (`sceIoRead`; background chunks on the `ssb_audio_pages` streamer thread) |
 | SI controller thread | `sceCtrlReadBufferPositive` |
 | RCP task scheduler | dropped; `sceGuStart`/`sceGuFinish`/`sceGuSync` |
 | SRAM | `ssb64.sav` |

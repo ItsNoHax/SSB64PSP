@@ -46,13 +46,21 @@
 //!   `scvsbattle.c:199`); the slabs' bookkeeping is sized then too, so a
 //!   miss allocates nothing.
 //!
-//! The background reads complete on the game thread: [`safe_point`] polls
-//! the read in flight, registers its files and starts the next, so the
-//! registry and the allocator stay single-threaded. A block a read fills is
-//! on whole cache lines and written back before its files are registered,
-//! so the GE never reads a line the CPU holds.
+//! The background reads run on the sample streamer's thread
+//! ([`crate::sample_stream`], priority 0x1E), one [`CHUNK`] after another
+//! ([`read_chunk`]), up to [`FRAME_BUDGET`] bytes between two
+//! [`safe_point`]s; a frame that reads on the game thread (a miss, a scene's
+//! own files) holds them after the chunk in flight until its safe point,
+//! so its reads wait for at most that chunk (RE-574). They complete on the
+//! game thread: [`safe_point`] sees the read done, registers its files and
+//! starts the next, so the registry and the allocator stay single-threaded.
+//! A block a read fills is on whole cache lines and written back before its
+//! files are registered, so the GE never reads a line the CPU holds.
 
 use alloc::vec::Vec;
+use core::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicIsize, AtomicPtr, AtomicU8, AtomicUsize, Ordering,
+};
 
 use psp::sys;
 use ssb_rom::loader_plan::{Io, Plan};
@@ -71,13 +79,12 @@ struct PspIo {
     path: &'static str,
     /// The pack's blob offset in the file.
     blob: i64,
-    /// The pack opened for background reads, and for the reads that wait,
-    /// kept open: opening it costs about 10 ms under PPSSPP (RE-476). A
-    /// failed read reopens it once (a descriptor does not survive standby).
+    /// The pack opened for background reads ([`JOB`]), and for the reads
+    /// that wait, kept open: opening it costs about 10 ms under PPSSPP
+    /// (RE-476). A failed read reopens it once (a descriptor does not
+    /// survive standby).
     fd: Option<sys::SceUid>,
     sync_fd: Option<sys::SceUid>,
-    /// The background read in flight, issued in [`CHUNK`]-byte pieces.
-    bg: Background,
 }
 
 /// The longest single `sceIoRead`/`sceIoReadAsync` (RE-573): the Memory
@@ -86,28 +93,77 @@ struct PspIo {
 /// is about 7 ms on a PSP-1000.
 const CHUNK: usize = 64 * 1024;
 
-/// The async I/O thread's priority for the background reads (RE-573): at
-/// the default it sits below the game's main thread (0x20) and makes no
-/// progress while a frame is busy. Equal to the sample streamer's.
-const ASYNC_PRIORITY: i32 = 0x1E;
+/// The background bytes read between two [`safe_point`]s at most: four
+/// chunks, more than a 60 FPS frame has time for (64 KiB is 6-9 ms on the
+/// Slim, RE-573); a long frame reads no more than four (RE-574).
+pub const FRAME_BUDGET: isize = 4 * CHUNK as isize;
 
-/// A background read: `len` bytes into `dst`, `done` of them read, the
-/// chunk in flight `chunk` long.
-#[derive(Clone, Copy)]
-struct Background {
-    dst: *mut u8,
-    len: usize,
-    done: usize,
-    chunk: usize,
+/// [`Job::state`]s.
+const IDLE: u8 = 0;
+const RUNNING: u8 = 1;
+const READ: u8 = 2;
+const FAILED: u8 = 3;
+
+/// The background read the streamer thread serves: `len` bytes from the
+/// descriptor's position into `dst`, `done` of them read. The game thread
+/// writes a job only while it is [`IDLE`] and publishes it with
+/// [`RUNNING`]; the streamer thread then owns `done`, `dst`'s bytes and
+/// the descriptor until it stores [`READ`] or [`FAILED`].
+struct Job {
+    fd: AtomicI32,
+    dst: AtomicPtr<u8>,
+    len: AtomicUsize,
+    done: AtomicUsize,
+    state: AtomicU8,
+    /// Bytes left until the next [`safe_point`] ([`FRAME_BUDGET`]).
+    budget: AtomicIsize,
+    /// The game thread read this frame: no chunk starts until the
+    /// [`safe_point`].
+    hold: AtomicBool,
 }
 
-impl Background {
-    const IDLE: Self = Self {
-        dst: core::ptr::null_mut(),
-        len: 0,
-        done: 0,
-        chunk: 0,
+static JOB: Job = Job {
+    fd: AtomicI32::new(-1),
+    dst: AtomicPtr::new(core::ptr::null_mut()),
+    len: AtomicUsize::new(0),
+    done: AtomicUsize::new(0),
+    state: AtomicU8::new(IDLE),
+    budget: AtomicIsize::new(FRAME_BUDGET),
+    hold: AtomicBool::new(false),
+};
+
+/// The streamer thread's turn at the background read: reads its next
+/// chunk unless none is running, the frame holds them or the budget is
+/// spent. Whether it read.
+pub(crate) fn read_chunk() -> bool {
+    if JOB.state.load(Ordering::Acquire) != RUNNING
+        || JOB.hold.load(Ordering::Acquire)
+        || JOB.budget.load(Ordering::Acquire) <= 0
+    {
+        return false;
+    }
+    let len = JOB.len.load(Ordering::Relaxed);
+    let done = JOB.done.load(Ordering::Relaxed);
+    let n = (len - done).min(CHUNK);
+    let fd = sys::SceUid(JOB.fd.load(Ordering::Relaxed));
+    // SAFETY: the job's block holds `len` bytes and stays allocated until
+    // the game thread sees the job end; the chunk stays inside it.
+    let got = unsafe {
+        sys::sceIoRead(
+            fd,
+            JOB.dst.load(Ordering::Relaxed).add(done) as *mut core::ffi::c_void,
+            n as u32,
+        )
     };
+    JOB.budget.fetch_sub(n as isize, Ordering::AcqRel);
+    if got as usize != n {
+        JOB.state.store(FAILED, Ordering::Release);
+    } else if done + n == len {
+        JOB.state.store(READ, Ordering::Release);
+    } else {
+        JOB.done.store(done + n, Ordering::Relaxed);
+    }
+    true
 }
 
 struct Loader {
@@ -211,7 +267,6 @@ pub fn boot(resident: &'static [u8], path: &'static str) -> Result<(), LoadError
                 blob,
                 fd: None,
                 sync_fd: None,
-                bg: Background::IDLE,
             },
             stream: Stream {
                 group_of: Vec::new(),
@@ -227,6 +282,9 @@ pub fn boot(resident: &'static [u8], path: &'static str) -> Result<(), LoadError
         });
         residency::install(resident.as_ptr(), Some(on_miss));
     }
+    // The background reads' thread; without it they never start and the
+    // scenes read their files as they start.
+    let _ = crate::sample_stream::start_reader();
     // Opened now rather than in a scene's first frame (RE-476).
     if let Some(l) = loader() {
         open_fd(&mut l.io.fd, path);
@@ -380,6 +438,12 @@ pub fn take_failure() -> Option<LoadError> {
 pub fn safe_point() {
     if let Some(l) = loader() {
         let t = crate::profile::start();
+        // The next frame's background reads.
+        JOB.hold.store(false, Ordering::Release);
+        JOB.budget.store(FRAME_BUDGET, Ordering::Release);
+        if JOB.state.load(Ordering::Acquire) == RUNNING {
+            crate::sample_stream::wake();
+        }
         l.plan.safe_point(&mut l.io);
         stream_safe_point(l);
         if !crate::gu::GE_LIST_OPEN.load(core::sync::atomic::Ordering::Relaxed) {
@@ -418,6 +482,8 @@ impl PspIo {
     /// Reads `len` bytes at pack offset `at` into `dst`, waiting, in
     /// [`CHUNK`]-byte reads.
     fn read_sync(&mut self, at: i64, dst: *mut u8, len: usize) -> Result<(), LoadError> {
+        // The background reads wait for the safe point (module docs).
+        JOB.hold.store(true, Ordering::Release);
         for attempt in 0..2 {
             if attempt == 1 {
                 close_fd(&mut self.sync_fd);
@@ -441,33 +507,6 @@ impl PspIo {
         }
         Err(LoadError::ShortRead)
     }
-
-    /// The async descriptor, opened at [`ASYNC_PRIORITY`].
-    fn async_fd(&mut self) -> Option<sys::SceUid> {
-        let fresh = self.fd.is_none();
-        let fd = open_fd(&mut self.fd, self.path)?;
-        if fresh {
-            // SAFETY: an open descriptor with no read in flight. A failure
-            // leaves the default priority, which still reads.
-            unsafe { sys::sceIoChangeAsyncPriority(fd, ASYNC_PRIORITY) };
-        }
-        Some(fd)
-    }
-
-    /// Issues the background read's next chunk.
-    fn next_chunk(&mut self, fd: sys::SceUid) -> bool {
-        let b = &mut self.bg;
-        b.chunk = (b.len - b.done).min(CHUNK);
-        // SAFETY: the block holds `len` bytes and stays allocated, in the
-        // arena, until the read completes; the chunk stays inside it.
-        unsafe {
-            sys::sceIoReadAsync(
-                fd,
-                b.dst.add(b.done) as *mut core::ffi::c_void,
-                b.chunk as u32,
-            ) >= 0
-        }
-    }
 }
 
 impl Io<AlignedBuf> for PspIo {
@@ -488,65 +527,61 @@ impl Io<AlignedBuf> for PspIo {
 
     fn start(&mut self, block: &AlignedBuf, start: u32, len: u32) -> bool {
         let at = self.blob + i64::from(start);
-        self.bg = Background {
-            dst: block.as_mut_ptr(),
-            len: len as usize,
-            done: 0,
-            chunk: 0,
-        };
+        if !crate::sample_stream::running() || JOB.state.load(Ordering::Acquire) != IDLE {
+            return false;
+        }
         for attempt in 0..2 {
             if attempt == 1 {
                 close_fd(&mut self.fd);
             }
-            let Some(fd) = self.async_fd() else {
+            let Some(fd) = open_fd(&mut self.fd, self.path) else {
                 return false;
             };
             // SAFETY: an open descriptor with no read in flight.
-            if unsafe { sys::sceIoLseek(fd, at, sys::IoWhence::Set) } == at && self.next_chunk(fd) {
+            if unsafe { sys::sceIoLseek(fd, at, sys::IoWhence::Set) } == at {
+                JOB.fd.store(fd.0, Ordering::Relaxed);
+                JOB.dst.store(block.as_mut_ptr(), Ordering::Relaxed);
+                JOB.len.store(len as usize, Ordering::Relaxed);
+                JOB.done.store(0, Ordering::Relaxed);
+                JOB.state.store(RUNNING, Ordering::Release);
+                crate::sample_stream::wake();
                 return true;
             }
         }
         false
     }
 
-    /// Completes the chunk in flight and issues the next; `Some` once the
-    /// whole read is done or one chunk failed.
+    /// The background read's end: `None` while it runs; with `wait`, lets
+    /// it read past the frame's hold and budget and waits for it.
     fn finish(&mut self, wait: bool) -> Option<bool> {
-        let Some(fd) = self.fd else {
-            return Some(false);
-        };
+        let mut woke = false;
         loop {
-            let mut res: i64 = 0;
-            // SAFETY: `fd` has a chunk in flight.
-            let status = unsafe {
-                if wait {
-                    sys::sceIoWaitAsync(fd, &mut res)
-                } else {
-                    sys::sceIoPollAsync(fd, &mut res)
+            match JOB.state.load(Ordering::Acquire) {
+                RUNNING if crate::sample_stream::running() => {
+                    if !wait {
+                        return None;
+                    }
+                    if !woke {
+                        woke = true;
+                        JOB.hold.store(false, Ordering::Release);
+                        JOB.budget.store(isize::MAX, Ordering::Release);
+                        crate::sample_stream::wake();
+                    }
+                    // SAFETY: a plain sleep; the streamer thread outranks
+                    // this one.
+                    unsafe { sys::sceKernelDelayThread(200) };
                 }
-            };
-            if status == 1 {
-                return None;
-            }
-            let ok = status >= 0 && res == self.bg.chunk as i64;
-            if ok {
-                self.bg.done += self.bg.chunk;
-                if self.bg.done == self.bg.len {
-                    self.bg = Background::IDLE;
+                READ => {
+                    JOB.state.store(IDLE, Ordering::Release);
                     return Some(true);
                 }
-                // The descriptor's position follows the last chunk.
-                if self.next_chunk(fd) {
-                    if wait {
-                        continue;
-                    }
-                    return None;
+                _ => {
+                    // The descriptor is reopened for the next read.
+                    JOB.state.store(IDLE, Ordering::Release);
+                    close_fd(&mut self.fd);
+                    return Some(false);
                 }
             }
-            // The descriptor is reopened for the next read.
-            self.bg = Background::IDLE;
-            close_fd(&mut self.fd);
-            return Some(false);
         }
     }
 

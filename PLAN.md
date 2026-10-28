@@ -60,9 +60,7 @@
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
 | vs4 link order | `vs4@2400` busy 19.71 ms (ms0) vs RE-539 16.92: re-search the link order | RE-539, RE-574 |
 | 1P intro | Kirby vs Yoshi team ~21 FPS (38.2 ms) on PSP-2000; batches 72-77 +0.73 ms unattributed → profile | RE-537, RE-539, RE-574 |
-| Background read rate | Loader issues one 64 KiB chunk per frame: prefetch ~1.3-2 MB/s. Issue chunks until pending/EWOULDBLOCK | RE-574 |
-| Opening figatree misses | Single misses 14-20 ms, up to 8 per frame at fighter-scene entry (first battle frame 64 ms): prefetch the next fighter's first statuses | RE-574 |
-| Opening audio misses | 3 sample misses (233 B zeros) at the first fighter battle in 2 of 4 runs; acceptance misses=0 | RE-574 |
+| Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
 | Acid tile-0 duplicates | Zebes acid `textures[1..3]` duplicate the TEXEL1 images (~520 KiB): drop the duplicate slots | RE-364 |

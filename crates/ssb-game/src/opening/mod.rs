@@ -132,6 +132,35 @@ impl Kind {
     }
 }
 
+/// The demo statuses `kind`'s `FuncStart` makes its fighters in (fighter,
+/// submotion row), whose figatrees the N64 reads before the scene's first
+/// frame: the host reads them with the scene's files (RE-574). None in the
+/// room (its figures are already the scene's), the eight fighter scenes
+/// (their posed fighter comes at the 15th tic), the jungle and the
+/// newcomers.
+pub fn first_rows(kind: Kind) -> alloc::vec::Vec<(crate::fighter::FighterKind, u8)> {
+    let world = match kind {
+        Kind::Portraits => portraits::Portraits::new().world,
+        Kind::Run => run::Run::new().world,
+        Kind::Cliff => cliff::Cliff::new().world,
+        Kind::Yamabuki => yamabuki::Yamabuki::new().world,
+        Kind::Yoster => yoster::Yoster::new().world,
+        Kind::Sector => sector::Sector::new().world,
+        Kind::Standoff => standoff::Standoff::new().world,
+        Kind::Clash => clash::Clash::new().world,
+        _ => return alloc::vec::Vec::new(),
+    };
+    let mut rows = alloc::vec::Vec::new();
+    for o in &world.objects {
+        if let movie::ObjectKind::Fighter(f) = &o.kind {
+            if !rows.contains(&(f.kind, f.row)) {
+                rows.push((f.kind, f.row));
+            }
+        }
+    }
+    rows
+}
+
 /// `mnTitleFuncStart` after the newcomers waits for this tic.
 pub const TITLE_START_TIC: u32 = 4215;
 
@@ -181,4 +210,42 @@ pub fn run_tics(tics: &mut i32, tapped: bool, skip_from: i32, exit: &mut Option<
         *exit = Some(Exit::Title);
     }
     *tics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fighter::FighterKind as F;
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn first_rows_name_each_scenes_starting_statuses() {
+        assert_eq!(first_rows(Kind::Cliff), [(F::Link, cliff::ROW_OPENING1)]);
+        assert_eq!(
+            first_rows(Kind::Yamabuki),
+            [(F::Pikachu, yamabuki::ROW_OPENING1)]
+        );
+        let run = first_rows(Kind::Run);
+        assert_eq!(run.len(), 8);
+        assert!(run.iter().all(|&(_, row)| row == run::ROW_RUN));
+        let clash = first_rows(Kind::Clash);
+        assert_eq!(clash.len(), 8);
+        assert!(clash.iter().all(|&(_, row)| row == clash::ROW_CLASH));
+        let standoff = first_rows(Kind::Standoff);
+        assert_eq!(
+            standoff.iter().map(|r| r.0).collect::<alloc::vec::Vec<_>>(),
+            [F::Mario, F::Kirby]
+        );
+        assert!(first_rows(Kind::Yoster).iter().all(|r| r.0 == F::Yoshi));
+        for k in [
+            Kind::Room,
+            Kind::Portraits,
+            Kind::Mario,
+            Kind::Jungle,
+            Kind::Sector,
+            Kind::Newcomers,
+        ] {
+            assert!(first_rows(k).is_empty(), "{k:?}");
+        }
+    }
 }

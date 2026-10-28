@@ -115,6 +115,21 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         Scene::Opening(Kind::Jungle) => Some((2, &[2, 3])),
         _ => None,
     };
+    // The clips the scene's fighters start with, which the N64 reads as
+    // `FuncStart` sets their statuses: read with the scene, so its first
+    // frames do not wait on them (RE-574). Later statuses still stream on
+    // their first use.
+    if let (Scene::Opening(k), Some(p)) = (s, pack) {
+        for (kind, row) in ssb_game::opening::first_rows(k) {
+            if let Some(slot) = ssb_psp_runtime::movie::demo_row_slot(row) {
+                for f in r::clip_files(p, [kind as u32], &[slot]) {
+                    if !v.contains(&f) {
+                        v.push(f);
+                    }
+                }
+            }
+        }
+    }
     if let Some((gkind, kinds)) = opening_fight {
         v.extend(r::GM_COMMON);
         v.extend(r::EF_COMMON);
