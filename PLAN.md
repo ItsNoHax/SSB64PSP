@@ -58,8 +58,8 @@
 |---|---|---|
 | Stage clip cost | Battle-stage guard-band clip costs +1.21 ms vs4, +1.75 ms Zebes: run the noclip-timer A/B to split clip from layout; reduce per-vertex test | RE-519 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| vs4 link order | `vs4@2400` busy 19.71 ms (ms0) vs RE-539 16.92: re-search the link order | RE-539, RE-574 |
-| 1P intro | Kirby vs Yoshi team ~21 FPS (38.2 ms) on PSP-2000; batches 72-77 +0.73 ms unattributed → profile | RE-537, RE-539, RE-574 |
+| vs4 link order | `vs4@2400` busy 19.71 ms (ms0) vs RE-539 16.92: re-search the link order; new hot-path branches go in cold never-inline helpers (code placement moves vs4 up to +0.9 ms) | RE-539, RE-574, RE-576 |
+| 1P intro | 23 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms; next: replay compose output for frozen models or cache per-model material state | RE-576 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |

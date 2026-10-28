@@ -392,6 +392,285 @@ pub struct DrawState {
     texture_override: Option<u32>,
 }
 
+/// A frozen model's expanded vertices, left in [`crate::gu::ge_vertices`]'
+/// VRAM region by the list that drew it: the next list draws the model
+/// again without rewriting them ([`DrawState::arm_tape`]).
+///
+/// The replay issues the same commands, allocates the same blocks at the
+/// same addresses and skips only the CPU work whose output already sits
+/// there: the light prepass, the skinning, the guard clip and the vertex
+/// expansion. It holds while the model's draw starts where the region
+/// stood last list, under the same inputs ([`TapeKey`]); anything that
+/// writes vertices elsewhere (a spill, the guard clip, effect colours, a
+/// per-corner float-UV copy, skinned vertices the GE reads directly) keeps
+/// the model off the tape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VertexTape {
+    /// The direct list ([`crate::gu::vertex_region`]) that last drew it.
+    list: u32,
+    /// Its blocks: the region's lines `start..end`.
+    start: usize,
+    end: usize,
+    /// [`TapeKey`] of the inputs it was drawn under.
+    key: u64,
+    /// Whether the blocks hold the model as drawn.
+    valid: bool,
+}
+
+/// [`TAPE`]: where the current model's [`VertexTape`] stands.
+#[derive(Debug, Clone, Copy, Default)]
+enum TapeMode {
+    /// No tape: every draw writes its vertices.
+    #[default]
+    Off,
+    /// [`DrawState::arm_tape`]'s tape and the caller's own key, until the
+    /// object draw takes its inputs.
+    Armed(VertexTape, u64),
+    /// Drawing as usual, into blocks the next list can replay from.
+    Record {
+        tape: VertexTape,
+        spills: u32,
+        spoiled: bool,
+    },
+    /// Drawing without writing vertices: `tape`'s blocks hold them.
+    Replay { tape: VertexTape, spills: u32 },
+}
+
+/// Where the frozen model being drawn stands ([`VertexTape`]). Out of
+/// [`DrawState`], so the draw path's state keeps its layout; only the
+/// render thread draws.
+static mut TAPE: TapeMode = TapeMode::Off;
+/// [`draw_node_mesh`] is drawing skinned vertices out of list memory, which
+/// a replay leaves unwritten.
+static mut TAPE_SKINNED: bool = false;
+
+/// [`TAPE`].
+#[inline(always)]
+fn tape_mode() -> &'static mut TapeMode {
+    // SAFETY: the render thread alone draws, and no caller holds the
+    // reference across another call.
+    unsafe { &mut *core::ptr::addr_of_mut!(TAPE) }
+}
+
+/// A 64-bit hash, two 32-bit multiply-rotate lanes (the CPU has no 64-bit
+/// multiply), over the words of everything a frozen model's vertices are a
+/// function of.
+struct TapeKey(u32, u32);
+
+impl TapeKey {
+    #[inline(never)]
+    fn word(&mut self, w: u32) {
+        self.0 = (self.0 ^ w).wrapping_mul(0x9e37_79b1).rotate_left(13);
+        self.1 = (self.1 ^ w).wrapping_mul(0x85eb_ca77).rotate_left(17);
+    }
+
+    fn finish(&self) -> u64 {
+        u64::from(self.0) << 32 | u64::from(self.1)
+    }
+
+    fn float(&mut self, f: f32) {
+        self.word(f.to_bits());
+    }
+
+    fn floats(&mut self, fs: &[f32]) {
+        for &f in fs {
+            self.float(f);
+        }
+    }
+
+    fn bytes(&mut self, bs: &[u8]) {
+        for &b in bs {
+            self.word(u32::from(b));
+        }
+    }
+
+    fn option(&mut self, some: bool) {
+        self.word(u32::from(some));
+    }
+}
+
+impl DrawState {
+    /// Arms `tape` for the next posed object draw, a frozen model's:
+    /// `key` names whatever of its look the caller knows and the draw
+    /// cannot see. [`Self::finish_tape`] returns the tape to keep.
+    pub fn arm_tape(&mut self, tape: VertexTape, key: u64) {
+        *tape_mode() = TapeMode::Armed(tape, key);
+    }
+
+    /// Ends [`Self::arm_tape`]'s draw: the tape the next list can replay
+    /// from, or an empty one.
+    pub fn finish_tape(&mut self) -> VertexTape {
+        let (list, next, spills_now) = crate::gu::vertex_region();
+        match core::mem::take(tape_mode()) {
+            TapeMode::Record {
+                tape,
+                spills,
+                spoiled,
+            } if !spoiled && list == tape.list && spills_now == spills && next > tape.start => {
+                VertexTape {
+                    end: next,
+                    valid: true,
+                    ..tape
+                }
+            }
+            TapeMode::Replay { tape, spills }
+                if list == tape.list && spills_now == spills && next == tape.end =>
+            {
+                tape
+            }
+            _ => VertexTape::default(),
+        }
+    }
+
+    /// Whether the draw in progress replays its vertices.
+    #[inline(always)]
+    fn replaying(&self) -> bool {
+        matches!(*tape_mode(), TapeMode::Replay { .. })
+    }
+
+    /// Keeps the draw in progress off the tape: it writes vertices a
+    /// replay could not reproduce.
+    #[inline(always)]
+    fn spoil_tape(&mut self) {
+        if let TapeMode::Record { spoiled, .. } = tape_mode() {
+            *spoiled = true;
+        }
+    }
+
+    /// Starts an armed tape at an object draw: replays when the tape's
+    /// blocks start where the region stands, from the previous list, under
+    /// the same inputs; records otherwise. A second object under one arm
+    /// draws as usual, off the tape.
+    #[inline(always)]
+    fn open_tape(
+        &mut self,
+        object: &ObjectDesc,
+        base: &ScePspFMatrix4,
+        posed: &[ssb_rom::scene::Mat4],
+        billboard_scales: Option<&[[f32; 2]]>,
+        look: &Look<'_>,
+        foreign: bool,
+    ) {
+        if !matches!(*tape_mode(), TapeMode::Off) {
+            self.open_armed_tape(object, base, posed, billboard_scales, look, foreign);
+        }
+    }
+
+    /// [`Self::open_tape`] past [`TapeMode::Off`]: out of line and cold,
+    /// away from the draw path every other object takes.
+    #[cold]
+    #[inline(never)]
+    fn open_armed_tape(
+        &mut self,
+        object: &ObjectDesc,
+        base: &ScePspFMatrix4,
+        posed: &[ssb_rom::scene::Mat4],
+        billboard_scales: Option<&[[f32; 2]]>,
+        look: &Look<'_>,
+        foreign: bool,
+    ) {
+        let (armed, caller) = match *tape_mode() {
+            TapeMode::Off => return,
+            TapeMode::Armed(armed, caller) => (armed, caller),
+            TapeMode::Record { .. } | TapeMode::Replay { .. } => {
+                *tape_mode() = TapeMode::Record {
+                    tape: VertexTape::default(),
+                    spills: 0,
+                    spoiled: true,
+                };
+                return;
+            }
+        };
+        let (list, next, spills) = crate::gu::vertex_region();
+        let mut key = TapeKey(0x811c_9dc5, 0x2545_f491);
+        key.word(caller as u32);
+        key.word((caller >> 32) as u32);
+        key.word(object.first_node);
+        key.word(object.node_count);
+        for v in [&base.x, &base.y, &base.z, &base.w] {
+            key.floats(&[v.x, v.y, v.z, v.w]);
+        }
+        key.word(posed.len() as u32);
+        for m in posed {
+            key.floats(&m.0);
+        }
+        key.option(billboard_scales.is_some());
+        for s in billboard_scales.unwrap_or(&[]) {
+            key.floats(s);
+        }
+        key.word(look.costume);
+        key.bytes(&look.textures.map(|t| t as u8));
+        key.option(look.parts.is_some());
+        for &part in look.parts.unwrap_or(&[]) {
+            key.word(part as u8 as u32);
+        }
+        key.option(look.accessory_before);
+        key.word(self.heads as u32);
+        key.option(self.mesh_only);
+        key.option(self.fade_alpha.is_some());
+        key.word(u32::from(self.fade_alpha.unwrap_or(0)));
+        key.option(self.fog_env.is_some());
+        key.bytes(&self.fog_env.unwrap_or([0; 4]));
+        key.option(self.fighter_fog);
+        key.bytes(&self.light_registers.concat());
+        key.bytes(&self.fighter_light.map(|c| c as u8));
+        key.option(self.runtime_fighter_light);
+        key.option(self.authored_lights_only);
+        key.option(self.stage_light.is_some());
+        key.bytes(&self.stage_light.unwrap_or([0; 3]).map(|c| c as u8));
+        key.word(self.scene_lights as u32);
+        key.word(self.env_lerp_fog.map_or(2, u32::from));
+        key.option(self.force_no_cull);
+        key.option(self.kind48_flat);
+        key.option(self.billboard_camera.is_some());
+        if let Some(c) = self.billboard_camera {
+            for (r, u) in [c.screen, c.pitch_locked] {
+                key.floats(&r);
+                key.floats(&u);
+            }
+        }
+        key.option(self.texgen_basis.is_some());
+        if let Some((r, u)) = self.texgen_basis {
+            key.floats(&r);
+            key.floats(&u);
+        }
+        key.option(self.modelview_camera.is_some());
+        for row in self.modelview_camera.unwrap_or([[0.0; 3]; 3]) {
+            key.floats(&row);
+        }
+        key.option(self.clip_view_proj.is_some());
+        for row in self.clip_view_proj.unwrap_or([[0.0; 4]; 4]) {
+            key.floats(&row);
+        }
+        key.option(self.clip_at_viewport);
+        let key = key.finish();
+        let spoiled = foreign || self.color_override.is_some() || next == 0;
+        *tape_mode() = if !spoiled
+            && armed.valid
+            && armed.list.wrapping_add(1) == list
+            && armed.start == next
+            && armed.key == key
+        {
+            TapeMode::Replay {
+                tape: VertexTape { list, ..armed },
+                spills,
+            }
+        } else {
+            TapeMode::Record {
+                tape: VertexTape {
+                    list,
+                    start: next,
+                    end: next,
+                    key,
+                    valid: false,
+                },
+                spills,
+                spoiled,
+            }
+        };
+    }
+}
+
 /// Which texture of a two-tile fractional blend a diagnostic capture keeps
 /// (RE-321). See [`DrawState::lod_blend_isolate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2004,12 +2283,20 @@ unsafe fn draw_mesh_vertices(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) -> u32 {
     let mut tris = 0u32;
+    // An open `VertexTape` takes the submissions (`taped_corners`). A
+    // replay reads no vertex: its recording drew unclipped.
+    let taped = !matches!(*tape_mode(), TapeMode::Off);
+    let replay = taped && st.replaying();
     let clip = st
         .clip_view_proj
+        .filter(|_| !replay)
         .and_then(|vp| {
             let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
             guard_clip(&vp, band, st.texgen_model.as_ref()?, verts)
         });
+    if taped && clip.is_some() {
+        st.spoil_tape();
+    }
     for i in 0..mesh.prim_count {
         let Some(p) = pack.prim(mesh.first_prim + i) else {
             continue;
@@ -2032,7 +2319,7 @@ unsafe fn draw_mesh_vertices(
         let effect_colors = material_colors(st.color_override, &p, mat_anim, effect_mat_anim);
         let light_scope = apply_material(pack, &p, st, mat_anim, effect_mat_anim, effect_colors);
         st.texture_override = None;
-        let lit = if light_scope == ssb_rom::anim_color::LightScope::Off {
+        let lit = if light_scope == ssb_rom::anim_color::LightScope::Off || replay {
             None
         } else {
             st.object_light()
@@ -2046,7 +2333,9 @@ unsafe fn draw_mesh_vertices(
 
         // One submission, kept so a two-tile blend's second pass redraws the
         // exact same vertices (RE-321).
-        let submission = if signed_clamp_uv {
+        let submission = if taped {
+            taped_corners(pack, &p, st, indices, verts, effect_colors, linear_texgen, light_scope, lit)
+        } else if signed_clamp_uv {
             expand_float_uv_corners(&p, indices, verts, effect_colors, lit)
         } else if effect_colors.is_some() || linear_texgen || lit.is_some() {
             expand_corners(
@@ -2866,6 +3155,105 @@ unsafe fn expand_range(
     }
 }
 
+/// [`draw_mesh_vertices`]' submission while a [`VertexTape`] is open: the
+/// same choice as the untaped draw, which a recording makes while it marks
+/// what a replay could not reproduce, and a replay makes from the
+/// primitive alone ([`replay_corners`]). Out of line and cold, away from
+/// the draw path every other object takes.
+#[allow(clippy::too_many_arguments)]
+#[cold]
+#[inline(never)]
+unsafe fn taped_corners(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    indices: &[u8],
+    verts: &[u8],
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    linear_texgen: bool,
+    light_scope: ssb_rom::anim_color::LightScope,
+    lit: Option<LitPrim>,
+) -> (VertexType, *const c_void, *const c_void) {
+    let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
+    if st.replaying() {
+        let expand = effect_colors.is_some()
+            || linear_texgen
+            || light_scope != ssb_rom::anim_color::LightScope::Off && st.active_light().is_some();
+        return replay_corners(p, indices, verts, signed_clamp_uv, expand);
+    }
+    let size = core::mem::size_of::<PackedVertex>();
+    if effect_colors.is_some() || signed_clamp_uv && vertex_range(indices, verts.len() / size).is_none() {
+        st.spoil_tape();
+    }
+    if signed_clamp_uv {
+        expand_float_uv_corners(p, indices, verts, effect_colors, lit)
+    } else if effect_colors.is_some() || linear_texgen || lit.is_some() {
+        expand_corners(pack, p, st, indices, verts, effect_colors, linear_texgen, lit)
+    } else {
+        // The GE reads skinned vertices from this list's own copy.
+        if *core::ptr::addr_of!(TAPE_SKINNED) {
+            st.spoil_tape();
+        }
+        (
+            VERTEX_FORMAT,
+            indices.as_ptr() as *const c_void,
+            verts.as_ptr() as *const c_void,
+        )
+    }
+}
+
+/// [`draw_mesh_vertices`]' submission under a replay ([`VertexTape`]):
+/// the block [`expand_corners`] or [`expand_float_uv_corners`] allocated
+/// for primitive `p` when its list recorded, at the same address and left
+/// as that list wrote it, or `verts` itself when it drew them packed.
+/// `expand` is whether it expanded them. Cold: only a replay takes it.
+#[cold]
+#[inline(never)]
+unsafe fn replay_corners(
+    p: &PrimDesc,
+    indices: &[u8],
+    verts: &[u8],
+    float_uv: bool,
+    expand: bool,
+) -> (VertexType, *const c_void, *const c_void) {
+    let size = core::mem::size_of::<PackedVertex>();
+    let range = vertex_range(indices, verts.len() / size);
+    if float_uv {
+        // A per-corner copy lives in list memory, which spoils the
+        // recording: the same inputs never replay it.
+        let (low, high) = range.unwrap_or((0, 0));
+        let bytes = (high - low + 1) * core::mem::size_of::<FloatUvVertex>();
+        let dynamic = crate::gu::ge_vertices(bytes) as *mut FloatUvVertex;
+        return (
+            INDEXED_FLOAT_UV_VERTEX_FORMAT,
+            indices.as_ptr() as *const c_void,
+            dynamic.wrapping_sub(low) as *const c_void,
+        );
+    }
+    if !expand {
+        return (
+            VERTEX_FORMAT,
+            indices.as_ptr() as *const c_void,
+            verts.as_ptr() as *const c_void,
+        );
+    }
+    match range {
+        Some((low, high)) => {
+            let dynamic = crate::gu::ge_vertices((high - low + 1) * size) as *mut PackedVertex;
+            (
+                VERTEX_FORMAT,
+                indices.as_ptr() as *const c_void,
+                dynamic.wrapping_sub(low) as *const c_void,
+            )
+        }
+        None => (
+            UNINDEXED_VERTEX_FORMAT,
+            core::ptr::null(),
+            crate::gu::ge_vertices(p.index_count as usize * size) as *const c_void,
+        ),
+    }
+}
+
 /// [`expand_corners`]' copy per corner, for a primitive whose range is
 /// sparser than its corners or indexes past its vertices. Out of line and
 /// cold.
@@ -3388,6 +3776,18 @@ unsafe fn draw_object_posed_nodes(
 ) -> u32 {
     let mut tris = 0;
     let costume = look.costume;
+    st.open_tape(
+        object,
+        base,
+        posed,
+        billboard_scales,
+        &look,
+        mat_anim.is_some()
+            || effect_mat_anim.is_some()
+            || only_node.is_some()
+            || hidden.is_some()
+            || node_override.is_some(),
+    );
     let prepass = light_prepass(pack, object, base, posed, st, look, only_node, node_override);
     for i in 0..object.node_count {
         let global_node = object.first_node + i;
@@ -3551,7 +3951,13 @@ unsafe fn light_prepass(
     prepass.0 = 0;
     // Fighters light nearly every primitive; a stage's unlit nodes would
     // pay for answers nobody reads.
-    if !st.runtime_fighter_light || node_override.is_some() || only_node.is_some() || object.node_count > 64 {
+    // A replay reads no light.
+    if !st.runtime_fighter_light
+        || node_override.is_some()
+        || only_node.is_some()
+        || object.node_count > 64
+        || st.replaying()
+    {
         return None;
     }
     let world = st.active_light()?;
@@ -3740,90 +4146,95 @@ unsafe fn draw_node_mesh(
             // the writeback: `expand_corners` reads it back for primitives
             // with effect colours or texgen.
             let dynamic = crate::gu::cached_vertices(verts.len());
-            let count = verts.len() / ssb_rom::pack::VERTEX_SIZE;
-            let mut bound = bindings.chunks_exact(8);
-            // RE-514: a lit vertex borrowed from another joint was lit at
-            // `G_VTX` time under *that* joint's modelview. Its dot product
-            // is taken here, from the source normal and the light in the
-            // source joint's space, and left in the vertex's tail padding.
-            let light = st.active_light();
-            let model = st
-                .texgen_model
-                .map_or(ssb_rom::scene::Mat4::IDENTITY, |m| mat4_of(&m));
-            // Only a node matrix carries `MODEL_SCALE`.
-            let scaled_model = st.texgen_model.is_some();
-            // One source joint's matrices (and light) serve its run of vertices.
-            let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose, [i8; 3])> = None;
-            for index in 0..count {
-                let at = index * ssb_rom::pack::VERTEX_SIZE;
-                let from = verts.as_ptr().add(at) as *const PackedVertex;
-                // Packed meshes are word-aligned; an aligned read is two
-                // loads per word fewer than an unaligned one.
-                let source_vertex = if from as usize % core::mem::align_of::<PackedVertex>() == 0 {
-                    from.read()
-                } else {
-                    from.read_unaligned()
-                };
-                let (vertex, source_light) = match bound.next() {
-                    Some(binding) if u16::from_le_bytes([binding[0], binding[1]]) != u16::MAX => {
-                        let source_node = u16::from_le_bytes([binding[0], binding[1]]);
-                        let (_, poser, source_light) = match &pose {
-                            Some(entry) if entry.0 == source_node => entry,
-                            _ => {
-                                let source = if source_node == u16::MAX - 1 {
-                                    ssb_rom::scene::Mat4::IDENTITY
-                                } else {
-                                    posed.get(source_node as usize).copied().unwrap_or_else(|| {
-                                        pack.node(object.first_node + u32::from(source_node))
-                                            .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
-                                                ssb_rom::scene::Mat4(n.world)
-                                            })
-                                    })
-                                };
-                                let source_light = light.map_or([0; 3], |world| {
-                                    let world_source = model.mul(&inverse.mul(&source));
-                                    ssb_engine::rsp_light::object_light_dir(
-                                        st.rsp_rows(if scaled_model {
-                                            light_rows(mat4_rows(&world_source))
-                                        } else {
-                                            mat4_rows(&world_source)
-                                        }),
-                                        world,
-                                    )
-                                });
-                                &*pose.insert((
-                                    source_node,
-                                    ssb_rom::pack::CachedVertexPose::new(inverse, source),
-                                    source_light,
-                                ))
-                            }
-                        };
-                        (
-                            poser.pose_with_sqrt(source_vertex, binding, fpu_sqrt),
-                            Some(*source_light),
-                        )
-                    }
-                    _ => (source_vertex, None),
-                };
-                (dynamic.add(at) as *mut PackedVertex).write(vertex);
-                if light.is_some() {
-                    // Written whole: the struct store leaves padding undefined.
-                    let mark = source_light.map_or(0, |dir| {
-                        LIGHT_MARK_SET
-                            | ssb_engine::rsp_light::dot16(
-                                [source_vertex.nx, source_vertex.ny, source_vertex.nz],
-                                dir,
+            // A replay draws no vertex from this copy (`VertexTape`): only
+            // its block, allocated as the recording list did.
+            if !st.replaying() {
+                let count = verts.len() / ssb_rom::pack::VERTEX_SIZE;
+                let mut bound = bindings.chunks_exact(8);
+                // RE-514: a lit vertex borrowed from another joint was lit at
+                // `G_VTX` time under *that* joint's modelview. Its dot product
+                // is taken here, from the source normal and the light in the
+                // source joint's space, and left in the vertex's tail padding.
+                let light = st.active_light();
+                let model = st
+                    .texgen_model
+                    .map_or(ssb_rom::scene::Mat4::IDENTITY, |m| mat4_of(&m));
+                // Only a node matrix carries `MODEL_SCALE`.
+                let scaled_model = st.texgen_model.is_some();
+                // One source joint's matrices (and light) serve its run of vertices.
+                let mut pose: Option<(u16, ssb_rom::pack::CachedVertexPose, [i8; 3])> = None;
+                for index in 0..count {
+                    let at = index * ssb_rom::pack::VERTEX_SIZE;
+                    let from = verts.as_ptr().add(at) as *const PackedVertex;
+                    // Packed meshes are word-aligned; an aligned read is two
+                    // loads per word fewer than an unaligned one.
+                    let source_vertex = if from as usize % core::mem::align_of::<PackedVertex>() == 0 {
+                        from.read()
+                    } else {
+                        from.read_unaligned()
+                    };
+                    let (vertex, source_light) = match bound.next() {
+                        Some(binding) if u16::from_le_bytes([binding[0], binding[1]]) != u16::MAX => {
+                            let source_node = u16::from_le_bytes([binding[0], binding[1]]);
+                            let (_, poser, source_light) = match &pose {
+                                Some(entry) if entry.0 == source_node => entry,
+                                _ => {
+                                    let source = if source_node == u16::MAX - 1 {
+                                        ssb_rom::scene::Mat4::IDENTITY
+                                    } else {
+                                        posed.get(source_node as usize).copied().unwrap_or_else(|| {
+                                            pack.node(object.first_node + u32::from(source_node))
+                                                .map_or(ssb_rom::scene::Mat4::IDENTITY, |n| {
+                                                    ssb_rom::scene::Mat4(n.world)
+                                                })
+                                        })
+                                    };
+                                    let source_light = light.map_or([0; 3], |world| {
+                                        let world_source = model.mul(&inverse.mul(&source));
+                                        ssb_engine::rsp_light::object_light_dir(
+                                            st.rsp_rows(if scaled_model {
+                                                light_rows(mat4_rows(&world_source))
+                                            } else {
+                                                mat4_rows(&world_source)
+                                            }),
+                                            world,
+                                        )
+                                    });
+                                    &*pose.insert((
+                                        source_node,
+                                        ssb_rom::pack::CachedVertexPose::new(inverse, source),
+                                        source_light,
+                                    ))
+                                }
+                            };
+                            (
+                                poser.pose_with_sqrt(source_vertex, binding, fpu_sqrt),
+                                Some(*source_light),
                             )
-                    });
-                    (dynamic.add(at + LIGHT_MARK_OFFSET) as *mut u16).write_unaligned(mark.to_le());
+                        }
+                        _ => (source_vertex, None),
+                    };
+                    (dynamic.add(at) as *mut PackedVertex).write(vertex);
+                    if light.is_some() {
+                        // Written whole: the struct store leaves padding undefined.
+                        let mark = source_light.map_or(0, |dir| {
+                            LIGHT_MARK_SET
+                                | ssb_engine::rsp_light::dot16(
+                                    [source_vertex.nx, source_vertex.ny, source_vertex.nz],
+                                    dir,
+                                )
+                        });
+                        (dynamic.add(at + LIGHT_MARK_OFFSET) as *mut u16).write_unaligned(mark.to_le());
+                    }
                 }
+                // A partial vertex at the end, as the copy carried it.
+                let tail = count * ssb_rom::pack::VERTEX_SIZE;
+                core::ptr::copy_nonoverlapping(verts.as_ptr().add(tail), dynamic.add(tail), verts.len() - tail);
+                crate::gu::writeback_vertices(dynamic, verts.len(), true);
             }
-            // A partial vertex at the end, as the copy carried it.
-            let tail = count * ssb_rom::pack::VERTEX_SIZE;
-            core::ptr::copy_nonoverlapping(verts.as_ptr().add(tail), dynamic.add(tail), verts.len() - tail);
-            crate::gu::writeback_vertices(dynamic, verts.len(), true);
             crate::profile::stop_fine(crate::profile::Span::Skin, skin);
-            return draw_mesh_vertices(
+            *core::ptr::addr_of_mut!(TAPE_SKINNED) = true;
+            let tris = draw_mesh_vertices(
                 pack,
                 mesh,
                 core::slice::from_raw_parts(dynamic, verts.len()),
@@ -3831,6 +4242,8 @@ unsafe fn draw_node_mesh(
                 mat_anim,
                 effect_mat_anim,
             );
+            *core::ptr::addr_of_mut!(TAPE_SKINNED) = false;
+            return tris;
         }
     }
     draw_mesh(pack, mesh, st, mat_anim, effect_mat_anim)

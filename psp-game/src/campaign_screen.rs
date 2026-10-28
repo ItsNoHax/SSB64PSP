@@ -47,6 +47,9 @@ struct Model {
     transn: [f32; 3],
     frozen: bool,
     priority: u8,
+    /// A frozen model's vertices from the last list that drew it
+    /// ([`meshdraw::VertexTape`]).
+    tape: core::cell::Cell<meshdraw::VertexTape>,
 }
 
 impl Presentation {
@@ -616,7 +619,8 @@ fn make_model(
         scale: 1.0,
         transn: [0.0; 3],
         frozen: frozen,
-        priority: if frozen { 40 } else { 50 };
+        priority: if frozen { 40 } else { 50 },
+        tape: core::cell::Cell::new(meshdraw::VertexTape::default());
         // The intro and figure motions are unflagged: the `animlock` parts
         // stay frozen (RE-509).
         // SAFETY: `ptr` is the new box's skeleton field.
@@ -763,6 +767,13 @@ unsafe fn draw_model_ex(
     }
     st.fighter_fog = fog.is_some();
     let parts = m.demo.parts().draw_parts();
+    // Never ticked, a frozen model draws the same vertices every list.
+    if m.frozen {
+        st.arm_tape(
+            m.tape.get(),
+            u64::from(m.object) | u64::from(m.costume) << 32 | u64::from(m.shade) << 40 | (m.kind as u64) << 48,
+        );
+    }
     meshdraw::draw_fighter_posed(
         p,
         &object,
@@ -776,6 +787,9 @@ unsafe fn draw_model_ex(
             accessory_before: m.kind == FighterKind::Purin,
         },
     );
+    if m.frozen {
+        m.tape.set(st.finish_tape());
+    }
     if fog.is_some() {
         gpu.clear_fog();
     }

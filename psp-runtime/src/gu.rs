@@ -104,12 +104,35 @@ pub(crate) unsafe fn ge_vertices(bytes: usize) -> *mut u8 {
         region.1 += lines;
         return block as *mut u8;
     }
+    *core::ptr::addr_of_mut!(VRAM_SPILLS) += 1;
     cached_vertices(bytes)
 }
 
 /// [`ge_vertices`]' VRAM region: its first line, its next free line and its
 /// end, cached-alias VRAM addresses; all 0 until [`Gpu::init`].
 static mut VRAM_VERTICES: (usize, usize, usize) = (0, 0, 0);
+/// The direct lists started so far ([`reset_vertex_chunk`]).
+static mut VRAM_LIST: u32 = 0;
+/// The [`ge_vertices`] blocks so far that the VRAM region could not hold.
+static mut VRAM_SPILLS: u32 = 0;
+
+/// Where [`ge_vertices`] stands: the direct lists started so far, the
+/// region's next free line (0 before [`Gpu::init`]) and the blocks so far
+/// that went to list memory instead.
+///
+/// A block's contents stay in VRAM until a later list allocates over it:
+/// each list starts the region over and the region is [`ge_vertices`]'
+/// alone, so the next list rewrites a line only by allocating it again.
+pub(crate) fn vertex_region() -> (u32, usize, u32) {
+    // SAFETY: the render thread alone touches the region and the counts.
+    unsafe {
+        (
+            *core::ptr::addr_of!(VRAM_LIST),
+            (*core::ptr::addr_of!(VRAM_VERTICES)).1,
+            *core::ptr::addr_of!(VRAM_SPILLS),
+        )
+    }
+}
 
 /// The direct list's first word, through the uncached alias `sceGuStart`
 /// writes it by: `sceGuCheckList`'s byte offsets count from here.
@@ -140,6 +163,7 @@ fn reset_vertex_chunk() {
         *core::ptr::addr_of_mut!(STALL_PENDING) = 0;
         let region = &mut *core::ptr::addr_of_mut!(VRAM_VERTICES);
         region.1 = region.0;
+        *core::ptr::addr_of_mut!(VRAM_LIST) = (*core::ptr::addr_of!(VRAM_LIST)).wrapping_add(1);
         texture_pool_frame();
     }
 }

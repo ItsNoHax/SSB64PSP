@@ -11,12 +11,13 @@
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy, ms0) | Room 13.84 ms, Run 15.21-15.29, Yoster 13.40, Clash 12.63-12.70 (120-frame reports) | RE-575 |
-| PSP-2000 `vs4@2400` | 19.77 ms busy (same-session HEAD 19.94; RE-574 19.71) | RE-575 |
-| PSP-2000 1P intro | 38.2 ms (~21 FPS); 1P battle 19.4 ms | RE-574 |
+| PSP-2000 `vs4@2400` | 19.64 ms busy | RE-576 |
+| PSP-2000 1P intro | 23.0 ms (30.6 FPS); 1P battle 19.4 ms; opening all 1-39 10.21 ms | RE-576 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 80): frozen-model vertex replay in the 1P intro: 38.3 to 23.0 ms busy on the Slim; vs4, 1P battle, opening unchanged; low_free -6,656 B code size; goldens 266/266 (RE-576).
 - Landed (batch 79): loader background reads run on the sample streamer's thread, up to 4 x 64 KiB per frame; a game-thread read holds them after the chunk in flight. Opening scenes read their `FuncStart` clips with the scene. Slim ms0: prefetch 1.15 to 3.2 MB/s; opening figatree misses 71 to 47 (max 8 to 2 per frame); audio misses 0; low_free -3,328 B code size, opening scenes up to +494,848 B (RE-575).
 - Batch 77: results, menus, boss scene built in place; deepest stack 126,888 B; peak 14,615,040 B.
 - Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
@@ -35,7 +36,7 @@
 
 ## Verification
 
-Baseline: batch 79 (hardware: RE-575); deepest game stack 126,888 B of 524288.
+Baseline: batch 80 (hardware: RE-576); deepest game stack 126,888 B of 524288.
 
 | Check | Result |
 |---|---|
