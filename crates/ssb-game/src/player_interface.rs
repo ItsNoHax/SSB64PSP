@@ -138,13 +138,17 @@ pub fn arrow_flag((x, y): (f32, f32)) -> u8 {
     }
 }
 
-/// `gmCameraPlayerMagnifyFuncMatrix`: projected 600 units / 18, capped at 3.
+/// [`magnify_scale`]'s cap (`ifcommon.c:2121`).
+pub const MAGNIFY_SCALE_MAX: f32 = 3.0;
+
+/// `gmCameraPlayerMagnifyFuncMatrix`: projected 600 units / 18, capped at
+/// [`MAGNIFY_SCALE_MAX`].
 pub fn magnify_scale(camera: &Camera) -> f32 {
     let dist = (camera.eye - camera.at).length();
     let mut mini = *camera;
     mini.eye = Vec3::new(0.0, 300.0, dist);
     mini.at = Vec3::new(0.0, 300.0, 0.0);
-    (mini.project(Vec3::new(0.0, 900.0, 0.0)).1 / 18.0).min(3.0)
+    (mini.project(Vec3::new(0.0, 900.0, 0.0)).1 / 18.0).min(MAGNIFY_SCALE_MAX)
 }
 
 /// Ray intersection with the inset viewport (`ifCommonPlayerMagnifyGetPosition`).

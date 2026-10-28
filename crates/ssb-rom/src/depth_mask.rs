@@ -12,7 +12,9 @@
 //! filtered one by one.
 
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::mem::{align_of, size_of};
+
+use ssb_engine::memory::Scope;
 
 use crate::n64_filter::sample_3point_quad;
 use crate::texture::Rgba8;
@@ -37,6 +39,33 @@ pub type Span = (i32, i32, u16);
 
 /// The most spans [`rows`] hands over at once.
 pub const SPANS_PER_CALL: usize = 128;
+
+/// The most pixel columns [`rows`] walks for a placement `width` screen
+/// pixels wide (`x1 - x0`): `ceil(x1)` less `x0` truncated, at most
+/// `floor(width) + 2`.
+pub const fn max_columns(width: f32) -> usize {
+    width as usize + 2
+}
+
+/// A column's `s`.
+type Column = i32;
+/// A run of columns on one integer texel `s0`: `(s0, first, end)`.
+type Run = (i32, u16, u16);
+/// A band's segment: `(first column, end column, quad)`.
+type Segment = (u16, u16, i32);
+
+/// The scope bytes [`rows`] takes for `columns` pixel columns: one list
+/// each of columns, runs and segments, each at most one entry per column
+/// (a run spans at least one column; a band's segments merge runs). The
+/// lists share one alignment, so only the first pads.
+pub const fn scratch_bytes(columns: usize) -> usize {
+    const {
+        assert!(align_of::<Run>() == align_of::<Column>());
+        assert!(align_of::<Segment>() == align_of::<Column>());
+    }
+    columns * (size_of::<Column>() + size_of::<Run>() + size_of::<Segment>())
+        + (align_of::<Column>() - 1)
+}
 
 /// `v` rounded up, as the GE's span end.
 fn ceil(v: f32) -> i32 {
@@ -82,20 +111,6 @@ pub struct Tables {
     /// bits only (alpha and blue's fifth bit fall below the depth word's
     /// two dropped bits). One channel is blended instead of four.
     grey: Option<[u16; 32]>,
-    /// [`rows`]' working lists, kept between calls: on the PSP every heap
-    /// allocation is a kernel call (rust-psp's `SystemAlloc` takes each
-    /// from `sceKernelAllocPartitionMemory`), and the lists grow by
-    /// doubling.
-    scratch: RefCell<Scratch>,
-}
-
-/// [`rows`]' lists, reused from call to call.
-#[derive(Default)]
-struct Scratch {
-    columns: Vec<i32>,
-    runs: Vec<(i32, usize, usize)>,
-    segments: Vec<(usize, usize, i32)>,
-    band_at: Vec<Option<(usize, usize)>>,
 }
 
 impl Tables {
@@ -140,7 +155,6 @@ impl Tables {
             quads,
             mixed,
             grey,
-            scratch: RefCell::default(),
         }
     }
 
@@ -248,58 +262,76 @@ impl<'a, F: FnMut(i32, &[Span])> Row<'a, F> {
 
 /// Every row's spans of `image` placed at `p`, top to bottom, through
 /// `emit(row, spans)`; a row's spans may come in several calls, in order.
-pub fn rows(image: &Rgba8, tables: &Tables, p: &Placement, mut emit: impl FnMut(i32, &[Span])) {
+/// Its working lists come from `scope`, released on return, so drawing
+/// never touches the heap: `None`, having emitted nothing, when they do
+/// not fit ([`scratch_bytes`] of the placement's [`max_columns`] always
+/// do).
+#[must_use]
+pub fn rows(
+    image: &Rgba8,
+    tables: &Tables,
+    p: &Placement,
+    scope: &mut Scope<'_>,
+    mut emit: impl FnMut(i32, &[Span]),
+) -> Option<()> {
     let first = p.x0 as i32;
     let end = ceil(p.x1);
     if first >= end {
-        return;
+        return Some(());
     }
+    let n = (end - first) as usize;
+    u16::try_from(n).ok()?;
+    let mut scope = scope.checkpoint();
+    let columns: &mut [Column] = scope.alloc_slice(n, 0)?;
+    let runs: &mut [Run] = scope.alloc_slice(n, (0, 0, 0))?;
+    let segments: &mut [Segment] = scope.alloc_slice(n, (0, 0, 0))?;
     // The columns' `s`, and their runs of one integer texel `s0`: the same
     // on every row.
-    let mut scratch = tables.scratch.borrow_mut();
-    let Scratch {
-        columns,
-        runs,
-        segments,
-        band_at,
-    } = &mut *scratch;
-    columns.clear();
-    columns.extend((first..end).map(|px| s_at(p, image, px)));
-    runs.clear();
+    for (i, c) in columns.iter_mut().enumerate() {
+        *c = s_at(p, image, first + i as i32);
+    }
+    let mut len = 0;
     for (i, &s) in columns.iter().enumerate() {
-        let s0 = s.div_euclid(32);
-        match runs.last_mut() {
+        let (s0, i) = (s.div_euclid(32), i as u16);
+        match runs[..len].last_mut() {
             Some(run) if run.0 == s0 => run.2 = i + 1,
-            _ => runs.push((s0, i, i + 1)),
+            _ => {
+                runs[len] = (s0, i, i + 1);
+                len += 1;
+            }
         }
     }
+    let runs = &runs[..len];
     // Per band of rows on one integer texel `t0`, the row's segments:
     // `(first column, end column, quad)`, uniform neighbours of one depth
-    // merged. Built when a row first reaches the band.
-    let bands = (tables.height + 1) as usize;
-    segments.clear();
-    band_at.clear();
-    band_at.resize(bands, None);
+    // merged. Built when a row reaches a band other than the last row's:
+    // rows run top to bottom, so `t` never falls and each band is built
+    // once.
+    let mut band = None;
+    let mut len = 0;
     let mut spans = [(0, 0, 0); SPANS_PER_CALL];
     for py in (p.y0 as i32)..ceil(p.y1) {
         let t = t_at(p, image, py);
         let t0 = t.div_euclid(32);
-        let band = (t0.clamp(-1, tables.height - 1) + 1) as usize;
-        let (lo, hi) = *band_at[band].get_or_insert_with(|| {
-            let lo = segments.len();
-            for &(s0, a, b) in runs.iter() {
+        let at = t0.clamp(-1, tables.height - 1);
+        if band != Some(at) {
+            band = Some(at);
+            len = 0;
+            for &(s0, a, b) in runs {
                 let quad = tables.quad(s0, t0);
-                let len = segments.len();
-                match segments.last_mut() {
-                    Some(last) if lo < len && quad >= 0 && last.2 == quad => last.1 = b,
-                    _ => segments.push((a, b, quad)),
+                match segments[..len].last_mut() {
+                    Some(last) if quad >= 0 && last.2 == quad => last.1 = b,
+                    _ => {
+                        segments[len] = (a, b, quad);
+                        len += 1;
+                    }
                 }
             }
-            (lo, segments.len())
-        });
+        }
         let mut row = Row::new(py, &mut spans, &mut emit);
         let tfrac = t.rem_euclid(32);
-        for &(a, b, quad) in &segments[lo..hi] {
+        for &(a, b, quad) in &segments[..len] {
+            let (a, b) = (usize::from(a), usize::from(b));
             if quad >= 0 {
                 row.put(first + a as i32, first + b as i32, quad as u16);
             } else {
@@ -330,6 +362,7 @@ pub fn rows(image: &Rgba8, tables: &Tables, p: &Placement, mut emit: impl FnMut(
         }
         row.finish();
     }
+    Some(())
 }
 
 /// [`rows`] the slow way, one filtered sample per pixel: the reference the
@@ -350,6 +383,7 @@ pub fn rows_per_pixel(image: &Rgba8, p: &Placement, mut emit: impl FnMut(i32, &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ssb_engine::memory::Arena;
 
     /// A mask like the magnifier's: a disc of near depth with a soft edge,
     /// far outside, and a few odd texels.
@@ -396,6 +430,13 @@ mod tests {
         let mut out = Vec::new();
         f(&mut |py, spans: &[Span]| out.extend(spans.iter().map(|&s| (py, s))));
         out
+    }
+
+    /// `f` with a scope that holds every [`placements`] lists.
+    fn with_scope<R>(f: impl FnOnce(&mut Scope<'_>) -> R) -> R {
+        let widest = max_columns(32.0 * 6.0 * ssb_engine::coord::SCREEN_SCALE);
+        let mut buf = vec![0u8; scratch_bytes(widest)];
+        Arena::new(&mut buf).scope(f)
     }
 
     fn placements() -> impl Iterator<Item = Placement> {
@@ -459,11 +500,47 @@ mod tests {
         ] {
             let tables = Tables::new(&img);
             for p in placements() {
-                let fast = collect(|e| rows(&img, &tables, &p, e));
+                let fast =
+                    collect(|e| with_scope(|scope| rows(&img, &tables, &p, scope, e).unwrap()));
                 let slow = collect(|e| rows_per_pixel(&img, &p, e));
                 assert!(!slow.is_empty());
                 assert_eq!(fast, slow, "{p:?}");
             }
+        }
+    }
+
+    /// [`scratch_bytes`] of a placement's [`max_columns`] holds its lists
+    /// at any alignment, and [`rows`] releases them.
+    #[test]
+    fn scratch_bytes_hold_the_lists() {
+        for img in [disc(32), disc(7), grey(disc(32))] {
+            let tables = Tables::new(&img);
+            for p in placements() {
+                let columns = max_columns(p.x1 - p.x0);
+                assert!(ceil(p.x1) - p.x0 as i32 <= columns as i32, "{p:?}");
+                for skew in 0..4 {
+                    let mut buf = vec![0u8; skew + scratch_bytes(columns)];
+                    let mut arena = Arena::new(&mut buf[skew..]);
+                    let mut scope = arena.begin();
+                    let fast = rows(&img, &tables, &p, &mut scope, |_, _| {});
+                    assert!(fast.is_some(), "{p:?} skew {skew}");
+                    assert_eq!(scope.used(), 0);
+                }
+            }
+        }
+    }
+
+    /// With no room for its lists, [`rows`] emits nothing.
+    #[test]
+    fn rows_without_room_emit_nothing() {
+        let img = disc(32);
+        let tables = Tables::new(&img);
+        for p in placements() {
+            let mut arena = Arena::new(&mut []);
+            let mut scope = arena.begin();
+            let mut spans = 0;
+            assert!(rows(&img, &tables, &p, &mut scope, |_, s| spans += s.len()).is_none());
+            assert_eq!(spans, 0, "{p:?}");
         }
     }
 
@@ -472,7 +549,7 @@ mod tests {
         let img = disc(32);
         let tables = Tables::new(&img);
         for p in placements() {
-            let spans = collect(|e| rows(&img, &tables, &p, e));
+            let spans = collect(|e| with_scope(|scope| rows(&img, &tables, &p, scope, e).unwrap()));
             for w in spans.windows(2) {
                 let ((ya, a), (yb, b)) = (w[0], w[1]);
                 if ya == yb {

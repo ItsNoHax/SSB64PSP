@@ -152,8 +152,10 @@ pub fn fatal(lines: &[&str]) -> ! {
     }
 }
 
-/// Bytes behind [`frame_arena`]. Measured high water: 28 B (opening
-/// movie camera order); 4 KiB keeps static RAM low for the PSP-1000.
+/// Bytes behind [`frame_arena`]. Largest user: the magnifier's depth-mask
+/// lists, `ssb_rom::depth_mask::scratch_bytes` at the widest magnifier
+/// (2,923 B; `psp-game` asserts they fit). 4 KiB keeps static RAM low for
+/// the PSP-1000.
 pub const FRAME_ARENA_BYTES: usize = 4 * 1024;
 
 /// The frame arena's storage, on its own D-cache lines like the GE
@@ -224,6 +226,41 @@ fn scene() -> &'static mut GameArena<SceneBlocks> {
     unsafe { &mut *SCENE.0.get() }
 }
 
+/// One [`fatal`] line, formatted on the stack: the heap may be what
+/// failed. Truncated past its 96 bytes.
+struct Line {
+    buf: [u8; 96],
+    len: usize,
+}
+
+impl Line {
+    fn new(args: core::fmt::Arguments) -> Self {
+        let mut line = Line {
+            buf: [0; 96],
+            len: 0,
+        };
+        let _ = core::fmt::Write::write_fmt(&mut line, args);
+        line
+    }
+
+    fn as_str(&self) -> &str {
+        // SAFETY: `write_str` copies whole characters only.
+        unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) }
+    }
+}
+
+impl core::fmt::Write for Line {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let mut n = s.len().min(self.buf.len() - self.len);
+        while !s.is_char_boundary(n) {
+            n -= 1;
+        }
+        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.len += n;
+        Ok(())
+    }
+}
+
 /// [`fatal`] for a scene arena failure, naming the scene and the sizes.
 #[cold]
 #[inline(never)]
@@ -234,17 +271,60 @@ fn scene_fatal(e: GameArenaError) -> ! {
             need,
             used,
             capacity,
-        } => alloc::format!("scene arena '{scene}' full: {need} B wanted, {used} of {capacity} B used"),
+        } => Line::new(format_args!(
+            "scene arena '{scene}' full: {need} B wanted, {used} of {capacity} B used"
+        )),
         GameArenaError::NoMemory { scene, bytes } => {
-            alloc::format!("scene arena '{scene}': no {bytes} B block")
+            Line::new(format_args!("scene arena '{scene}': no {bytes} B block"))
         }
-        GameArenaError::NoScene => alloc::string::String::from("scene arena: no scene"),
-        GameArenaError::Open { scene } => alloc::format!("scene arena: '{scene}' still open"),
-        GameArenaError::Live { scene, live } => {
-            alloc::format!("scene arena '{scene}': {live} values outlive the scene")
+        GameArenaError::NoScene => Line::new(format_args!("scene arena: no scene")),
+        GameArenaError::Open { scene } => {
+            Line::new(format_args!("scene arena: '{scene}' still open"))
+        }
+        GameArenaError::Live { scene, live } => Line::new(format_args!(
+            "scene arena '{scene}': {live} values outlive the scene"
+        )),
+    };
+    fatal(&["Out of memory.", line.as_str()])
+}
+
+/// [`fatal`] for an infallible allocation that got no memory (the global
+/// allocator's error handler, `crate::heap`): the size asked for, the
+/// scene whose arena is open and the thread.
+#[cold]
+#[inline(never)]
+pub fn alloc_failed(size: usize, align: usize) -> ! {
+    let need = Line::new(format_args!(
+        "allocation of {size} B (align {align}) failed"
+    ));
+    // SAFETY: read only, to name the scene; the arena may be mid-call on
+    // this thread, and nothing returns to that call.
+    let scene = unsafe { (*SCENE.0.get()).usage().scene };
+    let mut info = core::mem::MaybeUninit::<sys::SceKernelThreadInfo>::zeroed();
+    let p = info.as_mut_ptr();
+    // SAFETY: `p` points at a writable record (the kernel fills it); only
+    // its size and name are touched, plain integers.
+    let name = unsafe {
+        (*p).size = core::mem::size_of::<sys::SceKernelThreadInfo>();
+        let thid = sys::SceUid(sys::sceKernelGetThreadId());
+        if sys::sceKernelReferThreadStatus(thid, p) >= 0 {
+            (*p).name
+        } else {
+            let mut unknown = [0; 32];
+            unknown[0] = b'?';
+            unknown
         }
     };
-    fatal(&["Out of memory.", &line])
+    let mut place = Line::new(format_args!("scene '{scene}', thread '"));
+    for &b in name.iter().take_while(|&&b| b != 0) {
+        let c = match b {
+            b' '..=b'~' => char::from(b),
+            _ => '?',
+        };
+        let _ = core::fmt::Write::write_char(&mut place, c);
+    }
+    let _ = core::fmt::Write::write_str(&mut place, "'");
+    fatal(&["Out of memory.", need.as_str(), place.as_str()])
 }
 
 /// Opens scene `name`'s arena block of `bytes`, after closing the last

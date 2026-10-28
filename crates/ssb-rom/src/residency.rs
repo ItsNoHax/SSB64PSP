@@ -97,6 +97,18 @@ pub unsafe fn install(owner: *const u8, miss: Option<MissHook>) {
     r.generation = r.generation.wrapping_add(1);
 }
 
+/// Makes room for `additional` more spans than are registered now, so
+/// that registering them does not allocate.
+///
+/// # Safety
+///
+/// Single-threaded use (module docs).
+pub unsafe fn reserve(additional: usize) {
+    let r = unsafe { &mut *registry() };
+    r.spans.reserve(additional);
+    r.used.reserve(additional);
+}
+
 /// Registers `span`; replaces a span with the same start.
 ///
 /// # Safety

@@ -4581,7 +4581,9 @@ unsafe fn sobj_rect(corners: [(f32, f32, f32, f32); 2], abgr: u32) {
 /// Draws the RGBA5551 output of an RDP color-image pass into PSP's inverted
 /// depth buffer. Used by framebuffer masks. Pixel samples use the original
 /// 3-point filter; GE rasterisation places the resulting native pixel spans
-/// (`ssb_rom::depth_mask`, sampled per texel: RE-471).
+/// (`ssb_rom::depth_mask`, sampled per texel: RE-471), its working lists
+/// from `scratch` (`ssb_rom::depth_mask::scratch_bytes`; too little is
+/// fatal, as the frame arena is sized to hold them).
 ///
 /// # Safety
 /// An active GU list and an ordinary full-screen/pillarbox scissor are required.
@@ -4590,6 +4592,7 @@ pub unsafe fn draw_depth_image(
     tables: &ssb_rom::depth_mask::Tables,
     rect: [f32; 4],
     st: &mut DrawState,
+    scratch: &mut ssb_engine::memory::Scope<'_>,
 ) {
     if st.mesh_only {
         return;
@@ -4624,11 +4627,14 @@ pub unsafe fn draw_depth_image(
         words: core::ptr::null_mut(),
         count: 0,
     };
-    ssb_rom::depth_mask::rows(image, tables, &placement, |py, spans| {
+    let drawn = ssb_rom::depth_mask::rows(image, tables, &placement, scratch, |py, spans| {
         for &(start, end, depth) in spans {
             batch.push(py, start, end, depth);
         }
     });
+    if drawn.is_none() {
+        crate::memory::fatal(&["Frame arena full.", "depth mask lists"]);
+    }
     batch.draw();
     sys::sceGuPixelMask(0);
     sys::sceGuDepthFunc(sys::DepthFunc::GreaterOrEqual);

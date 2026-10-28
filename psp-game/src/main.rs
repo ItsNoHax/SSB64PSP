@@ -4365,6 +4365,7 @@ unsafe fn draw_frame(
                     .as_ref()
                     .and_then(|c| c.boss.as_deref())
                     .and_then(|b| b.effects.as_ref().map(|e| (e, &b.wallpaper))),
+                frame,
             );
             if let Some(demo) = s.demo.as_ref() {
                 demo_screen::draw(gpu, pack.as_ref(), draw_state, demo, frame);
@@ -6654,6 +6655,17 @@ impl MonsterAsset {
         })
     }
 }
+
+/// The widest magnifier mask in screen pixel columns: `draw_magnifiers`'
+/// 32-pixel frame at the largest magnify scale. Its depth-mask lists come
+/// from the frame arena, which holds them.
+const MAGNIFIER_MAX_COLUMNS: usize = ssb_rom::depth_mask::max_columns(
+    32.0 * ssb_game::player_interface::MAGNIFY_SCALE_MAX * ssb_engine::coord::SCREEN_SCALE,
+);
+const _: () = assert!(
+    ssb_rom::depth_mask::scratch_bytes(MAGNIFIER_MAX_COLUMNS)
+        <= ssb_psp_runtime::memory::FRAME_ARENA_BYTES
+);
 
 impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
@@ -8979,6 +8991,7 @@ unsafe fn draw_training(
     tags: [u8; 4],
     // Final Destination's boss wallpaper effects and their controller.
     boss: Option<(&ssb_psp_runtime::boss::BossEffects, &ssb_game::spgame::boss::BossWallpaper)>,
+    frame: &mut Scope<'_>,
 ) {
     let scene = pack
         .zip(play_state)
@@ -9403,6 +9416,7 @@ unsafe fn draw_training(
             views,
             damage_hud.colors,
             assets.player_frame.as_ref(),
+            frame,
         );
         profile::stop(profile::Span::DrawMagnifiers, t);
     }
@@ -9508,6 +9522,7 @@ unsafe fn draw_magnifiers(
     views: [ssb_game::player_interface::View; 4],
     colors: [u8; 4],
     frame_image: Option<&(ssb_rom::texture::Rgba8, ssb_rom::depth_mask::Tables)>,
+    scratch: &mut Scope<'_>,
 ) {
     use ssb_game::player_interface as logic;
     let Some(frame) = p.sprite(
@@ -9547,7 +9562,7 @@ unsafe fn draw_magnifiers(
             32.0 * scale,
         ];
         let t = profile::start();
-        meshdraw::draw_depth_image(image, tables, rect, st);
+        meshdraw::draw_depth_image(image, tables, rect, st, scratch);
         profile::stop(profile::Span::MagnifyMask, t);
         meshdraw::draw_sprite(
             p,

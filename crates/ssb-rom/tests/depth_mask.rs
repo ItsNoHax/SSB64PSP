@@ -29,7 +29,14 @@ fn magnifier_mask_spans_match_sampling_every_pixel() {
     let pack = Pack::open(&bytes).unwrap();
     let a = pack.effect_anim(asset::ARROWS_SLOT + 1).unwrap();
     let image = asset::frame(pack.anim_script(&a).unwrap()).unwrap().image;
+    // The widest placement below: scale 4.248.
     let tables = depth_mask::Tables::new(&image);
+    let mut buf = vec![
+        0u8;
+        depth_mask::scratch_bytes(depth_mask::max_columns(
+            32.0 * 4.25 * ssb_engine::coord::SCREEN_SCALE
+        ))
+    ];
     // `draw_magnifiers`: a 32-pixel mask times the magnify scale, centred
     // anywhere in the 10..310 x 10..230 viewport, through
     // `ssb_engine::coord`'s mapping onto the 480 x 272 screen.
@@ -58,7 +65,9 @@ fn magnifier_mask_spans_match_sampling_every_pixel() {
                 height: h,
             };
             let t = std::time::Instant::now();
-            let fast = collect(|e| depth_mask::rows(&image, &tables, &p, e));
+            let mut arena = ssb_engine::memory::Arena::new(&mut buf);
+            let fast =
+                collect(|e| depth_mask::rows(&image, &tables, &p, &mut arena.begin(), e).unwrap());
             fast_t += t.elapsed().as_nanos();
             let t = std::time::Instant::now();
             let slow = collect(|e| depth_mask::rows_per_pixel(&image, &p, e));

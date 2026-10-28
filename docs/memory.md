@@ -42,9 +42,10 @@
   - larger blocks: `sceKernelAllocPartitionMemory`
     - evicts the caller's cache lines
     - cost per allocate-and-free: RE-483
-- rust-psp allocation-error handler spins forever (black screen, hung HOME exit)
-  - large loads allocate fallibly
-  - failure ends on `memory::fatal` text screen
+- Allocation failure: large loads allocate fallibly; an infallible one reaches rust-psp's alloc error handler → `__psp_external_alloc_error` (`psp-runtime/src/heap.rs`) → `memory::alloc_failed`: fatal screen with size, align, scene, thread
+- Battle: 0 allocations after scene load except FxPool high-water grows (first-use object-pool growth as the N64, scvsbattle.c:24, objman.c:686-706; SmallHeap slack, no kernel call)
+  - streamed-figatree slabs and bookkeeping made eagerly at the battle's first safe point (`scene_files::make_groups`)
+  - magnifier depth-mask lists from the frame arena (`depth_mask::scratch_bytes`, `MAGNIFY_SCALE_MAX`)
 - No allocation in per-frame paths
 - Bounded lists: `ssb_engine::array_vec::ArrayVec`
 - `profile` `allocs`: per-frame count
@@ -116,7 +117,7 @@ lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
 |---|---|
 | `GameArena` | One kernel block per battle scene (`BATTLE_SCENE_BYTES` by CPU count: 691,707 / 729,186 / 766,665 / 804,144 B), taken at scene entry, freed at exit; holds `BattleWorld` and CPU fighters as `SceneBox`es (drop glue runs; `end` refuses while boxes live); overflow → `memory::fatal` (N64 `syTaskmanInitGeneralHeap`). `ManagerCounts` are statics, as in the original. Objects ≤32 KiB stay on SmallHeap chunks (never returned). Peak metric: `peak_use` is relative to boot free; compare absolute `low_free` (battle `peak_use` +12,288 B is `boot_free` rising from a 20,956 B smaller ELF) |
 | `AssetArena` | One block per read run (≤ 4 MiB load, ≤ 1 MiB prefetch), refcounted by its files; freed at the GE safe point after its last file drops |
-| `FrameArena` | One `Scope` per tick (`psp-game` loop); users: movie camera draw order |
+| `FrameArena` | One `Scope` per tick (`psp-game` loop); users: movie camera draw order, magnifier depth-mask lists (2,923 B of 4,096 at scale 3.0) |
 | `ObjectPool<T>` | Fixed capacity; free order `LowestFirst` or `Lifo`; users: items, weapons |
 
 Scratchpad: reserved for VFPU staging and hot loops, after profiling.

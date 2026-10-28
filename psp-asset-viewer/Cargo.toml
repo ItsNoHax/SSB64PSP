@@ -10,7 +10,7 @@ description = "Layer C: the PSP debug/rendering-validation asset viewer for the 
 [workspace]
 
 [dependencies]
-psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "fea0e1bd6c2e578375a7c065e5496fa546908397" }
+psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "6c3f2c338d93e6fbe346dae0610ac7e11eadf61f" }
 ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }

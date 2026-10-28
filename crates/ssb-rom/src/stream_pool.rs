@@ -71,6 +71,14 @@ impl StreamPool {
         }
     }
 
+    /// [`new`](Self::new) with room reserved for `entries` entries: with
+    /// [`max_entries`], no placement or eviction allocates.
+    pub fn with_entries(capacity: u32, entries: usize) -> Self {
+        let mut pool = Self::new(capacity);
+        pool.entries.reserve_exact(entries);
+        pool
+    }
+
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
@@ -157,6 +165,37 @@ impl StreamPool {
     }
 }
 
+/// The most entries a slab of `capacity` bytes can hold at once, of
+/// files of `lens` bytes (each held at most once): as many of the
+/// smallest as fit. Without a sort: the largest size `t` (in cache lines)
+/// whose files all fit together, then as many files one line larger as
+/// the rest of the slab holds.
+pub fn max_entries(capacity: u32, lens: &[u32]) -> usize {
+    let lines = |len: u32| len.div_ceil(ALIGN);
+    let cap = capacity / ALIGN;
+    // Lines and count of every file of at most `t` lines.
+    let upto = |t: u32| {
+        lens.iter()
+            .map(|&l| lines(l))
+            .filter(|&n| n <= t)
+            .fold((0u64, 0usize), |(sum, k), n| (sum + u64::from(n), k + 1))
+    };
+    let (mut lo, mut hi) = (0u32, cap);
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if upto(mid).0 <= u64::from(cap) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let (sum, count) = upto(lo);
+    let next = lo + 1;
+    let room = (u64::from(cap) - sum) / u64::from(next);
+    let of_next = lens.iter().filter(|&&l| lines(l) == next).count() as u64;
+    count + room.min(of_next) as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +256,65 @@ mod tests {
         pool.place(2, 64, 1, |e| stamp[e.key.min(1) as usize], &mut out)
             .unwrap();
         assert_eq!(out[0].key, 0);
+    }
+
+    #[test]
+    fn reserved_entries_never_grow() {
+        // Sizes of 1 to 9 cache lines: 30 files, of which the 9 smallest
+        // fit a 1 KiB slab together.
+        let lens: Vec<u32> = (0..30u32).map(|k| 1 + (k * 7 % 9) * 64 + 40).collect();
+        let max = max_entries(1024, &lens);
+        assert_eq!(max, 9);
+        let mut pool = StreamPool::with_entries(1024, max);
+        let mut out = Vec::with_capacity(max);
+        let mut used = [0u32; 30];
+        let cap = (pool.entries.capacity(), out.capacity());
+        // Every file in turn, several rounds, each in its own epoch.
+        for now in 1..200u32 {
+            let key = now * 13 % 30;
+            if pool.get(key).is_some() {
+                used[key as usize] = now;
+                continue;
+            }
+            out.clear();
+            pool.place(
+                key,
+                lens[key as usize],
+                now,
+                |e| used[e.key as usize],
+                &mut out,
+            )
+            .unwrap();
+            used[key as usize] = now;
+            assert!(pool.entries().len() <= max);
+            assert_eq!((pool.entries.capacity(), out.capacity()), cap);
+        }
+    }
+
+    #[test]
+    fn max_entries_is_the_smallest_first_count() {
+        // Against a sort: as many of the smallest as fit.
+        let mut seed = 1u32;
+        for case in 0..200u32 {
+            let n = case % 40;
+            let lens: Vec<u32> = (0..n)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    seed >> 16 & 0x7ff
+                })
+                .collect();
+            let capacity = 64 * (case % 50);
+            let mut sorted = lens.clone();
+            sorted.sort_unstable();
+            let mut used = 0;
+            let want = sorted
+                .iter()
+                .take_while(|&&l| {
+                    used += l.div_ceil(ALIGN) * ALIGN;
+                    used <= capacity
+                })
+                .count();
+            assert_eq!(max_entries(capacity, &lens), want, "{lens:?} in {capacity}");
+        }
     }
 }

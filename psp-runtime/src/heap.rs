@@ -97,6 +97,14 @@ unsafe fn __psp_external_realloc(
     p
 }
 
+/// The allocation error handler's hook (rust-psp's `external-allocator`):
+/// an infallible allocation got null. Ends on the fatal screen with the
+/// size, instead of the handler's spin.
+#[no_mangle]
+fn __psp_external_alloc_error(size: usize, align: usize) -> ! {
+    crate::memory::alloc_failed(size, align)
+}
+
 /// `(allocations since boot, kernel allocations since boot)`.
 pub fn counts() -> (u32, u32) {
     (

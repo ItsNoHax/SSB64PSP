@@ -40,7 +40,11 @@
 //!   (the game names them per scene) holds only the common statuses' ones;
 //!   any other is read on its first use into a [`GROUP_BYTES`] slab per
 //!   fighter kind and stays there, least recently used out first
-//!   ([`ssb_rom::stream_pool`], RE-572 option C, RE-573).
+//!   ([`ssb_rom::stream_pool`], RE-572 option C, RE-573). A battle makes
+//!   its slabs when it starts, as the N64 allocates each fighter's
+//!   figatree heap at scene setup (`ftManagerAllocFigatreeHeapKind`,
+//!   `scvsbattle.c:199`); the slabs' bookkeeping is sized then too, so a
+//!   miss allocates nothing.
 //!
 //! The background reads complete on the game thread: [`safe_point`] polls
 //! the read in flight, registers its files and starts the next, so the
@@ -136,8 +140,15 @@ struct Group {
 struct Stream {
     /// Per file-table index: its group, or [`NO_GROUP`].
     group_of: Vec<u8>,
-    /// The current scene's groups, made on their first miss.
+    /// The current scene's groups: made at the first [`safe_point`] after
+    /// [`enter`] when the scene streams eagerly, else on their first miss.
     groups: Vec<Group>,
+    /// The groups [`stream_files`] named, and the most entries each slab
+    /// can hold ([`ssb_rom::stream_pool::max_entries`]).
+    bounds: Vec<(u8, usize)>,
+    /// [`stream_files`]' `eager`, and whether the groups are still to make.
+    eager: bool,
+    make: bool,
     /// The last scene's, freed at the next [`safe_point`].
     leaving: Vec<Group>,
     /// Scratch for evictions.
@@ -205,6 +216,9 @@ pub fn boot(resident: &'static [u8], path: &'static str) -> Result<(), LoadError
             stream: Stream {
                 group_of: Vec::new(),
                 groups: Vec::new(),
+                bounds: Vec::new(),
+                eager: false,
+                make: false,
                 leaving: Vec::new(),
                 evicted: Vec::new(),
                 frame_misses: 0,
@@ -269,9 +283,10 @@ fn enter_with(scene: &'static str, roots: &[u32], within: bool) -> Result<Report
     };
     let report = l.plan.enter_end(&mut l.io, scene, within, wait_micros);
     // The last scene's groups go at the safe point, as its files do; this
-    // scene's fighters make their own.
+    // scene's are made there, after them.
     let s = &mut l.stream;
     s.leaving.append(&mut s.groups);
+    s.make = s.eager;
     report
 }
 
@@ -280,10 +295,15 @@ fn enter_with(scene: &'static str, roots: &[u32], within: bool) -> Result<Report
 /// not hold one reads it on its first use into its group's slab (module
 /// docs). A file named twice keeps its first group; groups are numbered
 /// below 255. An empty `table` streams nothing and frees the map.
-pub fn stream_files(table: &[(u32, u8)]) {
+///
+/// `eager`: the groups' slabs are made when the scene starts (at the first
+/// [`safe_point`] after [`enter`]), not on their first miss.
+pub fn stream_files(table: &[(u32, u8)], eager: bool) {
     let Some(l) = loader() else { return };
     let pack = l.plan.pack();
     let s = &mut l.stream;
+    s.bounds.clear();
+    s.eager = eager && !table.is_empty();
     if table.is_empty() {
         s.group_of = Vec::new();
         return;
@@ -297,6 +317,22 @@ pub fn stream_files(table: &[(u32, u8)]) {
                 *g = group.min(NO_GROUP - 1);
             }
         }
+    }
+    let mut lens = Vec::new();
+    for (i, &group) in s.group_of.iter().enumerate() {
+        if group == NO_GROUP || s.bounds.iter().any(|&(g, _)| g == group) {
+            continue;
+        }
+        lens.clear();
+        lens.extend(
+            s.group_of[i..]
+                .iter()
+                .zip(i as u32..)
+                .filter(|&(&g, _)| g == group)
+                .filter_map(|(_, k)| pack.file_at(k).map(|f| f.len)),
+        );
+        let max = ssb_rom::stream_pool::max_entries(GROUP_BYTES as u32, &lens);
+        s.bounds.push((group, max));
     }
 }
 
@@ -352,6 +388,7 @@ pub fn safe_point() {
             }
             l.plan.collect();
         }
+        make_groups(&mut l.stream);
         crate::profile::stop(crate::profile::Span::Files, t);
     }
 }
@@ -593,6 +630,50 @@ fn unregister(plan: &Plan<'static, CacheLineBlocks, LoadError>, entries: &[Entry
     }
 }
 
+/// An eager scene's groups, at its first safe point: after the last
+/// scene's groups and files are freed, so that the two scenes' never
+/// coexist.
+fn make_groups(s: &mut Stream) {
+    if core::mem::take(&mut s.make) {
+        for k in 0..s.bounds.len() {
+            let id = s.bounds[k].0;
+            if !s.groups.iter().any(|g| g.id == id) && make_group(s, id).is_none() {
+                break;
+            }
+        }
+    }
+}
+
+/// Makes group `id`'s slab, with room reserved in the stream's lists and
+/// the registry for every entry it can hold (`bounds`). Its index in
+/// `groups`; `None` when the slab does not fit.
+fn make_group(s: &mut Stream, id: u8) -> Option<usize> {
+    let slab = AlignedBuf::cache_lines(GROUP_BYTES)?;
+    let bound = |id: u8| {
+        s.bounds
+            .iter()
+            .find(|&&(g, _)| g == id)
+            .map_or(0, |&(_, max)| max)
+    };
+    let max = bound(id);
+    // Every group's entries, those of the groups made before included (the
+    // registry may already hold some of them).
+    let spans = max + s.groups.iter().map(|g| bound(g.id)).sum::<usize>();
+    s.stats.slabs += GROUP_BYTES as u32;
+    s.stats.slabs_peak = s.stats.slabs_peak.max(s.stats.slabs);
+    s.groups
+        .reserve_exact(s.bounds.len().max(s.groups.len() + 1) - s.groups.len());
+    s.evicted.reserve(max);
+    // SAFETY: single-threaded (module docs).
+    unsafe { residency::reserve(spans) };
+    s.groups.push(Group {
+        id,
+        pool: StreamPool::with_entries(GROUP_BYTES as u32, max),
+        slab,
+    });
+    Some(s.groups.len() - 1)
+}
+
 /// A miss on a streamed file: reads it into its group's slab, evicting the
 /// least recently used entries not read this frame. `None` when `offset`
 /// is not in a streamed file or no slab has room: the plan loads it.
@@ -609,17 +690,7 @@ fn stream_miss(l: &mut Loader, offset: u32) -> Option<bool> {
     let now = residency::epoch();
     let k = match s.groups.iter().position(|g| g.id == group) {
         Some(k) => k,
-        None => {
-            let slab = AlignedBuf::cache_lines(GROUP_BYTES)?;
-            s.stats.slabs += GROUP_BYTES as u32;
-            s.stats.slabs_peak = s.stats.slabs_peak.max(s.stats.slabs);
-            s.groups.push(Group {
-                id: group,
-                pool: StreamPool::new(GROUP_BYTES as u32),
-                slab,
-            });
-            s.groups.len() - 1
-        }
+        None => make_group(s, group)?,
     };
     let at = l.io.blob + i64::from(file.blob_start);
     let pad = (at % SECTOR) as u32;

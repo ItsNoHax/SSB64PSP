@@ -458,8 +458,11 @@ fn load(name: &'static str, extra: &[u32], within: bool) {
 /// scene, those of every fighter kind whose main file `roots` holds,
 /// grouped by the kind whose set it is (`r::anim_kind`). A file the scene
 /// does not hold is read on its first use into its group's slab
-/// (`scene_files::stream_files`, RE-572 option C, RE-573). Other scenes
-/// stream none: their few clips load on demand, as the scene's files.
+/// (`scene_files::stream_files`, RE-572 option C, RE-573). A battle makes
+/// its slabs when it starts, as the N64 allocates each fighter's figatree
+/// heap at scene setup (`scvsbattle.c:199`); the opening, whose fighters
+/// come and go, on their first miss. Other scenes stream none: their few
+/// clips load on demand, as the scene's files.
 fn stream_scene(name: &str, roots: &[u32]) {
     let Some(pack) = scene_files::pack() else {
         return;
@@ -484,7 +487,7 @@ fn stream_scene(name: &str, roots: &[u32]) {
             }
         }
     }
-    scene_files::stream_files(&table);
+    scene_files::stream_files(&table, name == "battle");
 }
 
 /// `scene_files::enter` (or `enter_within`) with `roots`, logged.
