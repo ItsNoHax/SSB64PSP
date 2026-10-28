@@ -20,7 +20,7 @@ cmake --build build-headless --target PPSSPPHeadless
 ## Verify and rebaseline
 
 ```bash
-tools/golden.sh verify [--filter REGEX] [-j N] [--twice] [--no-build]
+tools/golden.sh verify [--filter REGEX] [-j N] [--twice] [--no-build] [--ballast BYTES]
 tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
 tools/golden.sh baseline [--filter REGEX] [-j N] [--no-build]
 ```
@@ -56,6 +56,14 @@ Output: `target/golden-run/<timestamp>/`
 - failed capture
 - `--twice`: two captures of one scene differ
 - stack: past 7/8 of game-thread stack (`stack-near-limit`) or no stack line
+
+Memory budget (`--ballast BYTES`, verify only)
+- Builds `psp-game` with `golden_capture,memory_ballast`; writes `ballast.txt` (BYTES) beside each `psp-game` capture's EBOOT (`tools/run-ppsspp-headless.sh --ballast`).
+- The game holds what leaves BYTES free at boot (`memory::hold_ballast`); `psp-asset-viewer` rows run unchanged.
+- Pass: every row matches its hash; `memory.tsv` `low_free` = headroom left.
+- Allocation failure: `capture-failed` (fatal screen or hang); the job log's `MEMBLOCK_ALLOC_FAILED` line gives the size.
+- Under the prefetch margin the next scene loads at entry instead (`scene_files::prefetch`); pixels unchanged.
+- PSP-1000 budget: RE-572.
 
 Stack check
 - Each `psp-game` capture logs its game thread's deepest stack use.

@@ -2,6 +2,7 @@
 # Verify or rebaseline golden captures from tests/golden/scenes.tsv.
 #
 #   tools/golden.sh verify     [--filter REGEX] [-j N] [--twice] [--no-build]
+#                              [--ballast BYTES]
 #   tools/golden.sh rebaseline [--filter REGEX] [-j N] [--no-build] --reason TEXT
 #   tools/golden.sh baseline   [--filter REGEX] [-j N] [--no-build]
 #
@@ -24,6 +25,11 @@
 #                             golden PNG (only when tests/golden/local/ has one)
 #   summary.tsv               one row per scene
 #   index.html                side-by-side review, changed scenes first
+#
+# verify --ballast BYTES builds psp-game with `memory_ballast` and runs its
+# rows with BYTES free at boot (ballast.txt; RE-475, RE-572): a budget check.
+# psp-asset-viewer rows run unchanged; every pixel must still match, and
+# memory.tsv's low_free is the headroom left.
 #
 # verify exits non-zero on any unexpected difference: a `pass` row whose hash
 # differs, a `known-failing` row that now matches (update the manifest), a
@@ -65,7 +71,7 @@ LOCAL="$REPO/tests/golden/local"
 . "$REPO/tools/lib/pixel-hash.sh"
 
 usage() {
-  sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -81,9 +87,14 @@ if [ "${1:-}" = __capture ]; then
   log="$run/logs/$golden-$pass.log"
   start=$(date +%s.%N)
   status=ok
+  budget=()
+  if [ "$crate" = psp-game ] && [ -n "${GOLDEN_BALLAST:-}" ]; then
+    budget=(--ballast "$GOLDEN_BALLAST")
+  fi
   if ! PPSSPP_HEADLESS_TEST_DIR="$run/jobs" \
       "$REPO/tools/run-ppsspp-headless.sh" --no-build --crate "$crate" \
-      --scene "$spec" --job "$job" --log --seconds 180 > "$log" 2>&1; then
+      --scene "$spec" --job "$job" --log --seconds 180 ${budget[@]+"${budget[@]}"} \
+      > "$log" 2>&1; then
     status=capture-failed
   else
     cp -f "$run/jobs/$job/screenshot.png" "$dest/$golden.png"
@@ -121,6 +132,7 @@ JOBS=$(nproc)
 TWICE=0
 BUILD=1
 REASON=
+BALLAST=
 while [ $# -gt 0 ]; do
   case "$1" in
     --filter) FILTER="$2"; shift 2 ;;
@@ -129,6 +141,7 @@ while [ $# -gt 0 ]; do
     --twice) TWICE=1; shift ;;
     --no-build) BUILD=0; shift ;;
     --reason) REASON="$2"; shift 2 ;;
+    --ballast) BALLAST="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
 done
@@ -137,6 +150,11 @@ if [ "$MODE" = rebaseline ]; then
   TWICE=1
 fi
 case "$JOBS" in ''|*[!0-9]*|0) echo "-j needs a positive integer" >&2; exit 2 ;; esac
+case "$BALLAST" in *[!0-9]*) echo "--ballast needs a byte count" >&2; exit 2 ;; esac
+if [ -n "$BALLAST" ] && [ "$MODE" != verify ]; then
+  echo "--ballast is a budget check: verify only" >&2; exit 2
+fi
+export GOLDEN_BALLAST="$BALLAST"
 command -v magick >/dev/null || { echo "missing required tool: magick (ImageMagick)" >&2; exit 2; }
 
 # ---- manifest --------------------------------------------------------------
@@ -157,13 +175,16 @@ done < "$MANIFEST"
 RUN="$REPO/target/golden-run/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN"/{candidates,candidates-2,masks,logs,status,jobs,stack,hashes}
 echo "==> $MODE: ${#goldens[@]} scenes, -j $JOBS, run dir $RUN"
+[ -z "$BALLAST" ] || echo "==> psp-game rows: $BALLAST bytes free at boot (memory_ballast)"
 run_start=$(date +%s)
 
 # ---- build once per crate --------------------------------------------------
 if [ "$BUILD" = 1 ]; then
   for crate in $(printf '%s\n' "${crates[@]}" | sort -u); do
-    echo "==> building $crate (golden_capture)"
-    ( cd "$REPO/$crate" && cargo psp --release --features golden_capture ) \
+    features=golden_capture
+    [ "$crate" = psp-game ] && [ -n "$BALLAST" ] && features=golden_capture,memory_ballast
+    echo "==> building $crate ($features)"
+    ( cd "$REPO/$crate" && cargo psp --release --features "$features" ) \
       > "$RUN/logs/build-$crate.log" 2>&1 || {
       echo "build failed: $RUN/logs/build-$crate.log" >&2; exit 1; }
   done

@@ -86,7 +86,8 @@
 | Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
-| PSP-1000 | In scope, before MS8. B (Maps preview), A (audio page cache, pack v137) and C (figatrees per status) done in PPSSPP. Remaining: D only if needed; hardware: audio streamer smoke (misses=0, under=0), loader times with async priority 0x1E, figatree miss latency (up to 4 a frame in battle). Not a plan: fewer fighters at select. Acceptance: every golden under `memory_ballast` 18 MB (check not yet run), then hardware | RE-288, RE-475, RE-572, RE-573 |
+| PSP-1000 | In scope, before MS8. B (Maps preview), A (audio page cache, pack v137) and C (figatrees per status) done in PPSSPP. PPSSPP acceptance passed: goldens 266/266 under `--ballast 18000000` (min headroom 3.58 MB). Remaining, hardware only: free memory at `psp_main` on a PSP-1000 (1.3 MB firmware overhead is a PSP-2000 figure), audio streamer smoke (misses=0, under=0), loader times with async priority 0x1E, figatree miss latency. Not a plan: fewer fighters at select | RE-288, RE-475, RE-572, RE-573 |
+| OOM hang | An allocation failure spins in rust-psp's alloc-error handler instead of reaching `memory::fatal` (15,000,000 ballast, 200,472 B block, Training select). Fix in `psp-runtime` alloc error handling or the ItsNoHax/rust-psp fork; acceptance: fatal screen at ballast 14,500,000 | RE-572 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 

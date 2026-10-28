@@ -5,6 +5,7 @@
 #                                [--feature FEATURE] [--backend software]
 #                                [--seconds N] [--pack PATH]
 #                                [--scene SPEC] [--job NAME] [--log]
+#                                [--ballast BYTES]
 #
 # --log passes PPSSPPHeadless --log at the info level, without which the
 # game's own stdout (the capture log lines) is not written to
@@ -22,6 +23,10 @@
 # runs can share one build in parallel. PPSSPPHeadless keeps its memstick at
 # $HOME/.ppsspp and never saves ppsspp.ini there, so the game directory and
 # the per-job copy of no-status-overlay.ini are its only per-run state.
+#
+# --ballast writes BYTES to ballast.txt beside the staged EBOOT (removed
+# otherwise): a `memory_ballast` build then holds what leaves BYTES free at
+# boot (RE-475, RE-572).
 #
 # --pack stages another pack instead of assets/generated/ssb64.pak (A/B
 # captures). The native 480x272 frame is also kept as screenshot-native.png.
@@ -47,6 +52,7 @@ JOB=
 BUILD=1
 CRATE=psp-asset-viewer
 LOG_FLAG=
+BALLAST=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -59,6 +65,7 @@ while [ $# -gt 0 ]; do
     --scene)   SCENE="$2"; shift 2 ;;
     --job)     JOB="$2"; shift 2 ;;
     --log)     LOG_FLAG=--log; shift ;;
+    --ballast) BALLAST="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -70,6 +77,7 @@ case "$CRATE" in
   psp-asset-viewer|psp-game) ;;
   *) echo "--crate must be psp-asset-viewer or psp-game" >&2; exit 2 ;;
 esac
+case "$BALLAST" in *[!0-9]*) echo "--ballast needs a byte count" >&2; exit 2 ;; esac
 
 if [ -n "$SCENE" ]; then
   # Only `golden_capture` adds the exit after the screenshot; a `--scene` run
@@ -155,6 +163,12 @@ if [ -n "$SCENE" ]; then
   printf '%s\n' "$SCENE" > "$MEMSTICK/capture_scene.txt"
 else
   rm -f "$MEMSTICK/capture_scene.txt"
+fi
+# Likewise the ballast target: only a --ballast run leaves one.
+if [ -n "$BALLAST" ]; then
+  printf '%s\n' "$BALLAST" > "$MEMSTICK/ballast.txt"
+else
+  rm -f "$MEMSTICK/ballast.txt"
 fi
 # psp-game now loads the pack too (`assets.rs`), but its Training screen only recolours the
 # background on a missing/bad pack rather than failing to boot, so staging

@@ -16,12 +16,13 @@
 
 ## Current work
 
-- Landed (batch 73): fighter figatrees stream per status (RE-572 C). Battles and the opening hold 20 pinned statuses per kind plus a 64 KiB LRU slab per kind; presentation scenes do not stream. Held bytes -0.36..-4.0 MB; `low_free` up to +3.66 MB on 183 of 197 rows; 14 menu rows -4,864 B (code size, accepted). Peak 14,615,040 B (f1-vs-results-link). Max 4 misses a frame in battle, 8 on the opening's first frame (PPSSPP).
+- Landed (batch 74): `golden.sh verify --ballast BYTES`; goldens 266/266 at 18.0 and 17.5 MB, min headroom 3.58 MB (f1-training-fighter-select); failures begin at 15.0 MB (RE-572). PPSSPP-side PSP-1000 acceptance passed.
+- Batch 73: fighter figatrees stream per status (RE-572 C); peak 14,615,040 B (f1-vs-results-link).
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. PSP-1000 acceptance: goldens under `memory_ballast` 18 MB, then MS8.
+1. MS8 performance.
 2. Hardware: audio streamer smoke (misses=0, under=0), loader load times with async prio 0x1E, figatree miss latency (RE-573).
 
 ## Blockers
@@ -31,7 +32,7 @@
 
 ## Verification
 
-Baseline: batch 73; deepest game stack 367,616 B of 524288.
+Baseline: batch 74; deepest game stack 367,616 B of 524288.
 
 | Check | Result |
 |---|---|
