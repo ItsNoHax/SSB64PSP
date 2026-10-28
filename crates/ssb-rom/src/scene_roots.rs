@@ -165,6 +165,22 @@ pub const CONTINUE_CLIP_SLOTS: [usize; 2] = [
 pub const ENDING_CLIP_SLOTS: [usize; 2] =
     [crate::anim::SLOT_FIGURE_DROPPED, crate::anim::SLOT_WAIT];
 
+/// The figatrees a battle holds for each fighter from its start: the
+/// movement statuses ([`crate::anim::SLOT_DASH`] to
+/// [`crate::anim::SLOT_SQUAT_WAIT`]), which change every few frames. The N64 reads every status's figatree as the
+/// status starts (`ftMainSetStatus`, `ftmain.c:4619-4626`); the port reads
+/// the others on first use and keeps the recent ones (RE-572 option C,
+/// RE-573).
+pub const PINNED_CLIP_SLOTS: [usize; 20] = {
+    let mut slots = [0; 20];
+    let mut i = 0;
+    while i < slots.len() {
+        slots[i] = crate::anim::SLOT_DASH + i;
+        i += 1;
+    }
+    slots
+};
+
 /// The archive files of `kinds`' clips in `slots` (the figatrees a scene's
 /// demo poses play), without the rest of each kind's set: the N64 reads
 /// each into the fighter's figatree heap as the status starts.

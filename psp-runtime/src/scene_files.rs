@@ -34,6 +34,14 @@
 //! shell: the pack file's reads, the residency registry, cache-line blocks
 //! ([`crate::assets::CacheLineBlocks`]) and the GE safe point.
 //!
+//! * Streamed files ([`stream_files`]): fighter figatrees, which the N64
+//!   reads into each fighter's figatree heap on every status change
+//!   (`ftMainSetStatus`, `ftmain.c:4619-4626`). A scene that streams them
+//!   (the game names them per scene) holds only the common statuses' ones;
+//!   any other is read on its first use into a [`GROUP_BYTES`] slab per
+//!   fighter kind and stays there, least recently used out first
+//!   ([`ssb_rom::stream_pool`], RE-572 option C, RE-573).
+//!
 //! The background reads complete on the game thread: [`safe_point`] polls
 //! the read in flight, registers its files and starts the next, so the
 //! registry and the allocator stay single-threaded. A block a read fills is
@@ -46,6 +54,7 @@ use psp::sys;
 use ssb_rom::loader_plan::{Io, Plan};
 use ssb_rom::pack::Pack;
 use ssb_rom::residency::{self, Span};
+use ssb_rom::stream_pool::{Entry, StreamPool};
 
 use crate::assets::{AlignedBuf, CacheLineBlocks, LoadError};
 
@@ -100,6 +109,65 @@ impl Background {
 struct Loader {
     plan: Plan<'static, CacheLineBlocks, LoadError>,
     io: PspIo,
+    stream: Stream,
+}
+
+/// Each streamed group's slab: room for its figatrees beyond the scene's
+/// pinned ones (RE-573: one miss a frame fits a frame; a slab of 64 KiB
+/// holds 20-30 average figatrees, the largest 13,872 B).
+pub const GROUP_BYTES: usize = 64 * 1024;
+
+/// The Memory Stick's sector: a read from a sector boundary is ~0.8 ms
+/// faster than one from inside it (RE-573), so a streamed file is read
+/// from the boundary before it, into its entry.
+const SECTOR: i64 = 512;
+
+/// `Stream::group_of` for a file that is not streamed.
+const NO_GROUP: u8 = u8::MAX;
+
+/// One group's slab and what it holds.
+struct Group {
+    id: u8,
+    pool: StreamPool,
+    slab: AlignedBuf,
+}
+
+/// Streamed files (module docs).
+struct Stream {
+    /// Per file-table index: its group, or [`NO_GROUP`].
+    group_of: Vec<u8>,
+    /// The current scene's groups, made on their first miss.
+    groups: Vec<Group>,
+    /// The last scene's, freed at the next [`safe_point`].
+    leaving: Vec<Group>,
+    /// Scratch for evictions.
+    evicted: Vec<Entry>,
+    /// Misses since the last [`safe_point`].
+    frame_misses: u32,
+    stats: StreamStats,
+}
+
+/// Streamed-file counts since boot ([`stream_stats`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamStats {
+    /// Files read on a miss, and their bytes as read.
+    pub misses: u32,
+    pub bytes: u32,
+    /// Most misses in one frame, the [`residency::epoch`] of the first such
+    /// frame, and the scene it was in.
+    pub max_frame: u32,
+    pub max_epoch: u32,
+    pub max_scene: &'static str,
+    /// Entries evicted; misses no slab had room for (loaded as the
+    /// scene's own file instead).
+    pub evicted: u32,
+    pub failed: u32,
+    /// Slab bytes allocated now, and at most.
+    pub slabs: u32,
+    pub slabs_peak: u32,
+    /// Microseconds spent reading misses, and the longest one.
+    pub micros: u32,
+    pub max_micros: u32,
 }
 
 struct Cell(core::cell::UnsafeCell<Option<Loader>>);
@@ -133,6 +201,14 @@ pub fn boot(resident: &'static [u8], path: &'static str) -> Result<(), LoadError
                 fd: None,
                 sync_fd: None,
                 bg: Background::IDLE,
+            },
+            stream: Stream {
+                group_of: Vec::new(),
+                groups: Vec::new(),
+                leaving: Vec::new(),
+                evicted: Vec::new(),
+                frame_misses: 0,
+                stats: StreamStats::default(),
             },
         });
         residency::install(resident.as_ptr(), Some(on_miss));
@@ -191,7 +267,42 @@ fn enter_with(scene: &'static str, roots: &[u32], within: bool) -> Result<Report
     } else {
         0
     };
-    l.plan.enter_end(&mut l.io, scene, within, wait_micros)
+    let report = l.plan.enter_end(&mut l.io, scene, within, wait_micros);
+    // The last scene's groups go at the safe point, as its files do; this
+    // scene's fighters make their own.
+    let s = &mut l.stream;
+    s.leaving.append(&mut s.groups);
+    report
+}
+
+/// Marks the files `table` names (archive file, group) as the next
+/// scene's streamed ones, replacing the last scene's: a scene that does
+/// not hold one reads it on its first use into its group's slab (module
+/// docs). A file named twice keeps its first group; groups are numbered
+/// below 255. An empty `table` streams nothing and frees the map.
+pub fn stream_files(table: &[(u32, u8)]) {
+    let Some(l) = loader() else { return };
+    let pack = l.plan.pack();
+    let s = &mut l.stream;
+    if table.is_empty() {
+        s.group_of = Vec::new();
+        return;
+    }
+    s.group_of.clear();
+    s.group_of.resize(pack.file_count() as usize, NO_GROUP);
+    for &(file, group) in table {
+        if let Some(i) = pack.file_index(file) {
+            let g = &mut s.group_of[i as usize];
+            if *g == NO_GROUP {
+                *g = group.min(NO_GROUP - 1);
+            }
+        }
+    }
+}
+
+/// [`StreamStats`] so far.
+pub fn stream_stats() -> StreamStats {
+    loader().map(|l| l.stream.stats).unwrap_or_default()
 }
 
 /// Starts reading `roots` and their extern closure in the background,
@@ -234,6 +345,7 @@ pub fn safe_point() {
     if let Some(l) = loader() {
         let t = crate::profile::start();
         l.plan.safe_point(&mut l.io);
+        stream_safe_point(l);
         if !crate::gu::GE_LIST_OPEN.load(core::sync::atomic::Ordering::Relaxed) {
             if l.plan.retired() > 0 {
                 crate::gu::forget_resident_texture();
@@ -251,6 +363,9 @@ pub fn held() -> (usize, usize) {
 
 fn on_miss(offset: u32, _len: u32) -> bool {
     let Some(l) = loader() else { return false };
+    if let Some(loaded) = stream_miss(l, offset) {
+        return loaded;
+    }
     let t = crate::profile::start();
     let miss = l.plan.miss(&mut l.io, offset);
     if miss.loaded || miss.waited {
@@ -437,4 +552,130 @@ fn close_fd(fd: &mut Option<sys::SceUid>) {
         // SAFETY: the caller has no read in flight on it.
         unsafe { sys::sceIoClose(f) };
     }
+}
+
+/// The frame's end for the streamed files: the last scene's groups go
+/// (no lookup of this frame is used after it), the frame's misses are
+/// counted and the registry's clock moves on.
+fn stream_safe_point(l: &mut Loader) {
+    let s = &mut l.stream;
+    for g in s.leaving.drain(..) {
+        s.evicted.clear();
+        let mut g = g;
+        g.pool.drain_into(&mut s.evicted);
+        unregister(&l.plan, &s.evicted);
+        s.stats.slabs -= GROUP_BYTES as u32;
+        drop(g.slab);
+    }
+    if s.frame_misses > s.stats.max_frame {
+        s.stats.max_frame = s.frame_misses;
+        s.stats.max_epoch = residency::epoch();
+        s.stats.max_scene = l.plan.report().scene;
+    }
+    s.frame_misses = 0;
+    residency::advance();
+}
+
+/// Unregisters the spans of `entries` (file-table indices) that are still
+/// the stream's: a file the plan has since loaded has its own span.
+fn unregister(plan: &Plan<'static, CacheLineBlocks, LoadError>, entries: &[Entry]) {
+    for e in entries {
+        let i = e.key as usize;
+        if plan.files()[i].block != ssb_engine::memory::NO_BLOCK {
+            continue;
+        }
+        if let Some(f) = plan.pack().file_at(e.key) {
+            // SAFETY: single-threaded; the entry's bytes are not read after
+            // this frame's lookups (they were not looked up this frame, or
+            // this is the safe point).
+            unsafe { residency::remove(f.blob_start) };
+        }
+    }
+}
+
+/// A miss on a streamed file: reads it into its group's slab, evicting the
+/// least recently used entries not read this frame. `None` when `offset`
+/// is not in a streamed file or no slab has room: the plan loads it.
+fn stream_miss(l: &mut Loader, offset: u32) -> Option<bool> {
+    let pack = l.plan.pack();
+    let i = pack.file_at_offset(offset)?;
+    let group = *l.stream.group_of.get(i as usize)?;
+    let f = l.plan.files()[i as usize];
+    if group == NO_GROUP || f.block != ssb_engine::memory::NO_BLOCK || f.queued {
+        return None;
+    }
+    let file = pack.file_at(i)?;
+    let s = &mut l.stream;
+    let now = residency::epoch();
+    let k = match s.groups.iter().position(|g| g.id == group) {
+        Some(k) => k,
+        None => {
+            let slab = AlignedBuf::cache_lines(GROUP_BYTES)?;
+            s.stats.slabs += GROUP_BYTES as u32;
+            s.stats.slabs_peak = s.stats.slabs_peak.max(s.stats.slabs);
+            s.groups.push(Group {
+                id: group,
+                pool: StreamPool::new(GROUP_BYTES as u32),
+                slab,
+            });
+            s.groups.len() - 1
+        }
+    };
+    let at = l.io.blob + i64::from(file.blob_start);
+    let pad = (at % SECTOR) as u32;
+    let g = &mut s.groups[k];
+    // Still in the slab: a span the plan replaced and then dropped.
+    let entry = match g.pool.get(i) {
+        Some(e) => e,
+        None => {
+            s.evicted.clear();
+            let placed = g.pool.place(
+                i,
+                pad + file.len,
+                now,
+                |e| {
+                    pack.file_at(e.key)
+                        .and_then(|f| residency::last_used(f.blob_start))
+                        .unwrap_or(now.wrapping_sub(1))
+                },
+                &mut s.evicted,
+            );
+            unregister(&l.plan, &s.evicted);
+            s.stats.evicted += s.evicted.len() as u32;
+            let Some(e) = placed else {
+                s.stats.failed += 1;
+                return None;
+            };
+            let t = crate::profile::start();
+            let started = unsafe { sys::sceKernelGetSystemTimeLow() };
+            // SAFETY: the entry holds `pad + len` bytes of the slab.
+            let dst = unsafe { g.slab.as_mut_ptr().add(e.at as usize) };
+            if l.io
+                .read_sync(at - i64::from(pad), dst, e.len as usize)
+                .is_err()
+            {
+                g.pool.remove(i);
+                return Some(false);
+            }
+            let us = unsafe { sys::sceKernelGetSystemTimeLow() }.wrapping_sub(started);
+            crate::profile::stop(crate::profile::Span::Demand, t);
+            crate::profile::stop(crate::profile::Span::Io, t);
+            s.stats.misses += 1;
+            s.stats.bytes += e.len;
+            s.stats.micros = s.stats.micros.wrapping_add(us);
+            s.stats.max_micros = s.stats.max_micros.max(us);
+            s.frame_misses += 1;
+            e
+        }
+    };
+    // SAFETY: single-threaded; the slab lives until the group leaves, which
+    // unregisters its spans first.
+    unsafe {
+        residency::insert(Span {
+            start: file.blob_start,
+            len: file.len,
+            ptr: g.slab.as_ptr().add((entry.at + pad) as usize),
+        })
+    };
+    Some(true)
 }

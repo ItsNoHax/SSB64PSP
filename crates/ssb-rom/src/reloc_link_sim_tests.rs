@@ -286,7 +286,6 @@ impl<'a> Sim<'a> {
 /// `scene_load`'s root lists over `pack`.
 pub(crate) struct Roots<'a> {
     pack: &'a Pack<'a>,
-    figatrees: Vec<(u32, Vec<u32>)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -335,30 +334,12 @@ const ROOM_FIGURES: [u32; 2] = [2, 5];
 
 impl<'a> Roots<'a> {
     pub(crate) fn new(pack: &'a Pack<'a>) -> Self {
-        // `scene_load::scan_figatrees`.
-        let mut figatrees: Vec<(u32, Vec<u32>)> = Vec::new();
-        for a in (0..pack.anim_count()).filter_map(|i| pack.anim(i)) {
-            if a.script_len == 0 {
-                continue;
-            }
-            match figatrees.iter_mut().find(|(k, _)| *k == a.fighter) {
-                Some((_, v)) => v.push(a.source_file),
-                None => figatrees.push((a.fighter, alloc::vec![a.source_file])),
-            }
-        }
-        for (_, v) in &mut figatrees {
-            v.sort_unstable();
-            v.dedup();
-        }
-        Self { pack, figatrees }
+        Self { pack }
     }
 
-    fn figatrees(&self, kind: u32) -> Vec<u32> {
-        let k = r::anim_kind(kind);
-        self.figatrees
-            .iter()
-            .find(|(f, _)| *f == k)
-            .map_or_else(Vec::new, |(_, v)| v.clone())
+    /// `scene_load::pinned_figatrees`: the rest stream (RE-572 option C).
+    fn pinned_figatrees(&self, kind: u32) -> Vec<u32> {
+        r::clip_files(self.pack, [r::anim_kind(kind)], &r::PINNED_CLIP_SLOTS)
     }
 
     fn fighter_battle(&self, kinds: &[u32]) -> Vec<u32> {
@@ -369,7 +350,7 @@ impl<'a> Roots<'a> {
         v.extend(r::FT_MANAGER);
         for &k in kinds {
             v.extend(r::FIGHTER_MAIN.get(k as usize).copied());
-            v.extend(self.figatrees(k));
+            v.extend(self.pinned_figatrees(k));
         }
         v
     }
@@ -409,9 +390,6 @@ impl<'a> Roots<'a> {
             v.extend(r::EF_COMMON);
             v.extend(r::FT_MANAGER);
             v.extend(kinds.iter().map(|&k| r::FIGHTER_MAIN[k as usize]));
-            for &k in kinds {
-                v.extend(self.figatrees(k));
-            }
         }
         let fight = match o {
             Opening::Fight(g, k) => Some((g, k)),
@@ -671,7 +649,7 @@ impl<'a> Roots<'a> {
                 let mut v = Vec::new();
                 for k in 14..=25 {
                     v.extend(r::FIGHTER_MAIN.get(k as usize).copied());
-                    v.extend(self.figatrees(k));
+                    v.extend(self.pinned_figatrees(k));
                 }
                 v
             }),

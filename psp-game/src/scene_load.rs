@@ -96,14 +96,9 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         v.extend(r::EF_COMMON);
         v.extend(r::FT_MANAGER);
         v.extend(opening_kinds.iter().map(|&k| r::FIGHTER_MAIN[k as usize]));
-        // The figures' figatrees, which the N64 reads per status into each
-        // figure's figatree heap (`desc.figatree_heap`): read with the
-        // scene, as a battle's are (D-046), not on demand mid-scene.
-        if let Some(p) = pack {
-            for &k in opening_kinds {
-                v.extend(figatrees(p, r::anim_kind(k)));
-            }
-        }
+        // The figures' figatrees: the N64 reads each per status into the
+        // figure's figatree heap (`desc.figatree_heap`); here each streams
+        // on its first use ([`stream_scene`], RE-572 option C).
     }
     // The opening's fights (`mvOpening<Kind>FuncStart`, `mvOpeningJungle`):
     // the stage and fighters, read with the scene rather than when its
@@ -262,8 +257,8 @@ pub fn battle_roots(pack: &Pack<'_>, gkind: u8, kinds: &[u32]) -> Vec<u32> {
 
 /// A battle's files that do not depend on its stage: the interface,
 /// effects, items, the fighter manager's files, and each fighter's main
-/// closure and figatrees (all of them: the N64 streams one per status
-/// from the cartridge, which a memory stick is too slow for).
+/// closure and pinned figatrees ([`pinned_figatrees`]); its other
+/// figatrees stream ([`stream_scene`]).
 pub fn fighter_battle_roots(pack: &Pack<'_>, kinds: &[u32]) -> Vec<u32> {
     let mut v: Vec<u32> = Vec::new();
     v.extend(r::GM_COMMON);
@@ -274,9 +269,16 @@ pub fn fighter_battle_roots(pack: &Pack<'_>, kinds: &[u32]) -> Vec<u32> {
         if let Some(&main) = r::FIGHTER_MAIN.get(k as usize) {
             v.push(main);
         }
-        v.extend(figatrees(pack, r::anim_kind(k)));
+        v.extend(pinned_figatrees(pack, k));
     }
     v
+}
+
+/// The figatrees of kind `kind` a battle holds from its start
+/// ([`r::PINNED_CLIP_SLOTS`]); the N64 reads every status's as the status
+/// starts (`ftMainSetStatus`), the port the others on first use.
+pub fn pinned_figatrees(pack: &Pack<'_>, kind: u32) -> Vec<u32> {
+    r::clip_files(pack, [r::anim_kind(kind)], &r::PINNED_CLIP_SLOTS)
 }
 
 /// A battle's files for stage `gkind`: the map's closure and the stage
@@ -343,40 +345,6 @@ pub fn results_roots() -> Vec<u32> {
         v.extend(r::clip_files(p, 0..12, &r::RESULTS_CLIP_SLOTS));
     }
     v
-}
-
-/// [`figatrees`] of every kind, from one scan of the animation table the
-/// first time any is asked for: the scan decodes all 6,311 rows, a few
-/// milliseconds a pass (RE-476).
-static mut FIGATREES: Option<Vec<(u32, Vec<u32>)>> = None;
-
-/// The archive files of `kind`'s animation rows.
-pub fn figatrees(pack: &Pack<'_>, kind: u32) -> Vec<u32> {
-    // SAFETY: as `base`.
-    let cache = unsafe { &mut *core::ptr::addr_of_mut!(FIGATREES) };
-    let table = cache.get_or_insert_with(|| scan_figatrees(pack));
-    table
-        .iter()
-        .find(|(k, _)| *k == kind)
-        .map_or_else(Vec::new, |(_, v)| v.clone())
-}
-
-fn scan_figatrees(pack: &Pack<'_>) -> Vec<(u32, Vec<u32>)> {
-    let mut table: Vec<(u32, Vec<u32>)> = Vec::new();
-    for a in (0..pack.anim_count()).filter_map(|i| pack.anim(i)) {
-        if a.script_len == 0 {
-            continue;
-        }
-        match table.iter_mut().find(|(k, _)| *k == a.fighter) {
-            Some((_, v)) => v.push(a.source_file),
-            None => table.push((a.fighter, alloc::vec![a.source_file])),
-        }
-    }
-    for (_, v) in &mut table {
-        v.sort_unstable();
-        v.dedup();
-    }
-    table
 }
 
 /// The 1P manager's presentation scenes (`campaign_screen`'s scene ids):
@@ -449,12 +417,12 @@ pub fn set_base(roots: Vec<u32>) {
     unsafe { BASE_IN_BATTLE = true };
 }
 
-/// Kinds `kinds`' main files and figatrees.
+/// Kinds `kinds`' main files and pinned figatrees ([`pinned_figatrees`]).
 pub fn fighter_roots(pack: &Pack<'_>, kinds: core::ops::RangeInclusive<u32>) -> Vec<u32> {
     let mut v = Vec::new();
     for k in kinds {
         v.extend(r::FIGHTER_MAIN.get(k as usize).copied());
-        v.extend(figatrees(pack, r::anim_kind(k)));
+        v.extend(pinned_figatrees(pack, k));
     }
     v
 }
@@ -486,6 +454,39 @@ fn load(name: &'static str, extra: &[u32], within: bool) {
     enter(name, &roots, within);
 }
 
+/// Marks the figatrees scene `name` streams: in a battle or an opening
+/// scene, those of every fighter kind whose main file `roots` holds,
+/// grouped by the kind whose set it is (`r::anim_kind`). A file the scene
+/// does not hold is read on its first use into its group's slab
+/// (`scene_files::stream_files`, RE-572 option C, RE-573). Other scenes
+/// stream none: their few clips load on demand, as the scene's files.
+fn stream_scene(name: &str, roots: &[u32]) {
+    let Some(pack) = scene_files::pack() else {
+        return;
+    };
+    let mut table: Vec<(u32, u8)> = Vec::new();
+    if matches!(name, "battle" | "opening") {
+        let groups: Vec<u32> = (0u32..)
+            .zip(r::FIGHTER_MAIN)
+            .filter(|(_, main)| roots.contains(main))
+            .map(|(k, _)| r::anim_kind(k))
+            .collect();
+        if !groups.is_empty() {
+            // `nFTKindEnumCount`: rows past it are stage, effect and item
+            // clips.
+            for a in (0..pack.anim_count()).filter_map(|i| pack.anim(i)) {
+                if a.fighter < r::FIGHTER_MAIN.len() as u32 && a.script_len > 0 {
+                    let group = r::anim_kind(a.fighter);
+                    if groups.contains(&group) {
+                        table.push((a.source_file, group as u8));
+                    }
+                }
+            }
+        }
+    }
+    scene_files::stream_files(&table);
+}
+
 /// `scene_files::enter` (or `enter_within`) with `roots`, logged.
 fn enter(name: &'static str, roots: &[u32], within: bool) {
     let last = scene_files::report();
@@ -496,6 +497,7 @@ fn enter(name: &'static str, roots: &[u32], within: bool) {
             last.scene, last.demand_files, last.demand_bytes, last_demand
         ));
     }
+    stream_scene(name, roots);
     let t = ssb_psp_runtime::profile::start();
     let entered = if within {
         scene_files::enter_within(name, roots)

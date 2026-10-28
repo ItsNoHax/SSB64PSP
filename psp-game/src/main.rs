@@ -2173,8 +2173,11 @@ fn log_stack_peak(sim_frame_index: u64) {
     // The scene arena's use: a bump allocator, so its high water; then the
     // bytes grown past its block (the effect players' free list).
     let arena = ssb_psp_runtime::memory::scene_usage();
+    // Streamed figatrees (RE-572 option C): misses, the most in one frame
+    // (the epoch now less the epoch of that frame, in frames ago), slabs.
+    let fig = ssb_psp_runtime::scene_files::stream_stats();
     let line = alloc::format!(
-        "stack tick={} peak={} size={}\nmem tick={} boot={} low={} held={} blocks={} demand={}/{} arena={}:{}/{}+{}\nscene {} demand files {:x?}\n",
+        "stack tick={} peak={} size={}\nmem tick={} boot={} low={} held={} blocks={} demand={}/{} arena={}:{}/{}+{} fig={}/{}B max={}@{}-{}:{} ev={} fail={} slab={}/{} us={}/{}\nscene {} demand files {:x?}\n",
         sim_frame_index,
         used,
         GAME_STACK_BYTES,
@@ -2189,6 +2192,18 @@ fn log_stack_peak(sim_frame_index: u64) {
         arena.used,
         arena.capacity,
         arena.grown,
+        fig.misses,
+        fig.bytes,
+        fig.max_frame,
+        ssb_rom::residency::epoch(),
+        fig.max_epoch,
+        fig.max_scene,
+        fig.evicted,
+        fig.failed,
+        fig.slabs,
+        fig.slabs_peak,
+        fig.micros,
+        fig.max_micros,
         report.scene,
         ssb_psp_runtime::scene_files::demand_files(),
     );

@@ -30,6 +30,11 @@ pub struct Span {
     pub ptr: *const u8,
 }
 
+/// The registry's clock: a count the frame loop advances ([`advance`]).
+/// Every lookup stamps the span it resolves with it ([`last_used`]), so a
+/// cache of streamed files can tell which ones the frame has read.
+pub type Epoch = u32;
+
 /// Called for an offset no registered span holds: loads the file holding
 /// it and registers it, returning whether it did.
 pub type MissHook = fn(offset: u32, len: u32) -> bool;
@@ -40,6 +45,9 @@ struct Registry {
     owner: *const u8,
     /// Sorted by `start`; the ranges never overlap.
     spans: Vec<Span>,
+    /// Per span, in `spans` order: the [`Epoch`] of its last lookup.
+    used: Vec<Epoch>,
+    epoch: Epoch,
     /// The span the last lookup found.
     last: usize,
     miss: Option<MissHook>,
@@ -57,6 +65,8 @@ unsafe impl Sync for Cell {}
 static REGISTRY: Cell = Cell(UnsafeCell::new(Registry {
     owner: core::ptr::null(),
     spans: Vec::new(),
+    used: Vec::new(),
+    epoch: 0,
     last: 0,
     miss: None,
     misses: 0,
@@ -79,6 +89,7 @@ pub unsafe fn install(owner: *const u8, miss: Option<MissHook>) {
     let r = unsafe { &mut *registry() };
     r.owner = owner;
     r.spans.clear();
+    r.used.clear();
     r.last = 0;
     r.miss = miss;
     r.misses = 0;
@@ -97,8 +108,10 @@ pub unsafe fn insert(span: Span) {
     let i = r.spans.partition_point(|s| s.start < span.start);
     if r.spans.get(i).is_some_and(|s| s.start == span.start) {
         r.spans[i] = span;
+        r.used[i] = r.epoch;
     } else {
         r.spans.insert(i, span);
+        r.used.insert(i, r.epoch);
     }
     r.last = i;
     r.generation = r.generation.wrapping_add(1);
@@ -126,6 +139,8 @@ pub unsafe fn insert_run(run: &[Span]) {
         return;
     }
     r.spans.splice(i..i, run.iter().copied());
+    let epoch = r.epoch;
+    r.used.splice(i..i, run.iter().map(|_| epoch));
     r.last = i;
     r.generation = r.generation.wrapping_add(1);
 }
@@ -137,7 +152,16 @@ pub unsafe fn insert_run(run: &[Span]) {
 /// As [`remove`], for each span dropped.
 pub unsafe fn remove_where(mut drop: impl FnMut(u32) -> bool) {
     let r = unsafe { &mut *registry() };
-    r.spans.retain(|s| !drop(s.start));
+    let mut kept = 0;
+    for i in 0..r.spans.len() {
+        if !drop(r.spans[i].start) {
+            r.spans[kept] = r.spans[i];
+            r.used[kept] = r.used[i];
+            kept += 1;
+        }
+    }
+    r.spans.truncate(kept);
+    r.used.truncate(kept);
     r.last = 0;
     r.generation = r.generation.wrapping_add(1);
 }
@@ -152,6 +176,7 @@ pub unsafe fn remove(start: u32) {
     let i = r.spans.partition_point(|s| s.start < start);
     if r.spans.get(i).is_some_and(|s| s.start == start) {
         r.spans.remove(i);
+        r.used.remove(i);
         r.last = 0;
         r.generation = r.generation.wrapping_add(1);
     }
@@ -164,6 +189,33 @@ pub unsafe fn remove(start: u32) {
 pub fn generation() -> u32 {
     // SAFETY: module threading note.
     unsafe { (*registry()).generation }
+}
+
+/// Moves the clock on: lookups from now on stamp a new [`Epoch`]. The
+/// frame loop calls it once a frame, between frames.
+pub fn advance() -> Epoch {
+    // SAFETY: module threading note.
+    let r = unsafe { &mut *registry() };
+    r.epoch = r.epoch.wrapping_add(1);
+    r.epoch
+}
+
+/// The current [`Epoch`].
+pub fn epoch() -> Epoch {
+    // SAFETY: module threading note.
+    unsafe { (*registry()).epoch }
+}
+
+/// The [`Epoch`] of the last lookup (or registration) of the span starting
+/// at `start`, if one is registered.
+pub fn last_used(start: u32) -> Option<Epoch> {
+    // SAFETY: module threading note.
+    let r = unsafe { &*registry() };
+    let i = r.spans.partition_point(|s| s.start < start);
+    r.spans
+        .get(i)
+        .filter(|s| s.start == start)
+        .map(|_| r.used[i])
 }
 
 /// How many spans are registered.
@@ -210,6 +262,7 @@ fn find(offset: u32, len: usize) -> Option<&'static [u8]> {
         }
     };
     let s = r.spans[i];
+    r.used[i] = r.epoch;
     // SAFETY: `insert`'s contract keeps the span's bytes valid while it is
     // registered.
     Some(unsafe { core::slice::from_raw_parts(s.ptr.add((offset - s.start) as usize), len) })
@@ -280,8 +333,13 @@ mod tests {
             });
         }
         let g = generation();
+        let e = advance();
+        assert_eq!(last_used(16), Some(e.wrapping_sub(1)));
         assert_eq!(resolve(owner.as_ptr(), 20, 4), Some(&[7u8; 4][..]));
-        // A lookup leaves the generation alone.
+        // A lookup stamps its span with the epoch, and leaves the
+        // generation alone.
+        assert_eq!(last_used(16), Some(e));
+        assert_eq!(last_used(17), None);
         assert_eq!(generation(), g);
         // Crossing the span's end is not served.
         assert_eq!(resolve(owner.as_ptr(), 30, 4), None);

@@ -15,6 +15,7 @@
   - boot: audio heads + 48-slot page cache (1.94 MB), never freed; samples stream from the pack ([D-049](decisions/D-049.md), RE-573)
   - scene start: each scene's files with extern closure
   - runs `ssb_rom::loader_plan::Plan`: closure, `reloc_link::place_runs` Ascending runs, per-run blocks (RE-571)
+  - `battle` and `opening` scenes: fighter figatrees stream per status; 20 pinned slots per kind plus a lazy 64 KiB LRU slab per anim kind, sync sector-superset read on a miss (`stream_pool.rs`, `scene_files.rs` `stream_miss`; RE-572, RE-573)
 - Scene peaks, boot and XMB free bytes (PSP-2000): RE-475
   - XMB launch: 4 MiB less than PSPLink
 - Feature `memory_ballast`: reproduces any budget under PSPLink or PPSSPP

@@ -16,13 +16,13 @@
 
 ## Current work
 
-- Landed (batch 72): audio samples stream through a 16 KiB page cache (RE-572, RE-573). Resident audio 4,428,816 to 1,941,342 B (1.15 MB heads + 0.79 MB cache); streamer and loader async priority 0x1E; `low_free` +2.21..+2.47 MB on all rows. Highest peak `f1-onep-zako-ko-flash` 17,474,560 B. Unit measured: 64 MB Slim/Brite.
+- Landed (batch 73): fighter figatrees stream per status (RE-572 C). Battles and the opening hold 20 pinned statuses per kind plus a 64 KiB LRU slab per kind; presentation scenes do not stream. Held bytes -0.36..-4.0 MB; `low_free` up to +3.66 MB on 183 of 197 rows; 14 menu rows -4,864 B (code size, accepted). Peak 14,615,040 B (f1-vs-results-link). Max 4 misses a frame in battle, 8 on the opening's first frame (PPSSPP).
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next
 
-1. C per-status figatree LRU (RE-572, RE-573), then MS8.
-2. Hardware: audio streamer smoke (misses=0, under=0), loader load times with async prio 0x1E.
+1. PSP-1000 acceptance: goldens under `memory_ballast` 18 MB, then MS8.
+2. Hardware: audio streamer smoke (misses=0, under=0), loader load times with async prio 0x1E, figatree miss latency (RE-573).
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 
 ## Verification
 
-Baseline: batch 72; deepest game stack 367,536 B of 524288.
+Baseline: batch 73; deepest game stack 367,616 B of 524288.
 
 | Check | Result |
 |---|---|

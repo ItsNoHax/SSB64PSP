@@ -65,6 +65,7 @@ pub mod sprite_fringe;
 #[doc(hidden)]
 pub mod sprite_offsets;
 pub mod stage;
+pub mod stream_pool;
 pub mod strict;
 pub mod task_head;
 pub mod texture;
