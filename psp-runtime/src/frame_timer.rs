@@ -1,13 +1,15 @@
-//! Frame timer for measuring the release build on hardware (RE-500),
-//! compiled out unless the `frame_timer` feature is on.
+//! Frame timer for measuring the release build on hardware (RE-500): it
+//! writes its reports only when the `frame_timer` feature is on.
 //!
 //! The `profile` feature times spans inside the draw path, so a profiling
 //! build's hot code is not the release build's (RE-496, RE-499). This timer
 //! is called from the main loop only: at the frame's end ([`frame_end`]) and
 //! around the wait for the last frame to be on screen ([`vblank`]), which
 //! the main loop then makes before the draw instead of in
-//! `Gpu::begin_frame`. The code it adds is those calls and functions
-//! outside the searched link order; its state is a few words.
+//! `Gpu::begin_frame`. Every `capture_scene_file` build makes those calls
+//! and times its frames, so the `frame_timer` feature changes only a
+//! constant: the timed build's code is the trace build's (RE-578). Its
+//! state is a few words.
 //!
 //! A release-code battle mostly finishes its frame inside one vblank
 //! (RE-500), so frames per second say little about the code's speed; the
@@ -21,27 +23,31 @@
 //! its tick is not counted. With `profile` on as well the profiler reports
 //! and this timer does nothing.
 
+/// Whether this build writes its reports: the `frame_timer` feature,
+/// without `profile`. Read through `black_box`, so the timer's code is the
+/// same in the builds that write and those that do not.
+const REPORT: bool = cfg!(all(feature = "frame_timer", not(feature = "profile")));
+
 /// Closes a frame. `frozen`: a capture frozen at its tick, not a frame of
 /// the game.
-#[inline(always)]
+///
+/// Out of line, and the same code in every build that calls it: the
+/// `frame_timer` build and the trace build (`capture_scene_file`) differ
+/// only in a constant [`REPORT`], so the timed build's code is the traced
+/// build's, byte for byte outside its data addresses (RE-578).
+#[inline(never)]
 pub fn frame_end(frozen: bool) {
-    #[cfg(all(feature = "frame_timer", not(feature = "profile")))]
     imp::frame_end(frozen);
-    #[cfg(not(all(feature = "frame_timer", not(feature = "profile"))))]
-    let _ = frozen;
 }
 
 /// Runs `wait`, the wait for the last frame to be on screen
 /// (`Gpu::wait_presented`), and keeps its time out of the frame's `busy`.
-#[inline(always)]
+/// Out of line, as [`frame_end`].
+#[inline(never)]
 pub fn vblank(wait: impl FnOnce()) {
-    #[cfg(all(feature = "frame_timer", not(feature = "profile")))]
     imp::vblank(wait);
-    #[cfg(not(all(feature = "frame_timer", not(feature = "profile"))))]
-    wait();
 }
 
-#[cfg(all(feature = "frame_timer", not(feature = "profile")))]
 mod imp {
     use crate::profile::REPORT_FRAMES;
     use core::fmt::Write;
@@ -85,7 +91,7 @@ mod imp {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn vblank(wait: impl FnOnce()) {
         let t = unsafe { sys::sceKernelGetSystemTimeLow() };
         wait();
@@ -95,7 +101,7 @@ mod imp {
         s.wait = s.wait.wrapping_add(us);
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn frame_end(frozen: bool) {
         // A measurement run gets no input: keep the PSP from auto-sleeping
         // under it (RE-481).
@@ -141,6 +147,9 @@ mod imp {
         s.busy_sum = 0;
         s.busy_max = 0;
         let bytes = &line.buf[..line.len];
+        if !core::hint::black_box(super::REPORT) {
+            return;
+        }
         unsafe {
             sys::sceIoWrite(
                 sys::sceKernelStdout(),

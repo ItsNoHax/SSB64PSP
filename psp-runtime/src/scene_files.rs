@@ -435,6 +435,12 @@ pub fn take_failure() -> Option<LoadError> {
 
 /// Drops the files the last [`enter`] left and frees their blocks. Call
 /// after `Gpu::end_frame`, when the GE has read everything.
+///
+/// Out of line: its scan of every file runs each frame, and inlined it sat
+/// in `psp-game`'s `run`, whose code differs between the release and the
+/// capture builds; on its own it is the same function in every build, at
+/// the link order's address (RE-578).
+#[inline(never)]
 pub fn safe_point() {
     if let Some(l) = loader() {
         let t = crate::profile::start();

@@ -156,11 +156,11 @@ printf 'cd ms0:/PSP/GAME/ssb64/\nldstart host0:/<prx>\n' | pspsh
 Scene file lines:
 
 - `stage=N` goes after the scene line
-- `profile` and `frame_timer` builds also read:
+- every `capture_scene_file` build (trace, golden, profile, frame_timer) also reads:
   - `items=N`: VS item appearance 0..5
   - `level=N`: CPU level 1..9
   - `fighters=a,b,c,d`: fighter ordinals per port; first is also the 1P fighter
-- release and `golden_capture` builds ignore them (RE-531)
+- release builds ignore them; goldens name none (`scenes.tsv`); trace and timer builds compile identical code (RE-578)
 
 ### Profiling counters (`profile_hw`)
 

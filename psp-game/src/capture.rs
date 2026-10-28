@@ -32,8 +32,8 @@ pub fn tick_override() -> Option<u64> {
 }
 
 /// A `stage=GKIND` line's stage, plus one, or 0 for the scene's own: a
-/// `profile` or `frame_timer` build runs a battle scene on any stage
-/// (RE-471, RE-500).
+/// `capture_scene_file` build (the `profile` and `frame_timer` hardware
+/// runs) runs a battle scene on any stage (RE-471, RE-500).
 static STAGE_OVERRIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// The stage a `stage=GKIND` line asked for.
@@ -44,9 +44,9 @@ pub fn stage_override() -> Option<u8> {
     }
 }
 
-/// Diagnostic battle overrides for `profile` or `frame_timer` hardware
-/// sweeps (RE-531's `stack_poison` runs), each stored plus one, 0 for the
-/// scene's own: an `items=N` line's VS item appearance (0 none .. 5 very
+/// Diagnostic battle overrides for `capture_scene_file` hardware sweeps
+/// (`profile`, `frame_timer`; RE-531's `stack_poison` runs), each stored
+/// plus one, 0 for the scene's own: an `items=N` line's VS item appearance (0 none .. 5 very
 /// high), a `level=N` line's CPU level (1..=9), and a `fighters=a,b,c,d`
 /// line's fighter ordinals for the VS roster's four ports (the first also
 /// the 1P campaign's fighter).
@@ -116,38 +116,7 @@ pub fn select() -> Option<Capture> {
             // `scene@tick` captures the scene at another tick, for matching
             // an N64 frame (RE-425); the goldens name none.
             let text = core::str::from_utf8(&buf[..len]).ok();
-            #[cfg(any(feature = "profile", feature = "frame_timer"))]
-            if let Some(g) = text
-                .into_iter()
-                .flat_map(str::lines)
-                .find_map(|l| l.trim().strip_prefix("stage="))
-                .and_then(|g| g.parse::<u8>().ok())
-            {
-                STAGE_OVERRIDE.store(u32::from(g) + 1, core::sync::atomic::Ordering::Relaxed);
-            }
-            #[cfg(any(feature = "profile", feature = "frame_timer"))]
-            for l in text.into_iter().flat_map(str::lines).map(str::trim) {
-                let store = |a: &core::sync::atomic::AtomicU32, v: &str| {
-                    if let Ok(v) = v.trim().parse::<u8>() {
-                        a.store(u32::from(v) + 1, core::sync::atomic::Ordering::Relaxed);
-                    }
-                };
-                if let Some(v) = l.strip_prefix("items=") {
-                    store(&ITEMS_OVERRIDE, v);
-                } else if let Some(v) = l.strip_prefix("onepstage=") {
-                    store(&ONEP_STAGE_OVERRIDE, v);
-                } else if let Some(v) = l.strip_prefix("level=") {
-                    store(&LEVEL_OVERRIDE, v);
-                } else if let Some(v) = l.strip_prefix("fighters=") {
-                    for (a, v) in FIGHTERS_OVERRIDE.iter().zip(v.split(',')) {
-                        store(a, v);
-                    }
-                }
-            }
-            #[cfg(any(feature = "profile", feature = "frame_timer"))]
-            if text.into_iter().flat_map(str::lines).any(|l| l.trim() == "hold") {
-                HOLD.store(true, core::sync::atomic::Ordering::Relaxed);
-            }
+            apply_overrides(text);
             let line = text.and_then(ssb_capture::spec_line);
             if let Some(spec) = line.and_then(ssb_capture::GameSpec::parse) {
                 if let Some(tick) = spec.tick {
@@ -164,6 +133,46 @@ pub fn select() -> Option<Capture> {
         scene,
         from_file: false,
     })
+}
+
+/// Stores a capture file's diagnostic lines (`stage=`, `items=`,
+/// `onepstage=`, `level=`, `fighters=`, `hold`). In every
+/// `capture_scene_file` build, out of line and cold: a measurement build
+/// (`frame_timer`) then compiles `run` and the frame code exactly as the
+/// trace build does (RE-578).
+#[cfg(feature = "capture_scene_file")]
+#[cold]
+#[inline(never)]
+fn apply_overrides(text: Option<&str>) {
+    if let Some(g) = text
+        .into_iter()
+        .flat_map(str::lines)
+        .find_map(|l| l.trim().strip_prefix("stage="))
+        .and_then(|g| g.parse::<u8>().ok())
+    {
+        STAGE_OVERRIDE.store(u32::from(g) + 1, core::sync::atomic::Ordering::Relaxed);
+    }
+    for l in text.into_iter().flat_map(str::lines).map(str::trim) {
+        let store = |a: &core::sync::atomic::AtomicU32, v: &str| {
+            if let Ok(v) = v.trim().parse::<u8>() {
+                a.store(u32::from(v) + 1, core::sync::atomic::Ordering::Relaxed);
+            }
+        };
+        if let Some(v) = l.strip_prefix("items=") {
+            store(&ITEMS_OVERRIDE, v);
+        } else if let Some(v) = l.strip_prefix("onepstage=") {
+            store(&ONEP_STAGE_OVERRIDE, v);
+        } else if let Some(v) = l.strip_prefix("level=") {
+            store(&LEVEL_OVERRIDE, v);
+        } else if let Some(v) = l.strip_prefix("fighters=") {
+            for (a, v) in FIGHTERS_OVERRIDE.iter().zip(v.split(',')) {
+                store(a, v);
+            }
+        }
+    }
+    if text.into_iter().flat_map(str::lines).any(|l| l.trim() == "hold") {
+        HOLD.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// The scene named by the old per-scene Cargo features, in the order the old

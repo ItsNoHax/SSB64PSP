@@ -1760,10 +1760,7 @@ impl MaterialAnimator {
     /// live relative to each other).
     pub fn tick(&mut self, pack: &Pack<'_>) {
         for (i, joint) in self.joints.iter_mut().enumerate() {
-            let Some(a) = pack.mat_anim(i as u32) else {
-                continue;
-            };
-            let Some(data) = pack.mat_anim_file(&a) else {
+            let Some(data) = pack.mat_anim_file_at(i as u32) else {
                 continue;
             };
             let _ = joint.tick(data, 1.0);
@@ -2169,8 +2166,7 @@ impl EffectMaterialAnimator {
             if self.halted[n] {
                 continue;
             }
-            let Some(a) = pack.mat_anim(*i) else { continue };
-            let Some(data) = pack.mat_anim_file(&a) else {
+            let Some(data) = pack.mat_anim_file_at(*i) else {
                 continue;
             };
             let _ = j.tick(data, speed);

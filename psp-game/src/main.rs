@@ -5580,8 +5580,10 @@ unsafe fn run() -> ! {
 
         // A `frame_timer` build times the wait for the last frame to be on
         // screen here, outside the draw's code; `Gpu::begin_frame` then
-        // finds it done (RE-500).
-        #[cfg(feature = "frame_timer")]
+        // finds it done (RE-500). The trace build (`capture_scene_file`)
+        // makes the same calls untimed, so both compile this loop alike
+        // (RE-578).
+        #[cfg(any(feature = "frame_timer", all(feature = "capture_scene_file", not(feature = "profile"))))]
         ssb_psp_runtime::frame_timer::vblank(|| gpu.wait_presented());
         if s.hold_picture {
             // A scene's exit update is not drawn: its last picture stays
@@ -5610,6 +5612,7 @@ unsafe fn run() -> ! {
         }
         ssb_psp_runtime::audio::dump_flush(false);
         profile::frame_end(ssb_psp_runtime::thread::stack_free_bytes);
+        #[cfg(any(feature = "frame_timer", all(feature = "capture_scene_file", not(feature = "profile"))))]
         ssb_psp_runtime::frame_timer::frame_end(deterministic_capture_frozen(capture_spec, sim_frame_index));
         #[cfg(feature = "headless_capture")]
         ssb_psp_runtime::memory::sample();

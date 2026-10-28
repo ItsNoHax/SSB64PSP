@@ -148,6 +148,10 @@ pub struct Plan<'p, A: BlockAlloc, E> {
     /// Background reads, the first in flight once started.
     jobs: VecDeque<Job>,
     in_flight: bool,
+    /// Some file may be [`Keep::Leaving`]: set by
+    /// [`enter_end`](Self::enter_end), the only place that marks one,
+    /// cleared by the [`safe_point`](Self::safe_point) that drops them.
+    leaving: bool,
 }
 
 impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
@@ -172,6 +176,7 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
             failed: None,
             jobs: VecDeque::new(),
             in_flight: false,
+            leaving: false,
         })
     }
 
@@ -293,6 +298,7 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
                 *keep = Keep::Scene;
             } else if !w && (*keep == Keep::Scene || (*keep == Keep::Next && !within)) {
                 *keep = Keep::Leaving;
+                self.leaving = true;
             }
         }
         self.report = Report {
@@ -336,6 +342,11 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
     /// has read everything.
     pub fn safe_point<I: Io<A::Block, Error = E>>(&mut self, io: &mut I) {
         self.pump(io);
+        // Most frames leave nothing: skip the scan of every file.
+        if !self.leaving {
+            return;
+        }
+        self.leaving = false;
         // The registry drops them all in one pass (RE-476).
         self.starts.clear();
         for i in 0..self.files.len() {

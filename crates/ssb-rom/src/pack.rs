@@ -5026,6 +5026,17 @@ impl<'a> Pack<'a> {
         self.blob(a.file_offset, a.file_len as usize)
     }
 
+    /// [`Pack::mat_anim_file`] of [`Pack::mat_anim`]`(i)`, reading only the
+    /// entry's first two words: the per-tick lookup of every animator,
+    /// which needs no other field.
+    pub fn mat_anim_file_at(&self, i: u32) -> Option<&'a [u8]> {
+        if i >= self.mat_anim_count {
+            return None;
+        }
+        let at = self.mat_anim_table() + i as usize * MatAnimDesc::SIZE;
+        self.blob(u32_at(self.data, at), u32_at(self.data, at + 4) as usize)
+    }
+
     /// One resolved palette variant, by absolute index (see
     /// [`MatAnimDesc::first_palette`]/[`MatAnimDesc::palette_count`]).
     pub fn mat_anim_palette(&self, i: u32) -> Option<MatAnimPalette> {
@@ -7974,6 +7985,13 @@ mod tests {
         assert_eq!(pack.mat_anim_file(&a), pack.mat_anim_file(&b));
         assert_eq!(a.script, 0x100);
         assert_eq!(b.script, 0x200);
+        // The animators' narrow lookup reads the same range, and the same
+        // `None` past the table.
+        for i in 0..3 {
+            let whole = pack.mat_anim(i).and_then(|d| pack.mat_anim_file(&d));
+            assert_eq!(pack.mat_anim_file_at(i), whole, "{i}");
+        }
+        assert!(pack.mat_anim_file_at(2).is_none());
     }
 
     /// RE-175: a material animation's sprite (texture-id) variants -- up to

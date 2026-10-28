@@ -74,6 +74,8 @@ fn no_packed_material_script_uses_command_22() {
     for i in 0..p.mat_anim_count() {
         let a = p.mat_anim(i).unwrap();
         let file = p.mat_anim_file(&a).unwrap();
+        // The animators' per-tick lookup reads the same range.
+        assert_eq!(p.mat_anim_file_at(i), Some(file), "mat_anim {i}");
         if let Err(e) = walk(file, a.script as usize, &mut census) {
             bad.push(format!(
                 "mat_anim {i} (file {} script {:#x}): {e}",
