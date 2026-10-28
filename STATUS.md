@@ -10,9 +10,10 @@
 | Goldens | 266 of 266 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy) | Room 13.39 ms, Run 14.98, Yoster 15.58, Clash 13.17 | RE-530, RE-532, RE-539 |
-| PSP-2000 `vs4@2400` | 16.92 ms busy, BFPS 59.1 | RE-539 |
-| PSP-2000 1P intro | ~34 ms (~21 FPS) | RE-537, RE-539 |
+| PSP-2000 opening (busy, ms0) | Room 13.84 ms, Run 15.54, Yoster 12.99, Clash 12.80 (120-frame reports) | RE-574 |
+| PSP-2000 `vs4@2400` | 19.71 ms busy, BFPS 50.7, 44.8 FPS (ms0) | RE-574 |
+| PSP-2000 1P intro | 38.2 ms (~21 FPS); 1P battle 19.4 ms | RE-574 |
+| PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
@@ -25,7 +26,7 @@
 ## Next
 
 1. MS8 performance.
-2. Hardware: audio streamer smoke (misses=0, under=0), loader load times with async prio 0x1E, figatree miss latency (RE-573).
+2. Hardware: free memory on a PSP-1000 and an XMB launch (needs a person).
 
 ## Blockers
 
@@ -34,7 +35,7 @@
 
 ## Verification
 
-Baseline: batch 77; deepest game stack 126,888 B of 524288.
+Baseline: batch 77 (hardware: HEAD 02593043, RE-574); deepest game stack 126,888 B of 524288.
 
 | Check | Result |
 |---|---|

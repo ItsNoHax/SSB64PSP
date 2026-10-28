@@ -58,8 +58,12 @@
 |---|---|---|
 | Stage clip cost | Battle-stage guard-band clip costs +1.21 ms vs4, +1.75 ms Zebes: run the noclip-timer A/B to split clip from layout; reduce per-vertex test | RE-519 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| vs4 link order | `vs4@2400` busy 18.3 ms vs RE-539 16.92: re-search the link order | RE-539 |
-| 1P intro | Kirby vs Yoshi team ~21 FPS on PSP-2000 → profile | RE-537, RE-539 |
+| vs4 link order | `vs4@2400` busy 19.71 ms (ms0) vs RE-539 16.92: re-search the link order | RE-539, RE-574 |
+| 1P intro | Kirby vs Yoshi team ~21 FPS (38.2 ms) on PSP-2000; batches 72-77 +0.73 ms unattributed → profile | RE-537, RE-539, RE-574 |
+| Background read rate | Loader issues one 64 KiB chunk per frame: prefetch ~1.3-2 MB/s. Issue chunks until pending/EWOULDBLOCK | RE-574 |
+| Opening figatree misses | Single misses 14-20 ms, up to 8 per frame at fighter-scene entry (first battle frame 64 ms): prefetch the next fighter's first statuses | RE-574 |
+| Opening audio misses | 3 sample misses (233 B zeros) at the first fighter battle in 2 of 4 runs; acceptance misses=0 | RE-574 |
+| Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
 | Acid tile-0 duplicates | Zebes acid `textures[1..3]` duplicate the TEXEL1 images (~520 KiB): drop the duplicate slots | RE-364 |
 | `vs4@2400` | Busy time back under RE-500's 13.64 ms; rise = small gameplay and draw additions | RE-533–RE-539 |
@@ -85,7 +89,7 @@
 | Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
-| PSP-1000 | In scope, before MS8. B (Maps preview), A (audio page cache, pack v137) and C (figatrees per status) done in PPSSPP. PPSSPP acceptance passed: goldens 266/266 under `--ballast 18000000` (min headroom 3.58 MB). Remaining, hardware only: free memory at `psp_main` on a PSP-1000 (1.3 MB firmware overhead is a PSP-2000 figure), audio streamer smoke (misses=0, under=0), loader times with async priority 0x1E, figatree miss latency. Not a plan: fewer fighters at select | RE-288, RE-475, RE-572, RE-573 |
+| PSP-1000 | In scope, before MS8. B (Maps preview), A (audio page cache, pack v137) and C (figatrees per status) done in PPSSPP. PPSSPP acceptance passed: goldens 266/266 under `--ballast 18000000` (min headroom 3.58 MB). Measured on the Slim (RE-574): audio streamer under=0, loader priority, figatree latency. Remaining, hardware only: free memory at `psp_main` on a PSP-1000 (51.4 MB under PSPLink on the 64 MB unit; 1.3 MB firmware overhead is a PSP-2000 figure). Not a plan: fewer fighters at select | RE-288, RE-475, RE-572–RE-574 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 
