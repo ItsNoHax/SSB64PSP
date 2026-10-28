@@ -100,28 +100,66 @@ impl PosedFighter {
     /// ([`crate::fighter_skeleton`]), its clip not yet started. Build it after
     /// `fighter.attributes`: TopN carries their `size`.
     ///
-    /// Out of line, with the skeleton made in the struct and its locks set
-    /// after: the result lands in the caller's slot with no skeleton-sized
-    /// temporary on the PSP's stack (`FighterScene::at_position`).
-    #[inline(never)]
+    /// A host with the fighter in hand; the PSP builds its fighters in
+    /// place with [`Self::write_around_fighter`].
     pub fn new(pack: &Pack<'_>, fighter: ssb_game::fighter::Fighter) -> PosedFighter {
-        let locks = fighter_locks(fighter.kind, fighter.attributes.size);
-        let mut posed = PosedFighter {
-            // Which object a character's animations drive is stored per joint,
-            // so any one of them names it; a scan over the objects finds which
-            // one owns that node. Done once, here, rather than per tick.
-            object: ssb_rom::scene_deps::fighter_object(pack, fighter.kind as u32)
-                .unwrap_or(u32::MAX),
+        let mut posed = core::mem::MaybeUninit::<PosedFighter>::uninit();
+        let dst = posed.as_mut_ptr();
+        // SAFETY: the fighter is written first, then every other field.
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).fighter).write(fighter);
+            Self::write_around_fighter(dst, pack);
+            posed.assume_init()
+        }
+    }
+
+    /// [`Self::new`] in place, around the fighter already at
+    /// `(*dst).fighter`: every other field is written into `*dst`, the
+    /// skeleton made there and its locks set after, so no `PosedFighter`
+    /// or skeleton-sized temporary lands on the PSP's game stack
+    /// (`FighterScene::write_at_position`, RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` is valid for writes and aligned, and its `fighter` field is
+    /// initialised. Every other field is overwritten without being read or
+    /// dropped.
+    #[inline(never)]
+    pub unsafe fn write_around_fighter(dst: *mut PosedFighter, pack: &Pack<'_>) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(PosedFighter {
             fighter,
-            skeleton: ssb_rom::skeleton::Skeleton::new(),
-            started: None,
-            clip_restarts_seen: 0,
-            shield_yrotn: ssb_rom::figatree::JointPose::default(),
-            root_motion_before_tick: None,
-            anim_ticked_early: false,
+            skeleton,
+            object,
+            started,
+            clip_restarts_seen,
+            shield_yrotn,
+            root_motion_before_tick,
+            anim_ticked_early
+        });
+        // SAFETY: the caller initialised the fighter; nothing else is read.
+        let (kind, size) = unsafe {
+            let fighter = &*addr_of_mut!((*dst).fighter);
+            (fighter.kind, fighter.attributes.size)
         };
-        posed.skeleton.locks = locks;
-        posed
+        let locks = fighter_locks(kind, size);
+        // Which object a character's animations drive is stored per joint,
+        // so any one of them names it; a scan over the objects finds which
+        // one owns that node. Done once, here, rather than per tick.
+        let object = ssb_rom::scene_deps::fighter_object(pack, kind as u32).unwrap_or(u32::MAX);
+        // SAFETY: `dst` is valid for writes (the caller's contract); each
+        // field is written once, the skeleton before its locks are set.
+        unsafe {
+            addr_of_mut!((*dst).object).write(object);
+            let skeleton = addr_of_mut!((*dst).skeleton);
+            ssb_rom::skeleton::Skeleton::write_new(skeleton);
+            (*skeleton).locks = locks;
+            addr_of_mut!((*dst).started).write(None);
+            addr_of_mut!((*dst).clip_restarts_seen).write(0);
+            addr_of_mut!((*dst).shield_yrotn).write(ssb_rom::figatree::JointPose::default());
+            addr_of_mut!((*dst).root_motion_before_tick).write(None);
+            addr_of_mut!((*dst).anim_ticked_early).write(false);
+        }
     }
 
     /// The priority-5 half: input, runtime samples,

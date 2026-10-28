@@ -583,14 +583,15 @@ fn make_fighter(p: &Pack<'_>, f: &characters::Fighter) -> Box<FighterModel> {
     let mut demo = ssb_game::demo_fighter::DemoFighter::new(f.kind, 0, costume);
     // `fp->is_muted = TRUE`.
     demo.fighter.is_muted = true;
-    let mut m = Box::new(FighterModel {
+    let mut m = ssb_engine::box_in_place!(FighterModel {
         serial: f.serial,
         kind: f.kind,
         object: ssb_psp_runtime::scene::fighter_object(p, f.kind as u32).unwrap_or(u32::MAX),
         slot: None,
         skips_scales: false,
-        skeleton: ssb_psp_runtime::scene::fighter_skeleton(f.kind, f.scale()),
-        demo,
+        demo: demo;
+        // SAFETY: `ptr` is the new box's skeleton field.
+        skeleton => |ptr| unsafe { ssb_psp_runtime::scene::write_fighter_skeleton(ptr, f.kind, f.scale()) },
     });
     set_status(p, &mut m, f);
     m
@@ -616,7 +617,7 @@ fn set_status(p: &Pack<'_>, m: &mut FighterModel, f: &characters::Fighter) {
     // TopN is scaled by `dSCSubsysFighterScales`; a battle status may
     // be flagged (Yoshi's attacks), which animates the `animlock` parts
     // (RE-509).
-    m.skeleton = ssb_psp_runtime::scene::fighter_skeleton(f.kind, f.scale());
+    ssb_psp_runtime::scene::reset_fighter_skeleton(&mut m.skeleton, f.kind, f.scale());
     m.skeleton.locks.flagged = matches!(f.motion, Motion::Status(st)
         if ssb_game::motion::uses_animlocks(f.kind, st));
     if let Some(anim) = slot.and_then(|slot| p.fighter_anim(f.kind as u32, slot)) {

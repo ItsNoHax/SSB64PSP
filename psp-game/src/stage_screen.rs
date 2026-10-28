@@ -29,17 +29,18 @@ pub struct Preview {
     hide_len: usize,
 }
 
-/// Boxed so the session holds a pointer.
+/// Boxed so the session holds a pointer; built in the box (RE-469).
 #[inline(never)]
 pub fn start() -> Box<Preview> {
-    Box::new(Preview {
+    ssb_engine::box_in_place!(Preview {
         serial: None,
         stage: None,
         anim: None,
-        animator: StageAnimator::new(),
         mat_anim: MaterialAnimator::new(),
         hide: [u32::MAX; 2],
-        hide_len: 0,
+        hide_len: 0;
+        // SAFETY: `ptr` is the new box's animator field.
+        animator => |ptr| unsafe { StageAnimator::write_new(ptr) },
     })
 }
 

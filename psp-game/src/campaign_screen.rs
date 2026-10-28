@@ -602,24 +602,25 @@ fn make_model(
     camera: [f32; 10],
     entrance: spgame::intro::Entrance,
 ) -> Box<Model> {
-    let mut m = Box::new(Model {
-        kind,
-        costume,
+    let mut m = ssb_engine::box_in_place!(Model {
+        kind: kind,
+        costume: costume,
         shade: 0,
         slot: slot as u32,
         object: ssb_psp_runtime::scene::fighter_object(p, kind as u32)
             .expect("campaign fighter object"),
-        // The intro and figure motions are unflagged: the `animlock` parts
-        // stay frozen (RE-509).
-        skeleton: ssb_psp_runtime::scene::fighter_skeleton(kind, 1.0),
         demo: ssb_game::demo_fighter::DemoFighter::start(kind, 0, costume, row),
-        entrance,
-        camera,
+        entrance: entrance,
+        camera: camera,
         pos: [0.0; 3],
         scale: 1.0,
         transn: [0.0; 3],
-        frozen,
-        priority: if frozen { 40 } else { 50 },
+        frozen: frozen,
+        priority: if frozen { 40 } else { 50 };
+        // The intro and figure motions are unflagged: the `animlock` parts
+        // stay frozen (RE-509).
+        // SAFETY: `ptr` is the new box's skeleton field.
+        skeleton => |ptr| unsafe { ssb_psp_runtime::scene::write_fighter_skeleton(ptr, kind, 1.0) },
     });
     if let Some(anim) = p.fighter_anim(kind as u32, slot as u32) {
         m.skeleton

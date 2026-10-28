@@ -181,7 +181,7 @@ fn make_model(p: &Pack<'_>, fighter: layer::Fighter, port: u8, costume: u8) -> B
         None => ssb_rom::anim::SLOT_WAIT,
         Some(status) => ssb_rom::anim::SLOT_WIN1 + status.index(),
     } as u32;
-    let mut m = Box::new(Model {
+    let mut m = ssb_engine::box_in_place!(Model {
         serial: fighter.serial,
         kind: fighter.kind,
         object: ssb_psp_runtime::scene::fighter_object(p, kind).unwrap_or(u32::MAX),
@@ -189,11 +189,12 @@ fn make_model(p: &Pack<'_>, fighter: layer::Fighter, port: u8, costume: u8) -> B
         skips_scales: fighter
             .status
             .is_some_and(|s| s.skips_translate_scales(fighter.kind)),
+        // `desc.costume`; only the draw reads it, from the select.
+        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, port, costume);
         // The select motions are unflagged: the `animlock` parts stay
         // frozen (RE-509).
-        skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
-        // `desc.costume`; only the draw reads it, from the select.
-        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, port, costume),
+        // SAFETY: `ptr` is the new box's skeleton field.
+        skeleton => |ptr| unsafe { ssb_psp_runtime::scene::write_fighter_skeleton(ptr, fighter.kind, 1.0) },
     });
     if let Some(anim) = p.fighter_anim(kind, slot) {
         m.skeleton.start(p, &anim, 0.0, 1.0);

@@ -181,14 +181,15 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
 #[inline(never)]
 fn make_model(p: &Pack<'_>, fighter: results_scene::Fighter) -> Box<Model> {
     let kind = fighter.kind as u32;
-    let mut m = Box::new(Model {
-        fighter,
+    let mut m = ssb_engine::box_in_place!(Model {
+        fighter: fighter,
         object: ssb_psp_runtime::scene::fighter_object(p, kind).unwrap_or(u32::MAX),
         slot: None,
+        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, fighter.player as u8, fighter.costume);
         // Win and lose motions are unflagged: the `animlock` parts stay
         // frozen (RE-509).
-        skeleton: ssb_psp_runtime::scene::fighter_skeleton(fighter.kind, 1.0),
-        demo: ssb_game::demo_fighter::DemoFighter::new(fighter.kind, fighter.player as u8, fighter.costume),
+        // SAFETY: `ptr` is the new box's skeleton field.
+        skeleton => |ptr| unsafe { ssb_psp_runtime::scene::write_fighter_skeleton(ptr, fighter.kind, 1.0) },
     });
     if let Some(status) = fighter.status {
         let slot = (ssb_rom::anim::SLOT_WIN1 + status.index()) as u32;

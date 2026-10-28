@@ -33,6 +33,84 @@ use core::mem::{align_of, needs_drop, size_of, MaybeUninit};
 mod game;
 pub use game::{scene_bytes, GameArena, GameArenaError, GameArenaUsage, SceneBox, GROW_BLOCKS};
 
+/// Fails to compile unless the listed names are exactly the struct's
+/// fields: the guard on a field-by-field in-place initialiser
+/// (`addr_of_mut!((*dst).field).write(..)`), which the compiler cannot
+/// check for a field left unwritten. Expands to an uncalled closure.
+///
+/// ```
+/// struct Pair { a: u8, b: u16 }
+/// ssb_engine::all_fields!(Pair { a, b });
+/// ```
+///
+/// ```compile_fail
+/// struct Pair { a: u8, b: u16 }
+/// ssb_engine::all_fields!(Pair { a });
+/// ```
+#[macro_export]
+macro_rules! all_fields {
+    ($($ty:ident)::+ { $($field:ident),* $(,)? }) => {
+        let _ = |value: $($ty)::+| {
+            let $($ty)::+ { $($field: _),* } = value;
+        };
+    };
+}
+
+/// `Box::new(Type { field: value, .. })` with the fields after `;` built
+/// in the box by their initialisers, `|ptr| ..` closures that must write
+/// a whole value to the field `ptr` points at.
+///
+/// `Box::new` of a literal holding a large field builds it on the stack
+/// and copies it: `panic = unwind` keeps LLVM from constructing it in the
+/// heap slot (RE-469). The values are all evaluated first, in order, then
+/// the box is allocated, as `Box::new` does; [`all_fields!`] checks that
+/// every field is named once.
+///
+/// ```
+/// struct Big { tag: u8, data: [u32; 4096] }
+/// let b = ssb_engine::box_in_place!(Big { tag: 7; data => |p: *mut [u32; 4096]| {
+///     // SAFETY: `p` points into the new box.
+///     unsafe { core::ptr::write_bytes(p, 0, 1) }
+/// } });
+/// assert_eq!((b.tag, b.data[4095]), (7, 0));
+/// ```
+///
+/// # Safety
+///
+/// Each initialiser must initialise its field; the macro then takes the
+/// box as initialised.
+#[macro_export]
+macro_rules! box_in_place {
+    ($($ty:ident)::+ { $($field:ident : $value:expr),* $(,)? ; $($slot:ident => $init:expr),+ $(,)? }) => {{
+        $crate::all_fields!($($ty)::+ { $($field,)* $($slot),+ });
+        #[allow(unused_parens)]
+        let ($($field,)*) = ($($value,)*);
+        let mut boxed = $crate::memory::new_uninit_box::<$($ty)::+>();
+        let dst = boxed.as_mut_ptr();
+        // SAFETY: `dst` is the box's valid, aligned slot; each plain field
+        // is written once (`all_fields!`).
+        unsafe {
+            $(::core::ptr::addr_of_mut!((*dst).$field).write($field);)*
+        }
+        // The initialisers run outside the macro's `unsafe`: their own
+        // `unsafe` blocks carry their callers' safety argument.
+        $(
+            // SAFETY: a field projection inside the box's slot.
+            let slot = unsafe { ::core::ptr::addr_of_mut!((*dst).$slot) };
+            ($init)(slot);
+        )+
+        // SAFETY: every field is now written, the plain ones above and the
+        // rest by their initialisers (the macro's contract).
+        unsafe { boxed.assume_init() }
+    }};
+}
+
+/// [`box_in_place!`]'s allocation, so its callers need no `alloc` path.
+#[doc(hidden)]
+pub fn new_uninit_box<T>() -> alloc::boxed::Box<core::mem::MaybeUninit<T>> {
+    alloc::boxed::Box::new_uninit()
+}
+
 /// Default alignment: `LBRELOC_CACHE_ALIGN`'s 16 bytes, which is also what
 /// the GE wants for DMA sources.
 pub const ARENA_ALIGN: usize = 16;

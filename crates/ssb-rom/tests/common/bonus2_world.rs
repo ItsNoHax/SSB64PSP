@@ -38,7 +38,7 @@ impl<'p> Course<'p> {
             .stage_of_file(283 + kind as u32)
             .expect("Bonus 2 course");
         let stage = pack.stage(index).expect("course stage");
-        // `StageMap::new`.
+        // `StageGroups::write_new`.
         let anim = pack.stage_anim(index);
         let mut animator = StageAnimator::new();
         if let Some(anim) = anim {

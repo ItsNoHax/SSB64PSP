@@ -16,7 +16,8 @@
 
 ## Current work
 
-- Landed (batch 75): battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
+- Landed (batch 76): scene state built in place (`enter_training` 176,248 to 24,672 B; deepest stack 367,008 to 163,860 B); low_free +61,696 B (code size); peak 14,615,040 B unchanged.
+- Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
 - Batch 74: `golden.sh verify --ballast BYTES`; goldens 266/266 at 18.0 and 17.5 MB, min headroom 3.58 MB (f1-training-fighter-select); failures begin at 15.0 MB (RE-572). PPSSPP-side PSP-1000 acceptance passed.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; Mew catcher flag read (RE-568); real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
@@ -32,7 +33,7 @@
 
 ## Verification
 
-Baseline: batch 75; deepest game stack 367,008 B of 524288.
+Baseline: batch 76; deepest game stack 163,860 B of 524288.
 
 | Check | Result |
 |---|---|

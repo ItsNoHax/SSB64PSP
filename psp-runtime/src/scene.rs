@@ -665,10 +665,18 @@ impl core::ops::DerefMut for StageMap {
 }
 
 impl StageMap {
-    pub fn new(pack: &Pack<'_>, index: u32, stage: &StageDesc) -> Self {
-        Self {
-            platforms: alloc::vec::Vec::new(),
-            ground: ssb_pose::ground::StageGroups::new(pack, index, stage),
+    /// The map in its own heap box, built there: by value it is a 23 KB
+    /// stack temporary copied into the box (RE-469).
+    #[inline(never)]
+    pub fn new_boxed(pack: &Pack<'_>, index: u32, stage: &StageDesc) -> alloc::boxed::Box<Self> {
+        let mut slot = alloc::boxed::Box::<Self>::new_uninit();
+        let dst = slot.as_mut_ptr();
+        ssb_engine::all_fields!(StageMap { platforms, ground });
+        // SAFETY: the box is valid and aligned; both fields are written once.
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).platforms).write(alloc::vec::Vec::new());
+            ssb_pose::ground::StageGroups::write_new(core::ptr::addr_of_mut!((*dst).ground), pack, index, stage);
+            slot.assume_init()
         }
     }
 
@@ -1039,7 +1047,9 @@ pub fn fighter_shadow(
     )
 }
 
-pub use ssb_pose::{fighter_skeleton, tick_skeleton_animation};
+pub use ssb_pose::{
+    boxed_fighter_skeleton, fighter_skeleton, reset_fighter_skeleton, tick_skeleton_animation, write_fighter_skeleton,
+};
 
 /// The on-device gameplay slice: one fighter, connected end to end from
 /// `ssb-rom` `Pack` data through `ssb-game` physics/collision to skeleton
@@ -1184,13 +1194,69 @@ impl FighterScene {
         pos: Option<ssb_engine::math::Vec3>,
         counts: &ssb_game::manager_counts::ManagerCounts,
     ) -> FighterScene {
+        let mut scene = core::mem::MaybeUninit::<FighterScene>::uninit();
+        // SAFETY: `write_at_position` writes every field.
+        unsafe {
+            Self::write_at_position(scene.as_mut_ptr(), pack, stage, kind, port, pos, counts);
+            scene.assume_init()
+        }
+    }
+
+    /// [`Self::at_spawn`] built in `*dst`.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::write_at_position`].
+    pub unsafe fn write_at_spawn(
+        dst: *mut FighterScene,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        kind: FighterKind,
+        spawn_index: u16,
+        counts: &ssb_game::manager_counts::ManagerCounts,
+    ) {
+        let pos = pack
+            .spawn(stage, spawn_index)
+            .map(|spawn| ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0));
+        // SAFETY: the caller's contract.
+        unsafe { Self::write_at_position(dst, pack, stage, kind, spawn_index as u8, pos, counts) }
+    }
+
+    /// [`Self::at_position`] built in `*dst`, its final home (the battle's
+    /// world or a CPU's arena slot): the fighter is made and placed in the
+    /// scene's own field and every other field written after, so no 37 KB
+    /// scene or 10 KB fighter lands on the game stack (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` is valid for writes and aligned. Every field is overwritten
+    /// without being read or dropped.
+    #[inline(never)]
+    pub unsafe fn write_at_position(
+        dst: *mut FighterScene,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        kind: FighterKind,
+        port: u8,
+        pos: Option<ssb_engine::math::Vec3>,
+        counts: &ssb_game::manager_counts::ManagerCounts,
+    ) {
+        use core::ptr::addr_of_mut;
         let spawn_index = port;
+        ssb_engine::all_fields!(FighterScene { pose, placed, airborne_ticks, jump_was_held, from_pack, object_low, camera, cam_offset_y, camera_zoom_frame, shadow_size });
+        // SAFETY: `dst` is valid for writes (the caller's contract).
+        let pose = unsafe { addr_of_mut!((*dst).pose) };
         // `Fighter::new`'s `port` and `pack.spawn`'s `player` are different
         // concepts that happen to share the same value by this project's own
         // convention (port N spawns at spawn N) -- the same convention the
         // pre-generalization `Play`/`Dummy` split already baked in (ports 0
         // and 1 for spawns 0 and 1).
-        let mut fighter = Fighter::new(kind, spawn_index, 3);
+        // SAFETY: the fighter is written before the reference is made.
+        let fighter = unsafe {
+            let fighter = addr_of_mut!((*pose).fighter);
+            fighter.write(Fighter::new(kind, spawn_index, 3));
+            &mut *fighter
+        };
         fighter.stats.counts = counts.clone();
 
         // Real constants if the pack has them: gravity 2.4 and terminal
@@ -1223,7 +1289,7 @@ impl FighterScene {
             // then `mpCommonSetFighterWaitOrFall` (an entry or a demo sets
             // its own status after).
             placed = fighter.init_floor(FloorSegments::new(pack, stage));
-            ssb_game::status::set_wait_or_fall(&mut fighter);
+            ssb_game::status::set_wait_or_fall(fighter);
         }
         // `MPGroundData`'s `map_bound_*` and `camera_bound_*`, and the
         // `nMPMapObjKindRebirth` point the halo lowers the fighter onto.
@@ -1247,27 +1313,25 @@ impl FighterScene {
                 fog_color: stage.fog_color,
             });
         }
-        // Every other field before the pose, so `PosedFighter::new` is the
-        // literal's only call and builds into the scene's slot: no 37 KB
-        // temporary on the game stack (D-052).
         let object_low = fighter_low_object(pack, kind as u32).unwrap_or(u32::MAX);
-        // Matches real hardware's own `dGMCameraCObjVecDefault` rest
-        // state (RE-131) rather than starting already converged on the
-        // fighter -- the pan-in from that rest state as the match
-        // begins is real, observable behaviour, not a startup glitch to
-        // hide.
-        let camera = ssb_game::camera::CameraRig::default();
-        FighterScene {
-            pose: ssb_pose::PosedFighter::new(pack, fighter),
-            placed,
-            airborne_ticks: 0,
-            jump_was_held: false,
-            from_pack,
-            object_low,
-            camera,
-            cam_offset_y,
-            camera_zoom_frame,
-            shadow_size,
+        // SAFETY: the fighter is initialised; every other field is written
+        // once below.
+        unsafe {
+            ssb_pose::PosedFighter::write_around_fighter(pose, pack);
+            addr_of_mut!((*dst).placed).write(placed);
+            addr_of_mut!((*dst).airborne_ticks).write(0);
+            addr_of_mut!((*dst).jump_was_held).write(false);
+            addr_of_mut!((*dst).from_pack).write(from_pack);
+            addr_of_mut!((*dst).object_low).write(object_low);
+            // Matches real hardware's own `dGMCameraCObjVecDefault` rest
+            // state (RE-131) rather than starting already converged on the
+            // fighter -- the pan-in from that rest state as the match
+            // begins is real, observable behaviour, not a startup glitch to
+            // hide.
+            addr_of_mut!((*dst).camera).write(ssb_game::camera::CameraRig::default());
+            addr_of_mut!((*dst).cam_offset_y).write(cam_offset_y);
+            addr_of_mut!((*dst).camera_zoom_frame).write(camera_zoom_frame);
+            addr_of_mut!((*dst).shadow_size).write(shadow_size);
         }
     }
 

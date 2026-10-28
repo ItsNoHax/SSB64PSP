@@ -10,6 +10,7 @@
 
 use core::ops::{Deref, DerefMut};
 
+use ssb_engine::memory::SceneBox;
 use ssb_game::computer::CpuSight;
 use ssb_game::fighter::FighterKind;
 use ssb_rom::pack::{Pack, StageDesc};
@@ -71,8 +72,12 @@ impl Dummy {
     /// position -- [`FighterScene::at_spawn`] itself has no such
     /// distinction (it always returns a scene, `placed: false` when nothing
     /// to stand on), so that check stays here.
+    ///
+    /// Built in a slot of the scene arena, its final home: the 37 KB dummy
+    /// never lands on the game stack (RE-469).
     #[allow(clippy::too_many_arguments)]
-    pub fn at_spawn(
+    #[inline(never)]
+    pub fn new_at_spawn(
         pack: &Pack<'_>,
         stage: &StageDesc,
         kind: FighterKind,
@@ -82,16 +87,29 @@ impl Dummy {
         port: u8,
         counts: &ssb_game::manager_counts::ManagerCounts,
         groups: &[ssb_game::map::MapGroup],
-    ) -> Option<Dummy> {
+    ) -> Option<SceneBox<Dummy>> {
         pack.spawn(stage, spawn)?;
-        let scene = FighterScene::at_spawn(pack, stage, kind, spawn, counts);
-        Some(Self::with_scene(pack, stage, scene, costume, level, port, groups))
+        let mut b = ssb_psp_runtime::memory::scene_alloc_uninit::<Dummy>();
+        let dst = b.as_mut_ptr();
+        // SAFETY: the scene is written first, then every other field, before
+        // `assume_init`; a panic between leaves the slot uninitialised, never
+        // dropped.
+        unsafe {
+            FighterScene::write_at_spawn(core::ptr::addr_of_mut!((*dst).scene), pack, stage, kind, spawn, counts);
+            Self::write_around_scene(dst, pack, stage, costume, level, port, groups);
+            Some(b.assume_init())
+        }
     }
 
-    /// A CPU fighter at `pos`, such as a 1P Game team's next member
-    /// (`sc1PGameSpawnEnemyTeamNext`).
+    /// Replaces this fighter with a CPU fighter at `pos`, such as a 1P
+    /// Game team's next member (`sc1PGameSpawnEnemyTeamNext`).
+    ///
+    /// Built in place: by value the 37 KB member was a stack temporary
+    /// copied in (RE-469). The old member is dropped first.
     #[allow(clippy::too_many_arguments)]
-    pub fn at_position(
+    #[inline(never)]
+    pub fn replace_at_position(
+        &mut self,
         pack: &Pack<'_>,
         stage: &StageDesc,
         kind: FighterKind,
@@ -101,20 +119,49 @@ impl Dummy {
         port: u8,
         counts: &ssb_game::manager_counts::ManagerCounts,
         groups: &[ssb_game::map::MapGroup],
-    ) -> Dummy {
-        let scene = FighterScene::at_position(pack, stage, kind, port, Some(pos), counts);
-        Self::with_scene(pack, stage, scene, costume, level, port, groups)
+    ) {
+        /// Between the drop and the last write `*self` holds no valid
+        /// value, so a panic there must not unwind past its owner: a panic
+        /// during unwinding aborts.
+        struct AbortOnUnwind;
+        impl Drop for AbortOnUnwind {
+            fn drop(&mut self) {
+                panic!("a fighter's in-place rebuild unwound");
+            }
+        }
+        let guard = AbortOnUnwind;
+        let dst: *mut Dummy = self;
+        // SAFETY: `dst` is valid and aligned; the old value is dropped once,
+        // then every field is written anew (the scene first).
+        unsafe {
+            core::ptr::drop_in_place(dst);
+            FighterScene::write_at_position(core::ptr::addr_of_mut!((*dst).scene), pack, stage, kind, port, Some(pos), counts);
+            Self::write_around_scene(dst, pack, stage, costume, level, port, groups);
+        }
+        core::mem::forget(guard);
     }
 
-    fn with_scene(
+    /// The CPU around the scene already at `(*dst).scene`: the scene's port,
+    /// costume and damage detect size, then every other field.
+    ///
+    /// # Safety
+    ///
+    /// `dst` is valid for writes and aligned, and its `scene` field is
+    /// initialised. Every other field is overwritten without being read or
+    /// dropped.
+    unsafe fn write_around_scene(
+        dst: *mut Dummy,
         pack: &Pack<'_>,
         stage: &StageDesc,
-        mut scene: FighterScene,
         costume: u8,
         level: u8,
         port: u8,
         groups: &[ssb_game::map::MapGroup],
-    ) -> Dummy {
+    ) {
+        use core::ptr::addr_of_mut;
+        // SAFETY: the caller initialised the scene.
+        ssb_engine::all_fields!(Dummy { scene, computer, is_1p_game, key, mirror, link });
+        let scene = unsafe { &mut *addr_of_mut!((*dst).scene) };
         scene.fighter.port = port;
         scene.fighter.costume = costume;
         // `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`.
@@ -129,13 +176,14 @@ impl Dummy {
         let sight = CpuSight::default();
         let world = cpu_world(stage, surfaces, &[], &sight, false);
         computer.setup_world(&scene.fighter, &world);
-        Dummy {
-            scene,
-            computer,
-            is_1p_game: false,
-            key: None,
-            mirror: false,
-            link: u32::from(port),
+        // SAFETY: `dst` is valid for writes (the caller's contract); each
+        // field is written once.
+        unsafe {
+            addr_of_mut!((*dst).computer).write(computer);
+            addr_of_mut!((*dst).is_1p_game).write(false);
+            addr_of_mut!((*dst).key).write(None);
+            addr_of_mut!((*dst).mirror).write(false);
+            addr_of_mut!((*dst).link).write(u32::from(port));
         }
     }
 

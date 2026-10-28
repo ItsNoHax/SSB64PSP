@@ -300,7 +300,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     // The campaign's battle runs in the world's slot; `Session` takes it
     // back for the calls that read it.
     s.vs_battle = sp.battle.take();
-    let Some(pl) = w.play_state.as_mut() else {
+    let Some(pl) = w.play_state.as_deref_mut() else {
         return Err(Blocked::Assets(stage));
     };
     pl.camera.bonus_follow = stage == Stage::Bonus3;
@@ -620,14 +620,14 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
         for platform in bonus.platforms.iter().flatten() {
             let group = map.groups.get_mut(platform.group as usize).ok_or(Blocked::Assets(which))?;
             if !group.animated { group.status = ssb_game::map::GroupStatus::On; }
-            map.platforms.push(ssb_rom::bonus2::Visual::new(p, platform.group, platform.kind).ok_or(Blocked::Assets(which))?);
+            ssb_rom::bonus2::Visual::push_new(&mut map.platforms, p, platform.group, platform.kind).ok_or(Blocked::Assets(which))?;
         }
         for (i, pos) in bumpers.into_iter().enumerate() {
             use ssb_game::stage::StageItems;
             w.items.make_item(ssb_game::stage::StageItem::Bonus2Bumper(i as u8), pos).ok_or(Blocked::Assets(which))?;
         }
     }
-    let pl = w.play_state.as_mut().ok_or(Blocked::Assets(which))?;
+    let pl = w.play_state.as_deref_mut().ok_or(Blocked::Assets(which))?;
     ssb_game::status::set_wait_or_fall(&mut pl.fighter);
     pl.fighter.facing = if pl.fighter.pos.x >= 0.0 { ssb_game::fighter::Facing::Left } else { ssb_game::fighter::Facing::Right };
     pl.fighter.stats.enable();
@@ -724,7 +724,7 @@ pub(crate) fn log_boss_state(s: &Session, tick: u64) {
             f.pos.z
         ));
     }
-    if let Some(pl) = s.world.as_deref().and_then(|w| w.play_state.as_ref()) {
+    if let Some(pl) = s.world.as_deref().and_then(|w| w.play_state.as_deref()) {
         let f = &pl.fighter;
         line.push_str(&alloc::format!(
             " K(st={} dmg={} pos={:.1},{:.1})",
@@ -806,7 +806,7 @@ pub(crate) fn log_zako_state(s: &Session, tick: u64) {
             f.pos.y
         ));
     }
-    if let Some(pl) = s.world.as_deref().and_then(|w| w.play_state.as_ref()) {
+    if let Some(pl) = s.world.as_deref().and_then(|w| w.play_state.as_deref()) {
         let f = &pl.fighter;
         line.push_str(&alloc::format!(
             " K(st{} dmg{} pos={:.1},{:.1} tw{} hide{} cd{}) eye={:.1},{:.1},{:.1}",
@@ -1124,9 +1124,11 @@ impl<'a, 'p> NextMembers<'a, 'p> {
         // `ftManagerMakeFighter` draws from the battle's counts, which the
         // outgoing member shares.
         let counts = d.fighter.stats.counts.clone();
-        let mut n = play::Dummy::at_position(p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts, groups);
+        let team = d.fighter.team;
+        d.replace_at_position(p, stage, e.fkind, e.costume, e.level, e.pos, port, &counts, groups);
+        let n = d;
         n.fighter.facing = e.facing;
-        n.fighter.team = d.fighter.team;
+        n.fighter.team = team;
         n.fighter.shade = e.shade;
         let detail = if e.detail_high {
             ssb_game::modelpart::Detail::High
@@ -1139,12 +1141,11 @@ impl<'a, 'p> NextMembers<'a, 'p> {
         n.computer.trait_kind = e.cp_trait;
         n.is_1p_game = true;
         let setup = self.sp.game.as_ref().expect("active game").setups[usize::from(port)];
-        configure(self.sp, &mut n, setup, team_bounds);
+        configure(self.sp, n, setup, team_bounds);
         // `is_skip_entry`: wait or fall, unlocked at once.
         ssb_game::status::set_wait_or_fall(&mut n.fighter);
         n.link = self.next_link;
         self.next_link += 1;
-        *d = n;
         if let Some(m) = self.made.get_mut(usize::from(port)) {
             *m = true;
         }
@@ -1244,7 +1245,7 @@ pub(crate) fn finish_battle(s: &mut Session, pack: Option<&Pack<'_>>) {
     }
     c.boss = None;
     // Callbacks still queued on the fighters belong to this battle.
-    if let Some(pl) = s.world.as_deref_mut().and_then(|w| w.play_state.as_mut().zip(Some(&mut w.dummies))) {
+    if let Some(pl) = s.world.as_deref_mut().and_then(|w| w.play_state.as_deref_mut().zip(Some(&mut w.dummies))) {
         let (pl, dummies) = pl;
         for f in scenes(pl, dummies).into_iter().flatten() {
             collect_fall(sp, &mut s.vs_battle, &mut f.fighter);
@@ -1430,7 +1431,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
             }
         }
         let mut line = alloc::format!("itemflash tick={}", tick);
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             line += &alloc::format!(
                 " P[{:?} x{:.1} y{:.1}]",
                 pl.fighter.status.status, pl.fighter.pos.x, pl.fighter.pos.y
@@ -1500,7 +1501,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         .as_ref()
         .is_some_and(|b| b.clock() >= 1000 && b.clock() % 150 == 100)
     {
-        if let (Some(pl), Some(stage)) = (w.play_state.as_ref(), pack.stage(s.training_stage)) {
+        if let (Some(pl), Some(stage)) = (w.play_state.as_deref(), pack.stage(s.training_stage)) {
             let team = pl.fighter.team;
             for d in w.dummies.iter_mut().flatten() {
                 // Past `nFTCommonStatusControlStart`: not dead, asleep or entering.
@@ -1514,7 +1515,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         }
     }
     if scene == GameScene::OnePRaceHazards && tick == 600 {
-        if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (w.play_state.as_mut(), &w.stage_ctl.controller) {
+        if let (Some(pl), ssb_game::stage::Controller::Bonus3(race)) = (w.play_state.as_deref_mut(), &w.stage_ctl.controller) {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.floor = None;
             pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
@@ -1522,7 +1523,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         }
     }
     if matches!(scene, GameScene::OnePRaceClear | GameScene::OnePRaceFall) && tick == 600 {
-        if let (Some(pl), Some(stage)) = (w.play_state.as_mut(), pack.stage(s.training_stage)) {
+        if let (Some(pl), Some(stage)) = (w.play_state.as_deref_mut(), pack.stage(s.training_stage)) {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.floor = None;
             pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
@@ -1539,13 +1540,13 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     }
     if !s.campaign.as_ref().is_some_and(|c| c.bonus.is_some()) { return; }
     if matches!(scene, GameScene::OnePTargetFall | GameScene::OnePPlatformFall) && tick == 600 {
-        if let Some(pl) = w.play_state.as_mut() {
+        if let Some(pl) = w.play_state.as_deref_mut() {
             ssb_game::status::set_fall(&mut pl.fighter);
             pl.fighter.pos.y = -20000.0;
         }
     }
     if scene == GameScene::OnePPlatformClear && (600..810).contains(&tick) && tick % 20 == 0 {
-        let Some(pl) = w.play_state.as_mut() else { return };
+        let Some(pl) = w.play_state.as_deref_mut() else { return };
         let Some(stage) = pack.stage(s.training_stage) else { return };
         let Some(map) = w.stage_map.as_ref() else { return };
         let Some(platform) = s.campaign.as_ref().and_then(|c| c.bonus.as_ref())
@@ -1563,7 +1564,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         pl.fighter.physics.vel_air = ssb_engine::math::Vec3::ZERO;
     }
     if scene == GameScene::OnePTargetClear && (600..810).contains(&tick) {
-        let Some(pl) = w.play_state.as_mut() else { return };
+        let Some(pl) = w.play_state.as_deref_mut() else { return };
         // Keep the fighter over its real starting floor and offer one
         // target at a time to Mario's actual jab script; course motion
         // is stopped only for this diagnostic placement fixture.

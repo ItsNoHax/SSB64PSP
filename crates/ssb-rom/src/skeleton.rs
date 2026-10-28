@@ -219,6 +219,73 @@ impl Skeleton {
         Self::default()
     }
 
+    /// Writes [`Skeleton::default`] into `dst` one joint at a time.
+    ///
+    /// The value is about 26 KB on the PSP; built by value it lands on the
+    /// stack and is copied, because `panic = unwind` keeps LLVM from
+    /// constructing it in a heap or arena slot (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned. Its old contents are
+    /// overwritten without being dropped.
+    #[inline(never)]
+    pub unsafe fn write_new(dst: *mut Skeleton) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(Skeleton {
+            nodes,
+            anims,
+            joints32,
+            anim_joint,
+            gobj_frame,
+            poses,
+            joint_count,
+            speed,
+            lead_xrotn,
+            lead_transn,
+            locks
+        });
+        // SAFETY: every field of `*dst` is written once, through raw
+        // pointers, before anything reads it.
+        unsafe {
+            let nodes = addr_of_mut!((*dst).nodes).cast::<u32>();
+            let anims = addr_of_mut!((*dst).anims).cast::<JointAnim>();
+            let joints32 = addr_of_mut!((*dst).joints32).cast::<Option<StageJoint>>();
+            let poses = addr_of_mut!((*dst).poses).cast::<JointPose>();
+            for i in 0..MAX_JOINTS {
+                nodes.add(i).write(AnimJoint::NO_NODE);
+                anims.add(i).write(JointAnim::inert());
+                joints32.add(i).write(None);
+                poses.add(i).write(JointPose::default());
+            }
+            addr_of_mut!((*dst).anim_joint).write(false);
+            addr_of_mut!((*dst).gobj_frame).write(0.0);
+            addr_of_mut!((*dst).joint_count).write(0);
+            addr_of_mut!((*dst).speed).write(1.0);
+            addr_of_mut!((*dst).lead_xrotn).write(false);
+            addr_of_mut!((*dst).lead_transn).write(false);
+            addr_of_mut!((*dst).locks).write(AnimLocks::default());
+        }
+    }
+
+    /// Back to [`Skeleton::default`] in place, with no stack temporary.
+    pub fn reset(&mut self) {
+        // The old value is overwritten, not dropped: it owns nothing.
+        const { assert!(!core::mem::needs_drop::<Skeleton>()) };
+        // SAFETY: `self` is valid for writes and aligned.
+        unsafe { Self::write_new(self) }
+    }
+
+    /// [`Skeleton::default`] in its own heap box, built there.
+    pub fn new_boxed() -> alloc::boxed::Box<Self> {
+        let mut slot = alloc::boxed::Box::<Self>::new_uninit();
+        // SAFETY: the box is valid and aligned; `write_new` fills it.
+        unsafe {
+            Self::write_new(slot.as_mut_ptr());
+            slot.assume_init()
+        }
+    }
+
     pub fn joint_count(&self) -> usize {
         self.joint_count
     }
@@ -949,6 +1016,45 @@ impl StageAnimator {
         }
     }
 
+    /// Writes [`StageAnimator::new`] into `dst` one joint at a time, so the
+    /// 23 KB value is never built on the stack and copied (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned. Its old contents are
+    /// overwritten without being dropped.
+    #[inline(never)]
+    pub unsafe fn write_new(dst: *mut StageAnimator) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(StageAnimator {
+            nodes,
+            joints,
+            poses,
+            count,
+            gobj_frame
+        });
+        // SAFETY: every field of `*dst` is written once, through raw
+        // pointers, before anything reads it.
+        unsafe {
+            let nodes = addr_of_mut!((*dst).nodes).cast::<u32>();
+            let joints = addr_of_mut!((*dst).joints).cast::<crate::objanim::StageJoint>();
+            let poses = addr_of_mut!((*dst).poses).cast::<JointPose>();
+            for i in 0..MAX_STAGE_JOINTS {
+                nodes.add(i).write(0);
+                joints
+                    .add(i)
+                    .write(crate::objanim::StageJoint::start(0, 0.0));
+                poses.add(i).write(JointPose {
+                    rotate: [0.0; 3],
+                    translate: [0.0; 3],
+                    scale: [1.0; 3],
+                });
+            }
+            addr_of_mut!((*dst).count).write(0);
+            addr_of_mut!((*dst).gobj_frame).write(0.0);
+        }
+    }
+
     /// `GObj::anim_frame` after the last tick (`lbTransitionProcUpdate`
     /// ejects its wipe once it is at or below 0).
     pub fn gobj_frame(&self) -> f32 {
@@ -1029,11 +1135,24 @@ impl StageAnimator {
         anim: &AnimDesc,
     ) -> Result<Self, crate::objanim::AnimError> {
         let mut a = Self::new();
-        a.start_changed(pack, anim);
-        if let Some(script) = pack.anim_script(anim) {
-            a.tick(script)?;
-        }
+        a.play_creation_pose(pack, anim)?;
         Ok(a)
+    }
+
+    /// [`Self::creation_pose`] played on this animator instead of a new
+    /// one. Every reader stops at the joint count, which [`Self::start`]
+    /// rewrites with the joints below it, so a later `start` of the same
+    /// clip leaves no trace of this play.
+    pub fn play_creation_pose(
+        &mut self,
+        pack: &Pack<'_>,
+        anim: &AnimDesc,
+    ) -> Result<(), crate::objanim::AnimError> {
+        self.start_changed(pack, anim);
+        if let Some(script) = pack.anim_script(anim) {
+            self.tick(script)?;
+        }
+        Ok(())
     }
 
     /// The node a joint drives, and the pose it has reached. Exposed so a
@@ -2091,6 +2210,24 @@ pub struct GraphicPlayers {
 }
 
 impl GraphicPlayers {
+    /// [`GraphicPlayers::default`] written straight into `dst`, with no
+    /// 27 KB stack temporary (RE-469).
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned. Its old contents are
+    /// overwritten without being dropped.
+    #[inline(never)]
+    pub unsafe fn write_new(dst: *mut GraphicPlayers) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(GraphicPlayers { anim, materials });
+        // SAFETY: the caller's contract; each field is written once.
+        unsafe {
+            StageAnimator::write_new(addr_of_mut!((*dst).anim));
+            addr_of_mut!((*dst).materials).write(EffectMaterialAnimator::new());
+        }
+    }
+
     /// `gcAddAnimAll`: restarts `anim`'s joints and, given `mat_anims`,
     /// the material scripts, all at `AOBJ_ANIM_CHANGED`.
     pub fn start(
@@ -2133,6 +2270,42 @@ mod tests {
     use super::*;
     use crate::pack::PackWriter;
     use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+
+    #[test]
+    fn stage_animator_write_new_matches_new() {
+        let mut slot = alloc::boxed::Box::<StageAnimator>::new_uninit();
+        // SAFETY: the box is a valid, aligned slot; `write_new` fills it.
+        let built = unsafe {
+            StageAnimator::write_new(slot.as_mut_ptr());
+            slot.assume_init()
+        };
+        let fresh = StageAnimator::new();
+        let fields = |a: &StageAnimator| {
+            alloc::format!(
+                "{:?} {:?} {:?} {} {}",
+                a.nodes,
+                a.joints,
+                a.poses,
+                a.count,
+                a.gobj_frame
+            )
+        };
+        assert_eq!(fields(&built), fields(&fresh));
+    }
+
+    #[test]
+    fn write_new_matches_default() {
+        let mut slot = alloc::boxed::Box::<Skeleton>::new_uninit();
+        // SAFETY: the box is a valid, aligned slot; `write_new` fills it.
+        let built = unsafe {
+            Skeleton::write_new(slot.as_mut_ptr());
+            slot.assume_init()
+        };
+        assert_eq!(
+            alloc::format!("{built:?}"),
+            alloc::format!("{:?}", Skeleton::default())
+        );
+    }
 
     /// Link's entry leads with `TransN`, then `XRotN`: the interposed pose
     /// is the second joint's.

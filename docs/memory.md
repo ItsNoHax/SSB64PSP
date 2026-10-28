@@ -54,7 +54,7 @@
 
 - Main thread: 512 KiB (`GAME_STACK_BYTES`, `psp-game/src/main.rs:2127`; `psp::module!` argument, RE-469)
   - why: 256 KiB default overflowed; PPSSPP does not detect it
-- Largest frame: `enter_training` (builds `GroundObjects` by value)
+- Largest battle-entry frame: `PosedFighter::set_damage_detect_size` (41 KB); scene state built in place (`box_in_place!`, `write_new` writers, `all_fields!` guard in `crates/ssb-engine/src/memory.rs`), never by value (`panic = unwind` blocks copy elision)
 - Deepest measured stack: [STATUS.md](../STATUS.md)
 
 ### Constraint

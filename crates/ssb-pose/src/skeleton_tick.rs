@@ -1,6 +1,8 @@
 //! A fighter's skeleton and its clip tick: moved verbatim from the PSP
 //! runtime's `scene.rs`, which re-exports them.
 
+extern crate alloc;
+
 use ssb_game::fighter::FighterKind;
 use ssb_game::status::AnyStatus;
 use ssb_rom::pack::Pack;
@@ -10,6 +12,44 @@ use ssb_rom::pack::Pack;
 /// until a flagged motion's figatree clears them (RE-509).
 pub fn fighter_skeleton(kind: FighterKind, size: f32) -> ssb_rom::skeleton::Skeleton {
     let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+    skeleton.locks = fighter_locks(kind, size);
+    skeleton
+}
+
+/// [`fighter_skeleton`] written straight into `dst`: by value it is a
+/// 26 KB stack temporary copied into place (RE-469).
+///
+/// # Safety
+///
+/// `dst` must be valid for writes and aligned.
+pub unsafe fn write_fighter_skeleton(
+    dst: *mut ssb_rom::skeleton::Skeleton,
+    kind: FighterKind,
+    size: f32,
+) {
+    // SAFETY: the caller's contract; `write_new` initialises every field.
+    unsafe {
+        ssb_rom::skeleton::Skeleton::write_new(dst);
+        (*dst).locks = fighter_locks(kind, size);
+    }
+}
+
+/// [`fighter_skeleton`] written over `skeleton`, with no stack temporary.
+pub fn reset_fighter_skeleton(
+    skeleton: &mut ssb_rom::skeleton::Skeleton,
+    kind: FighterKind,
+    size: f32,
+) {
+    skeleton.reset();
+    skeleton.locks = fighter_locks(kind, size);
+}
+
+/// [`fighter_skeleton`] in its own heap box, built there.
+pub fn boxed_fighter_skeleton(
+    kind: FighterKind,
+    size: f32,
+) -> alloc::boxed::Box<ssb_rom::skeleton::Skeleton> {
+    let mut skeleton = ssb_rom::skeleton::Skeleton::new_boxed();
     skeleton.locks = fighter_locks(kind, size);
     skeleton
 }

@@ -240,7 +240,7 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
         ssb_game::rng::set_seed(seed_outside);
         return false;
     };
-    let Some(pl) = w.play_state.as_mut() else {
+    let Some(pl) = w.play_state.as_deref_mut() else {
         ssb_game::item::set_explain(false);
         ssb_game::rng::set_seed(seed_outside);
         return false;
@@ -314,7 +314,7 @@ struct World<'a> {
 impl World<'_> {
     fn fighter(&mut self, player: usize) -> Option<&mut play::FighterScene> {
         let w = self.s.world.as_deref_mut()?;
-        let pl = w.play_state.as_mut()?;
+        let pl = w.play_state.as_deref_mut()?;
         crate::scenes(pl, &mut w.dummies)
             .into_iter()
             .flatten()
@@ -328,7 +328,7 @@ impl auto_demo::World for World<'_> {
         let Some(w) = self.s.world.as_deref() else {
             return false;
         };
-        let Some(pl) = w.play_state.as_ref() else {
+        let Some(pl) = w.play_state.as_deref() else {
             return false;
         };
         crate::scenes_ref(pl, &w.dummies)
@@ -372,7 +372,7 @@ impl auto_demo::World for World<'_> {
         let dist = pack
             .fighter(kind as u32)
             .map_or(1000.0, |d| d.closeup_camera_zoom);
-        if let Some(pl) = self.s.world.as_deref_mut().and_then(|w| w.play_state.as_mut()) {
+        if let Some(pl) = self.s.world.as_deref_mut().and_then(|w| w.play_state.as_deref_mut()) {
             pl.camera.demo_zoom = Some(ssb_game::camera::DemoZoom {
                 port: player as u8,
                 eye,
@@ -386,7 +386,7 @@ impl auto_demo::World for World<'_> {
     }
 
     fn reset_camera(&mut self) {
-        if let Some(pl) = self.s.world.as_deref_mut().and_then(|w| w.play_state.as_mut()) {
+        if let Some(pl) = self.s.world.as_deref_mut().and_then(|w| w.play_state.as_deref_mut()) {
             pl.camera.demo_zoom = None;
         }
     }
@@ -440,7 +440,7 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
     let Some(w) = s.world.as_deref_mut() else {
         return false;
     };
-    let Some(pl) = w.play_state.as_mut() else {
+    let Some(pl) = w.play_state.as_deref_mut() else {
         return false;
     };
     // `desc.damage = players[].stock_damage_all`.
@@ -878,7 +878,7 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
     let Some(stage) = p.stage(s.training_stage) else {
         return;
     };
-    let Some(pl) = w.play_state.as_mut() else {
+    let Some(pl) = w.play_state.as_deref_mut() else {
         return;
     };
     for (port, f) in crate::scenes(pl, &mut w.dummies).into_iter().enumerate() {
@@ -974,7 +974,7 @@ pub(crate) fn movie_after_world(s: &mut Session, pack: Option<&Pack<'_>>) {
             MovieLogic::Jungle(j) => &j.world,
         };
         m.runtime.sync(world, &a);
-        if let (Some(c), Some(pl)) = (cam, s.world.as_deref_mut().and_then(|w| w.play_state.as_mut())) {
+        if let (Some(c), Some(pl)) = (cam, s.world.as_deref_mut().and_then(|w| w.play_state.as_deref_mut())) {
             let (mut eye, mut at, mut up_x, mut fovy) = (c.eye, c.at, c.up_x, c.fovy);
             if let Some(anim) = c.anim {
                 if let Some(fr) = a.camera(anim.slot).and_then(|b| {

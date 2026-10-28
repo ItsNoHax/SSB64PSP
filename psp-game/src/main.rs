@@ -1552,7 +1552,9 @@ type Dummies = [Option<SceneBox<play::Dummy>>; 3];
 /// at the battle scene's entry, freed at its exit
 /// ([`Session::leave_battle`]), so no other scene holds its memory.
 struct BattleWorld {
-    play_state: Option<play::FighterScene>,
+    /// The lead fighter, in its own slot of the scene arena: built there in
+    /// place ([`enter_training`]), never on the game stack (RE-469).
+    play_state: Option<SceneBox<play::FighterScene>>,
     dummies: Dummies,
     weapons: ssb_game::weapon::WeaponPool,
     items: ssb_game::item::ItemPool,
@@ -1570,16 +1572,17 @@ struct BattleWorld {
 }
 
 /// The scene arena's block for a battle with `dummies` CPU fighters: its
-/// world and its CPUs ([`BattleWorld`]'s values in the order they are
-/// made). The N64 sizes each scene's heap in a table
+/// world, its lead fighter and its CPUs ([`BattleWorld`]'s values in the
+/// order they are made). The N64 sizes each scene's heap in a table
 /// (`scene arena_size`); the port sizes the block to the battle, so a
 /// smaller battle takes less (`docs/memory.md`).
 const fn battle_scene_bytes(dummies: usize) -> usize {
     use core::mem::{align_of, size_of};
     let world = (size_of::<BattleWorld>(), align_of::<BattleWorld>());
+    let lead = (size_of::<play::FighterScene>(), align_of::<play::FighterScene>());
     let dummy = (size_of::<play::Dummy>(), align_of::<play::Dummy>());
-    let all = [world, dummy, dummy, dummy];
-    let (used, _) = all.split_at(1 + dummies);
+    let all = [world, lead, dummy, dummy, dummy];
+    let (used, _) = all.split_at(2 + dummies);
     ssb_engine::memory::scene_bytes(used)
 }
 
@@ -1996,7 +1999,11 @@ fn log_launch_fcr31() {
 /// before it existed) is logged and handed to the system as an empty
 /// section, which the synthesizer rejects (`AudioError::BadSection`); any
 /// failure leaves the game silent, with every sound call a no-op.
+///
+/// Out of line: inlined, the audio system's 27 KB construction temporaries
+/// sat in `run`'s frame, under every scene for the whole run (RE-469).
 #[cfg(not(feature = "no_audio"))]
+#[inline(never)]
 fn start_audio(pack: &[u8], path: &'static str) {
     use ssb_psp_runtime::audio;
     let head = &pack[..pack.len().min(ssb_rom::pack::Header::SIZE)];
@@ -2105,7 +2112,7 @@ fn log_sector_state(s: &Session, tick: u64) {
             u8::from(l.exploded)
         ));
     }
-    if let Some(pl) = w.play_state.as_ref() {
+    if let Some(pl) = w.play_state.as_deref() {
         line.push_str(&alloc::format!(" F({:.1},{:.1}) dmg={}", pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.damage));
     }
     if let Some(d) = w.dummies[0].as_deref() {
@@ -2130,7 +2137,7 @@ fn log_push_state(s: &Session, tick: u64) {
     let Some(w) = s.world.as_deref() else {
         return;
     };
-    let (Some(pl), Some(d)) = (w.play_state.as_ref(), w.dummies[0].as_deref()) else {
+    let (Some(pl), Some(d)) = (w.play_state.as_deref(), w.dummies[0].as_deref()) else {
         return;
     };
     let players = s.vs_battle.as_ref().map(|b| b.players);
@@ -2405,7 +2412,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
         ]),
         _ => None,
     } {
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             // Each from a ball resting on the floor (its map box's top
             // above it) that Mario (port 0) threw.
             // Blastoise's maker reads every fighter.
@@ -2439,7 +2446,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
                 | GameScene::TrainingSword
         )
     ) {
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             let at = pl.fighter.pos;
             w.items.camera_at_x = pl.camera.at.x;
             let selected = match scene {
@@ -2473,7 +2480,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
     }
     if scene == Some(GameScene::TrainingCpuItem) {
         // A Bat dropped beside the CPU, on the side away from the player.
-        if let (Some(pl), Some(d)) = (w.play_state.as_ref(), w.dummies[0].as_deref()) {
+        if let (Some(pl), Some(d)) = (w.play_state.as_deref(), w.dummies[0].as_deref()) {
             let side = if d.fighter.pos.x < pl.fighter.pos.x {
                 -1.0
             } else {
@@ -2492,7 +2499,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
         return;
     }
     if scene == Some(GameScene::TrainingThrowable) {
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             // Motion-Sensor Bomb, Bob-omb, Bumper and the two Shells across
             // the stage; the Poké Ball in reach.
             let at = pl.fighter.pos;
@@ -2521,7 +2528,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
         scene,
         Some(GameScene::TrainingSlide | GameScene::TrainingBumperThrow | GameScene::TrainingItemFlash)
     ) {
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             // The thrown item in reach; the slide adds a Bob-omb that walks,
             // the item flash a Bob-omb on the left platform.
             let at = pl.fighter.pos;
@@ -2547,7 +2554,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
         return;
     }
     if scene == Some(GameScene::TrainingUtility) {
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             // Tomato in reach, Heart and Star in view; the Star bounces
             // towards the camera's look-at. No parent: no map projection.
             let at = pl.fighter.pos;
@@ -2578,7 +2585,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
                 | GameScene::TrainingHeavy
         )
     ) {
-        if let Some(pl) = w.play_state.as_ref() {
+        if let Some(pl) = w.play_state.as_deref() {
             let kind = match scene {
                 Some(GameScene::TrainingBarrel) => ssb_game::item::container::Kind::Barrel,
                 Some(GameScene::TrainingCrate | GameScene::TrainingHeavy) => {
@@ -3546,7 +3553,7 @@ fn start_sudden_death(
     let world = world.insert(new_battle_world("vs", dummies));
     let index = enter_training(pack, gkind, &tied, Some(rules), battle, world);
     // `is_skip_entry`: sudden death's fighters stand at once.
-    if let Some(pl) = world.play_state.as_mut() {
+    if let Some(pl) = world.play_state.as_deref_mut() {
         pl.fighter.damage = ssb_game::battle::SUDDEN_DEATH_DAMAGE;
         ssb_game::status::set_wait(&mut pl.fighter);
     }
@@ -3669,7 +3676,7 @@ fn reset_damage_hud(world: &mut BattleWorld) {
     world.damage_hud.steals = [None; 4];
     world.damage_hud.players = ssb_game::player_interface::Interface::default();
     let mut damage = [0; 4];
-    if let Some(pl) = world.play_state.as_ref() {
+    if let Some(pl) = world.play_state.as_deref() {
         damage[0] = i32::from(pl.fighter.damage);
     }
     for (d, damage) in world.dummies.iter().zip(&mut damage[1..]) {
@@ -4024,9 +4031,7 @@ fn enter_training(
     }) else {
         return 0;
     };
-    world.stage_map = Some(alloc::boxed::Box::new(ssb_psp_runtime::scene::StageMap::new(
-        p, index, &stage,
-    )));
+    world.stage_map = Some(ssb_psp_runtime::scene::StageMap::new_boxed(p, index, &stage));
     world.stage_objects.load(p, stage.source_file);
     // The ground's MObj material clocks: `gcAddAnimAll` and the maker's own
     // `gcPlayAnimAll` (`grdisplay.c:208-210`, `grzebes.c:95-102`). Each
@@ -4073,9 +4078,10 @@ fn enter_training(
             .filter(|point| point.kind == ssb_game::stage::mapobj::ITEM)
             .map(|point| ssb_engine::math::Vec3::new(point.x as f32, point.y as f32, 0.0)),
     );
-    // `ftManagerMakeFighter` for each player in turn.
+    // `ftManagerMakeFighter` for each player in turn, each built in its
+    // arena slot.
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
-    let mut scene = play::FighterScene::at_spawn(p, &stage, lead.kind, lead.spawn, &counts);
+    let scene = world.play_state.insert(new_lead_scene(p, &stage, lead.kind, lead.spawn, &counts));
     // `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`: the
     // CPUs read the player's hurtbox extent.
     scene.set_damage_detect_size(p);
@@ -4086,24 +4092,24 @@ fn enter_training(
     scene.fighter.costume = lead.costume;
     scene.fighter.shade = lead.shade;
     scene.fighter.handicap = lead.handicap;
-    world.play_state = Some(scene);
-    world.dummies = core::array::from_fn(|i| {
-        let e = roster[i + 1]?;
-        let port = i as u8 + 1;
-        let groups = world.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
-        let mut d = play::Dummy::at_spawn(
-            p, &stage, e.kind, e.costume, e.level, e.spawn, port, &counts, groups,
-        )?;
-        d.fighter.team = e.team;
-        d.fighter.handicap = e.handicap;
-        d.fighter.shade = e.shade;
-        Some(ssb_psp_runtime::memory::scene_alloc(d))
-    });
+    for (i, slot) in world.dummies.iter_mut().enumerate() {
+        *slot = roster[i + 1].and_then(|e| {
+            let port = i as u8 + 1;
+            let groups = world.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
+            let mut d = play::Dummy::new_at_spawn(
+                p, &stage, e.kind, e.costume, e.level, e.spawn, port, &counts, groups,
+            )?;
+            d.fighter.team = e.team;
+            d.fighter.handicap = e.handicap;
+            d.fighter.shade = e.shade;
+            Some(d)
+        });
+    }
     // `ifCommonPlayerDamageInitInterface`; Training shows it at once
     // (`ifCommonPlayerDamageSetShowInterface`), VS at "Go".
     reset_damage_hud(world);
     world.damage_hud.colors = core::array::from_fn(|port| roster[port].map_or(port as u8, |e| e.color));
-    let Some(pl) = world.play_state.as_mut() else {
+    let Some(pl) = world.play_state.as_deref_mut() else {
         return index;
     };
     // `desc.detail` (`scvsbattle.c:188`, `sc1ptrainingmode.c:1809`): low
@@ -4192,6 +4198,25 @@ fn enter_training(
     index
 }
 
+/// [`play::FighterScene::at_spawn`] built in a slot of the scene arena, its
+/// final home: the 37 KB scene never lands on the game stack (RE-469).
+#[inline(never)]
+fn new_lead_scene(
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    kind: ssb_game::fighter::FighterKind,
+    spawn: u16,
+    counts: &ssb_game::manager_counts::ManagerCounts,
+) -> SceneBox<play::FighterScene> {
+    let mut b = ssb_psp_runtime::memory::scene_alloc_uninit::<play::FighterScene>();
+    // SAFETY: `write_at_spawn` writes every field before `assume_init`; a
+    // panic between leaves the slot uninitialised, never dropped.
+    unsafe {
+        play::FighterScene::write_at_spawn(b.as_mut_ptr(), p, stage, kind, spawn, counts);
+        b.assume_init()
+    }
+}
+
 /// The frame's draw for the current screen. Out of [`run`] so `run` stays
 /// inside MIPS branch range.
 #[inline(never)]
@@ -4277,7 +4302,7 @@ unsafe fn draw_frame(
                 return;
             };
             let effect_visuals = &mut w.effect_visuals;
-            if let (Some(p), Some(pl)) = (pack.as_ref(), w.play_state.as_ref()) {
+            if let (Some(p), Some(pl)) = (pack.as_ref(), w.play_state.as_deref()) {
                 let t = profile::start();
                 effect_visuals.sync(
                     p,
@@ -4314,7 +4339,7 @@ unsafe fn draw_frame(
             // process priority 3, after the battle camera's, so from this
             // tick's camera. Recomputed from the same camera, it is the same
             // on a frame drawn without a tick.
-            if let Some(pl) = w.play_state.as_ref() {
+            if let Some(pl) = w.play_state.as_deref() {
                 s.wallpaper.update(pl.camera.eye, pl.camera.at);
             }
             if let (Some(p), Some(b)) = (pack.as_ref(), s.campaign.as_mut().and_then(|c| c.boss.as_deref_mut())) {
@@ -4337,7 +4362,7 @@ unsafe fn draw_frame(
                 draw_state,
                 pack.as_ref(),
                 s.training_stage,
-                w.play_state.as_ref(),
+                w.play_state.as_deref(),
                 &w.dummies,
                 &w.weapons,
                 &w.items,
@@ -4370,7 +4395,7 @@ unsafe fn draw_frame(
             if let Some(demo) = s.demo.as_ref() {
                 demo_screen::draw(gpu, pack.as_ref(), draw_state, demo, frame);
             }
-            if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), w.play_state.as_ref()) {
+            if let (Some(p), Some(menu), Some(pl)) = (pack.as_ref(), s.training_menu.as_mut(), w.play_state.as_deref()) {
                 let dummy = w.dummies[0].as_ref().map(|x| &x.fighter);
                 if !s.training_paused {
                     menu.stats.observe(dummy.map_or(0, |f| f.combo_damage_foe), dummy.map_or(0, |f| f.combo_count_foe));
@@ -4499,7 +4524,7 @@ unsafe fn session_frame(
                             // (`FTCreateDesc::copy_kind`).
                             if capture_scene == Some(GameScene::CpuFxK) {
                                 use ssb_game::fighter::FighterKind;
-                                if let Some(pl) = w.play_state.as_mut() {
+                                if let Some(pl) = w.play_state.as_deref_mut() {
                                     ssb_game::kirby::init_copy(&mut pl.fighter, FighterKind::Samus);
                                 }
                                 if let Some(d) = w.dummies[0].as_mut() {
@@ -4634,7 +4659,7 @@ unsafe fn session_frame(
                 log_entry_state(
                     capture_scene,
                     sim_frame_index,
-                    s.world.as_deref().and_then(|w| w.play_state.as_ref()),
+                    s.world.as_deref().and_then(|w| w.play_state.as_deref()),
                     s.world.as_deref().and_then(|w| w.dummies[0].as_deref()),
                 );
                 // In a VS battle START is the pause menu's (`training_frame`).
@@ -4701,7 +4726,7 @@ unsafe fn session_frame(
             }
         }
         if capture_scene == Some(GameScene::StarKo) && sim_frame_index == STAR_KO_TICK {
-            if let Some(pl) = s.world.as_deref_mut().and_then(|w| w.play_state.as_mut()) {
+            if let Some(pl) = s.world.as_deref_mut().and_then(|w| w.play_state.as_deref_mut()) {
                 ssb_game::dead::set_dead_up_star(&mut pl.fighter);
             }
         }
@@ -4883,7 +4908,7 @@ fn training_menu_frame(
         return false;
     };
     use ssb_game::training;
-    let (Some(menu), Some(pl)) = (s.training_menu.as_mut(), w.play_state.as_mut()) else {
+    let (Some(menu), Some(pl)) = (s.training_menu.as_mut(), w.play_state.as_deref_mut()) else {
         return false;
     };
     if !s.training_paused {
@@ -5156,7 +5181,7 @@ impl Session {
         let Some(w) = self.world.as_deref_mut() else {
             return;
         };
-        if let (Some(t), Some(pl)) = (training, w.play_state.as_mut()) {
+        if let (Some(t), Some(pl)) = (training, w.play_state.as_deref_mut()) {
             for f in scenes(pl, &mut w.dummies).into_iter().flatten() {
                 if let Some(b) = f.fighter.dead.bounds.as_mut() {
                     b.fog_color = t.fog_color;
@@ -5535,7 +5560,7 @@ unsafe fn run() -> ! {
                     .items
                     .items()
                     .find(|i| i.kind == if capture_scene == Some(GameScene::TrainingBumper) { ssb_game::item::ItemKind::GBumper } else { ssb_game::item::ItemKind::Pakkun });
-                w.play_state.as_mut().zip(item)
+                w.play_state.as_deref_mut().zip(item)
             }) {
                 let at = if item.kind == ssb_game::item::ItemKind::Pakkun {
                     item.vars.pakkun_pos + ssb_engine::math::Vec3::new(0.0, 400.0, 0.0)
@@ -7699,7 +7724,7 @@ impl EffectVisuals {
             }
             ptr::addr_of_mut!((*p).fx_pool).write(FxPool::new());
             for i in 0..MAX_ITEM_VISUALS {
-                ptr::addr_of_mut!((*p).items[i]).write(Default::default());
+                ItemVisual::write_new(ptr::addr_of_mut!((*p).items[i]));
             }
         }
     }
@@ -7713,6 +7738,22 @@ impl EffectVisuals {
 unsafe fn write_default<T: Default>(p: *mut T) {
     // SAFETY: as the caller promises.
     unsafe { p.write(T::default()) }
+}
+
+/// `v.resize_with(len, ..)` with each new element written in place by
+/// `init`, which must initialise the slot it is given: `resize_with`
+/// builds each element on the stack and copies it (RE-469).
+#[inline(never)]
+fn grow_in_place<T>(v: &mut alloc::vec::Vec<T>, len: usize, init: impl Fn(*mut T)) {
+    v.reserve(len.saturating_sub(v.len()));
+    while v.len() < len {
+        let Some(slot) = v.spare_capacity_mut().first_mut() else {
+            return;
+        };
+        init(slot.as_mut_ptr());
+        // SAFETY: `init` has initialised the next slot.
+        unsafe { v.set_len(v.len() + 1) };
+    }
 }
 
 /// One effect's or weapon's transform and material players: its `GObj`'s
@@ -7767,7 +7808,7 @@ impl FxPool {
             // anew in place.
             unsafe {
                 core::ptr::drop_in_place(p);
-                write_default(p);
+                FxPlayers::write_new(p);
             }
             return Some(players);
         }
@@ -7778,7 +7819,7 @@ impl FxPool {
         let mut players = ssb_psp_runtime::memory::scene_alloc_grow_uninit::<FxPlayers>();
         // SAFETY: written here, then taken as initialized.
         unsafe {
-            write_default(players.as_mut_ptr());
+            FxPlayers::write_new(players.as_mut_ptr());
             Some(players.assume_init())
         }
     }
@@ -7988,6 +8029,28 @@ struct ItemVisual {
     root_cleared: bool,
 }
 
+impl ItemVisual {
+    /// [`ItemVisual::default`] written straight into `dst` (RE-469).
+    ///
+    /// # Safety
+    /// `dst` is valid for a write.
+    unsafe fn write_new(dst: *mut ItemVisual) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(ItemVisual { kind, ticks, anim, materials, status, playing, root_added, root_cleared });
+        // SAFETY: as the caller promises; each field is written once.
+        unsafe {
+            addr_of_mut!((*dst).kind).write(None);
+            addr_of_mut!((*dst).ticks).write(0);
+            ssb_rom::skeleton::StageAnimator::write_new(addr_of_mut!((*dst).anim));
+            addr_of_mut!((*dst).materials).write(ssb_rom::skeleton::EffectMaterialAnimator::new());
+            addr_of_mut!((*dst).status).write(None);
+            addr_of_mut!((*dst).playing).write(None);
+            addr_of_mut!((*dst).root_added).write(None);
+            addr_of_mut!((*dst).root_cleared).write(false);
+        }
+    }
+}
+
 impl DrawAssets {
     fn item(
         &self,
@@ -8045,6 +8108,25 @@ struct EntryVisual {
     ejected: bool,
 }
 
+impl EntryVisual {
+    /// [`EntryVisual::default`] written straight into `dst` (RE-469).
+    ///
+    /// # Safety
+    /// `dst` is valid for a write.
+    unsafe fn write_new(dst: *mut EntryVisual) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(EntryVisual { ticks, anim, materials, link, ejected });
+        // SAFETY: as the caller promises; each field is written once.
+        unsafe {
+            addr_of_mut!((*dst).ticks).write(None);
+            ssb_rom::skeleton::StageAnimator::write_new(addr_of_mut!((*dst).anim));
+            addr_of_mut!((*dst).materials).write(ssb_rom::skeleton::EffectMaterialAnimator::new());
+            addr_of_mut!((*dst).link).write(0);
+            addr_of_mut!((*dst).ejected).write(false);
+        }
+    }
+}
+
 /// A node's local z in an entry part's animation, as the sort helpers
 /// read `dobj->translate.vec.f.z`.
 fn entry_node_z(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc, anim: &ssb_rom::skeleton::StageAnimator, node: usize) -> f32 {
@@ -8082,7 +8164,14 @@ impl EffectVisuals {
     fn sync_entry(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 4]) {
         use ssb_psp_runtime::scene::{EntryClock, EntryLink, ENTRY_PARTS};
         if self.entry.len() < fighters.len() {
-            self.entry.resize_with(fighters.len(), Default::default);
+            grow_in_place(&mut self.entry, fighters.len(), |p| {
+                // SAFETY: `p` is a free slot; both parts are written.
+                unsafe {
+                    let parts = p.cast::<EntryVisual>();
+                    EntryVisual::write_new(parts);
+                    EntryVisual::write_new(parts.add(1));
+                }
+            });
         }
         for (visuals, f) in self.entry.iter_mut().zip(fighters) {
             let parts = f.map_or(&[][..], ssb_psp_runtime::scene::entry_effect_parts);
@@ -8264,6 +8353,25 @@ struct KoVisual {
     halo: ssb_rom::skeleton::StageAnimator,
 }
 
+impl KoVisual {
+    /// [`KoVisual::default`] written straight into `dst` (RE-469).
+    ///
+    /// # Safety
+    /// `dst` is valid for a write.
+    unsafe fn write_new(dst: *mut KoVisual) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(KoVisual { explode_ticks, explode, explode_materials, halo_ticks, halo });
+        // SAFETY: as the caller promises; each field is written once.
+        unsafe {
+            addr_of_mut!((*dst).explode_ticks).write(None);
+            ssb_rom::skeleton::StageAnimator::write_new(addr_of_mut!((*dst).explode));
+            addr_of_mut!((*dst).explode_materials).write(ssb_rom::skeleton::EffectMaterialAnimator::new());
+            addr_of_mut!((*dst).halo_ticks).write(None);
+            ssb_rom::skeleton::StageAnimator::write_new(addr_of_mut!((*dst).halo));
+        }
+    }
+}
+
 /// One port's Egg Lay egg player: the animation epoch it plays and the
 /// plays it has caught up to.
 #[derive(Default)]
@@ -8273,6 +8381,23 @@ struct EggVisual {
     anim: ssb_rom::skeleton::StageAnimator,
 }
 
+impl EggVisual {
+    /// [`EggVisual::default`] written straight into `dst` (RE-469).
+    ///
+    /// # Safety
+    /// `dst` is valid for a write.
+    unsafe fn write_new(dst: *mut EggVisual) {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(EggVisual { epoch, plays, anim });
+        // SAFETY: as the caller promises; each field is written once.
+        unsafe {
+            addr_of_mut!((*dst).epoch).write(None);
+            addr_of_mut!((*dst).plays).write(0);
+            ssb_rom::skeleton::StageAnimator::write_new(addr_of_mut!((*dst).anim));
+        }
+    }
+}
+
 impl EffectVisuals {
     /// Plays each fighter's egg up to its play count, restarting on a new
     /// animation (`efManagerYoshiEggLaySetAnim`), at the effect's
@@ -8280,7 +8405,10 @@ impl EffectVisuals {
     #[inline(never)]
     fn sync_eggs(&mut self, p: &Pack<'_>, assets: &DrawAssets, fighters: [Option<&ssb_game::fighter::Fighter>; 4]) {
         if self.eggs.len() < 4 {
-            self.eggs.resize_with(4, Default::default);
+            grow_in_place(&mut self.eggs, 4, |p| {
+                // SAFETY: `p` is a free slot.
+                unsafe { EggVisual::write_new(p) }
+            });
         }
         let Some((_, anims)) = assets.egg_lay.as_ref() else {
             return;
@@ -8398,7 +8526,10 @@ impl EffectVisuals {
         fighters: [Option<&ssb_game::fighter::Fighter>; 4],
     ) {
         if self.ko.len() < 4 {
-            self.ko.resize_with(4, Default::default);
+            grow_in_place(&mut self.ko, 4, |p| {
+                // SAFETY: `p` is a free slot.
+                unsafe { KoVisual::write_new(p) }
+            });
         }
         for (i, v) in self.ko.iter_mut().enumerate() {
             let blast = ko.explosions[i];

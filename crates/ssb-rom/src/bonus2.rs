@@ -60,17 +60,67 @@ pub struct Visual {
 }
 impl Visual {
     pub fn new(pack: &Pack<'_>, group: u16, kind: u8) -> Option<Self> {
-        let mut this = Self {
+        let mut this = core::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: `write_new` initialises the slot when it returns true.
+        unsafe { Self::write_new(this.as_mut_ptr(), pack, group, kind).then(|| this.assume_init()) }
+    }
+
+    /// [`Self::new`] pushed onto `into`, built in the vector's spare
+    /// capacity: by value the 27 KB tree is a stack temporary copied into
+    /// the vector (RE-469). `None` (and `into` unchanged) when the pack
+    /// lacks the tree or its clip.
+    pub fn push_new(into: &mut Vec<Self>, pack: &Pack<'_>, group: u16, kind: u8) -> Option<()> {
+        into.reserve(1);
+        let slot = into.spare_capacity_mut().first_mut()?;
+        // SAFETY: the slot is valid and aligned; once `write_new` has
+        // initialised it, it becomes the vector's next element.
+        unsafe {
+            if !Self::write_new(slot.as_mut_ptr(), pack, group, kind) {
+                return None;
+            }
+            into.set_len(into.len() + 1);
+        }
+        Some(())
+    }
+
+    /// [`Self::new`] written straight into `dst`. Returns false, with
+    /// nothing written, when the pack lacks the tree or its clip.
+    ///
+    /// # Safety
+    ///
+    /// `dst` must be valid for writes and aligned. Its old contents are
+    /// overwritten without being dropped.
+    #[inline(never)]
+    pub unsafe fn write_new(dst: *mut Self, pack: &Pack<'_>, group: u16, kind: u8) -> bool {
+        use core::ptr::addr_of_mut;
+        ssb_engine::all_fields!(Visual {
             group,
             kind,
-            boarded: false,
-            object: object(pack, kind as usize)?,
-            anim: StageAnimator::new(),
-            materials: EffectMaterialAnimator::new(),
-            clip: pack.item_anim(FIRST_ANIM + u32::from(kind))?,
+            boarded,
+            object,
+            anim,
+            materials,
+            clip
+        });
+        let Some(object) = object(pack, kind as usize) else {
+            return false;
         };
-        this.restart(pack);
-        Some(this)
+        let Some(clip) = pack.item_anim(FIRST_ANIM + u32::from(kind)) else {
+            return false;
+        };
+        // SAFETY: `dst` is valid for writes (the caller's contract); each
+        // field is written once before `restart` borrows the whole.
+        unsafe {
+            addr_of_mut!((*dst).group).write(group);
+            addr_of_mut!((*dst).kind).write(kind);
+            addr_of_mut!((*dst).boarded).write(false);
+            addr_of_mut!((*dst).object).write(object);
+            StageAnimator::write_new(addr_of_mut!((*dst).anim));
+            addr_of_mut!((*dst).materials).write(EffectMaterialAnimator::new());
+            addr_of_mut!((*dst).clip).write(clip);
+            (*dst).restart(pack);
+        }
+        true
     }
     fn restart(&mut self, pack: &Pack<'_>) {
         self.anim.start_changed(pack, &self.clip);
