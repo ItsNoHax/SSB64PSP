@@ -14,7 +14,8 @@ names onto them, appends the unlisted functions sorted by stable name (a
 checkout-independent layout) and passes the result to `rust-lld` as a
 `--symbol-ordering-file`. It changes where code goes, never the code.
 It then links again with zero bytes after the code (`OUT.pad.o`) so that
-`.bss` keeps one data-cache placement however large the code is (RE-580).
+`.bss` keeps one data-cache placement and `.rodata` one offset in its
+cache line however large the code is (RE-580, RE-584).
 
 Set as `psp-game`'s linker in `psp-game/.cargo/config.toml`; rustc calls it
 with `rust-lld`'s arguments and has `rust-lld` on `PATH`.
@@ -42,6 +43,13 @@ BASIC_TYPES = set('abcdefhijlmnostuvxyzp')
 # on a PSP (RE-580).
 DCACHE_WAY = 0x2000
 BSS_SET = 0x1d00
+# `.rodata`'s offset in a 64-byte data-cache line, pinned with `.bss`: the
+# code's size otherwise moves the constants and `.data` by its remainder
+# mod 64 (1P intro +0.05-0.07 ms busy on a PSP-2000 for a 16-byte shift).
+# Measured fastest of 0x00-0x30 (RE-584). PSP_LINK_RODATA_LINE overrides it, for a
+# screen.
+RODATA_LINE = int(os.environ.get('PSP_LINK_RODATA_LINE', '0x00'), 0)
+LINE = 64
 PAD_SYMBOL = 'psp_link_pad'
 
 
@@ -378,18 +386,27 @@ def main():
     # whatever the code's size (RE-580): the statics and the kernel blocks
     # after them then map onto the same cache sets in every build, timed or
     # released, before and after a code change.
+    # `.rodata` goes first to its line offset (a step under one line), then
+    # whole lines move `.bss` to its set without moving `.rodata` in its line.
     objects = [a for a in args if a.endswith('.o') and os.path.isfile(a)]
     pad = 0
-    for _ in range(3):
+    for _ in range(6):
         start = section_addr(out, '.bss')
-        if start is None or not objects or (start - BSS_SET) % DCACHE_WAY == 0:
+        rodata = section_addr(out, '.rodata')
+        if start is None or not objects:
             break
-        pad = (pad + BSS_SET - start) % DCACHE_WAY
+        if rodata is not None and (rodata - RODATA_LINE) % LINE:
+            pad = (pad + (RODATA_LINE - rodata) % LINE) % DCACHE_WAY
+        elif (start - BSS_SET) % DCACHE_WAY:
+            pad = (pad + BSS_SET - start) % DCACHE_WAY
+        else:
+            break
         pad_path = out + '.pad.o'
         write_pad_object(pad_path, pad, elf_flags(objects[0]))
         run(lld[:lld.index('-o')] + [pad_path, '--undefined=' + PAD_SYMBOL] + lld[lld.index('-o'):])
     else:
-        sys.exit('psp-link: .bss at %#x, not at %#x in the data cache' % (section_addr(out, '.bss'), BSS_SET))
+        sys.exit('psp-link: .bss at %#x, .rodata at %#x: not at %#x and line offset %#x in the data cache'
+                 % (section_addr(out, '.bss'), section_addr(out, '.rodata'), BSS_SET, RODATA_LINE))
 
 
 def run(cmd):

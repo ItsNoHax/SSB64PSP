@@ -58,8 +58,8 @@
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| Master Hand stage | Playtest: frame rate drops in the Master Hand fight; profile on hardware, cut to 16.7 ms | — |
-| Electric hit drop | Playtest: big frame drop when Pikachu's electric specials or the Ray Gun hit a fighter; profile the hit effect on hardware, cut to 16.7 ms | — |
+| Master Hand stage | onepbosshit comets 17.3-19.3 ms, Fall 18.4-19.9 ms busy on the PSP-2000: effect CPU skinning; cut to 16.7 ms | RE-584 |
+| Electric hit drop | vs4@1340 4xL9 Pikachu: shocked 19.0-20.2 ms, no-hit 17.3-18.0 ms busy on the PSP-2000; cut to 16.7 ms | RE-584 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v137; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | vs4 to 16.7 ms | `vs4@2400` 16.76 ms busy (ms0): 0.06 ms left; next: audio reverb `madd` (needs `audio_selftest` on target, ~0.05 ms); re-search the order after hot-code changes, tracing the `frame_timer,capture_scene_file` build (RE-494, RE-580) | RE-519, RE-580 |
 | 1P intro | 17.86 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |

@@ -58,6 +58,7 @@
 - Optional payload built in place: `ssb_engine::memory::InlineOption` (bool tag + `MaybeUninit`; `write_with`), used for the results wipe `Transition`
 - Other frames over 16 KB: `new_session` 32 KB, `init_weapon_pool` 25 KB, `enter_training` 25 KB, `opening_screen::start` and `players_screen::start` 18 KB
 - Frame stack pinned: `psp_main` enters `run` at d-cache way offset 0x1600 (`stack_pin::enter`); re-screen with `tools/icache/stack-set.py` when `.bss` pin or map changes (RE-583)
+- `.rodata` pinned at line offset 0x00 with `.bss` by `psp-link.py`; re-screen `RODATA_LINE` when the data layout changes a lot (RE-584)
 - Deepest measured stack: [STATUS.md](../STATUS.md)
 
 ### Constraint

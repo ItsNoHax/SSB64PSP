@@ -228,3 +228,4 @@ build PRX + current pack
 
 - `psp_main` enters `run` at d-cache way offset 0x1600 (`stack_pin`); `run` asserts it
 - Memory map, `.bss` pin or `run` frame changes → re-screen offsets: `tools/icache/stack-set.py` on a timer PRX, intro and battle busy ms (RE-583)
+- Data layout changes a lot → re-screen `.rodata` line offset: `PSP_LINK_RODATA_LINE` + `relink.py` (RE-584)

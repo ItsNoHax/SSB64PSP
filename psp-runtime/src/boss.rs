@@ -30,6 +30,9 @@ struct Visual {
     joints: [StageJoint; MAX_NODES],
     live: [bool; MAX_NODES],
     poses: [JointPose; MAX_NODES],
+    /// Each node's parent below it in the tree, read once at the make: the
+    /// pack's node rows never change.
+    parents: [Option<u8>; MAX_NODES],
     /// The `MObj`s' material scripts, for an effect with materials.
     mats: Option<alloc::boxed::Box<EffectMaterialAnimator>>,
     plays: u32,
@@ -164,6 +167,7 @@ impl BossEffects {
         // drew much darker (RE-519).
         let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
         st.clip_at_viewport = true;
+        let mut posed = [Mat4::IDENTITY; MAX_NODES];
         for i in wallpaper.draw_order(tag) {
             let Some(e) = &wallpaper.effects[i] else {
                 continue;
@@ -196,8 +200,8 @@ impl BossEffects {
                 gpu.set_view(&view);
                 st.clip_view_proj = Some((proj * view).cols);
             }
-            let mut posed = [Mat4::IDENTITY; MAX_NODES];
-            let n = compose(pack, v, e, &mut posed);
+            // `compose` writes every node it returns before it is read.
+            let n = compose(v, e, &mut posed);
             gpu.model_transform([0.0; 3], [0.0; 3], MODEL_SCALE);
             let base = gpu.model_matrix();
             let alpha = e.alpha.clamp(0, 0xFF) as u8;
@@ -249,6 +253,15 @@ fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Opt
             };
         }
     }
+    let mut parents = [None; MAX_NODES];
+    for (i, parent) in parents.iter_mut().enumerate().take(count) {
+        *parent = pack
+            .node(object.first_node + i as u32)
+            .and_then(|n| n.parent.checked_sub(object.first_node))
+            .map(|p| p as usize)
+            .filter(|&p| p < i)
+            .map(|p| p as u8);
+    }
     let mut joints = [StageJoint::start(0, 0.0); MAX_NODES];
     let mut live = [false; MAX_NODES];
     if let (Some(table), Some(data)) = (asset.anim_joint, data) {
@@ -273,6 +286,7 @@ fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Opt
         joints,
         live,
         poses: rest,
+        parents,
         mats,
         // The make's `gcPlayAnimAll` is the first of `Effect::plays`.
         plays: 0,
@@ -321,7 +335,7 @@ fn start_materials(
 
 /// Every node's matrix: the root from the controller's transform, the
 /// rest from their poses, parent first.
-fn compose(pack: &Pack<'_>, v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
+fn compose(v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
     let count = v.count.min(out.len());
     for i in 0..count {
         let mut pose = v.poses[i];
@@ -340,13 +354,8 @@ fn compose(pack: &Pack<'_>, v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
             pose.translate[2] / MODEL_SCALE,
         ];
         let local = Mat4::from_trs_display(t, pose.rotate, pose.scale);
-        let parent = pack
-            .node(v.object.first_node + i as u32)
-            .and_then(|n| n.parent.checked_sub(v.object.first_node))
-            .map(|p| p as usize)
-            .filter(|&p| p < i);
-        out[i] = match parent {
-            Some(p) => out[p].mul(&local),
+        out[i] = match v.parents[i] {
+            Some(p) => out[usize::from(p)].mul(&local),
             None => local,
         };
     }

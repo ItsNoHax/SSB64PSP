@@ -7557,7 +7557,10 @@ fn draw_one_display(
                 }
             }
         }
-        None => scratch.anim = ssb_rom::skeleton::StageAnimator::new(),
+        // No joint animation: the pose is "no joints". `clear` instead of
+        // assigning a new 23 KB animator, which per live display per frame
+        // was most of an electric hit's frame cost (ShockSmall).
+        None => scratch.anim.clear(),
     }
     scratch.materials.start(p, object_mat_anims(p, object));
     for _ in 0..d.ticks {

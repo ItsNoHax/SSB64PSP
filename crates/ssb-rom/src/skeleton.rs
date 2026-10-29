@@ -1121,6 +1121,16 @@ impl StageAnimator {
         }
     }
 
+    /// Empties this animator in place: afterwards it reads exactly as
+    /// [`StageAnimator::new`] does (no joints, `GObj` frame 0). Every reader
+    /// stops at the joint count, so the 23 KB of joint storage past it is
+    /// left as it is rather than rewritten each call; a display effect with
+    /// no joint animation clears its scratch animator every frame this way.
+    pub fn clear(&mut self) {
+        self.count = 0;
+        self.gobj_frame = 0.0;
+    }
+
     /// `GObj::anim_frame` after the last tick (`lbTransitionProcUpdate`
     /// ejects its wipe once it is at or below 0).
     pub fn gobj_frame(&self) -> f32 {
@@ -2780,6 +2790,59 @@ mod tests {
             posed[2], rest[2],
             "its child must inherit motion without its own script"
         );
+    }
+
+    #[test]
+    fn stage_animator_clear_reads_as_new() {
+        // A display effect with no joint animation clears the scratch
+        // animator the previous display played: every reader must then see
+        // exactly what a new animator shows.
+        let bytes = packed(&chain());
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let object = pack.object(0).unwrap();
+        let mut used = StageAnimator::new();
+        used.count = 2;
+        used.nodes[0] = object.first_node + 1;
+        used.nodes[1] = object.first_node + 2;
+        used.joints[0].flags = 2;
+        used.joints[1].flags = 1;
+        used.poses[0] = JointPose {
+            rotate: [0.0, 1.2, 0.0],
+            translate: [5.0, 0.0, -2.0],
+            scale: [2.0, 1.0, 1.0],
+        };
+        used.gobj_frame = 7.0;
+        let observe = |a: &StageAnimator| {
+            let per_node: alloc::vec::Vec<_> = (0..object.node_count)
+                .map(|i| object.first_node + i)
+                .map(|n| {
+                    alloc::format!(
+                        "{:?} {:?} {:?} {} {}",
+                        a.node_pose(n),
+                        a.node_ended(n),
+                        a.track_value(n, 0),
+                        a.flags(n),
+                        a.visible(&pack, n)
+                    )
+                })
+                .collect();
+            let mut out = [Mat4::IDENTITY; MAX_NODES];
+            let n = a.compose(&pack, &object, &mut out);
+            alloc::format!(
+                "{} {:?} {} {} {:?} {} {:?}",
+                a.joint_count(),
+                a.joint(0),
+                a.ended(),
+                a.gobj_frame(),
+                per_node,
+                n,
+                &out[..n]
+            )
+        };
+        let fresh = StageAnimator::new();
+        assert_ne!(observe(&used), observe(&fresh), "the setup must differ");
+        used.clear();
+        assert_eq!(observe(&used), observe(&fresh));
     }
 
     #[test]
