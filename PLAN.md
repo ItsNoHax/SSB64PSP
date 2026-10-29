@@ -136,6 +136,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
+| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen). Build-time ROM tables (`ssb-tablegen`) move into that pack step. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md) |
 
 ## Completed
 
