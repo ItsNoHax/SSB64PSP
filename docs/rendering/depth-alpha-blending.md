@@ -43,7 +43,7 @@ N64 has two independent discard gates; GE has one alpha-test unit. `pack::alpha_
 - Deviations:
   - GE has no coverage → polygon edges count as fully covered.
   - Mix is by alpha, not eighths of coverage.
-  - Mix uses what is drawn before the pixel; VI uses finished neighbours.
+- RDP writes partial-coverage edge pixels and samples texture attributes ~(-0.35,-0.35) ±0.1 px from the GE pixel centre (Mario and Kirby ramps); sub-pixel seams that the N64 closes can open on PSP (RE-581 #10).  - Mix uses what is drawn before the pixel; VI uses finished neighbours.
 - Example: Planet Zebes's yellow transparent TLUT entry, filtered into platform edges, mixes with the background by coverage, as on the N64.
 
 ### Other `SETOTHERMODE` fields (RE-124, RE-127, RE-195)

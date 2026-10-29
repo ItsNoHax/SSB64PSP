@@ -17,7 +17,7 @@
 
 ## Current work
 
-- Landed (batch 86): Master Hand return matches the N64 per tick (PSP = N64 + 106); Giant DK intro order, clears and positions match ParaLLEl-RDP; new golden `f1-onep-intro-giant`; no code change (RE-581).
+- Landed (batches 86-88): Master Hand return matches the N64 per tick (PSP = N64 + 106); Giant DK intro matches ParaLLEl-RDP; new golden `f1-onep-intro-giant`; mouth line closed as RDP coverage and sample-point deviation (RE-581).
 - Landed (batch 85): Master Hand TopN yaw turns with `invert_lr`, Move and Wait turns; 1P intro fighter cameras and the Mario Bros. Luigi clear depth; new golden `f1-onep-intro-mario`; low_free unchanged (RE-581).
 - Landed (batch 83): memcpy/hash cuts, bit-exact `Mat4::mul` affine path, order re-searched. Slim ms0: vs4 17.62 to 17.03, 1P intro 18.44 to 18.01, battle 16.79 to 16.36, Zebes 11.94 to 11.38, opening 9.17 to 9.05 (RE-579). Batch 82: mat_anim range read, `safe_point` skip (RE-578).
 - Landed (batch 80): frozen-model vertex replay in the 1P intro: 38.3 to 23.0 ms busy on the Slim; vs4, 1P battle, opening unchanged; low_free -6,656 B code size; goldens 266/266 (RE-576).

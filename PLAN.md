@@ -134,7 +134,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
-| 1P intro Mario mouth | Giant DK intro: on ParaLLEl-RDP Mario's open-mouth line (about 8x2 N64 px) disappears from ~frame 124; PSP and Rice keep it. Investigate mouth mesh render mode and Z (RDP depth or decal); acceptance: explained or matched | RE-581 |
 
 ### Architecture
 
