@@ -53,7 +53,12 @@ struct Model {
     /// A frozen model's vertices from the last list that drew it
     /// ([`meshdraw::VertexTape`]).
     tape: core::cell::Cell<meshdraw::VertexTape>,
+    /// A frozen model's composed skeleton: never ticked, it poses the same
+    /// matrices every list, so its first draw composes them once.
+    posed: core::cell::OnceCell<Posed>,
 }
+/// [`Model::posed`]: `Skeleton::compose`'s output and node count.
+struct Posed([ssb_rom::scene::Mat4; ssb_rom::skeleton::MAX_NODES], usize);
 
 impl Presentation {
     pub fn prepare_draw(
@@ -314,6 +319,8 @@ impl Presentation {
                         m.transn = [0.0; 3];
                         if let Some(anim) = p.fighter_anim(m.kind as u32, m.slot) {
                             m.skeleton.start(p, &anim, 0.0, 1.0);
+                            // A Continue model is never frozen: its
+                            // `posed` stays empty.
                             play(p, m);
                             m.transn = m.skeleton.pose(0).map_or([0.0; 3], |p| p.translate);
                         }
@@ -635,7 +642,8 @@ fn make_model(
         frozen: frozen,
         priority: if frozen { 40 } else { 50 },
         clears_depth: false,
-        tape: core::cell::Cell::new(meshdraw::VertexTape::default());
+        tape: core::cell::Cell::new(meshdraw::VertexTape::default()),
+        posed: core::cell::OnceCell::new();
         // The intro and figure motions are unflagged: the `animlock` parts
         // stay frozen (RE-509).
         // SAFETY: `ptr` is the new box's skeleton field.
@@ -762,8 +770,17 @@ unsafe fn draw_model_ex(
             ([0.0; 3], [0.0; 3])
         });
     }
-    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-    let n = m.skeleton.compose(p, &object, &mut posed);
+    let mut fresh = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    let posed = if m.frozen {
+        let Posed(posed, n) = match m.posed.get() {
+            Some(cached) => cached,
+            None => frozen_posed(p, &object, m),
+        };
+        &posed[..*n]
+    } else {
+        let n = m.skeleton.compose(p, &object, &mut fresh);
+        &fresh[..n]
+    };
     let base = crate::topn_base(pos, view.yaw, m.scale * scale, m.skeleton.locks.flagged);
     match light {
         FighterLight::Reflect(angles) => st.configure_fighter_light(angles),
@@ -793,7 +810,7 @@ unsafe fn draw_model_ex(
         p,
         &object,
         &base,
-        &posed[..n],
+        posed,
         st,
         meshdraw::Look {
             costume: m.costume as u32,
@@ -811,6 +828,17 @@ unsafe fn draw_model_ex(
     st.finish_fighter_light();
     st.texgen_basis = texgen_basis;
     st.modelview_camera = None;
+}
+/// [`Model::posed`]'s first fill. Out of line and cold: once per model, and
+/// its matrices stay off [`draw_model_ex`]'s frame.
+#[cold]
+#[inline(never)]
+fn frozen_posed<'m>(p: &Pack<'_>, object: &ssb_rom::pack::ObjectDesc, m: &'m Model) -> &'m Posed {
+    m.posed.get_or_init(|| {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+        let n = m.skeleton.compose(p, object, &mut posed);
+        Posed(posed, n)
+    })
 }
 #[allow(clippy::too_many_arguments)]
 unsafe fn sprite(
