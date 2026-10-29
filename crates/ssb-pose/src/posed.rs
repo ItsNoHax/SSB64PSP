@@ -444,7 +444,8 @@ impl PosedFighter {
         hooks.after_map(&self.fighter);
         // A status set inside the physics and map step ran the old status's
         // `proc_accessory` first (ftmain.c:4397-4403): its maker read the
-        // frame's play, TopN after the move, before the new motion parses.
+        // frame's play, TopN after the move (or, from `proc_physics`,
+        // before it: `SpawnPose::topn`), before the new motion parses.
         if ssb_game::spawn_pose::switch_pending(&self.fighter) {
             self.sample_gameplay_joints(pack);
             ssb_game::spawn_pose::place_switch(&mut self.fighter);

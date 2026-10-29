@@ -22,7 +22,9 @@
 //!   (a landing, a lost floor) runs the old status's `proc_accessory`
 //!   first (`ftMainSetStatus`, ftmain.c:4397-4403): the pose is the old
 //!   motion's play with TopN where the map step put it. The host samples
-//!   before the new motion's first parse and calls [`place_switch`].
+//!   before the new motion's first parse and calls [`place_switch`]. A set
+//!   inside `proc_physics` (:1763) runs it before the move: TopN is the one
+//!   the set saw ([`SpawnPose::topn`]), and so is the weapon's parent.
 
 use crate::colanim::ColAnimId;
 use crate::fighter::Fighter;
@@ -62,6 +64,10 @@ pub struct SpawnPose {
     /// (or a setter that queries before its motion plays): the status whose
     /// play this frame the query read.
     pub played: Option<StatusState>,
+    /// A [`SpawnPhase::Switch`] query made inside `proc_physics`, before
+    /// the move: TopN's translate when the set ran. The joints are sampled
+    /// after the map step and carried back by the difference.
+    pub topn: Option<Vec3>,
 }
 
 impl SpawnPose {
@@ -76,6 +82,7 @@ impl SpawnPose {
             colanim: None,
             entry: 0,
             played: None,
+            topn: None,
         }
     }
 
@@ -140,6 +147,10 @@ impl SpawnPose {
         } else {
             f.joint_world(self.joint, self.local)
         };
+        // TopN's translate moves the whole chain rigidly.
+        if let Some(topn) = self.topn {
+            p += topn - f.pos;
+        }
         p.x += self.world.x * f.facing.sign();
         p.y += self.world.y;
         p.z += self.world.z;
@@ -221,9 +232,12 @@ pub fn place_switch(f: &mut Fighter) {
 /// - Inside the frame's passes (`is_events_forward`) the old status's
 ///   `proc_accessory` runs now (ftmain.c:4397-4403): an
 ///   [`SpawnPhase::Accessory`] maker of this status makes its weapon here,
-///   with the colour animation and `fp->ga` of this moment. Before the
-///   physics step its pose is this status's play (as `Update`); inside
-///   it, the play with TopN after the map step ([`SpawnPhase::Switch`]).
+///   with the colour animation, `fp->ga` and the parent of this moment.
+///   Before the physics step its pose is this status's play (as `Update`)
+///   and its parent the fighter before the move; inside
+///   it, the play with TopN after the map step ([`SpawnPhase::Switch`]),
+///   or, from `proc_physics` (ftmain.c:1763), with TopN and the parent
+///   before the move (:1792).
 pub fn on_set(f: &mut Fighter) {
     let Some(mut pose) = pending(f) else {
         return;
@@ -235,8 +249,22 @@ pub fn on_set(f: &mut Fighter) {
         SpawnPhase::Update => pose.played = Some(f.status),
         SpawnPhase::Accessory if f.motion_script.is_events_forward => {
             made_in_accessory(f, &pose);
+            // `wpManagerMakeWeapon` copies the parent's TopN now
+            // (`mpCommonCopyCollDataStats`, mpcommon.c:938): before the
+            // move for a set from `proc_update`, `proc_interrupt` or
+            // `proc_physics`; after it for one from the map step.
+            if !f.physics_pass || f.physics_before_move {
+                f.weapon_spawn_parent = crate::weapon::SpawnParent {
+                    pos: f.pos,
+                    coll: f.coll,
+                };
+                f.weapon_spawn_parent_noted = true;
+            }
             if f.physics_pass {
                 pose.phase = SpawnPhase::Switch;
+                if f.physics_before_move {
+                    pose.topn = Some(f.pos);
+                }
             } else {
                 pose.phase = SpawnPhase::Update;
                 pose.played = Some(f.status);
@@ -478,6 +506,60 @@ mod tests {
         assert_eq!(spawn(&f).position, Vec3::new(7.0, 8.0, 9.0));
     }
 
+    /// The same set from `proc_physics` (ftmain.c:1763), before the
+    /// velocity add (:1792) moves TopN: the old accessory reads the
+    /// frame's play with TopN where the set saw it, and the jolt's parent
+    /// is the fighter there. No move does this today (RE-555); built here
+    /// from the fall setter.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_physics_set_makes_the_jolt_with_topn_before_the_move() {
+        let mut f = pending_jolt();
+        f.motion_script.is_events_forward = true;
+        f.physics_pass = true;
+        f.physics_before_move = true;
+        let before = Vec3::new(100.0, 50.0, 0.0);
+        f.pos = before;
+        let coll = f.coll;
+        status::set_fall(&mut f);
+        assert!(switch_pending(&f));
+        // The move, then the host's sample of the old play at the moved
+        // TopN: joint 11 sits 7, 8, 9 from it.
+        f.physics_before_move = false;
+        let moved = Vec3::new(130.0, 40.0, 0.0);
+        f.pos = moved;
+        f.joint_transforms[11] = turned(moved + Vec3::new(7.0, 8.0, 9.0));
+        place_switch(&mut f);
+        assert_eq!(spawn(&f).position, before + Vec3::new(7.0, 8.0, 9.0));
+        assert!(f.weapon_spawn_pose.is_none(), "one query per make");
+        let (_, parent) = f.take_weapon_spawn_with_parent().unwrap();
+        assert_eq!(parent.pos, before);
+        assert_eq!(parent.coll, coll);
+    }
+
+    /// The same set in the map step leaves the parent where the map step
+    /// put the fighter, as a `proc_accessory` make.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_map_step_switch_takes_the_moved_parent() {
+        let mut f = pending_jolt();
+        f.motion_script.is_events_forward = true;
+        f.physics_pass = true;
+        f.pos = Vec3::new(100.0, 50.0, 0.0);
+        assert!(crate::pikachu::on_landing(
+            &mut f,
+            0.0,
+            ssb_engine::math::Vec2::new(0.0, 1.0)
+        ));
+        let moved = Vec3::new(130.0, 40.0, 0.0);
+        f.pos = moved;
+        f.joint_transforms[11] = turned(moved + Vec3::new(7.0, 8.0, 9.0));
+        place_switch(&mut f);
+        assert_eq!(spawn(&f).position, moved + Vec3::new(7.0, 8.0, 9.0));
+        let (_, parent) = f.take_weapon_spawn_with_parent().unwrap();
+        assert_eq!(parent.pos, moved);
+    }
+
     /// The same set before the physics step (`proc_update` or
     /// `proc_interrupt`): the old accessory reads that frame's play, TopN
     /// before the move, as an update maker.
@@ -499,6 +581,27 @@ mod tests {
         f.joint_transforms[11] = turned(Vec3::new(4.0, 5.0, 6.0));
         place_played(&mut f);
         assert_eq!(spawn(&f).position, Vec3::new(4.0, 5.0, 6.0));
+    }
+
+    /// The jolt made by that set takes its parent there, TopN before this
+    /// frame's physics (`wpManagerMakeWeapon`'s COLLPROJECT pass,
+    /// wpmanager.c:328; `mpCommonCopyCollDataStats` copies it,
+    /// mpcommon.c:938), not where the move and the map step put it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn an_update_set_makes_the_jolt_with_the_parent_before_the_move() {
+        let mut f = pending_jolt();
+        f.motion_script.is_events_forward = true;
+        let before = Vec3::new(100.0, 50.0, 0.0);
+        f.pos = before;
+        let coll = f.coll;
+        status::set_fall(&mut f);
+        assert!(played_status(&f).is_some());
+        // The frame's physics and map step move the fighter.
+        f.pos = Vec3::new(130.0, 40.0, 0.0);
+        let (_, parent) = f.take_weapon_spawn_with_parent().unwrap();
+        assert_eq!(parent.pos, before);
+        assert_eq!(parent.coll, coll);
     }
 
     /// Outside the frame's passes `ftMainSetStatus` runs no accessory.

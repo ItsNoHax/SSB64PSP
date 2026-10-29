@@ -455,9 +455,18 @@ pub struct Fighter {
     /// maker's process reads ([`crate::spawn_pose`]); `None` once placed.
     pub weapon_spawn_pose: Option<crate::spawn_pose::SpawnPose>,
     /// Inside `ftMainProcPhysicsMap` up to `proc_slope`: a status set here
-    /// runs the old `proc_accessory` after the map step's move
-    /// ([`crate::spawn_pose::on_set`]).
+    /// runs the old `proc_accessory` there ([`crate::spawn_pose::on_set`]).
     pub physics_pass: bool,
+    /// Inside [`Self::physics_pass`] before the move (`proc_physics`,
+    /// `ftmain.c:1763`): TopN is still where the frame's physics found it.
+    /// The velocity add (`ftmain.c:1792`) ends it.
+    pub physics_before_move: bool,
+    /// A status set before the move (`proc_update`, `proc_interrupt`,
+    /// `proc_physics`) ran the old `proc_accessory`
+    /// ([`crate::spawn_pose::on_set`]): [`Self::weapon_spawn_parent`] is
+    /// the parent at that make, for a
+    /// [`crate::weapon::WeaponKind::made_in_accessory`] weapon too.
+    pub weapon_spawn_parent_noted: bool,
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
@@ -713,6 +722,8 @@ impl Fighter {
             weapon_spawn_parent: crate::weapon::SpawnParent::default(),
             weapon_spawn_pose: None,
             physics_pass: false,
+            physics_before_move: false,
+            weapon_spawn_parent_noted: false,
             joint_transforms: [None; FIGHTER_JOINTS],
             damage_coll_size: None,
             joint4_rotate_x: None,
@@ -1257,6 +1268,7 @@ impl Fighter {
     pub fn queue_weapon_spawn(&mut self, spawn: crate::weapon::WeaponSpawn) {
         self.weapon_spawn = Some(spawn);
         self.weapon_spawn_pose = None;
+        self.weapon_spawn_parent_noted = false;
         self.weapon_spawn_parent = crate::weapon::SpawnParent {
             pos: self.pos,
             coll: self.coll,
@@ -1288,14 +1300,16 @@ impl Fighter {
     /// `mpCommonRunWeaponCollisionDefault` starts from: the one noted at the
     /// queue for a maker in `proc_update` or `proc_physics`, the current
     /// one for a maker in `proc_accessory`, which runs after this frame's
-    /// physics and map ([`crate::weapon::WeaponKind::made_in_accessory`]).
+    /// physics and map ([`crate::weapon::WeaponKind::made_in_accessory`]),
+    /// unless a set before the move ran that accessory
+    /// ([`Self::weapon_spawn_parent_noted`]).
     /// Call it after the fighter's physics and map.
     pub fn take_weapon_spawn_with_parent(
         &mut self,
     ) -> Option<(crate::weapon::WeaponSpawn, crate::weapon::SpawnParent)> {
         let spawn = self.weapon_spawn.take()?;
         self.weapon_spawn_pose = None;
-        let parent = if spawn.kind.made_in_accessory() {
+        let parent = if spawn.kind.made_in_accessory() && !self.weapon_spawn_parent_noted {
             crate::weapon::SpawnParent {
                 pos: self.pos,
                 coll: self.coll,
@@ -1441,6 +1455,7 @@ impl Fighter {
     /// scripts' effects.
     pub fn finish_physics_map(&mut self) {
         self.physics_pass = false;
+        self.physics_before_move = false;
         self.clear_joint_query(0);
         crate::motion::end_physics(self);
     }
@@ -1628,6 +1643,7 @@ impl Fighter {
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.physics_pass = true;
+        self.physics_before_move = true;
         // `ftCommonThrownReleaseFighterLoseGrip`'s
         // `mpCommonRunFighterCollisionDefault`: one collision pass from the
         // catcher's position with its diamond to the dropped TopN. It runs
@@ -1829,6 +1845,9 @@ impl Fighter {
         };
         let from = self.pos;
         let pre_map = want + speed;
+        // `ftmain.c:1792`: the velocity add moves TopN; a set from here on
+        // (the dead check, `proc_map`) reads it moved.
+        self.physics_before_move = false;
         self.pos = pre_map;
         let dead = crate::dead::check(self);
         self.after_dead_check(pos_prev.y);

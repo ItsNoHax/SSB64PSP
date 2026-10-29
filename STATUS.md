@@ -24,7 +24,7 @@
 - Landed (batch 84): in-place battle locals, order re-searched on the timed build, `.bss` pinned to a data-cache way. Slim ms0: vs4 17.16 to 16.76, intro 18.29 to 17.86, battle 16.41 to 15.90, Zebes 11.53 to 11.36; low_free -1,280 B (RE-580).
 - Landed (batches 86-88): Master Hand return matches the N64 per tick (PSP = N64 + 106); Giant DK intro matches ParaLLEl-RDP; new golden `f1-onep-intro-giant`; mouth line closed as RDP coverage and sample-point deviation (RE-581).
 - Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
-- Open: NOFOG under demo fade; real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
+- Open: real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561). Gaps in `PLAN.md`.
 
 ## Next
 
