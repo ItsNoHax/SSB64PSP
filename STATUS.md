@@ -28,8 +28,8 @@
 
 ## Next
 
-1. MS8 vs4 to 16.7 ms (0.06 ms left).
-2. Playtest performance: electric hit and Master Hand windows still above 16.7 ms.
+1. Playtest performance: electric hit and Master Hand windows still above 16.7 ms.
+2. 1P intro 17.54 ms busy (> 16.7).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
