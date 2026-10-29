@@ -6716,6 +6716,8 @@ struct DrawAssets {
     /// The display effects' objects and transform animations (RE-415), by
     /// [`display_asset`].
     displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 10],
+    /// [`Self::displays`]' primitive heads ([`meshdraw::object_heads`]).
+    display_heads: [(bool, bool); 10],
     /// Pikachu's Thunder frames by `texture_id_curr` (RE-417).
     thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
     /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
@@ -6782,6 +6784,7 @@ const _: () = assert!(
 
 impl DrawAssets {
     fn resolve(p: &Pack<'_>) -> Self {
+        let displays = display_assets(p);
         DrawAssets {
             shadow_texture: meshdraw::fighter_shadow_texture(p),
             player_frame: player_screen::frame_image(p).map(|image| {
@@ -6903,7 +6906,9 @@ impl DrawAssets {
                 p,
                 ssb_psp_runtime::scene::REBIRTH_HALO_EFFECT_KEY,
             ),
-            displays: display_assets(p),
+            displays,
+            display_heads: displays
+                .map(|d| d.map_or((false, false), |(o, _)| meshdraw::object_heads(p, &o))),
             thunder_frames: ssb_psp_runtime::scene::pikachu_thunder_meshes(p),
             egg_lay: ssb_psp_runtime::scene::yoshi_egg_lay_effect(p),
             mmonsters: core::array::from_fn(|kind| MonsterAsset::resolve(p, kind)),
@@ -7540,10 +7545,25 @@ fn draw_one_display(
         }
         _ => {}
     }
-    let Some((object, anim)) = display_asset(d.kind).and_then(|i| assets.displays[i].as_ref())
-    else {
+    let Some(asset) = display_asset(d.kind) else {
         return;
     };
+    let Some((object, anim)) = assets.displays[asset].as_ref() else {
+        return;
+    };
+    // A split pass draws each display under head 0, then again under head
+    // 1 (RE-422). Under a head the object has no primitive on, the draw
+    // submits nothing: skip its replay and posing, keeping the head-1
+    // replay a skipped head-0 draw would have asked for.
+    let (head0, head1) = assets.display_heads[asset];
+    match draw_state.heads {
+        meshdraw::Heads::Head0 if !head0 => {
+            draw_state.head1_pending |= head1;
+            return;
+        }
+        meshdraw::Heads::Head1 if !head1 => return,
+        _ => {}
+    }
     match anim {
         Some(anim) => {
             // `efManagerMakeEffect`'s `gcAddAnimAll` (`AOBJ_ANIM_CHANGED`):

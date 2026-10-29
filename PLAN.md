@@ -59,9 +59,9 @@
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
 | Master Hand stage | onepbosshit comets 17.3-19.3 ms, Fall 18.4-19.9 ms busy on the PSP-2000: effect CPU skinning; cut to 16.7 ms | RE-584 |
-| Electric hit drop | vs4@1340 4xL9 Pikachu: shocked 19.0-20.2 ms, no-hit 17.3-18.0 ms busy on the PSP-2000; cut to 16.7 ms | RE-584 |
+| Electric hit drop | vs4@1340 4xL9 Pikachu on the PSP-2000: no hit 17.50, shock 18.25 ms busy; cut to 16.7 ms. Effects now 0.9 ms; rest is stage 4.8-5.6 ms and fighters 6.4 ms | RE-584 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v138; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
-| 1P intro | 17.54 ms busy (> 16.7, RE-585): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
+| 1P intro | 17.35 ms busy (> 16.7, RE-585): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |

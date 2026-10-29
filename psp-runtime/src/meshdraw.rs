@@ -171,6 +171,34 @@ impl Heads {
     }
 }
 
+/// Which heads an object's own primitives sit on, as [`draw_object_posed`]
+/// with costume 0 walks them: `(head 0, head 1)`. A split pass's draw
+/// under one head of an object with no primitive there submits nothing
+/// (RE-422), so a caller may skip its posing; a skipped head-0 draw still
+/// owes [`DrawState::head1_pending`] when the object has head-1 content.
+pub fn object_heads(pack: &Pack<'_>, object: &ObjectDesc) -> (bool, bool) {
+    let mut heads = (false, false);
+    for i in 0..object.node_count {
+        let Some(node) = pack.node(object.first_node + i) else {
+            continue;
+        };
+        if node.mesh == NodeDesc::NO_MESH {
+            continue;
+        }
+        let Some(mesh) = pack.mesh(node.mesh) else {
+            continue;
+        };
+        for j in 0..mesh.prim_count {
+            if let Some(p) = pack.prim(mesh.first_prim + j) {
+                let head1 = p.flags & ssb_rom::pack::flags::HEAD1 != 0;
+                heads.0 |= !head1;
+                heads.1 |= head1;
+            }
+        }
+    }
+    heads
+}
+
 /// Tracks what state is already applied, so redundant sets are skipped.
 #[derive(Default)]
 pub struct DrawState {
