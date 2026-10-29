@@ -125,7 +125,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 |---|---|---|
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
-| Cutout over a later surface | TEX_EDGE edge mix blends over the clear where the surface behind draws later (opening-room antenna: wall is head-1 XLU); candidate: stencil "drawn" mask, raw colour where empty; needs hardware proof (D-051) | RE-424, RE-459 |
+| Cutout over a later surface | TEX_EDGE edge mix blends over the clear where the surface behind draws later (opening-room antenna); N64 screen = VI mix with the finished wall. Candidate: deferred edge pass (`Heads::Edge`, strict depth; tip MAE 105.8 → 38.4); owner decision on scope, perf, ~74 golden rows; hardware proof (D-051) | RE-424, RE-459 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
