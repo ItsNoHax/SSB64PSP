@@ -275,6 +275,7 @@ f1-onep-zako-clear	psp-game	onepzako@2864	pass	RE-458
 f1-onep-intro-enter	psp-game	onepintro@115	pass	RE-548
 f1-onep-intro	psp-game	onepintro@256	pass	RE-548
 f1-onep-intro-mario	psp-game	onepmario@123	pass	RE-548
+f1-onep-intro-giant	psp-game	onepgiant@140	pass	RE-548 RE-581
 f1-onep-clear-tally	psp-game	onepclear@176	pass	RE-548
 f1-onep-game-clear	psp-game	onepgameclear@386	pass	RE-548
 f1-onep-ending-desk	psp-game	onepending@197	pass	RE-459 RE-519

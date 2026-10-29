@@ -134,8 +134,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
-| Master Hand return | After GootsubusuEnd to Wait (N64 frames 1322/1343, PSP `onepboss@1422/1443`) the N64 hand flies back mid-left; the PSP hand sits at the top edge, mostly off-screen; rejoins by the next shot. Camera or Wait return position, not facing; acceptance: matches the N64 at those frames | RE-581 |
-| onepgiant intro | Donkey stage intro now has 3 clearing cameras (priorities 70, 60, 50); no golden and no N64 capture: capture both, compare | RE-581 |
+| 1P intro Mario mouth | Giant DK intro: on ParaLLEl-RDP Mario's open-mouth line (about 8x2 N64 px) disappears from ~frame 124; PSP and Rice keep it. Investigate mouth mesh render mode and Z (RDP depth or decal); acceptance: explained or matched | RE-581 |
 
 ### Architecture
 
