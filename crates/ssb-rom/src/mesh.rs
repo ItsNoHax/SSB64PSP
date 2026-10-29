@@ -2199,6 +2199,19 @@ impl State {
             // `TEXEL0_ALPHA * SHADE_ALPHA` on the GE; the packer proves the
             // texels opaque before it draws the second pass.
             Some(AlphaBlend::Shade)
+        } else if let Some(l) = lod_blend.filter(|_| {
+            self.material.translucent
+                && self.combiner.and_then(|(_, lo)| lod_cycle2_alpha(lo))
+                    == Some(LodAlpha::TimesPrim)
+        }) {
+            // RE-321: a translucent two-tile blend whose alpha keeps its
+            // texels, `lerp(T0a, T1a, f) * PRIM_ALPHA` (Master Hand's Fall
+            // wallpaper, `G_RM_AA_XLU_SURF2`): each pass is
+            // `TEXELn_ALPHA * PRIM_ALPHA` on the GE, the vertices carrying
+            // the primitive alpha; the packer weights the two passes
+            // (`lod_blend::texel_alpha_pass_alphas`). Declined there, the
+            // single pass blends `TEXEL0` alone.
+            Some(AlphaBlend::Prim(l.prim_alpha))
         } else {
             alpha_blend
         };

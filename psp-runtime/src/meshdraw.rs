@@ -2264,6 +2264,40 @@ unsafe fn draw_lod_blend_pass(
         (Some(fix_a), _) if translucent => (fix_a, 0x00FF_FFFF),
         (Some(fix_a), fix_b) => (fix_a, fix_b),
     };
+    if !bind_lod_next(pack, p, st, &lod) {
+        return false;
+    }
+
+    if !translucent {
+        sys::sceGuDisable(GuState::AlphaTest);
+    }
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::Fix,
+        sys::BlendFactor::Fix,
+        fix_a,
+        fix_b,
+    );
+    sys::sceGuDepthMask(1);
+    for d in draws {
+        d.draw();
+    }
+    st.last_flags = None;
+    st.state_changes += 1;
+    true
+}
+
+/// Binds a two-tile blend's `TEXEL1` image (RE-321) with tile 1's live
+/// window through [`bind_texture`] and [`apply_texture_affine`], updating the
+/// cache fields so the next primitive compares against what is really
+/// bound, and `Modulate`. `false` when the texture is missing.
+unsafe fn bind_lod_next(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    lod: &ssb_rom::skeleton::LodBlendState,
+) -> bool {
     let Some(t) = pack.texture(lod.texture) else {
         return false;
     };
@@ -2288,25 +2322,104 @@ unsafe fn draw_lod_blend_pass(
             sys::TextureColorComponent::Rgba,
         );
     }
+    true
+}
 
-    if !translucent {
-        sys::sceGuDisable(GuState::AlphaTest);
+/// Draws a texel-alpha translucent two-tile blend (RE-321; Master Hand's
+/// Fall wallpaper): both passes blend `Add(SrcAlpha, OneMinusSrcAlpha)`,
+/// pass 1 `TEXEL0` and pass 2 `TEXEL1`, each through its own vertex
+/// expansion whose alpha replaces the primitive alpha `A` with
+/// [`ssb_rom::lod_blend::texel_alpha_pass_alphas`]' weight. Returns the
+/// draws submitted, or `None` to leave the primitive to the single pass
+/// (no packed `texel_alpha`, or a flat colour whose register is unknown).
+///
+/// * `A` is the live primitive alpha, or the packed vertex alpha
+///   (`AlphaBlend::Prim` bakes it) when nothing overrides it.
+/// * The alpha test is off in both passes: the RDP gates on the blended
+///   alpha, which neither pass carries; the packer accepted only a gate
+///   whose dropped pixels are within `8/255` (RE-321).
+/// * Pass 2 masks depth writes; blend, alpha test and depth mask are
+///   re-issued by the next primitive (`last_flags`).
+/// * A debug isolation draws one tile at `A`.
+#[cold]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_lod_texel_alpha(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    indices: &[u8],
+    verts: &[u8],
+    effect_colors: Option<ssb_rom::skeleton::EffectColors>,
+    linear_texgen: bool,
+    lit: Option<LitPrim>,
+    clip: Option<&GuardClip<'_>>,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+) -> Option<u32> {
+    let lod = match effect_mat_anim {
+        Some(m) => m.resolved_lod_blend(pack, p.mat_anim),
+        None => mat_anim.and_then(|m| m.resolved_lod_blend(pack, p.mat_anim)),
+    }?;
+    let mean = lod.texel_alpha?;
+    let base = effect_colors.unwrap_or_default();
+    if base.prim.is_none() && p.flags & flags::FLAT_COLOR != 0 {
+        return None;
     }
-    sys::sceGuEnable(GuState::Blend);
-    sys::sceGuBlendFunc(
-        sys::BlendOp::Add,
-        sys::BlendFactor::Fix,
-        sys::BlendFactor::Fix,
-        fix_a,
-        fix_b,
-    );
-    sys::sceGuDepthMask(1);
-    for d in draws {
-        d.draw();
-    }
+    let prim_alpha = match base.prim {
+        Some(prim) => prim[3],
+        None => {
+            let size = core::mem::size_of::<PackedVertex>();
+            let first = usize::from(u16::from_le_bytes([indices[0], indices[1]]));
+            let v = verts.get(first * size..(first + 1) * size)?;
+            (*(v.as_ptr() as *const PackedVertex)).color.to_le_bytes()[3]
+        }
+    };
+    let (v0, v1) = match st.lod_blend_isolate {
+        Some(LodBlendIsolate::Current) => (prim_alpha, 0),
+        Some(LodBlendIsolate::Next) => (0, prim_alpha),
+        None => ssb_rom::lod_blend::texel_alpha_pass_alphas(prim_alpha, lod.frac, mean),
+    };
+    sys::sceGuDisable(GuState::AlphaTest);
     st.last_flags = None;
     st.state_changes += 1;
-    true
+    let mut draws = 0;
+    for (pass, alpha) in [(0, v0), (1, v1)] {
+        if alpha == 0 {
+            continue;
+        }
+        if pass == 1 {
+            if !bind_lod_next(pack, p, st, &lod) {
+                break;
+            }
+            sys::sceGuDepthMask(1);
+        }
+        let rgb = base.prim.map_or([0xFF; 3], |c| [c[0], c[1], c[2]]);
+        let colors = ssb_rom::skeleton::EffectColors {
+            prim: Some([rgb[0], rgb[1], rgb[2], alpha]),
+            ..base
+        };
+        let (vtype, index, vertex) = if p.flags & flags::SIGNED_CLAMP_UV != 0 {
+            expand_float_uv_corners(p, indices, verts, Some(colors), lit)
+        } else {
+            expand_corners(pack, p, st, indices, verts, Some(colors), linear_texgen, lit)
+        };
+        let whole = [Draw {
+            vtype: vtype.bits(),
+            index,
+            vertex,
+            count: p.index_count,
+        }];
+        let list: &[Draw] = match clip {
+            Some(clip) => clip_submission(clip, indices, &whole[0]).unwrap_or(&whole),
+            None => &whole,
+        };
+        for d in list {
+            d.draw();
+        }
+        draws += 1;
+    }
+    Some(draws)
 }
 
 /// Draws one mesh from the pack.
@@ -2386,6 +2499,28 @@ unsafe fn draw_mesh_vertices(
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
         let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
         crate::profile::stop_fine(crate::profile::Span::Material, material_t);
+
+        // RE-321: a texel-alpha translucent two-tile blend draws its own two
+        // expansions. A vertex tape keeps the single pass.
+        if p.flags & LOD_BLEND_TRANSLUCENT == LOD_BLEND_TRANSLUCENT && !taped {
+            if let Some(n) = draw_lod_texel_alpha(
+                pack,
+                &p,
+                st,
+                indices,
+                verts,
+                effect_colors,
+                linear_texgen,
+                lit,
+                clip.as_ref(),
+                mat_anim,
+                effect_mat_anim,
+            ) {
+                st.draws += n;
+                tris += p.index_count / 3;
+                continue;
+            }
+        }
 
         // One submission, kept so a two-tile blend's second pass redraws the
         // exact same vertices (RE-321).

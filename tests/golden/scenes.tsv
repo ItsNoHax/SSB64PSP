@@ -270,6 +270,8 @@ f1-training-kirby-star-bounce	psp-game	kirbystarbounce	pass	RE-503
 f1-training-catch-slope	psp-game	catchslope	pass	RE-510
 f1-onep-boss-defeat-zoom	psp-game	onepbosshit@2665	pass	RE-457
 f1-onep-boss-defeat-fade	psp-game	onepbosshit@2895	pass	RE-457
+f1-onep-boss-fall-fadein	psp-game	onepbosshit@1225	pass	RE-321
+f1-onep-boss-fall-full	psp-game	onepbosshit@1466	pass	RE-321
 f1-onep-zako-ko-flash	psp-game	onepzako@2820	pass	RE-458
 f1-onep-zako-clear	psp-game	onepzako@2864	pass	RE-458
 f1-onep-intro-enter	psp-game	onepintro@115	pass	RE-548

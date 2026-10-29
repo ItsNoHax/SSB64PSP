@@ -1695,6 +1695,9 @@ pub struct LodBlendState {
     /// [`crate::pack::LodBlendDesc::origin_delta`]: tile 0's static origin
     /// less tile 1's, quarter texels.
     pub origin_delta: [i16; 2],
+    /// [`crate::pack::LodBlendDesc::texel_alpha`]: the texel-alpha
+    /// translucent lowering's mean `TEXEL0` alpha.
+    pub texel_alpha: Option<u8>,
 }
 
 impl LodBlendState {
@@ -1828,6 +1831,9 @@ impl MaterialAnimator {
     /// The material colour registers driven by a stage script.  This is the
     /// same original `gcPlayMObjMatAnim` colour window as manager effects;
     /// stages merely own a pack-lifetime clock instead of a spawn-local one.
+    ///
+    /// Out of line: `psp-game/link-order.txt` places it (`tools/psp-link.py`).
+    #[inline(never)]
     pub fn resolved_colors(&self, mat_anim: u32) -> Option<EffectColors> {
         let j = self.joints.get(mat_anim as usize)?;
         Some(EffectColors {
@@ -1925,6 +1931,7 @@ fn resolve_lod_blend(
         frac: crate::lod_blend::prim_lod_frac(lfrac),
         uv,
         origin_delta: lod.origin_delta,
+        texel_alpha: lod.texel_alpha,
     })
 }
 
@@ -3482,6 +3489,7 @@ mod tests {
             next_textures,
             tile1_params: [384, 128, 128],
             origin_delta: [0, 0],
+            texel_alpha: None,
         }));
         (w.finish(), anim, current, next)
     }
@@ -3558,6 +3566,7 @@ mod tests {
             frac: 128,
             uv: None,
             origin_delta: [0, 128],
+            texel_alpha: None,
         };
         let a = rest.ge_affine((32, 64), (true, true));
         assert_eq!((a.scale_s, a.scale_t), (1.0, 1.0));

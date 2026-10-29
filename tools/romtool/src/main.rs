@@ -1215,6 +1215,94 @@ fn source_fully_opaque(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Option
     }))
 }
 
+/// The RGBA of every texel of `t`'s window: a CI image through its TLUT (as
+/// [`source_fully_opaque`]), or a direct image with the TLUT off. `None` for
+/// any other pairing.
+fn source_texels_rgba(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Option<Vec<[u8; 4]>> {
+    use ssb_rom::texture;
+    let file = src.bytes(t.data_file)?;
+    if t.format != texture::Format::Ci && !t.tlut.enabled() {
+        let (w, h) = (u32::from(t.width), u32::from(t.height));
+        let row = texture::data_len(u32::from(t.source_width.max(t.width)), 1, t.size);
+        let used = texture::data_len(w, 1, t.size);
+        let mut data = Vec::with_capacity(used * h as usize);
+        for y in 0..h as usize {
+            let at = t.data_offset as usize + y * row;
+            data.extend_from_slice(file.get(at..at + used)?);
+        }
+        let img = texture::decode_lut(
+            &data,
+            w,
+            h,
+            t.format,
+            t.size,
+            texture::TextureLut::None,
+            &[],
+            0,
+        )
+        .ok()?;
+        return Some((0..(w * h) as usize).map(|i| img.get(i)).collect());
+    }
+    if !t.tlut.enabled() || t.format != texture::Format::Ci {
+        return None;
+    }
+    let indices = decode_index_field(file, t)?;
+    let bank = if t.size == texture::BitSize::Bits4 {
+        t.palette
+    } else {
+        0
+    };
+    let (off, n) = palette_bank_offset(t.palette_offset?, t.palette_entries, bank);
+    let tlut = src
+        .bytes(t.palette_file)?
+        .get(off as usize..off as usize + n * 2)
+        .map(texture::parse_tlut)?;
+    indices
+        .iter()
+        .map(|&i| tlut.get(usize::from(i)).map(|&e| t.tlut.entry_rgba(e)))
+        .collect()
+}
+
+/// RE-321: the texel-alpha translucent lowering's proof for a two-tile blend
+/// whose alpha keeps its texels (`lerp(T0a, T1a, f) * PRIM_ALPHA` under a
+/// blending mode; Master Hand's Fall wallpaper): every texel of every
+/// `TEXEL0` and `TEXEL1` image has one RGB, so both passes add the same
+/// colour and only their alphas weight it
+/// ([`ssb_rom::lod_blend::texel_alpha_pass_alphas`]). Returns the mean
+/// `TEXEL0` alpha over the images the script reaches, rounded.
+fn lod_texel_alpha_mean(
+    src: Texels<'_>,
+    current: impl Iterator<Item = ssb_rom::mesh::TextureRef>,
+    next: impl Iterator<Item = ssb_rom::mesh::TextureRef>,
+) -> Result<u8, &'static str> {
+    let mut rgb = None;
+    let mut same_rgb = |texels: &[[u8; 4]]| {
+        texels.iter().all(|c| {
+            let c = [c[0], c[1], c[2]];
+            *rgb.get_or_insert(c) == c
+        })
+    };
+    let (mut sum, mut count) = (0u64, 0u64);
+    for t in current {
+        let texels = source_texels_rgba(src, &t).ok_or("a TEXEL0 image did not decode")?;
+        if !same_rgb(&texels) {
+            return Err("the texel colours differ, so the passes' alphas would weight them");
+        }
+        sum += texels.iter().map(|c| u64::from(c[3])).sum::<u64>();
+        count += texels.len() as u64;
+    }
+    for t in next {
+        let texels = source_texels_rgba(src, &t).ok_or("a TEXEL1 image did not decode")?;
+        if !same_rgb(&texels) {
+            return Err("the texel colours differ, so the passes' alphas would weight them");
+        }
+    }
+    if count == 0 {
+        return Err("no TEXEL0 texel");
+    }
+    Ok(((sum + count / 2) / count) as u8)
+}
+
 /// RE-321: converts a two-tile blend primitive's `TEXEL1` images and checks
 /// that the two-pass GE lowering reproduces its RDP output, returning the
 /// record to pack or the reason to keep the single-texture path.
@@ -1280,7 +1368,47 @@ fn lod_blend_desc(
             ..base
         }))
     };
-    if translucent_blend {
+    let mut texel_alpha = None;
+    if translucent_blend
+        && !lod.shade_alpha
+        && matches!(
+            prim.material.alpha_blend,
+            Some(ssb_rom::mesh::AlphaBlend::Prim(_))
+        )
+    {
+        // The runtime draws both passes with the alpha test off: the RDP
+        // gates on the blended alpha, which no single pass carries. Only a
+        // gate low enough that what it drops is invisible is accepted
+        // (Master Hand's Fall: `G_AC_THRESHOLD` against 8).
+        let floor = match gate {
+            AlphaGate::Off => 0,
+            AlphaGate::Greater(t) => u16::from(t) + 1,
+            AlphaGate::GreaterOrEqual(t) => u16::from(t),
+        };
+        if floor > TEXEL_ALPHA_GATE_MAX {
+            return Err("the alpha gate is too high to drop for the texel-alpha passes");
+        }
+        let next = data.sprites.iter().map(|p| ssb_rom::mesh::TextureRef {
+            data_file: p.file,
+            data_offset: p.offset,
+            ..lod.next
+        });
+        let mean = lod_texel_alpha_mean(src, reached_current(), next)?;
+        println!(
+            "lod texel-alpha file {id} list 0x{offset:X} prim {prim_index}: TEXEL0 0x{:X} sprites [{}] tile 1 origin ({},{}) tile 0 ({},{}) mean alpha {mean}",
+            base.data_offset,
+            data.sprites
+                .iter()
+                .map(|p| format!("{:?}+0x{:X}", p.file, p.offset))
+                .collect::<Vec<_>>()
+                .join(" "),
+            lod.next.origin_s,
+            lod.next.origin_t,
+            base.origin_s,
+            base.origin_t,
+        );
+        texel_alpha = Some(mean);
+    } else if translucent_blend {
         if !lod.shade_alpha || prim.material.alpha_blend != Some(ssb_rom::mesh::AlphaBlend::Shade) {
             return Err("GE blending would weight pass 1 by its own alpha");
         }
@@ -1304,7 +1432,7 @@ fn lod_blend_desc(
         AlphaGate::Greater(t) => Some(u16::from(t) + 1),
         AlphaGate::GreaterOrEqual(t) => Some(u16::from(t)),
     };
-    if let Some(floor) = floor.filter(|_| !translucent_blend) {
+    if let Some(floor) = floor.filter(|_| !translucent_blend && texel_alpha.is_none()) {
         // With every `TEXEL0` opaque and `PRIM_ALPHA` 255 the blended alpha
         // is at least the lerp from 255 towards 0 at the largest fraction
         // the script reaches; the gate must pass that (RE-424: the cutout
@@ -1357,8 +1485,14 @@ fn lod_blend_desc(
         next_textures,
         tile1_params: lod.tile1_params.map(u32::from),
         origin_delta: lod.origin_delta,
+        texel_alpha,
     })
 }
+
+/// The highest alpha-gate floor the texel-alpha translucent lowering drops
+/// (RE-321): a pixel the RDP gates has alpha below it, so drawing it anyway
+/// moves the framebuffer by under `8/255` of its distance to the colour.
+const TEXEL_ALPHA_GATE_MAX: u16 = 8;
 
 /// RE-321: the vertices primitive `packed` of `m` draws, when the translucent
 /// two-tile lowering may premultiply them by their alpha
@@ -1438,6 +1572,7 @@ fn pack_mesh(
     let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_phase = Vec::with_capacity(m.primitives.len());
     let mut per_prim_lod = Vec::with_capacity(m.primitives.len());
+    let mut per_prim_premul: Vec<bool> = Vec::with_capacity(m.primitives.len());
     let mut texture_parts: Vec<(u32, u32, [u32; ssb_rom::pack::TexturePartDesc::MAX_IDS])> =
         Vec::new();
     for (packed_index, prim) in m.primitives.iter().enumerate() {
@@ -1755,6 +1890,9 @@ fn pack_mesh(
         // RE-321: a classified two-tile blend gets its second pass only
         // once the lowering is proven exact for it; otherwise it keeps the
         // single-texture path.
+        // A texel-alpha blend keeps its vertex colours: its passes take
+        // their alpha from `PrimDesc` effect colours, not premultiplied shade.
+        let mut texel_alpha_lod = false;
         let lod = prim.material.lod_blend.map(|lod| {
             let outcome = if prim.material.texture != source.primitives[prim_index].material.texture
             {
@@ -1780,6 +1918,7 @@ fn pack_mesh(
                             phase,
                         )
                         .and_then(|desc| {
+                            texel_alpha_lod = desc.texel_alpha.is_some();
                             if writer.add_lod_blend(desc) {
                                 Ok(desc.next_count as usize)
                             } else {
@@ -1821,18 +1960,19 @@ fn pack_mesh(
         per_prim.push(texture_index);
         per_prim_mat_anim.push(mat_anim_index_resolved);
         per_prim_lod.push(lod == Some(true));
+        per_prim_premul.push(lod == Some(true) && !texel_alpha_lod);
     }
     // RE-321: a translucent two-tile blend draws `S * a` from its vertices
     // (`lod_blend_desc` proved them its own and of one RGB).
     let premultiplied;
-    let m = if per_prim_lod
+    let m = if per_prim_premul
         .iter()
         .zip(&m.primitives)
         .any(|(&lod, p)| lod && ssb_rom::pack::material_alpha_state(&p.material).1)
     {
         let mut copy = m.clone();
         for (k, p) in m.primitives.iter().enumerate() {
-            if !per_prim_lod[k] || !ssb_rom::pack::material_alpha_state(&p.material).1 {
+            if !per_prim_premul[k] || !ssb_rom::pack::material_alpha_state(&p.material).1 {
                 continue;
             }
             let used = lod_premultiply_vertices(m, k).expect("checked by lod_blend_desc");

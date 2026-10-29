@@ -495,7 +495,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (`ssb_engine::audio::stream::HEAD`), then both tbl parts from a 16 KiB
 // page boundary; the section starts on a page boundary in the file
 // ([`AUDIO_ALIGN`]). No table layout change.
-pub const VERSION: u32 = 137;
+// 138 grows `LodBlendDesc` to 60 bytes with `texel_alpha`: Master Hand's
+// Fall wallpaper draws its two-tile blend translucent by its texels' alpha
+// (`AlphaBlend::Prim` per pass, RE-321).
+pub const VERSION: u32 = 138;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1555,10 +1558,27 @@ pub struct LodBlendDesc {
     /// [`crate::mesh::LodBlend::origin_delta`]: tile 0's static origin less
     /// tile 1's, quarter texels (one word: S low, T high).
     pub origin_delta: [i16; 2],
+    /// The texel-alpha translucent lowering (Master Hand's Fall wallpaper,
+    /// RE-321): the mean alpha over the `TEXEL0` images, which pass 2's
+    /// vertex alpha compensates by
+    /// ([`crate::lod_blend::texel_alpha_pass_alphas`]). `None` for the
+    /// opaque and the premultiplied shade-alpha lowerings. One word: bit 8
+    /// set when present, the mean in bits 0-7.
+    pub texel_alpha: Option<u8>,
 }
 
 impl LodBlendDesc {
-    pub const SIZE: usize = 56;
+    pub const SIZE: usize = 60;
+
+    /// [`Self::texel_alpha`]'s packed word.
+    pub fn texel_alpha_word(&self) -> u32 {
+        self.texel_alpha.map_or(0, |m| 0x100 | u32::from(m))
+    }
+
+    /// Reads [`Self::texel_alpha_word`] back.
+    pub fn texel_alpha_from_word(w: u32) -> Option<u8> {
+        (w & 0x100 != 0).then_some(w as u8)
+    }
 }
 
 /// A fighter primitive whose image is a texture part's `MObj` sprite
@@ -4014,8 +4034,11 @@ impl PackWriter {
                 .into_iter()
                 .chain(lod.next_textures)
                 .chain(lod.tile1_params)
-                .chain([u32::from(lod.origin_delta[0] as u16)
-                    | u32::from(lod.origin_delta[1] as u16) << 16])
+                .chain([
+                    u32::from(lod.origin_delta[0] as u16)
+                        | u32::from(lod.origin_delta[1] as u16) << 16,
+                    lod.texel_alpha_word(),
+                ])
             {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -5764,6 +5787,9 @@ impl<'a> Pack<'a> {
                         let w = word(5 + MatAnimDesc::MAX_TEXTURES);
                         [w as u16 as i16, (w >> 16) as u16 as i16]
                     },
+                    texel_alpha: LodBlendDesc::texel_alpha_from_word(word(
+                        6 + MatAnimDesc::MAX_TEXTURES,
+                    )),
                 }
             })
         })
@@ -8577,6 +8603,7 @@ mod tests {
             ],
             tile1_params: [384, 128, 128],
             origin_delta: [0, 0],
+            texel_alpha: None,
         };
         let second = LodBlendDesc {
             mat_anim: 9,
@@ -8595,6 +8622,8 @@ mod tests {
             // Master Hand's Fall: tile 0 at (256,128), tile 1 at (256,0); a
             // negative S checks the sign survives the packed word.
             origin_delta: [-4, 128],
+            // and its texel-alpha lowering's mean, including a zero mean.
+            texel_alpha: Some(0),
         };
         assert!(w.add_lod_blend(first));
         assert!(
@@ -8645,6 +8674,7 @@ mod tests {
             ],
             tile1_params: [1, 2, 3],
             origin_delta: [0, 0],
+            texel_alpha: None,
         };
         assert!(w.add_lod_blend(blend));
         let digit = SpriteDesc {

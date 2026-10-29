@@ -60,7 +60,7 @@
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
 | Master Hand stage | onepbosshit comets 17.3-19.3 ms, Fall 18.4-19.9 ms busy on the PSP-2000: effect CPU skinning; cut to 16.7 ms | RE-584 |
 | Electric hit drop | vs4@1340 4xL9 Pikachu: shocked 19.0-20.2 ms, no-hit 17.3-18.0 ms busy on the PSP-2000; cut to 16.7 ms | RE-584 |
-| Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v137; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
+| Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v138; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | vs4 to 16.7 ms | `vs4@2400` 16.76 ms busy (ms0): 0.06 ms left; next: audio reverb `madd` (needs `audio_selftest` on target, ~0.05 ms); re-search the order after hot-code changes, tracing the `frame_timer,capture_scene_file` build (RE-494, RE-580) | RE-519, RE-580 |
 | 1P intro | 17.86 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
@@ -132,7 +132,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
+| Master Hand | Fall wallpaper: order `draw_lod_texel_alpha` and add a Fall trace to the training mix (untested; Fall +0.44 ms, Slim) | RE-585 |
 
 ### Architecture
 

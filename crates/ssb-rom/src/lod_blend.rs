@@ -148,6 +148,92 @@ pub fn rdp_translucent_channel(t0: u8, t1: u8, shade: u8, alpha: u8, mem: u8, fr
     ((color * u32::from(alpha) + u32::from(mem) * (255 - u32::from(alpha))) / 255) as u8
 }
 
+/// Per-pass vertex alphas of the texel-alpha translucent lowering (Master
+/// Hand's Fall wallpaper, RE-321): a two-tile blend whose alpha keeps its
+/// texels, `lerp(T0a, T1a, f) * PRIM_ALPHA`, under `G_RM_AA_XLU_SURF2`.
+///
+/// The GE draws both tiles with `Add(SrcAlpha, OneMinusSrcAlpha)`, each
+/// with its own vertex alpha (`Modulate`: fragment alpha `Tn_a * vn`):
+///
+/// ```text
+/// RDP:  a  = ((1 - f) * T0a + f * T1a) * A           M' = C*a + M*(1 - a)
+/// GE:   a0 = T0a * A * (1 - f)                        M1 = C*a0 + M*(1 - a0)
+///       a1 = T1a * A * f / (1 - m0)                   M2 = C*a1 + M1*(1 - a1)
+///       m0 = A * (1 - f) * mean(T0a)
+/// ```
+///
+/// The colour is exact when every texel of both tiles has one RGB (the
+/// packer proves it), since `C` is then the same for both passes. The two
+/// passes cover `1 - (1 - a0)(1 - a1) = a0 + a1 (1 - a0)`; dividing pass 2's
+/// alpha by `1 - m0` restores the RDP's `f * T1a * A` where `a0` is its
+/// image mean, so the error is `f*T1a*A * (m0 - a0) / (1 - m0)` per pixel and
+/// zero on average for tiles whose alphas are uncorrelated.
+///
+/// `fb`/`fa` are [`ge_fix_weights`]' `(1 - f)`/`f` in `/255` steps. Returns
+/// `(v0, v1)`; `v1` is 0 at `frac == 0`, where pass 2 draws nothing. `v1`
+/// never exceeds `A`: `f / (1 - (1 - f) * m) <= 1` for any `m <= 1`.
+pub fn texel_alpha_pass_alphas(prim_alpha: u8, frac: u8, mean_t0_alpha: u8) -> (u8, u8) {
+    let (fa, fb) = ge_fix_weights(frac);
+    let a = u32::from(prim_alpha);
+    let v0 = (a * u32::from(fb) + 127) / 255;
+    if fa == 0 {
+        return (v0 as u8, 0);
+    }
+    // 1 - m0 in 1/65025 steps; m0 = v0/255 * mean/255 < 1.
+    let den = 65025 - v0 * u32::from(mean_t0_alpha);
+    let v1 = (a * u32::from(fa) * 255 + den / 2) / den;
+    (v0 as u8, v1.min(255) as u8)
+}
+
+/// The RDP reference for one pixel of the texel-alpha translucent blend, one
+/// colour channel: the first cycle's alpha lerp, the second's
+/// `COMBINED_ALPHA * PRIM_ALPHA`, the `G_AC_THRESHOLD` gate against `gate`
+/// (`>=` passes), then `CLR_IN * A + CLR_MEM * (1 - A)`. `color` is the
+/// shade-modulated texel colour, the same for both tiles.
+pub fn rdp_texel_alpha_channel(
+    t0a: u8,
+    t1a: u8,
+    prim_alpha: u8,
+    frac: u8,
+    gate: u8,
+    color: u8,
+    mem: u8,
+) -> u8 {
+    let lerp = rdp_combine_channel(t1a, t0a, frac, t0a);
+    let a = rdp_combine_channel(lerp, 0, prim_alpha, 0);
+    if a < gate {
+        return mem;
+    }
+    blend_src_alpha(color, a, mem)
+}
+
+/// The GE's two passes for the same pixel ([`texel_alpha_pass_alphas`]),
+/// with the alpha test off: each pass's fragment alpha is its texel's times
+/// its vertex alpha (`Modulate`), blended `Add(SrcAlpha, OneMinusSrcAlpha)`.
+pub fn ge_texel_alpha_two_pass_channel(
+    t0a: u8,
+    t1a: u8,
+    prim_alpha: u8,
+    frac: u8,
+    mean_t0_alpha: u8,
+    color: u8,
+    mem: u8,
+) -> u8 {
+    let (v0, v1) = texel_alpha_pass_alphas(prim_alpha, frac, mean_t0_alpha);
+    let modulate = |t: u8, v: u8| (u32::from(t) * u32::from(v) / 255) as u8;
+    let m1 = blend_src_alpha(color, modulate(t0a, v0), mem);
+    if v1 == 0 {
+        return m1;
+    }
+    blend_src_alpha(color, modulate(t1a, v1), m1)
+}
+
+/// `CLR_IN * A + CLR_MEM * (1 - A)` in `/255` steps, truncated.
+fn blend_src_alpha(color: u8, alpha: u8, mem: u8) -> u8 {
+    let a = u32::from(alpha);
+    ((u32::from(color) * a + u32::from(mem) * (255 - a)) / 255) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +378,70 @@ mod tests {
         }
         assert_eq!(ge_fix_weights(0), (0, 255));
         assert_eq!(ge_fix_colors(128), (0x0080_8080, 0x007F_7F7F));
+    }
+
+    #[test]
+    fn texel_alpha_pass_alphas_stay_in_range_and_skip_pass_two_at_zero() {
+        for a in 0..=255u8 {
+            for frac in 0..=255u8 {
+                for mean in [0u8, 128, 173, 255] {
+                    let (v0, v1) = texel_alpha_pass_alphas(a, frac, mean);
+                    assert!(
+                        v0 <= a && v1 <= a,
+                        "a {a} frac {frac} mean {mean}: {v0} {v1}"
+                    );
+                }
+            }
+        }
+        assert_eq!(texel_alpha_pass_alphas(200, 0, 173), (200, 0));
+        assert_eq!(texel_alpha_pass_alphas(255, 255, 173).0, 1);
+        // Mean 0: pass 1 hides nothing, so pass 2 takes the plain weight.
+        assert_eq!(texel_alpha_pass_alphas(255, 128, 0), (127, 128));
+    }
+
+    /// The compensated two passes track the RDP where pass 1's alpha is
+    /// its image mean, and are unbiased over independent tile alphas (the
+    /// residual is the covariance term, measured on the ROM's image by
+    /// `tests/boss_fall_lod.rs`).
+    #[test]
+    fn the_texel_alpha_two_pass_tracks_the_rdp_blender() {
+        // The Fall's alpha ramp spans 85..=255 over index 0..=10.
+        let ramp: [u8; 11] = core::array::from_fn(|i| (85 + 17 * i) as u8);
+        let mean = (ramp.iter().map(|&a| u32::from(a)).sum::<u32>() / 11) as u8;
+        let mut worst_at_mean = 0u8;
+        for prim_alpha in [24u8, 58, 128, 255] {
+            for frac in [51u8, 100, 128, 160, 204] {
+                for color in [40u8, 200] {
+                    for mem in [0u8, 120, 255] {
+                        let mut signed = 0i64;
+                        let mut n = 0i64;
+                        for &t0 in &ramp {
+                            for &t1 in &ramp {
+                                let rdp = rdp_texel_alpha_channel(
+                                    t0, t1, prim_alpha, frac, 0, color, mem,
+                                );
+                                let ge = ge_texel_alpha_two_pass_channel(
+                                    t0, t1, prim_alpha, frac, mean, color, mem,
+                                );
+                                signed += i64::from(ge) - i64::from(rdp);
+                                n += 1;
+                                if t0.abs_diff(mean) <= 8 {
+                                    worst_at_mean = worst_at_mean.max(ge.abs_diff(rdp));
+                                }
+                            }
+                        }
+                        let bias = signed as f64 / n as f64;
+                        assert!(
+                            bias.abs() <= 1.5,
+                            "A {prim_alpha} f {frac} c {color} m {mem}: bias {bias}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            worst_at_mean <= 4,
+            "worst error near the mean {worst_at_mean}"
+        );
     }
 }
