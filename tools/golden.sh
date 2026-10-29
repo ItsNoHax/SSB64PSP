@@ -234,20 +234,24 @@ for i in "${!goldens[@]}"; do
     elif [ "${actual%% *}" != "${expected%% *}" ]; then
       result=size-mismatch
     else
-      # The hash says the capture differs; a local golden PNG with the
-      # recorded hash says by how many pixels, and where.
+      # The hash says the capture differs: that alone decides the result.
+      # A local golden PNG with the recorded hash only says by how many RGB
+      # pixels, and where (diagnostic; never a pass).
       pixels='?'
       if [ -f "$local_png" ] && [ "$(pixel_hash "$local_png")" = "$expected" ]; then
-        pixels=$(pixel_diff_count "$local_png" "$candidate")
-        pixel_diff_mask "$local_png" "$candidate" "$RUN/masks/$golden.png"
+        pixels=$(pixel_diff_count "$local_png" "$candidate" || echo '?')
+        pixel_diff_mask "$local_png" "$candidate" "$RUN/masks/$golden.png" || true
       fi
     fi
     if [ "$pixels" != - ]; then
-      case "$status:$pixels" in
-        pass:0) result=match ;;
-        pass:*) result=changed ;;
-        known-failing:0) result=now-matches ;;
-        known-failing:*) result=known-failing ;;
+      # Only a hash equal to hashes.tsv matches.
+      same=0
+      [ "$actual" = "$expected" ] && same=1
+      case "$status:$same" in
+        pass:1) result=match ;;
+        pass:0) result=changed ;;
+        known-failing:1) result=now-matches ;;
+        known-failing:0) result=known-failing ;;
       esac
     fi
   fi

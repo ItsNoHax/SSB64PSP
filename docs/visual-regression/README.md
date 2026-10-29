@@ -45,7 +45,8 @@ Output: `target/golden-run/<timestamp>/`
 | `index.html` | Side-by-side golden, candidate, mask; changed scenes first |
 | `stack/<golden>-<pass>.holds` | `scene hold tick=N` lines: ticks that repeat the previous picture (scene exit); capture tick = hold tick means a held picture |
 
-- Pixel count and mask need the scene's local PNG in `tests/golden/local/`, used only if its hash still matches the manifest.
+- Result: hash only. Pixel count and mask: diagnostic, never a pass.
+- Pixel count and mask: RGB only (`-alpha off`, like the hash); need the scene's local PNG in `tests/golden/local/`, used only if its hash still matches the manifest.
 - No local PNG → pixel count reads `?`.
 - View `index.html`: serve over HTTP from repo root (`python3 -m http.server`); loads goldens from `tests/golden/local/`.
 

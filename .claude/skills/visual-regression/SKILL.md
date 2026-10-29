@@ -24,3 +24,8 @@ Tiers:
 | PPSSPP hardware backend | separate, non-deterministic |
 | Physical-PSP capture | separate, non-deterministic |
 | Camera photo of a PSP screen | qualitative; never to the exact comparator |
+
+Worktrees and bisects:
+- No `rom/` in a worktree → set `SSB64_ROM` (absolute) or the tablegen build panics; `assets/generated/ssb64.pak` needed (build or symlink main's)
+- Golden result = hash equality only. Before batch 95 a `pass` row with a differing hash still matched when the local PNG diff said 0 px: that diff honoured alpha, so RGB changes under alpha 0 (viewer scenes, 99.6 % alpha 0) were invisible. "Varying hash, 0 px" is never nondeterminism
+- Bisecting a golden: build each commit's own pack (`romtool pack` at that commit); a newer pack under older code gives a meaningless third hash. Before 74c63e22 also run `tools/gen-*.py --refs refs/ssb-decomp-re` (`--out` for anim-table, computer-scripts)
