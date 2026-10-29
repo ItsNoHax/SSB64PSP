@@ -58,6 +58,9 @@
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
+| Master Hand stage | Playtest: frame rate drops in the Master Hand fight; profile on hardware, cut to 16.7 ms | — |
+| Electric hit drop | Playtest: big frame drop when Pikachu's electric specials or the Ray Gun hit a fighter; profile the hit effect on hardware, cut to 16.7 ms | — |
+| Boot time | Playtest: boot from XMB to the first screen is very slow; measure on hardware (EBOOT + pack on ms0), find the cause, cut it | — |
 | vs4 to 16.7 ms | `vs4@2400` 17.03 ms busy (ms0): 0.33 ms left; next: audio reverb `madd` (needs `audio_selftest` on target, ~0.05 ms), PartLocals/CollisionLocals moves (`hand_transform`, `tick_fight`, ~0.7% of vs4 words), weapon clash copies (~0.3%); re-search the order after hot-code changes (RE-494 procedure; train vs4 + 1P battle + 1P intro) | RE-519, RE-578, RE-579 |
 | 1P intro | 18.01 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
@@ -87,7 +90,6 @@
 | Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
-| PSP-1000 | In scope, before MS8. B (Maps preview), A (audio page cache, pack v137) and C (figatrees per status) done in PPSSPP. PPSSPP acceptance passed: goldens 266/266 under `--ballast 18000000` (min headroom 3.58 MB). Measured on the Slim (RE-574): audio streamer under=0, loader priority, figatree latency. Remaining, hardware only: free memory at `psp_main` on a PSP-1000 (51.4 MB under PSPLink on the 64 MB unit; 1.3 MB firmware overhead is a PSP-2000 figure). Not a plan: fewer fighters at select | RE-288, RE-475, RE-572–RE-574 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 
@@ -110,7 +112,6 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | vs-four golden | Optional: narrow change to catch/thrown/relz/pulled | RE-511 |
-| Fox ledge freeze | Host sweep green (`ledge_sweep.rs`, release full sweep); input recorder only if a playtest repro appears | RE-553 |
 
 ### Audio and rumble (`MS7`)
 
@@ -133,6 +134,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Master Hand | Fall wallpaper (damage 90) draws opaque (N64 alpha 58, MAE 30.4): translucent LOD crossfade needs an fb-copy or dst-alpha lowering plus PSP hardware proof | RE-321, D-051 |
+| Master Hand return | After GootsubusuEnd to Wait (N64 frames 1322/1343, PSP `onepboss@1422/1443`) the N64 hand flies back mid-left; the PSP hand sits at the top edge, mostly off-screen; rejoins by the next shot. Camera or Wait return position, not facing; acceptance: matches the N64 at those frames | RE-581 |
+| onepgiant intro | Donkey stage intro now has 3 clearing cameras (priorities 70, 60, 50); no golden and no N64 capture: capture both, compare | RE-581 |
 
 ### Architecture
 

@@ -1337,7 +1337,7 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
         GameScene::OnePMetal
         | GameScene::OnePGiant
         | GameScene::OnePZako
-        | GameScene::OnePYoshi => {
+        | GameScene::OnePYoshi | GameScene::OnePMario => {
             if scene == GameScene::OnePYoshi {
                 // Yoshi in costume 0, so the Yoshi Team's costume-0 Yoshi
                 // takes shade 1 (`sc1pgame.c:1347`).
@@ -1352,6 +1352,7 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
                 GameScene::OnePMetal => Stage::MMario,
                 GameScene::OnePGiant => Stage::Donkey,
                 GameScene::OnePYoshi => Stage::Yoshi,
+                GameScene::OnePMario => Stage::Mario,
                 _ => Stage::Zako,
             } as u8);
             // The stage's own setup (Giant Donkey Kong's random allies),
@@ -1494,7 +1495,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     // The fixture writes no stocks, falls or results.
     if matches!(
         scene,
-        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario
     ) && s
         .vs_battle
         .as_ref()

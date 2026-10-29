@@ -2,6 +2,7 @@ use super::*;
 use crate::collision::Segment;
 use crate::fighter::FighterKind;
 use crate::ground::BodyColl;
+use crate::slope_contour;
 
 /// A Final Destination-like floor: one line from -3000 to 3000 at y 0.
 fn floor() -> [MapSurface; 1] {
@@ -542,4 +543,75 @@ fn the_struck_joint_sets_the_defeat_zoom() {
     ));
     crate::combat::resolve(&mut f);
     assert_eq!(f.damage_joint_id, 0);
+}
+
+/// TopN's yaw as `ftBossCommonInvertLR` and `ftMainSetStatus` leave it.
+fn want_yaw(f: &Fighter) -> f32 {
+    lr(f) * ssb_engine::math::f_cst_dtor32(90.0)
+}
+
+#[test]
+fn the_turn_constant_matches_the_status_set_constant() {
+    use ssb_engine::math::{f_clc_dtor32, f_cst_dtor32};
+    assert_eq!(f_cst_dtor32(90.0).to_bits(), f_clc_dtor32(90.0).to_bits());
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_move_behind_turns_the_model_with_the_facing() {
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    f.facing = Facing::Right;
+    f.topn_lr = 1.0;
+    set_move(&mut f, Next::Hippataku, Vec3::new(-800.0, 400.0, 0.0));
+    assert_eq!(f.facing, Facing::Left);
+    assert_eq!(
+        slope_contour::topn_yaw(&f).to_bits(),
+        want_yaw(&f).to_bits()
+    );
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_human_turn_in_wait_turns_the_model_with_the_facing() {
+    let mut f = boss();
+    set_wait(&mut f, &floor);
+    f.facing = Facing::Right;
+    f.topn_lr = 1.0;
+    f.stick.x = -80;
+    decide_player(&mut f, &floor);
+    assert_eq!(f.facing, Facing::Left);
+    assert_eq!(
+        slope_contour::topn_yaw(&f).to_bits(),
+        want_yaw(&f).to_bits()
+    );
+}
+
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_model_faces_lr_on_every_tick_while_the_target_switches_sides() {
+    for seed in 1..4 {
+        crate::rng::set_seed(seed);
+        let mut f = boss();
+        set_wait(&mut f, &floor);
+        for t in 0..3000 {
+            // The target crosses over every 300 ticks, so the hand turns
+            // inside its statuses (Move, Hippataku, Harau, Okukouki, ...).
+            let x = if (t / 300) % 2 == 0 { 1200.0 } else { -1200.0 };
+            f.boss.target = Some(Target {
+                port: 0,
+                pos: Vec3::new(x, 0.0, 0.0),
+                floor_line: Some(0),
+            });
+            step(&mut f);
+            f.weapon_spawn = None;
+            f.boss.camera = None;
+            assert_eq!(
+                slope_contour::topn_yaw(&f).to_bits(),
+                want_yaw(&f).to_bits(),
+                "seed {seed} tick {t} {:?}",
+                f.status.status
+            );
+        }
+    }
 }

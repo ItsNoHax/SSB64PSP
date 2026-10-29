@@ -47,6 +47,9 @@ struct Model {
     transn: [f32; 3],
     frozen: bool,
     priority: u8,
+    /// Its intro camera clears the depth buffer before drawing
+    /// ([`spgame::intro::camera_clears_depth`]).
+    clears_depth: bool,
     /// A frozen model's vertices from the last list that drew it
     /// ([`meshdraw::VertexTape`]).
     tape: core::cell::Cell<meshdraw::VertexTape>,
@@ -116,6 +119,7 @@ impl Presentation {
                     spgame::intro::Entrance::ally(card),
                 );
                 model.priority = if card == 5 { 70 } else { 60 };
+                model.clears_depth = spgame::intro::camera_clears_depth(intro.stage, None);
                 // `sc1PIntroFuncStart`: `sSC1PIntroAlly*FighterDemoDesc.shade`.
                 model.shade = ally.shade;
                 self.models.push(model);
@@ -137,6 +141,7 @@ impl Presentation {
             );
             // `sSC1PIntroPlayerFighterDemoDesc.shade`.
             model.shade = session.state.players[usize::from(data.player)].shade;
+            model.clears_depth = spgame::intro::camera_clears_depth(intro.stage, None);
             self.models.push(model);
             let (kind, index, count) = match intro.stage {
                 Stage::Link => (FighterKind::Link, 12, 1),
@@ -219,6 +224,7 @@ impl Presentation {
                     camera,
                     spgame::intro::Entrance::opponent(intro.stage, kind, card),
                 );
+                model.clears_depth = spgame::intro::camera_clears_depth(intro.stage, Some(kind));
                 if intro.stage == Stage::Yoshi {
                     // `ftParamInitAllParts(.., i % 6, shade)`: the Yoshi
                     // in the player's own colour wears shade 1
@@ -256,7 +262,7 @@ impl Presentation {
                             || ally.fkind == FighterKind::Luigi && ally.costume == 0,
                     ),
                 );
-                self.models.push(make_model(
+                let mut model = make_model(
                     p,
                     FighterKind::Luigi,
                     costume,
@@ -266,7 +272,10 @@ impl Presentation {
                     true,
                     camera,
                     spgame::intro::Entrance::opponent(Stage::Mario, FighterKind::Luigi, 0),
-                ));
+                );
+                model.clears_depth =
+                    spgame::intro::camera_clears_depth(Stage::Mario, Some(FighterKind::Luigi));
+                self.models.push(model);
             }
         } else if matches!(screen, Screen::Continue(_)) {
             let camera = [0.0, 1000.0, 2000.0, 0.0, 0.0, 400.0, 0.0, 0.0, 0.0, 30.0];
@@ -568,6 +577,11 @@ impl Presentation {
         lights: &mut spgame::intro::FighterLights,
     ) {
         for m in &self.models {
+            // The model's camera clears depth over its viewport whether or
+            // not it draws anything; each such camera draws one model here.
+            if m.priority == priority && m.clears_depth {
+                gpu.clear_depth();
+            }
             if m.priority == priority && m.entrance.shown {
                 let light = lights.next(m.kind);
                 draw_model(
@@ -620,6 +634,7 @@ fn make_model(
         transn: [0.0; 3],
         frozen: frozen,
         priority: if frozen { 40 } else { 50 },
+        clears_depth: false,
         tape: core::cell::Cell::new(meshdraw::VertexTape::default());
         // The intro and figure motions are unflagged: the `animlock` parts
         // stay frozen (RE-509).

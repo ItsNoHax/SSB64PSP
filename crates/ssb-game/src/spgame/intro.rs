@@ -287,3 +287,41 @@ pub fn named_allies<'a>(
         .take(allies_num(stage))
         .map(move |&port| state.players[usize::from(port)].fkind)
 }
+
+/// Whether the camera that draws an intro fighter clears the depth buffer
+/// over its viewport first (`COBJ_FLAG_ZBUFFER`, `objdisplay.c`), so the
+/// fighter depth-tests only against its own camera's draws. `opponent` is
+/// `None` for the player and the allies, whose `sc1PIntroMakeFighterCamera`
+/// sets the flag (`sc1pintro.c:1572`); an opponent's stage camera clears
+/// only for the Mario Bros.' Luigi (`sc1PIntroInitVSFighters`,
+/// `sc1pintro.c:1343-1345`).
+pub fn camera_clears_depth(stage: Stage, opponent: Option<FighterKind>) -> bool {
+    match opponent {
+        None => true,
+        Some(kind) => stage == Stage::Mario && kind == FighterKind::Luigi,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fighter_cameras_and_luigis_clear_depth() {
+        for stage in [Stage::Mario, Stage::Donkey, Stage::Yoshi, Stage::Boss] {
+            assert!(camera_clears_depth(stage, None), "{stage:?}");
+        }
+        assert!(camera_clears_depth(Stage::Mario, Some(FighterKind::Luigi)));
+        assert!(!camera_clears_depth(Stage::Mario, Some(FighterKind::Mario)));
+        for (stage, kind) in [
+            (Stage::Yoshi, FighterKind::Yoshi),
+            (Stage::Kirby, FighterKind::Kirby),
+            (Stage::Link, FighterKind::Link),
+            (Stage::Donkey, FighterKind::Donkey),
+            (Stage::Zako, FighterKind::PolyMario),
+            (Stage::Boss, FighterKind::Boss),
+        ] {
+            assert!(!camera_clears_depth(stage, Some(kind)), "{stage:?}");
+        }
+    }
+}

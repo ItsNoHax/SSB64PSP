@@ -178,7 +178,7 @@ const fn vs_knock_smash(tick: u64) -> bool {
 const fn special_stage_a_from(scene: GameScene) -> u64 {
     match scene {
         // The fixture's KOs at battle clock 1000 (tick 1466).
-        GameScene::OnePMetal | GameScene::OnePGiant => 1466,
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePMario => 1466,
         // The sixth team KO, at clock 1750 (tick 2216).
         GameScene::OnePYoshi => 2216,
         GameScene::OnePZako => 2820,
@@ -210,7 +210,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::OnePBoss => 1500,
         GameScene::OnePBossDefeat => 1500,
         GameScene::OnePBossHit => ssb_capture::script::boss_hit::CAPTURE_TICK,
-        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi => 1200,
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario => 1200,
         GameScene::OnePContinue => 240,
         GameScene::OnePRetry => 320,
         GameScene::OnePClear => 270,
@@ -599,7 +599,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         (g, _) if opening_capture_kind(g).is_some() || g == GameScene::OpeningTitle => return N64Buttons(0),
         _ => {}
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return match tick {
             4 | 10 | 34 => N64Buttons(N64Buttons::A),
             166 if scene == GameScene::OnePGame => N64Buttons(N64Buttons::A),
@@ -613,7 +613,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             270 if scene == GameScene::OnePRetry => N64Buttons(N64Buttons::A),
             // Past its capture, A every 30 ticks takes a stage the fixture
             // clears through its results into the next stage (RE-478).
-            t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePBossDefeat)
+            t if matches!(scene, GameScene::OnePTargetClear | GameScene::OnePPlatformClear | GameScene::OnePRaceClear | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePBossDefeat)
                 && t > capture_ticks(scene)
                 && t >= special_stage_a_from(scene)
                 && t % 30 == 0 => N64Buttons(N64Buttons::A),
@@ -883,7 +883,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if capture_menu(scene).is_some() {
         return 0;
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         return if (14..=24).contains(&tick) { 80 } else { 0 };
     }
     if scene == GameScene::TrainingInterface {
@@ -1009,7 +1009,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
     if capture_menu(scene).is_some() {
         return 0;
     }
-    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
+    if matches!(scene, GameScene::OnePGame | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale) {
         // Two separate menu-down edges, then carry the puck to Kirby.
         return match tick {
             6 | 8 => -80,
@@ -2641,7 +2641,7 @@ fn capture_route(scene: GameScene) -> CaptureRoute {
             CaptureRoute::StageSelect
         }
         GameScene::OnePGame
-        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale
+        | GameScene::OnePIntro | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePContinue | GameScene::OnePRetry | GameScene::OnePClear | GameScene::OnePGameClear | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale
         | GameScene::FighterSelect
         | GameScene::VsModeMenu
         | GameScene::VsPlayers
@@ -5511,7 +5511,7 @@ unsafe fn run() -> ! {
             campaign::log_boss_state(&s, sim_frame_index);
         }
         #[cfg(any(feature = "headless_capture", feature = "regression_capture"))]
-        if matches!(capture_spec, Some(GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi)) {
+        if matches!(capture_spec, Some(GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario)) {
             campaign::log_zako_state(&s, sim_frame_index);
         }
         // `vspush`: the pushed CPU has no jumps left to come back with and
@@ -5624,7 +5624,7 @@ unsafe fn run() -> ! {
             gpu.wait_presented();
             emit_headless_screenshot();
             log_stack_peak(sim_frame_index);
-            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
+            if matches!(capture_scene, Some(GameScene::OnePGame | GameScene::OnePBonus | GameScene::OnePTargetClear | GameScene::OnePTargetFall | GameScene::OnePPlatforms | GameScene::OnePPlatformClear | GameScene::OnePPlatformFall | GameScene::OnePPlatformsRide | GameScene::OnePRace | GameScene::OnePRaceClear | GameScene::OnePRaceFall | GameScene::OnePRaceHazards | GameScene::OnePBoss | GameScene::OnePBossDefeat | GameScene::OnePBossHit | GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePEnding | GameScene::OnePStaffroll | GameScene::OnePCongra | GameScene::OnePChallenger | GameScene::OnePMessage | GameScene::OnePFinale)) {
                 campaign::log_capture(&s, sim_frame_index);
             }
             // One line for the capture log: whether the scripted attack

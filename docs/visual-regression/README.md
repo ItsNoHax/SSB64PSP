@@ -141,7 +141,7 @@ Source of which goldens exist: [`tests/golden/scenes.tsv`](../../tests/golden/sc
   - `onepintro`, `onepbonus`, `onepcontinue`, `onepretry`, `onepclear`, `onepgameclear`
   - `onepintro@T`, `onepclear@T`: N64 scene tic T-106 (RE-548)
   - Break the Targets, Board the Platforms, Race to the Finish fixtures
-  - `onepboss*`, `onepmetal`, `onepgiant`, `onepzako`, `onepyoshi`
+  - `onepboss*`, `onepmetal`, `onepgiant`, `onepzako`, `onepyoshi`, `onepmario`
   - `onepending`, `onepstaffroll`, `onepcongra`, `onepchallenger`, `onepmessage`, `onepfinale`
 - Fixtures simulate no preceding campaign wins and write no results.
 - Objective, result and handoff logic after the seed: the port's own.

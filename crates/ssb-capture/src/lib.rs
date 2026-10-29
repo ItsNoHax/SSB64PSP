@@ -320,6 +320,9 @@ pub enum GameScene {
     /// `onepyoshi`: Yoshi costume 0 against the Yoshi Team, whose
     /// same-costume Yoshi takes shade 1 (`sc1pgame.c:1347`, RE-453).
     OnePYoshi,
+    /// `onepmario`: the Mario Bros. with the player's ally; Luigi's stage
+    /// camera clears depth over Mario's (`sc1pintro.c:1343-1345`).
+    OnePMario,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -853,7 +856,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 210] = [
+    pub const ALL: [GameScene; 211] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -874,6 +877,7 @@ impl GameScene {
         GameScene::OnePGiant,
         GameScene::OnePZako,
         GameScene::OnePYoshi,
+        GameScene::OnePMario,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -1088,6 +1092,7 @@ impl GameScene {
             GameScene::OnePGiant => "onepgiant",
             GameScene::OnePZako => "onepzako",
             GameScene::OnePYoshi => "onepyoshi",
+            GameScene::OnePMario => "onepmario",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",

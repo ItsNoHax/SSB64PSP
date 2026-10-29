@@ -382,10 +382,15 @@ fn target_floor(f: &Fighter) -> Option<u16> {
 // ftbosscommon.c
 // ---------------------------------------------------------------------------
 
-/// `ftBossCommonInvertLR`.
+/// `ftBossCommonInvertLR`; also the inline turns of `ftBossMoveSetStatus`
+/// and `ftBossWaitDecideStatusPlayer`. Each writes TopN `rotate.y =
+/// lr * F_CST_DTOR32(90)` with the flip, so the model and its joints turn at
+/// once, not at the next status set. `F_CST_DTOR32(90)` and `ftMainSetStatus`'s
+/// `F_CLC_DTOR32(90)` are the same `f32`, so `topn_lr` carries it.
 fn invert_lr(f: &mut Fighter) {
     if !f.boss.lr_zero {
         f.facing = f.facing.flipped();
+        f.topn_lr = f.facing.sign();
     }
 }
 
