@@ -1952,12 +1952,36 @@ const GAME_STACK_BYTES: usize = 512 * 1024;
 
 psp::module!("ssb64_psp_game", 1, 0, GAME_STACK_BYTES);
 
+/// Where `run`'s frame ends in the data cache's way
+/// (`ssb_psp_runtime::stack_pin`), so every frame's stack maps onto the
+/// same cache sets whatever `run`'s size: the middle of the offsets
+/// measured fastest on a PSP-2000 (RE-583). The second word of a `static`
+/// read at run time, not a `const`, so that `tools/icache/stack-set.py`
+/// can set it after the marker word in a built PRX and every screened
+/// offset runs the same code.
+static STACK_SET: [u32; 2] = [u32::from_le_bytes(*b"SPIN"), 0x1600];
+
+fn stack_set() -> usize {
+    // SAFETY: a static's word.
+    unsafe { core::ptr::read_volatile(&STACK_SET[1]) as usize }
+}
+
 #[cfg_attr(feature = "fcr31_probe", allow(unreachable_code))]
 fn psp_main() {
     ssb_psp_runtime::fpu::init_thread(ssb_psp_runtime::fpu::GameThread::Main);
     #[cfg(feature = "fcr31_probe")]
     ssb_psp_runtime::fcr31_probe::run();
+    #[cfg(not(feature = "boot_log"))]
     boot_log::log("psp_main");
+    // The stack before the pin (RE-583).
+    #[cfg(feature = "boot_log")]
+    boot_log::log_args(format_args!(
+        "psp_main sp={:#x}",
+        ssb_psp_runtime::stack_pin::stack_pointer() as u32
+    ));
+    // A fatal screen writes the lines `boot_log` still holds.
+    #[cfg(feature = "boot_log")]
+    ssb_psp_runtime::memory::on_fatal(boot_log::flush);
     // A test build takes away the memory a smaller launch lacks (RE-475).
     #[cfg(feature = "memory_ballast")]
     if let Some(target) = ssb_psp_runtime::memory::ballast_target() {
@@ -1971,7 +1995,8 @@ fn psp_main() {
     ssb_psp_runtime::sqrt_selftest::run();
     #[cfg(feature = "trig_selftest")]
     ssb_psp_runtime::trig_selftest::run();
-    unsafe { run() }
+    // SAFETY: the 512 KiB stack has room for the pin's at most 8 KiB.
+    unsafe { ssb_psp_runtime::stack_pin::enter(run, stack_set()) }
 }
 
 /// The FPU control word each game thread started with
@@ -1992,6 +2017,31 @@ fn log_launch_fcr31() {
         psp::sys::sceIoWrite(psp::sys::sceKernelStdout(), line.as_ptr() as *const core::ffi::c_void, line.len());
     }
     boot_log::log_args(format_args!("{}", line.trim_end()));
+}
+
+/// The tick that starts a boot's audio system (D-049), at its top: after
+/// the first picture, which no longer waits for the 1.9 MB audio read
+/// (about 0.1 s on a PSP-2000), and before any sound call. The boot's tick
+/// 1 is `mnStartup`'s, which calls nothing (its `syAudioStopBGMAll` runs in
+/// its start, with nothing playing) and lets the skip to the title come on
+/// tic 8 at the earliest (`ssb_game::opening::startup` tests). A capture
+/// starts audio before its first tick, which enters its scene.
+const AUDIO_START_TICK: u64 = 2;
+
+/// Another version's pack, or not a pack: the screen says which file and
+/// why (`ssb_rom::pack::PackError`'s text), and `boot.log` keeps it.
+#[cold]
+#[inline(never)]
+fn pack_rejected(path: &str, e: ssb_rom::pack::PackError) -> ! {
+    let file = alloc::format!("File: {path}");
+    let why = alloc::format!("Reason: {e}.");
+    boot_log::log_args(format_args!("pack rejected: {path}: {e}"));
+    ssb_psp_runtime::memory::fatal(&[
+        "ssb64.pak does not match this EBOOT.PBP.",
+        &file,
+        &why,
+        "Copy the ssb64.pak built with this EBOOT beside it.",
+    ]);
 }
 
 /// Loads the pack's audio section, starts the audio thread and installs the
@@ -2301,9 +2351,6 @@ const BG_TRAINING_OUT_OF_MEMORY: Color = Color::rgba(120, 0, 160, 255);
 /// `assets::LoadError::ShortRead` -- `sceIoRead` returned fewer bytes than
 /// the file's reported size (seen over PSPLink's `host0:`, RE-296).
 const BG_TRAINING_SHORT_READ: Color = Color::rgba(200, 200, 0, 255);
-/// The pack opened and read fully but `ssb_rom::pack::Pack::open` rejected
-/// its contents (bad magic/version/bounds).
-const BG_TRAINING_PARSE_FAILED: Color = Color::rgba(0, 90, 170, 255);
 /// `strict_render` builds only: the pack opened but `ssb_rom::strict` found
 /// a reference the draw path would silently skip.
 #[cfg(feature = "strict_render")]
@@ -5308,15 +5355,24 @@ fn new_session(backup: ssb_game::backup::Backup, save: save::Save) -> alloc::box
 }
 
 unsafe fn run() -> ! {
+    ssb_psp_runtime::stack_pin::check(stack_set());
     // The scripted scene this run captures; `None` reads the real pad.
     let capture = capture::select();
     // The save scenes run another scene's route and script.
     let capture_spec = capture.map(|c| c.scene);
     let capture_scene = capture_spec.map(GameScene::script);
+    #[cfg(not(feature = "boot_log"))]
+    boot_log::log("run_start");
+    #[cfg(feature = "boot_log")]
+    boot_log::log_args(format_args!(
+        "run_start sp={:#x}",
+        ssb_psp_runtime::stack_pin::stack_pointer() as u32
+    ));
     let mut gpu = Gpu::init();
     // Select this application’s layout at the PSP backend boundary.  The
     // asset viewer keeps PspInput::init() and therefore its legacy controls.
     let mut pad = PspInput::init_with_mapping(SSB64_GAME_MAPPING);
+    boot_log::log("gpu_pad_init");
 
     // Load the converted asset pack. Held for the whole program: the GE
     // reads vertex and texture data out of it by DMA once the training
@@ -5326,6 +5382,14 @@ unsafe fn run() -> ! {
         "load_pack {}",
         loaded.as_ref().map_or_else(|e| e.as_str(), |_| "ok")
     ));
+    // A pack of another version is read header-only (`resident_len`) and
+    // rejected here: the game stops on a screen that says so instead of
+    // running on placeholder screens.
+    let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
+    let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
+    if let (Ok((_, path)), Some(Err(e))) = (&loaded, &opened) {
+        pack_rejected(path, *e);
+    }
     // `lbBackupIsSramValid` and `lbBackupApplyOptions`, before the first
     // scene.
     // The archive files after the resident bytes load per scene (RE-475).
@@ -5333,35 +5397,49 @@ unsafe fn run() -> ! {
         // SAFETY: `loaded` lives until `run` returns, which it never does.
         let bytes: &'static [u8] = core::slice::from_raw_parts(buf.as_ptr(), buf.as_slice().len());
         if let Some(c) = assets::c_path(path) {
-            if let Err(assets::LoadError::OutOfMemory) = ssb_psp_runtime::scene_files::boot(bytes, c) {
-                ssb_psp_runtime::memory::fatal(&["Out of memory while opening ssb64.pak."]);
+            match ssb_psp_runtime::scene_files::boot(bytes, c) {
+                Ok(()) => {}
+                Err(assets::LoadError::OutOfMemory) => {
+                    ssb_psp_runtime::memory::fatal(&["Out of memory while opening ssb64.pak."]);
+                }
+                Err(e) => {
+                    boot_log::log_args(format_args!("scene_files boot failed: {}", e.as_str()));
+                    ssb_psp_runtime::memory::fatal(&["Could not open ssb64.pak:", e.as_str()]);
+                }
             }
         }
+        boot_log::log("scene_files_boot");
     }
     // The controller motor (a no-op on the PSP: `NoMotor`), before the
     // first scene's rumble calls.
     ssb_game::rumble::install(&ssb_psp_runtime::input::MOTOR);
     // The audio system (D-049), before the backup's options reach it and
-    // before the first scene's sound calls.
+    // before the first scene's sound calls: here for a capture, whose
+    // first tick enters its scene; after the first picture for a boot
+    // ([`AUDIO_START_TICK`]).
+    let defer_audio = capture_scene.is_none();
     #[cfg(not(feature = "no_audio"))]
-    if let Ok((buf, path)) = &loaded {
-        start_audio(buf.as_slice(), path);
+    if !defer_audio {
+        if let Ok((buf, path)) = &loaded {
+            start_audio(buf.as_slice(), path);
+        }
     }
     let (backup, save) = save::boot(loaded.as_ref().ok().map(|(_, p)| *p), capture_spec);
+    boot_log::log("save_boot");
     // `scManagerRunLoop`: `syAudioSetFXType(AL_FX_CUSTOM)` and its waits on
     // the audio thread are the audio system's own boot configuration
     // (D-049), done where it is installed; then `lbBackupApplyOptions`,
     // which needs the audio system installed (`ssb_game::sound::install`).
-    backup.apply_options();
-    let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
-    let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
+    if !defer_audio {
+        backup.apply_options();
+    }
     // At boot, not in the first frame that looks a sprite up (RE-471).
     if let Some(Ok(p)) = &opened {
         p.build_indexes();
     }
     // Which flat colour `draw_training` falls back to when there is no scene
-    // to draw -- distinguishes *why* (open/read failure s.vs. a rejected
-    // header) without needing `sceFont` text, extending the pixel-provable
+    // to draw -- distinguishes *why* the pack did not load without needing
+    // `sceFont` text, extending the pixel-provable
     // convention the retired F1 spec's "Scene loading" section already
     // established for the plain not-loaded case.
     let no_pack_color = match (&loaded, &opened) {
@@ -5369,10 +5447,10 @@ unsafe fn run() -> ! {
         (Err(assets::LoadError::Empty), _) => BG_TRAINING_PACK_EMPTY,
         (Err(assets::LoadError::OutOfMemory), _) => BG_TRAINING_OUT_OF_MEMORY,
         (Err(assets::LoadError::ShortRead), _) => BG_TRAINING_SHORT_READ,
-        (Ok(_), Some(Err(_))) => BG_TRAINING_PARSE_FAILED,
         (Ok(_), _) => BG_TRAINING_NO_PACK,
     };
     let pack: Option<Pack<'_>> = opened.and_then(|r| r.ok());
+    boot_log::log("pack_open_indexes");
     // Strict rendering mode fails fast instead of drawing around a bad
     // reference.
     #[cfg(feature = "strict_render")]
@@ -5382,17 +5460,20 @@ unsafe fn run() -> ! {
     };
     // On the heap, built in `new_session`'s frame rather than `run`'s.
     let mut s = new_session(backup, save);
+    boot_log::log("new_session");
     // `scManagerRunLoop`'s first scene: the N64 logo (`mnStartup`), then
     // the opening movie and the title (RE-467). A capture takes its
     // scripted route.
     if capture_scene.is_none() {
         go_scene(&mut s, pack.as_ref(), MScene::Startup, MScene::Startup, false);
     }
+    boot_log::log("go_scene_done");
     // Built on each Training entry for the stage picked (`enter_training`).
     // `gSCManagerSceneData.gkind` and `s.maps_training_gkind`, both
     // `nGRKindCastle` in `dSCManagerDefaultSceneData`.
 
     let draw_assets = pack.as_ref().map(DrawAssets::resolve).unwrap_or_default();
+    boot_log::log("draw_assets");
     let mut draw_state = meshdraw::DrawState::default();
     // Each battle scene's fighters, pools, stage and effect players are its
     // `BattleWorld`, made in the scene arena at its entry (`Session::enter`).
@@ -5420,6 +5501,17 @@ unsafe fn run() -> ! {
         }
         if sim_frame_index == 60 {
             log_launch_fcr31();
+            boot_log::flush();
+        }
+        // A boot's audio system, after its first picture and before any
+        // sound call: `mnStartup`'s first tick makes none (D-049).
+        if defer_audio && sim_frame_index == AUDIO_START_TICK {
+            #[cfg(not(feature = "no_audio"))]
+            if let Ok((buf, path)) = &loaded {
+                start_audio(buf.as_slice(), path);
+            }
+            s.backup.apply_options();
+            boot_log::log("audio_started");
         }
         pad.poll();
         let (previous_controller, controller) = if let Some(scene) = capture_scene {
@@ -5469,7 +5561,7 @@ unsafe fn run() -> ! {
             hold_picture(&mut s, before, sim_frame_index);
         }
         profile::stop(profile::Span::Update, update_start);
-        save::persist(&mut s.save, &s.backup);
+        save::persist(&mut s.save, &s.backup, sim_frame_index);
 
         // `kirbywiggle`: the captured dummy reads the pad from here, as the
         // N64 trace's dummy read port 2 (RE-552).

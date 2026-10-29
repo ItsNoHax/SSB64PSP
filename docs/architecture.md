@@ -34,7 +34,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 - Simulation: fixed 60 Hz, catch-up cap, decoupled from rendering ([D-005](decisions/D-005.md))
 - Display lists: converted once at build time; RDP not emulated ([D-001](decisions/D-001.md), [D-002](decisions/D-002.md))
 - Pack: mandatory, built separately ([D-028](decisions/D-028.md))
-  - boot reads header, tables, shared region
+  - boot order: `load_pack`, `Pack::open` version check (mismatch is fatal), `scene_files::boot`, `save::boot`, frame 1; tick 2 starts audio and writes the first save (RE-582)
   - each scene reads its files and extern closure at start; Maps loads MAPS + cursor preview, swapped per cursor move (`scene_load::maps_preview`)
   - next scene's files prefetched where known ([D-046](decisions/D-046.md))
   - sizes, budgets: [memory.md](memory.md)

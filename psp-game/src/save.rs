@@ -18,7 +18,15 @@ pub(crate) struct Save {
     path: Option<&'static str>,
     /// `Backup::writes` at the last save.
     saved: u32,
+    /// A save taken before [`FIRST_WRITE_TICK`], written then.
+    held: Option<alloc::boxed::Box<Backup>>,
 }
+
+/// The first tick that writes the memory stick. The boot's own save (its
+/// boot count) is taken in tick 1 but written here, after the first
+/// picture: the write costs about 35 ms on a PSP-2000, 0.3 s when it
+/// creates the file. The same bytes, one tick later.
+pub(crate) const FIRST_WRITE_TICK: u64 = 2;
 
 /// Whether a run with this capture scene uses the memory stick.
 fn persists(capture: Option<GameScene>) -> bool {
@@ -48,17 +56,38 @@ pub(crate) fn boot(pack_path: Option<&'static str>, capture: Option<GameScene>) 
         ));
     }
     backup.count_boot();
-    (backup, Save { path, saved: 0 })
+    (
+        backup,
+        Save {
+            path,
+            saved: 0,
+            held: None,
+        },
+    )
 }
 
 /// `lbBackupWrite`'s memory-stick half: saves `backup` if the game wrote it
-/// since the last save.
-pub(crate) fn persist(save: &mut Save, backup: &Backup) {
+/// since the last save. Before [`FIRST_WRITE_TICK`] the save is held, and
+/// written first thing at that tick.
+pub(crate) fn persist(save: &mut Save, backup: &Backup, tick: u64) {
+    let Some(path) = save.path else { return };
+    if tick >= FIRST_WRITE_TICK {
+        if let Some(held) = save.held.take() {
+            write(path, &held);
+        }
+    }
     if backup.writes == save.saved {
         return;
     }
     save.saved = backup.writes;
-    let Some(path) = save.path else { return };
+    if tick < FIRST_WRITE_TICK {
+        save.held = Some(alloc::boxed::Box::new(backup.clone()));
+        return;
+    }
+    write(path, backup);
+}
+
+fn write(path: &'static str, backup: &Backup) {
     let line = match savedata::save(path, backup) {
         Ok(()) => alloc::format!(
             "save: wrote {} boot={} unlock={:#04x} fighters={:#06x}\n",

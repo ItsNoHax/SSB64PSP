@@ -5824,6 +5824,29 @@ impl<'a> Pack<'a> {
     }
 }
 
+/// What the player reads when the pack beside the EBOOT is not this
+/// build's: another version is loaded header-only and would otherwise run
+/// the game on placeholder screens. After `impl Pack`: an impl before it
+/// renumbers `Pack`'s symbol names, which `psp-game/link-order.txt` lists
+/// (`tools/psp-link.py`).
+impl core::fmt::Display for PackError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            PackError::TooSmall => f.write_str("the file is too short to be a pack"),
+            PackError::BadMagic(m) => {
+                write!(f, "the file is not an SSB64PSP pack (magic {m:#010x})")
+            }
+            PackError::BadVersion(v) => write!(
+                f,
+                "it is pack version {v}; this EBOOT needs version {VERSION}"
+            ),
+            PackError::OutOfBounds => {
+                f.write_str("a table points outside the file (damaged or truncated)")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8777,5 +8800,32 @@ mod tests {
         // A leaf that does continue its parent's subtree stays in place.
         parents.push(Some(0));
         assert_eq!(dobj_draw_order(&parents), (0..52).collect::<Vec<_>>());
+    }
+
+    /// Another version's pack: the boot reads its header only
+    /// (`resident_len`), `Pack::open` names both versions, and the PSP
+    /// shows that line instead of running on placeholder screens.
+    #[test]
+    fn another_versions_header_is_named_not_opened() {
+        let mut head = alloc::vec![0u8; Header::SIZE];
+        head[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        head[4..8].copy_from_slice(&(VERSION - 1).to_le_bytes());
+        assert_eq!(u32_at(&head, 4), VERSION - 1);
+        assert_eq!(resident_len(&head), None);
+        assert_eq!(audio_range(&head), None);
+        let e = Pack::open(&head).err().unwrap();
+        assert_eq!(e, PackError::BadVersion(VERSION - 1));
+        assert_eq!(
+            alloc::format!("{e}"),
+            alloc::format!(
+                "it is pack version {}; this EBOOT needs version {VERSION}",
+                VERSION - 1
+            )
+        );
+        head[0] ^= 0xFF;
+        let e = Pack::open(&head).err().unwrap();
+        assert!(matches!(e, PackError::BadMagic(_)));
+        assert!(alloc::format!("{e}").starts_with("the file is not an SSB64PSP pack"));
+        assert_eq!(Pack::open(&head[..8]).err(), Some(PackError::TooSmall));
     }
 }

@@ -7,7 +7,7 @@
 //! PSPLink. [`hold_ballast`] takes the difference away at boot so PPSSPP
 //! and PSPLink runs see a launch's budget.
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 use psp::sys;
 use ssb_engine::memory::{BlockAlloc, GameArena, GameArenaError, GameArenaUsage, SceneBox};
@@ -100,11 +100,26 @@ pub fn ballast_target() -> Option<usize> {
     None
 }
 
+/// What [`fatal`] runs first: the application's own last words (the
+/// game's held `boot.log` lines).
+static ON_FATAL: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Has [`fatal`] call `hook` before it draws its screen.
+pub fn on_fatal(hook: fn()) {
+    ON_FATAL.store(hook as *mut (), Ordering::Relaxed);
+}
+
 /// Shows `lines` on a black screen and keeps the thread waiting on vblank,
 /// so HOME still quits: the screen a load or allocation failure ends on
 /// instead of a hang (RE-475). Draws with the CPU into VRAM, after the GE
 /// has finished, and allocates nothing.
 pub fn fatal(lines: &[&str]) -> ! {
+    let hook = ON_FATAL.load(Ordering::Relaxed);
+    if !hook.is_null() {
+        // SAFETY: only `on_fatal` stores here, and it stores a `fn()`.
+        let hook: fn() = unsafe { core::mem::transmute::<*mut (), fn()>(hook) };
+        hook();
+    }
     // SAFETY: the GE is waited for before the CPU writes VRAM; the waits
     // have no preconditions.
     unsafe {

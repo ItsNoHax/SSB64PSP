@@ -7,7 +7,8 @@ through next to each other removes 8% of the draw's instruction-cache
 misses on a PSP-2000 (RE-482). `psp-game/link-order.txt` lists them, hottest
 first, as v0-mangled names with the crate hashes removed (`stable`): a
 crate's hash changes with its feature set and the checkout's path, the rest
-of the name does not. This script
+of the name does not. Names match without their impl disambiguators
+(`key`), which an impl added above another changes. This script
 reads the function symbols of the objects being linked, maps the listed
 names onto them, appends the unlisted functions sorted by stable name (a
 checkout-independent layout) and passes the result to `rust-lld` as a
@@ -44,8 +45,9 @@ BSS_SET = 0x1d00
 PAD_SYMBOL = 'psp_link_pad'
 
 
-def stable(name):
-    """`name` without its crate hashes. A v0 back-reference (`B<base62>_`)
+def stable(name, impls=True):
+    """`name` without its crate hashes (and, with `impls` false, without
+    its impl disambiguators: see `key`). A v0 back-reference (`B<base62>_`)
     is a byte offset into the name, so it moves with the hashes' lengths:
     each is re-pointed into the hash-free name, which then does not depend
     on the hashes at all (a generic function's name otherwise matches only
@@ -53,18 +55,30 @@ def stable(name):
     v0 grammar below does not cover keeps its back-references."""
     if name.startswith('_R'):
         try:
-            return _V0(name).stable()
+            return _V0(name, impls).stable()
         except (ValueError, IndexError, KeyError):
             pass
     return CRATE_HASH.sub('C', name)
+
+
+def key(name):
+    """The name a `link-order.txt` line and a function match on: `stable`
+    without the v0 impl disambiguators (`M`/`X` then `s<base62>_`). rustc
+    numbers a module's impl blocks in source order, so an impl added above
+    another renames every method of the later one: batch 90's `impl
+    Display for PackError` above `impl Pack` dropped the whole `Pack` part
+    of the order (RE-583). The unlisted functions still sort by `stable`,
+    so this changes no layout."""
+    return stable(name, impls=False)
 
 
 class _V0:
     """One pass over a v0 symbol (the Rust v0 mangling grammar), copying it
     without crate disambiguators and with back-references re-encoded."""
 
-    def __init__(self, name):
+    def __init__(self, name, impls=True):
         self.s, self.i, self.out, self.at = name, 2, ['_R'], {}
+        self.impls = impls
         self.length = 2
 
     def stable(self):
@@ -175,8 +189,12 @@ class _V0:
 
     def impl_path(self):
         if self.peek() == 's':
-            self.take()
-            self.base62()
+            if self.impls:
+                self.take()
+                self.base62()
+            else:
+                self.i += 1
+                self.base62(emit=False)
         self.path()
 
     def generic_arg(self):
@@ -296,23 +314,38 @@ def main():
             print(' '.join(f))
         return
     out = args[args.index('-o') + 1] if '-o' in args else 'a.out'
-    by_stable = {}
+    by_key = {}
     for arg in args:
         if arg.endswith('.o') and os.path.isfile(arg):
             for name in functions(arg):
-                by_stable.setdefault(stable(name), []).append(name)
+                by_key.setdefault(key(name), []).append(name)
     order = []
+    unmatched = []
     with open(LIST) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith('#'):
-                order.extend(by_stable.get(line, []))
+                names = by_key.get(key(line), [])
+                order.extend(names)
+                if not names:
+                    unmatched.append(line)
+    # The order is traced on the timed build (`frame_timer`), so there every
+    # line names a function, and one that does not is a function renamed or
+    # removed since: the linker warns. A release build also lacks the
+    # timer's own functions, listed in OUT.unmatched without a warning.
+    if not unmatched and os.path.exists(out + '.unmatched'):
+        os.remove(out + '.unmatched')
+    if unmatched:
+        with open(out + '.unmatched', 'w') as f:
+            f.write(''.join(line + '\n' for line in unmatched))
+        if any('11frame_timer' in k for k in by_key):
+            sys.stderr.write('psp-link: %d link-order lines match no function (%s.unmatched)\n' % (len(unmatched), out))
     # The functions the list leaves out follow by stable name: in rustc's
     # output order they would sit by crate hash, so in another order in
     # every checkout, and their placement moves the listed code's timing
     # (RE-580).
     listed = set(order)
-    order.extend(sorted((n for names in by_stable.values() for n in names if n not in listed), key=lambda n: (stable(n), n)))
+    order.extend(sorted((n for names in by_key.values() for n in names if n not in listed), key=lambda n: (stable(n), n)))
     save = os.environ.get('PSP_LINK_SAVE')
     if save:
         # Keep the link's inputs, so another function order can be linked

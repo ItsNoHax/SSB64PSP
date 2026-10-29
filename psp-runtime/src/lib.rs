@@ -35,6 +35,7 @@ pub mod sample_stream;
 pub mod scene_files;
 #[cfg(feature = "sqrt_selftest")]
 pub mod sqrt_selftest;
+pub mod stack_pin;
 pub mod stack_poison;
 #[cfg(feature = "texture_probe")]
 pub mod texprobe;

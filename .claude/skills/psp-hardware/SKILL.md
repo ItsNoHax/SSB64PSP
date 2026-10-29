@@ -223,3 +223,8 @@ build PRX + current pack
   -> rebuild, reset/reload, stability window
   -> native capture + hardware evidence
 ```
+
+## Frame stack pin
+
+- `psp_main` enters `run` at d-cache way offset 0x1600 (`stack_pin`); `run` asserts it
+- Memory map, `.bss` pin or `run` frame changes → re-screen offsets: `tools/icache/stack-set.py` on a timer PRX, intro and battle busy ms (RE-583)

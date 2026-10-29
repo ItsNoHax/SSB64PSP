@@ -192,3 +192,30 @@ impl Default for Startup {
         Startup::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sound::testing::{Call, Recorder};
+
+    /// The PSP boot installs the audio system after the first frame
+    /// (`psp-game` `AUDIO_START_TICK`, 2): sound lost before it must be
+    /// none. The logo's only call is `mnStartupStartScene`'s
+    /// `syAudioStopBGMAll` (nothing plays yet), it calls nothing on any tic,
+    /// and its earliest exit, the skip to the title, comes on tic 8.
+    #[test]
+    fn the_logo_makes_no_sound_before_its_skip() {
+        let r = Recorder::install();
+        let mut s = Startup::new();
+        assert_eq!(r.take(), [Call::StopBgmAll]);
+        let first_skip = (1..=200).find(|_| s.tick(true).is_some());
+        assert_eq!(first_skip, Some(8));
+        let mut s = Startup::new();
+        r.take();
+        let next = (1..=200).find(|_| s.tick(false).is_some());
+        // Rise 17 tics, rest 24, fade wait 13, then the exit tic.
+        assert_eq!(next, Some(17 + 24 + 13 + 1));
+        assert_eq!(r.take(), []);
+        crate::sound::uninstall();
+    }
+}

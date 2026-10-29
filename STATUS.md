@@ -10,13 +10,15 @@
 | Goldens | 268 of 268 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy, ms0) | opening 1-39 9.05 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579 |
-| PSP-2000 `vs4@2400` | 16.76 ms busy (Zebes 11.36) | RE-580 |
-| PSP-2000 1P intro | 17.86 ms; 1P battle 15.90 ms | RE-580 |
+| PSP-2000 opening (busy, ms0) | opening 1-39 9.13 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579 |
+| PSP-2000 `vs4@2400` | 16.79 ms busy (Zebes 11.34) | RE-583 |
+| PSP-2000 1P intro | 19.02 ms (timer build); 1P battle 16.01 ms | RE-583 |
+| PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 90): boot audio start and first save at tick 2 (no sound call precedes it); PSP-2000 `psp_main` to frame 1 534 to about 417 ms, boot-to-opening unchanged; frame stack pinned at d-cache way offset 0x1600 (RE-583); `psp-link.py` warns on unmatched link-order lines; `boot_log` buffered to frame 60; pack of another version stops on a fatal screen naming both versions (RE-582).
 - Landed (batch 84): in-place battle locals, order re-searched on the timed build, `.bss` pinned to a data-cache way. Slim ms0: vs4 17.16 to 16.76, intro 18.29 to 17.86, battle 16.41 to 15.90, Zebes 11.53 to 11.36; low_free -1,280 B (RE-580).
 - Landed (batches 86-88): Master Hand return matches the N64 per tick (PSP = N64 + 106); Giant DK intro matches ParaLLEl-RDP; new golden `f1-onep-intro-giant`; mouth line closed as RDP coverage and sample-point deviation (RE-581).
 - Landed (batch 85): Master Hand TopN yaw turns with `invert_lr`, Move and Wait turns; 1P intro fighter cameras and the Mario Bros. Luigi clear depth; new golden `f1-onep-intro-mario`; low_free unchanged (RE-581).
@@ -24,7 +26,6 @@
 - Landed (batch 80): frozen-model vertex replay in the 1P intro: 38.3 to 23.0 ms busy on the Slim; vs4, 1P battle, opening unchanged; low_free -6,656 B code size; goldens 266/266 (RE-576).
 - Batch 77: results, menus, boss scene built in place; deepest stack 126,888 B; peak 14,615,040 B.
 - Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
-- Batch 74: `golden.sh verify --ballast BYTES`; goldens 266/266 at 18.0 and 17.5 MB, min headroom 3.58 MB (f1-training-fighter-select); failures begin at 15.0 MB (RE-572). PPSSPP-side PSP-1000 acceptance passed.
 - Open: cutout over a later surface (RE-424); NOFOG under demo fade; real N64 VS menu boot; Magnifier and FlyRoll re-takes (RE-561); `proc_physics`-set status with a pending accessory maker (RE-555). Gaps in `PLAN.md`.
 
 ## Next

@@ -12,7 +12,7 @@
 
 - Pack loading (`psp_runtime::scene_files`; RE-475, [D-046](decisions/D-046.md)):
   - boot: header, tables, shared region
-  - boot: audio heads + 48-slot page cache (1.94 MB), never freed; samples stream from the pack ([D-049](decisions/D-049.md), RE-573)
+  - tick 2 of boot: audio heads + 48-slot page cache (1.94 MB), never freed; samples stream from the pack ([D-049](decisions/D-049.md), RE-573, RE-582)
   - scene start: each scene's files with extern closure
   - runs `ssb_rom::loader_plan::Plan`: closure, `reloc_link::place_runs` Ascending runs, per-run blocks (RE-571)
   - `battle` and `opening` scenes: fighter figatrees stream per status; 20 pinned slots per kind plus a lazy 64 KiB LRU slab per anim kind, sync sector-superset read on a miss (`stream_pool.rs`, `scene_files.rs` `stream_miss`; RE-572, RE-573)
@@ -57,6 +57,7 @@
 - Largest battle-entry frame: `PosedFighter::set_damage_detect_size` (29 KB, the aside `Snapshot`); scene state built in place (`box_in_place!`, `write_new` writers, `all_fields!` guard in `crates/ssb-engine/src/memory.rs`), never by value (`panic = unwind` blocks copy elision)
 - Optional payload built in place: `ssb_engine::memory::InlineOption` (bool tag + `MaybeUninit`; `write_with`), used for the results wipe `Transition`
 - Other frames over 16 KB: `new_session` 32 KB, `init_weapon_pool` 25 KB, `enter_training` 25 KB, `opening_screen::start` and `players_screen::start` 18 KB
+- Frame stack pinned: `psp_main` enters `run` at d-cache way offset 0x1600 (`stack_pin::enter`); re-screen with `tools/icache/stack-set.py` when `.bss` pin or map changes (RE-583)
 - Deepest measured stack: [STATUS.md](../STATUS.md)
 
 ### Constraint
