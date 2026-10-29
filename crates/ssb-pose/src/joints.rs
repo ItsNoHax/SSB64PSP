@@ -109,14 +109,18 @@ pub fn part_locals_into(
 ) -> ssb_game::slope_contour::PartLocals {
     use ssb_game::fighter::FIGHTER_JOINTS;
     let mut parts = ssb_game::slope_contour::PartLocals::default();
-    let mut locals = [[[0.0f32; 3]; 4]; ssb_rom::skeleton::MAX_NODES];
-    let mut translate_x = [0.0f32; ssb_rom::skeleton::MAX_NODES];
     let mut lead = None;
-    let count = skeleton
-        .collision_parts_keep(pack, object, kept, &mut locals, &mut translate_x, &mut lead)
-        .min(FIGHTER_JOINTS - 4);
-    for i in 0..count {
-        parts.set(i + 4, locals[i], translate_x[i]);
+    // Written straight into joints 4.. (no 3 KB staging copy, RE-580).
+    let count = skeleton.collision_parts_keep(
+        pack,
+        object,
+        kept,
+        &mut parts.locals[4..],
+        &mut parts.translate_x[4..],
+        &mut lead,
+    );
+    for i in 0..count.min(FIGHTER_JOINTS - 4) {
+        parts.present |= 1 << (i + 4);
     }
     if let Some((local, x)) = lead {
         parts.set(2, local, x);

@@ -113,6 +113,12 @@ impl InputView<'_> {
     pub fn sight(&self, port: u8) -> crate::computer::CpuSight {
         crate::computer::CpuSight::observe(port, self.items, self.weapons, self.stage)
     }
+
+    /// [`Self::sight`] into `out`, without moving the view (RE-580).
+    #[inline]
+    pub fn sight_into(&self, port: u8, out: &mut crate::computer::CpuSight) {
+        out.observe_into(port, self.items, self.weapons, self.stage);
+    }
 }
 
 /// The stage's map as fighters and pools read it.

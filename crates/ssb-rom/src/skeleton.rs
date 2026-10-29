@@ -156,7 +156,10 @@ impl Default for AnimLocks {
 #[derive(Debug, Clone)]
 pub struct CollisionLocals {
     count: usize,
-    local: [Mat4; MAX_NODES],
+    /// Initialised below `count`: [`Skeleton::compose_with`] writes every
+    /// entry it counts. Left uninitialised, not `IDENTITY`-filled, since a
+    /// fresh one is made per keep (a 4 KB copy each, RE-580).
+    local: [core::mem::MaybeUninit<Mat4>; MAX_NODES],
     /// Node `i`'s parent index, or one of the `LINK_` cases.
     link: [u8; MAX_NODES],
     /// The interposed `XRotN`'s local, when the clip leads with it.
@@ -171,10 +174,18 @@ impl CollisionLocals {
     /// A parent outside the object: left in its own space.
     const LINK_OWN: u8 = 0xFD;
 
+    /// Node `i`'s local; `i < count`.
+    #[inline(always)]
+    fn local(&self, i: usize) -> &Mat4 {
+        assert!(i < self.count);
+        // SAFETY: entries below `count` are written before `count` is set.
+        unsafe { self.local[i].assume_init_ref() }
+    }
+
     pub fn new() -> Self {
         CollisionLocals {
             count: 0,
-            local: [Mat4::IDENTITY; MAX_NODES],
+            local: [const { core::mem::MaybeUninit::uninit() }; MAX_NODES],
             link: [Self::LINK_NONE; MAX_NODES],
             lead: None,
         }
@@ -694,7 +705,7 @@ impl Skeleton {
         let joint_of = self.joint_table(object.first_node);
         let count = count.min(locals.len()).min(translate_x.len());
         for i in 0..count {
-            locals[i] = rows(&composed.local[i]);
+            locals[i] = rows(composed.local(i));
             let global = object.first_node + i as u32;
             translate_x[i] = match self.pose_at(&joint_of, i) {
                 Some(p) => p.translate[0],
@@ -717,7 +728,7 @@ impl Skeleton {
     pub fn compose_collision_from(composed: &CollisionLocals, out: &mut [Mat4]) -> usize {
         let count = composed.count.min(out.len());
         for i in 0..count {
-            let local = composed.local[i];
+            let local = *composed.local(i);
             out[i] = match composed.link[i] {
                 CollisionLocals::LINK_NONE => Mat4::IDENTITY,
                 CollisionLocals::LINK_ROOT => composed.lead.map_or(local, |lead| lead.mul(&local)),
@@ -835,7 +846,8 @@ impl Skeleton {
         };
         if let Some(kept) = locals_out.as_deref_mut() {
             kept.lead = lead;
-            kept.count = count;
+            // Counted only after the loop below has written every entry.
+            kept.count = 0;
         }
         for i in 0..count {
             let global = object.first_node + i as u32;
@@ -844,7 +856,7 @@ impl Skeleton {
                     out[i] = Mat4::IDENTITY;
                 }
                 if let Some(kept) = locals_out.as_deref_mut() {
-                    kept.local[i] = Mat4::IDENTITY;
+                    kept.local[i].write(Mat4::IDENTITY);
                     kept.link[i] = CollisionLocals::LINK_NONE;
                 }
                 continue;
@@ -892,7 +904,7 @@ impl Skeleton {
                 m
             };
             if let Some(kept) = locals_out.as_deref_mut() {
-                kept.local[i] = local;
+                kept.local[i].write(local);
                 kept.link[i] = match (parent, parent_index) {
                     (_, Some(p)) => p as u8,
                     (NodeDesc::NO_PARENT, None) => CollisionLocals::LINK_ROOT,
@@ -914,6 +926,9 @@ impl Skeleton {
                     _ => local,
                 };
             }
+        }
+        if let Some(kept) = locals_out {
+            kept.count = count;
         }
         count
     }
@@ -4027,7 +4042,9 @@ mod compose_equivalence_tests {
         );
         let mut kept = CollisionLocals::new();
         // Stale contents must not leak into the next keep.
-        kept.local = [Mat4::from_trs([1.0; 3], [0.5; 3], [2.0; 3]); MAX_NODES];
+        kept.local =
+            [core::mem::MaybeUninit::new(Mat4::from_trs([1.0; 3], [0.5; 3], [2.0; 3])); MAX_NODES];
+        kept.count = MAX_NODES;
         kept.link = [7; MAX_NODES];
         let mut locals2 = [[[0.0f32; 3]; 4]; MAX_NODES];
         let mut tx2 = [0.0f32; MAX_NODES];

@@ -699,7 +699,6 @@ impl PosedFighter {
         F: Fn() -> I,
         I: IntoIterator<Item = MapSurface>,
     {
-        use ssb_game::slope_contour::PartLocals;
         if pending && !self.fighter.slope_pending {
             return false;
         }
@@ -711,17 +710,19 @@ impl PosedFighter {
         self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
         // Composed only when the leg fit reads them: not in the air, in
         // hitlag or off a floor.
+        // Without them no foot reads the parts (the gate fails first or no
+        // foot flag is set), so none are passed rather than empty ones.
         let parts = if self.fighter.slope_contour != 0 && self.fighter.slope_contour_reads_parts() {
             let kept = kept.insert(ssb_rom::skeleton::CollisionLocals::new());
-            part_locals_into(&self.skeleton, pack, &object, kept)
+            Some(part_locals_into(&self.skeleton, pack, &object, kept))
         } else {
-            PartLocals::default()
+            None
         };
         let fits = if pending {
             self.fighter
-                .run_pending_slope_contour(surfaces, Some(&parts))
+                .run_pending_slope_contour(surfaces, parts.as_ref())
         } else {
-            self.fighter.slope_contour(surfaces, Some(&parts))
+            self.fighter.slope_contour(surfaces, parts.as_ref())
         };
         let mut moved = false;
         for fit in fits.into_iter().flatten() {

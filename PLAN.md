@@ -61,8 +61,8 @@
 | Master Hand stage | Playtest: frame rate drops in the Master Hand fight; profile on hardware, cut to 16.7 ms | — |
 | Electric hit drop | Playtest: big frame drop when Pikachu's electric specials or the Ray Gun hit a fighter; profile the hit effect on hardware, cut to 16.7 ms | — |
 | Boot time | Playtest: boot from XMB to the first screen is very slow; measure on hardware (EBOOT + pack on ms0), find the cause, cut it | — |
-| vs4 to 16.7 ms | `vs4@2400` 17.03 ms busy (ms0): 0.33 ms left; next: audio reverb `madd` (needs `audio_selftest` on target, ~0.05 ms), PartLocals/CollisionLocals moves (`hand_transform`, `tick_fight`, ~0.7% of vs4 words), weapon clash copies (~0.3%); re-search the order after hot-code changes (RE-494 procedure; train vs4 + 1P battle + 1P intro) | RE-519, RE-578, RE-579 |
-| 1P intro | 18.01 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
+| vs4 to 16.7 ms | `vs4@2400` 16.76 ms busy (ms0): 0.06 ms left; next: audio reverb `madd` (needs `audio_selftest` on target, ~0.05 ms); re-search the order after hot-code changes, tracing the `frame_timer,capture_scene_file` build (RE-494, RE-580) | RE-519, RE-580 |
+| 1P intro | 17.86 ms busy (> 16.7): compose ~3.9, material ~3.2, nodemat ~1.4, submit ~1.3 ms (pre-order-change split); next: cache per-model material state (posed-matrix cache ~76 KB breaks low_free) | RE-576, RE-579 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |

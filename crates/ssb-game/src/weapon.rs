@@ -4969,18 +4969,31 @@ impl WeaponPool {
         self.set_off = [false; MAX_WEAPONS];
         self.clash_damage = [0; MAX_WEAPONS];
         let (order, count) = self.link_order();
-        let mut view = ClashView {
-            taken: true,
-            order,
-            count,
-            ..ClashView::default()
-        };
+        // Built in place, empty slots without the attack calls: a whole view
+        // built on the stack and moved, and each slot's attacks copied, cost
+        // about 7 KB of copies a frame (RE-580). Neither attack reads the
+        // view.
+        let view = &mut self.clash_view;
+        view.taken = true;
+        view.order = order;
+        view.count = count;
+        view.refilled = [false; MAX_WEAPONS];
         for i in 0..MAX_WEAPONS {
-            view.attacks[i] = self.clash_attack(i);
-            view.item_attacks[i] = self.item_attack(i);
-            view.groups[i] = self.slots.values()[i].and_then(|w| w.group());
+            let Some(w) = &self.slots.values()[i] else {
+                let view = &mut self.clash_view;
+                view.attacks[i] = None;
+                view.item_attacks[i] = None;
+                view.groups[i] = None;
+                continue;
+            };
+            let group = w.group();
+            let attack = self.clash_attack(i);
+            let item_attack = self.item_attack(i);
+            let view = &mut self.clash_view;
+            view.attacks[i] = attack;
+            view.item_attacks[i] = item_attack;
+            view.groups[i] = group;
         }
-        self.clash_view = view;
     }
 
     /// `wpProcessProcSearchHitWeapon` for every weapon, in link order (the

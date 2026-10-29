@@ -5924,19 +5924,25 @@ pub unsafe fn draw_stage(
 pub use ssb_game::stage::LAYER_DL_LINKS as STAGE_LAYER_LINKS;
 
 /// One render layer's posed node matrices and billboard scales.
+///
+/// Only the object's own nodes are initialised, by each [`Self::compose`]:
+/// filling all `MAX_NODES` entries per layer and frame was a 4.6 KB memset
+/// for objects of a few nodes (RE-580).
 struct LayerPose {
-    posed: [ssb_rom::scene::Mat4; ssb_rom::skeleton::MAX_NODES],
+    /// Initialised below `node_count`.
+    posed: [core::mem::MaybeUninit<ssb_rom::scene::Mat4>; ssb_rom::skeleton::MAX_NODES],
     node_count: usize,
-    billboard_scales: [[f32; 2]; ssb_rom::skeleton::MAX_NODES],
+    /// Initialised below `scale_count`.
+    billboard_scales: [core::mem::MaybeUninit<[f32; 2]>; ssb_rom::skeleton::MAX_NODES],
     scale_count: usize,
 }
 
 impl LayerPose {
     const fn new() -> Self {
         LayerPose {
-            posed: [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES],
+            posed: [const { core::mem::MaybeUninit::uninit() }; ssb_rom::skeleton::MAX_NODES],
             node_count: 0,
-            billboard_scales: [[1.0; 2]; ssb_rom::skeleton::MAX_NODES],
+            billboard_scales: [const { core::mem::MaybeUninit::uninit() }; ssb_rom::skeleton::MAX_NODES],
             scale_count: 0,
         }
     }
@@ -5950,10 +5956,49 @@ impl LayerPose {
         object: &ObjectDesc,
     ) {
         let compose_t = crate::profile::start();
-        self.node_count = anim.compose(pack, object, &mut self.posed);
-        self.scale_count = anim.billboard_scales(pack, object, &mut self.billboard_scales);
+        // Both calls write at most `node_count.min(MAX_NODES)` entries, the
+        // length of the slices they get.
+        let n = (object.node_count as usize).min(ssb_rom::skeleton::MAX_NODES);
+        self.node_count = 0;
+        self.scale_count = 0;
+        // SAFETY: the first `n` entries are zeroed (a valid `Mat4` and
+        // `[f32; 2]`) before the slices over them are made.
+        let (posed, scales) = unsafe {
+            let p = self.posed.as_mut_ptr() as *mut ssb_rom::scene::Mat4;
+            let s = self.billboard_scales.as_mut_ptr() as *mut [f32; 2];
+            core::ptr::write_bytes(p, 0, n);
+            core::ptr::write_bytes(s, 0, n);
+            (
+                core::slice::from_raw_parts_mut(p, n),
+                core::slice::from_raw_parts_mut(s, n),
+            )
+        };
+        let node_count = anim.compose(pack, object, posed);
+        let scale_count = anim.billboard_scales(pack, object, scales);
+        self.node_count = node_count.min(n);
+        self.scale_count = scale_count.min(n);
         crate::profile::stop(crate::profile::Span::Compose, compose_t);
         debug_assert_eq!(self.node_count, self.scale_count);
+    }
+
+    fn posed(&self) -> &[ssb_rom::scene::Mat4] {
+        // SAFETY: `compose` initialised the first `node_count` entries.
+        unsafe {
+            core::slice::from_raw_parts(
+                self.posed.as_ptr() as *const ssb_rom::scene::Mat4,
+                self.node_count,
+            )
+        }
+    }
+
+    fn billboard_scales(&self) -> &[[f32; 2]] {
+        // SAFETY: `compose` initialised the first `scale_count` entries.
+        unsafe {
+            core::slice::from_raw_parts(
+                self.billboard_scales.as_ptr() as *const [f32; 2],
+                self.scale_count,
+            )
+        }
     }
 }
 
@@ -5968,17 +6013,16 @@ impl LayerPose {
 pub struct StagePoseCache {
     /// The object each entry of `layers` was posed for, or `NO_LAYER`.
     keys: [u32; 4],
-    /// Initialised exactly when its `keys` entry is not `NO_LAYER`: a fresh
-    /// cache is made every frame, and building four rest poses up front cost
-    /// two 18 KB copies per frame for layers mostly never drawn.
-    layers: [core::mem::MaybeUninit<LayerPose>; 4],
+    /// Costs nothing to make: a layer's entries are written by its first
+    /// pose ([`LayerPose`]).
+    layers: [LayerPose; 4],
 }
 
 impl Default for StagePoseCache {
     fn default() -> Self {
         StagePoseCache {
             keys: [ssb_rom::pack::StageDesc::NO_LAYER; 4],
-            layers: [const { core::mem::MaybeUninit::uninit() }; 4],
+            layers: [const { LayerPose::new() }; 4],
         }
     }
 }
@@ -5996,18 +6040,10 @@ impl StagePoseCache {
     ) -> &LayerPose {
         let entry = &mut self.layers[layer];
         if self.keys[layer] != slot {
-            if self.keys[layer] == ssb_rom::pack::StageDesc::NO_LAYER {
-                // All-zero bits are a valid `LayerPose`; `compose` then writes
-                // every entry the draw reads (`..node_count`, `..scale_count`).
-                // SAFETY: the pointer is valid for one `LayerPose`.
-                unsafe { core::ptr::write_bytes(entry.as_mut_ptr(), 0, 1) };
-            }
-            // SAFETY: initialised above or by an earlier pose of this layer.
-            unsafe { entry.assume_init_mut() }.compose(anim, pack, object);
+            entry.compose(anim, pack, object);
             self.keys[layer] = slot;
         }
-        // SAFETY: `keys[layer]` is a real object, so the entry is initialised.
-        unsafe { entry.assume_init_ref() }
+        entry
     }
 }
 
@@ -6128,8 +6164,8 @@ unsafe fn draw_layer_posed(
         pack,
         object,
         base,
-        &pose.posed[..pose.node_count],
-        Some(&pose.billboard_scales[..pose.scale_count]),
+        pose.posed(),
+        Some(pose.billboard_scales()),
         st,
         mat_anim,
         None,

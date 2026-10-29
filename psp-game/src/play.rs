@@ -406,7 +406,8 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
                     _ if view.locked => (ssb_engine::input::ControllerState::default(), false),
                     Lead::Key(key) => key_input(key),
                     Lead::Computer(computer) => {
-                        let sight = view.sight(scene.fighter.port);
+                        let mut sight = ssb_game::computer::CpuSight::default();
+                        view.sight_into(scene.fighter.port, &mut sight);
                         let input =
                             computer_input(computer, scene, pack, stage, groups, view.opponents, &sight, false);
                         (input, false)
@@ -421,7 +422,8 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
                 } else {
                     // The items as the fighters before it left them this
                     // pass.
-                    let sight = view.sight(dummy.fighter.port);
+                    let mut sight = ssb_game::computer::CpuSight::default();
+                    view.sight_into(dummy.fighter.port, &mut sight);
                     dummy.tick_interrupt(pack, stage, groups, view.opponents, &sight, view.locked);
                 }
             }

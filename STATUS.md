@@ -11,12 +11,13 @@
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy, ms0) | opening 1-39 9.05 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579 |
-| PSP-2000 `vs4@2400` | 17.03 ms busy (Zebes 11.38) | RE-579 |
-| PSP-2000 1P intro | 18.01 ms; 1P battle 16.36 ms | RE-579 |
+| PSP-2000 `vs4@2400` | 16.76 ms busy (Zebes 11.36) | RE-580 |
+| PSP-2000 1P intro | 17.86 ms; 1P battle 15.90 ms | RE-580 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 84): in-place battle locals, order re-searched on the timed build, `.bss` pinned to a data-cache way. Slim ms0: vs4 17.16 to 16.76, intro 18.29 to 17.86, battle 16.41 to 15.90, Zebes 11.53 to 11.36; low_free -1,280 B (RE-580).
 - Landed (batches 86-88): Master Hand return matches the N64 per tick (PSP = N64 + 106); Giant DK intro matches ParaLLEl-RDP; new golden `f1-onep-intro-giant`; mouth line closed as RDP coverage and sample-point deviation (RE-581).
 - Landed (batch 85): Master Hand TopN yaw turns with `invert_lr`, Move and Wait turns; 1P intro fighter cameras and the Mario Bros. Luigi clear depth; new golden `f1-onep-intro-mario`; low_free unchanged (RE-581).
 - Landed (batch 83): memcpy/hash cuts, bit-exact `Mat4::mul` affine path, order re-searched. Slim ms0: vs4 17.62 to 17.03, 1P intro 18.44 to 18.01, battle 16.79 to 16.36, Zebes 11.94 to 11.38, opening 9.17 to 9.05 (RE-579). Batch 82: mat_anim range read, `safe_point` skip (RE-578).
@@ -28,7 +29,7 @@
 
 ## Next
 
-1. MS8 vs4 to 16.7 ms (batch 84).
+1. MS8 vs4 to 16.7 ms (0.06 ms left).
 2. Playtest performance: boot time, electric hit drop, Master Hand stage.
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).

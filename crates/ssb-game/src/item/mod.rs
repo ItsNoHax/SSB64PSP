@@ -1638,6 +1638,10 @@ impl ItemPool {
 
     /// Item-made weapons enter the weapon link before its main processes.
     pub fn flush_monster_shots(&mut self, weapons: &mut crate::weapon::WeaponPool) {
+        // Mostly empty: taking it copied the whole queue each frame (RE-580).
+        if self.monster_shots.iter().all(Option::is_none) {
+            return;
+        }
         for shot in core::mem::take(&mut self.monster_shots)
             .into_iter()
             .flatten()

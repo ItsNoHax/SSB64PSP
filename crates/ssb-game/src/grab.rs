@@ -2494,9 +2494,13 @@ pub fn exchange(from: &mut Fighter, to: &mut Fighter) {
     if to.grab.capture == Some(from.port) {
         to.grab.holder = Some(holder_of(from));
     }
-    let events = core::mem::take(&mut from.grab.outbox);
-    for event in events.into_iter().flatten() {
-        deliver(event, from, to);
+    // Mostly empty: taking it copied the whole outbox per pair and pass
+    // (RE-580).
+    if from.grab.outbox.iter().any(Option::is_some) {
+        let events = core::mem::take(&mut from.grab.outbox);
+        for event in events.into_iter().flatten() {
+            deliver(event, from, to);
+        }
     }
     if to.grab.capture == Some(from.port) {
         to.grab.holder = Some(holder_of(from));

@@ -40,26 +40,36 @@ impl Default for CpuSight {
 impl CpuSight {
     /// The view of the CPU on `port`.
     pub fn observe(port: u8, items: &ItemPool, weapons: &WeaponPool, stage: &Stage) -> Self {
-        let flat = |v: Vec3| Vec2::new(v.x, v.y);
-        // Filled in place: a collected `ArrayVec` moves its whole capacity
-        // on each hand-over, about 1.4 KB per CPU per frame several times.
-        let mut sight = CpuSight {
-            items: ArrayVec::new(),
-            weapons: ArrayVec::new(),
-            team_rules: items.team_rules,
-            twister: match &stage.controller {
-                Controller::Hyrule(h) => h.visible_position().map(flat),
-                _ => None,
-            },
-            acid: match &stage.controller {
-                Controller::Zebes(z) => Some(z.level_info()),
-                _ => None,
-            },
-            pk_thunder_trail: weapons.own_pk_trail(port).map(flat),
-        };
-        sight.items.extend(items.cpu_sights());
-        sight.weapons.extend(weapons.cpu_threats());
+        let mut sight = CpuSight::default();
+        sight.observe_into(port, items, weapons, stage);
         sight
+    }
+
+    /// [`Self::observe`] into `self`, every field rewritten: returning the
+    /// view moved its whole ArrayVec capacity, about 2.5 KB per CPU and
+    /// frame (RE-580).
+    pub fn observe_into(
+        &mut self,
+        port: u8,
+        items: &ItemPool,
+        weapons: &WeaponPool,
+        stage: &Stage,
+    ) {
+        let flat = |v: Vec3| Vec2::new(v.x, v.y);
+        self.team_rules = items.team_rules;
+        self.twister = match &stage.controller {
+            Controller::Hyrule(h) => h.visible_position().map(flat),
+            _ => None,
+        };
+        self.acid = match &stage.controller {
+            Controller::Zebes(z) => Some(z.level_info()),
+            _ => None,
+        };
+        self.pk_thunder_trail = weapons.own_pk_trail(port).map(flat);
+        self.items.clear();
+        self.items.extend(items.cpu_sights());
+        self.weapons.clear();
+        self.weapons.extend(weapons.cpu_threats());
     }
 }
 

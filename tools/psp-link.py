@@ -9,8 +9,11 @@ first, as v0-mangled names with the crate hashes removed (`stable`): a
 crate's hash changes with its feature set and the checkout's path, the rest
 of the name does not. This script
 reads the function symbols of the objects being linked, maps the listed
-names onto them and passes the result to `rust-lld` as a
+names onto them, appends the unlisted functions sorted by stable name (a
+checkout-independent layout) and passes the result to `rust-lld` as a
 `--symbol-ordering-file`. It changes where code goes, never the code.
+It then links again with zero bytes after the code (`OUT.pad.o`) so that
+`.bss` keeps one data-cache placement however large the code is (RE-580).
 
 Set as `psp-game`'s linker in `psp-game/.cargo/config.toml`; rustc calls it
 with `rust-lld`'s arguments and has `rust-lld` on `PATH`.
@@ -33,6 +36,12 @@ LIST = os.environ.get('PSP_LINK_ORDER') or os.path.join(os.path.dirname(os.path.
 CRATE_HASH = re.compile(r'Cs[0-9A-Za-z]*_(?=\d)')
 BASE62 = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 BASIC_TYPES = set('abcdefhijlmnostuvxyzp')
+# The data cache is 16 KB two-way: an address's set is its offset in an
+# 8 KB way. BSS_SET is the `.bss` offset measured fastest of those tried
+# on a PSP (RE-580).
+DCACHE_WAY = 0x2000
+BSS_SET = 0x1d00
+PAD_SYMBOL = 'psp_link_pad'
 
 
 def stable(name):
@@ -298,6 +307,12 @@ def main():
             line = line.strip()
             if line and not line.startswith('#'):
                 order.extend(by_stable.get(line, []))
+    # The functions the list leaves out follow by stable name: in rustc's
+    # output order they would sit by crate hash, so in another order in
+    # every checkout, and their placement moves the listed code's timing
+    # (RE-580).
+    listed = set(order)
+    order.extend(sorted((n for names in by_stable.values() for n in names if n not in listed), key=lambda n: (stable(n), n)))
     save = os.environ.get('PSP_LINK_SAVE')
     if save:
         # Keep the link's inputs, so another function order can be linked
@@ -324,7 +339,77 @@ def main():
     order_path = out + '.order'
     with open(order_path, 'w') as f:
         f.write(''.join(name + '\n' for name in order))
-    os.execvp('rust-lld', ['rust-lld'] + args + ['--symbol-ordering-file=' + order_path, '--no-warn-symbol-ordering'])
+    lld = ['rust-lld'] + args + ['--symbol-ordering-file=' + order_path, '--no-warn-symbol-ordering']
+    run(lld)
+    # Pad the end of the code so `.bss` starts at BSS_SET in the data cache
+    # whatever the code's size (RE-580): the statics and the kernel blocks
+    # after them then map onto the same cache sets in every build, timed or
+    # released, before and after a code change.
+    objects = [a for a in args if a.endswith('.o') and os.path.isfile(a)]
+    pad = 0
+    for _ in range(3):
+        start = section_addr(out, '.bss')
+        if start is None or not objects or (start - BSS_SET) % DCACHE_WAY == 0:
+            break
+        pad = (pad + BSS_SET - start) % DCACHE_WAY
+        pad_path = out + '.pad.o'
+        write_pad_object(pad_path, pad, elf_flags(objects[0]))
+        run(lld[:lld.index('-o')] + [pad_path, '--undefined=' + PAD_SYMBOL] + lld[lld.index('-o'):])
+    else:
+        sys.exit('psp-link: .bss at %#x, not at %#x in the data cache' % (section_addr(out, '.bss'), BSS_SET))
+
+
+def run(cmd):
+    import subprocess
+    rc = subprocess.run(cmd).returncode
+    if rc:
+        sys.exit(rc)
+
+
+def elf_sections(data):
+    shoff, = struct.unpack_from('<I', data, 0x20)
+    shentsize, shnum, shstrndx = struct.unpack_from('<HHH', data, 0x2E)
+    sections = [struct.unpack_from('<IIIIIIIIII', data, shoff + i * shentsize) for i in range(shnum)]
+    names = sections[shstrndx][4]
+    return {data[names + s[0]:data.index(b'\0', names + s[0])].decode(): s for s in sections}
+
+
+def section_addr(path, name):
+    with open(path, 'rb') as f:
+        section = elf_sections(f.read()).get(name)
+    return section[3] if section else None
+
+
+def elf_flags(path):
+    with open(path, 'rb') as f:
+        return struct.unpack_from('<I', f.read(0x28), 0x24)[0]
+
+
+def write_pad_object(path, size, flags):
+    """A relocatable MIPS object holding `size` zero bytes of code, defined by
+    PAD_SYMBOL (kept through `--gc-sections` by `--undefined`)."""
+    shstr = b'\0.text.psp_link_pad\0.symtab\0.strtab\0.shstrtab\0'
+    strtab = b'\0' + PAD_SYMBOL.encode() + b'\0'
+    symtab = bytes(16) + struct.pack('<IIIBBH', 1, 0, 0, 0x10, 0, 1)  # STB_GLOBAL, STT_NOTYPE
+    body = bytes(size) + symtab + strtab + shstr
+    text_off = 0x34
+    sym_off = text_off + size
+    str_off = sym_off + len(symtab)
+    shs_off = str_off + len(strtab)
+    shoff = (shs_off + len(shstr) + 3) & ~3
+    sh = [
+        (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        (1, 1, 6, 0, text_off, size, 0, 0, 4, 0),  # SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR
+        (20, 2, 0, 0, sym_off, len(symtab), 3, 1, 4, 16),  # SHT_SYMTAB
+        (28, 3, 0, 0, str_off, len(strtab), 0, 0, 1, 0),  # SHT_STRTAB
+        (36, 3, 0, 0, shs_off, len(shstr), 0, 0, 1, 0),
+    ]
+    header = b'\x7fELF\x01\x01\x01' + bytes(9) + struct.pack(
+        '<HHIIIIIHHHHHH', 1, 8, 1, 0, 0, shoff, flags, 0x34, 0, 0, 40, len(sh), 4)
+    with open(path, 'wb') as f:
+        f.write(header + body + bytes(shoff - text_off - len(body)))
+        for s in sh:
+            f.write(struct.pack('<IIIIIIIIII', *s))
 
 
 if __name__ == '__main__':
