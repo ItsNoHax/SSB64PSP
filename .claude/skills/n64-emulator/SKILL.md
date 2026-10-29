@@ -77,6 +77,7 @@ tools/run-n64-headless.sh --route "60:start;30:;10:a" \
 | angrylion-plus | segfaults in `PluginStartup` for the same reason as ParaLLEl below (RTLD_GLOBAL symbol clash); not retried (RE-276) |
 | ParaLLEl-RDP | coverage-exact RDP; RMG flatpak `com.github.Rosalie241.RMG`: core `/app/lib/RMG/Core/libmupen64plus.so`, `mupen64plus-video-parallel.so`, `mupen64plus-rsp-parallel.so`, `RMG-Audio.so`; `dlopen` core and plugins `RTLD_LOCAL`; `CoreOverrideVidExt` with a headless Vulkan surface (`VK_EXT_headless_surface`); read RDRAM framebuffers, screenshots are VI-filtered (RE-564) |
 | Sandbox filesystem | needs read on repo, write on scratch dir |
+| Opening-room figures | Picked from `osGetTime()&0xFF` (`mvopeningroom.c:1134`); PSP captures pin Pikachu + DK (`room_time`). Compare the figure only when the N64 draw matches |
 | Rice inset Z fills | Rice skips `func_8001663C` viewport-inset clears: depth order between clearing cameras is wrong; use ParaLLEl |
 | RMG flatpak files | no filesystem access by default: pass `--filesystem=/home/alberto/ppsspp-test` to `flatpak run` |
 | Software approximation | Rice is not a physical N64; treat RDP/RSP filtering differences as PPSSPP-vs-hardware |
