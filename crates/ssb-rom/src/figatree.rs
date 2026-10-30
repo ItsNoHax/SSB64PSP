@@ -42,9 +42,9 @@ pub const TRACK_COUNT: usize = 10;
 pub const TRACK_ROT_X: usize = 0;
 pub const TRACK_ROT_Y: usize = 1;
 pub const TRACK_ROT_Z: usize = 2;
-/// Translation along a spline. Never set by a gameplay animation: applying it
-/// needs the control points that only opcode 12 supplies, and no fighter
-/// figatree in the ROM contains an opcode 12.
+/// Translation along the spline opcode 12 names. Only Samus's `RollF` and
+/// `RollB` (files 1013, 1014) set it, on joint 0 and with no `TraX/Y/Z`
+/// track beside it (RE-508).
 pub const TRACK_TRA_I: usize = 3;
 pub const TRACK_TRA_X: usize = 4;
 pub const TRACK_TRA_Y: usize = 5;
