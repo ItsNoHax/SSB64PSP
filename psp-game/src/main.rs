@@ -9978,6 +9978,12 @@ unsafe fn draw_fighter_model(
         // is centred on the origin.
         topn.0[12..15].fill(0.0);
     }
+    // ftdisplaymain.c:1205: the hit shake, a world translation pushed under
+    // the whole tree whichever camera draws it.
+    if let Some(o) = f.fighter.shuffle.offset() {
+        topn.0[12] += o.x;
+        topn.0[13] += o.y;
+    }
     let m = psp_matrix(&topn);
     // `ftDisplayLightsDrawReflect`: a colour animation's light turns with
     // the fighter (`lr * light_angle_x`).

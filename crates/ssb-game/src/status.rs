@@ -2402,9 +2402,25 @@ fn check_guard_pass(f: &mut Fighter) -> bool {
     false
 }
 
-/// `ftCommonShieldBreakFlyCommonSetStatus`: [`crate::reaction`] runs the
-/// chain.
+/// `ftCommonShieldBreakFlyCommonSetStatus`: the break's effect, the 1P
+/// stats, then [`crate::reaction`] runs the chain.
 pub fn set_shield_break_fly(f: &mut Fighter) {
+    use crate::fteffect::{kind, FighterEffect};
+    if f.kind == crate::fighter::FighterKind::Yoshi {
+        // `efManagerYoshiEggExplodeMakeEffect` and `efManagerEggBreakMakeEffect`
+        // at TopN's translation, as the egg's escape makes them.
+        let pos = Vec3::new(f.pos.x, f.pos.y, 0.0);
+        f.effects.push(FighterEffect::YoshiEggExplode { pos });
+        f.effects.push(FighterEffect::At {
+            kind: kind::EGG_BREAK,
+            pos,
+        });
+    } else {
+        // `efManagerShieldBreakMakeEffect` at YRotN
+        // (`gmCollisionGetFighterPartsWorldPosition`).
+        let pos = f.joint_query(crate::yoshi::EGGTHROW_JOINT, Vec3::ZERO);
+        f.effects.push(FighterEffect::ShieldBreak { pos });
+    }
     crate::combat::record_shield_break(f);
     crate::reaction::set_shield_break_fly(f);
 }
@@ -4123,6 +4139,9 @@ pub struct Preserve {
     pub slope_contour: bool,
     /// `FTSTATUS_PRESERVE_RUMBLE`: keep rumble 7 running.
     pub rumble: bool,
+    /// `FTSTATUS_PRESERVE_SHUFFLETIME`: keep the hit shake running
+    /// (`shuffle_tics`).
+    pub shuffle_time: bool,
 }
 
 impl Preserve {
@@ -4137,6 +4156,7 @@ impl Preserve {
         loop_sfx: false,
         slope_contour: false,
         rumble: false,
+        shuffle_time: false,
     };
     pub const SLOPE_CONTOUR: Preserve = Preserve {
         slope_contour: true,
@@ -4245,6 +4265,10 @@ pub fn set_any_status_preserve(
     f.interface.tag_hide = false;
     if !preserve.playertag {
         f.interface.tag_wait = 0;
+    }
+    // ftmain.c:4525.
+    if !preserve.shuffle_time {
+        f.shuffle.tics = 0;
     }
     if !preserve.loop_sfx {
         crate::fighter_sound::stop_loop_sfx(f);

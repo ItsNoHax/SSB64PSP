@@ -5,7 +5,7 @@
 //! so renumbering would silently mis-associate every character's data.
 
 use ssb_engine::input::{ControllerState, N64Buttons};
-use ssb_engine::math::Vec3;
+use ssb_engine::math::{Vec2, Vec3};
 
 use crate::collision::{self, Segment};
 use crate::ground::{self, BodyColl, Standing};
@@ -295,6 +295,64 @@ impl Default for AfterImage {
             desc_id: 0,
             desc: [AfterImageDesc::default(); 3],
         }
+    }
+}
+
+/// `dFTDisplayMainShufflePositions[electric][i]`: the hit shake's model
+/// offset, non-electric then electric.
+pub fn shuffle_position(electric: bool, i: usize) -> Vec2 {
+    let [x, y] = crate::d_arrays::FT_DISPLAY_MAIN_SHUFFLE_POSITIONS[usize::from(electric)][i];
+    Vec2::new(x, y)
+}
+
+/// `FTCOMMON_DAMAGE_SHUFFLE_MUL`.
+const SHUFFLE_MUL: f32 = 1.3;
+
+/// `FTStruct::shuffle_*`: the model shake a hit starts with its hitlag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Shuffle {
+    /// `shuffle_tics`.
+    pub tics: u16,
+    /// `shuffle_frame_index`.
+    pub frame_index: u8,
+    /// `shuffle_index_max`.
+    pub index_max: u8,
+    /// `is_shuffle_electric`.
+    pub is_electric: bool,
+}
+
+impl Shuffle {
+    /// `ftParamSetDamageShuffle` (ftparam.c:234).
+    pub fn set(
+        &mut self,
+        is_electric: bool,
+        damage: i32,
+        status: crate::status::AnyStatus,
+        hitlag_mul: f32,
+    ) {
+        let lag = i32::from(crate::combat::hitlag_frames(damage, status, hitlag_mul));
+        self.tics = (lag as f32 * SHUFFLE_MUL) as i32 as u16;
+        self.frame_index = 0;
+        self.is_electric = is_electric;
+        self.index_max =
+            crate::d_arrays::FT_PARAM_SHUFFLE_FRAME_INDEX_MAX[usize::from(is_electric)];
+    }
+
+    /// ftmain.c:1478.
+    pub fn tick(&mut self) {
+        if self.tics != 0 {
+            self.tics -= 1;
+            self.frame_index += 1;
+            if self.frame_index == self.index_max {
+                self.frame_index = 0;
+            }
+        }
+    }
+
+    /// The world `(x, y)` translation the display pushes before the
+    /// fighter's joints (ftdisplaymain.c:1205), or `None` with no shake.
+    pub fn offset(&self) -> Option<Vec2> {
+        (self.tics != 0).then(|| shuffle_position(self.is_electric, usize::from(self.frame_index)))
     }
 }
 
@@ -588,6 +646,8 @@ pub struct Fighter {
     /// `proc_lagupdate == ftCommonDamageCommonProcLagUpdate`: set by a
     /// damage status, cleared by the next status.
     pub is_smash_di: bool,
+    /// The hit shake (`shuffle_*`): set with hitlag, drawn as an offset.
+    pub shuffle: Shuffle,
     /// This tick's runtime-sampled TransN motion. It is data, not a renderer
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
@@ -612,6 +672,19 @@ pub struct Fighter {
     /// last, credited with a KO. `None` for -1 and for
     /// `GMCOMMON_PLAYERS_MAX` (the stage, or the fighter's own weapon).
     pub damage_player: Option<u8>,
+    /// `FTStruct::damage_player_num`: the attacker
+    /// `ftCommonDamageInitDamageVars` credits; `None` for the source's 0
+    /// (the stage, the fighter's own weapon, scripted releases).
+    pub damage_player_num: Option<u8>,
+    /// `FTStruct::attack_count`: hits this fighter's attacks dealt
+    /// (`ftCommonDamageInitDamageVars` on the victim).
+    pub attack_count: u16,
+    /// `FTStruct::attack_knockback`: the knockback of the last of them.
+    pub attack_knockback: f32,
+    /// Credits for `attack_count`/`attack_knockback` this fighter's damage
+    /// statuses owe their attackers, as (port, knockback), applied by
+    /// [`crate::combat::flush_attack_credits`].
+    pub(crate) attack_credits: [Option<(u8, f32)>; 4],
     /// `FTStruct::damage_joint_id`: the struck hurtbox's `joint_id`
     /// (`hitlog->damage_coll->joint_id`), 0 after a stage hit; set only by
     /// the hit that wins a frame (`ftMainProcessHitCollisionStatsMain`).
@@ -784,12 +857,17 @@ impl Fighter {
             damage_e_status: None,
             reaction: crate::reaction::ReactionState::default(),
             is_smash_di: false,
+            shuffle: Shuffle::default(),
             hazard: crate::hazard::HazardState::default(),
             dokan: crate::dokan::DokanState::default(),
             dead: crate::dead::DeadState::default(),
             colanim: crate::colanim::ColAnim::default(),
             screen_flash: None,
             damage_player: None,
+            damage_player_num: None,
+            attack_count: 0,
+            attack_knockback: 0.0,
+            attack_credits: [None; 4],
             damage_joint_id: 0,
             effects: crate::fteffect::EffectQueue::default(),
             effect_joint_array_id: 0,
@@ -895,6 +973,8 @@ impl Fighter {
                 self.colanim.is_heal_expired = true;
             }
         }
+        // ftmain.c:1478, every frame, hitlag or not.
+        self.shuffle.tick();
         if self.hitlag > 0 {
             return false;
         }
@@ -3074,6 +3154,23 @@ mod proc_physics_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ROM tables equal the decomp's initialisers (ftdisplaymain.c:38,
+    /// ftparam.c:15): two readings (D-034).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_shuffle_tables_match_the_decomp() {
+        let decomp = [
+            [(0.0, -100.0), (0.0, -50.0), (0.0, 100.0), (0.0, 50.0)],
+            [(0.0, -20.0), (15.0, 5.0), (-15.0, 5.0), (0.0, 0.0)],
+        ];
+        for (row, electric) in [(0, false), (1, true)] {
+            for (i, &(x, y)) in decomp[row].iter().enumerate() {
+                assert_eq!(shuffle_position(electric, i), Vec2::new(x, y));
+            }
+        }
+        assert_eq!(crate::d_arrays::FT_PARAM_SHUFFLE_FRAME_INDEX_MAX, [4, 3]);
+    }
 
     #[test]
     fn a_spawn_at_or_right_of_centre_faces_left() {

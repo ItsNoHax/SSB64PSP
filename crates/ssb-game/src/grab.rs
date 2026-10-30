@@ -1403,6 +1403,8 @@ pub(crate) fn apply_capture_knockback_with(
         f.handicap,
     );
     let lr = if f.pos.x < holder.pos.x { 1.0 } else { -1.0 };
+    // `damage_player_num` 0 (ftcommoncapture.c:30, :61).
+    f.damage_player_num = None;
     attack::init_damage_vars(f, None, 0, knockback, angle, lr, false);
     clear_damage_stats(f);
 }
@@ -1427,6 +1429,8 @@ fn apply_catch_knockback_with(f: &mut Fighter, capture_handicap: u8, desc: (i32,
         f.handicap,
     );
     let lr = f.facing.sign();
+    // `damage_player_num` 0 (ftcommoncapture.c:30, :61).
+    f.damage_player_num = None;
     attack::init_damage_vars(f, None, 0, knockback, angle, lr, false);
     clear_damage_stats(f);
 }
@@ -1464,6 +1468,7 @@ fn release_with(
     let Some(holder) = f.grab.holder else {
         return 0;
     };
+    let catcher = f.grab.capture;
     // `if (this_fp->hitstatus != nGMHitStatusNormal)`: a Yoshi's victim
     // (`ftcommonthrown2.c:133`, `:216`).
     if f.hitstatus != crate::combat::HitStatus::Normal {
@@ -1535,6 +1540,9 @@ fn release_with(
         damage = 0;
     }
     f.thrown.pending = thrown;
+    // `damage_player_num`: `capture_fp->player_num` (ftcommonthrown2.c:165,
+    // :248).
+    f.damage_player_num = catcher;
     // `is_force_damage_sfx`: TRUE for `ftCommonThrownReleaseThrownUpdateStats`,
     // FALSE for `ftCommonThrownSetStatusDamageRelease`.
     attack::init_damage_vars_sfx(
@@ -1852,8 +1860,10 @@ fn set_no_damage_release(f: &mut Fighter) {
         f.handicap,
     );
     let lr = f.facing.sign();
-    // `is_force_damage_sfx = TRUE`.
+    // `is_force_damage_sfx = TRUE`; `damage_player_num` 0
+    // (ftcommonthrown2.c:285).
     f.add_damage(0);
+    f.damage_player_num = None;
     attack::init_damage_vars_sfx(
         f,
         None,

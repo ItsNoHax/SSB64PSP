@@ -441,6 +441,8 @@ fn shoot_twister(f: &mut Fighter, t: HazardThrow) {
     } else {
         t.damage
     };
+    // `damage_player_num` 0 (ftcommontwister.c:106).
+    f.damage_player_num = None;
     crate::attack::init_damage_vars_sfx(
         f,
         None,
@@ -485,6 +487,8 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
     let degrees = ((f.hazard.barrel_rotate / core::f32::consts::PI) * 180.0) as i32;
     let mut angle = degrees * -(lr as i32) + 90;
     angle -= (angle / 360) * 360;
+    // `damage_player_num` 0 (ftcommontarucann.c:111).
+    f.damage_player_num = None;
     crate::attack::init_damage_vars_sfx(
         f,
         Some(AnyStatus::Common(Status::DamageFlyRoll)),

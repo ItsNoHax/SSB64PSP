@@ -672,6 +672,47 @@ impl Computer {
         } else {
             self.landing_checked = false;
         }
+        // ftcomputer.c:6222-6268: after a hit of more than 160 knockback,
+        // taunt within 60 frames when the target is far and the fighter
+        // stands, except on a Peach's Castle or Yoshi's Island platform.
+        if self.attack_count != f.attack_count {
+            self.attack_count = f.attack_count;
+            if f.attack_knockback > 160.0 {
+                self.appeal_attempt_frames = 60;
+            }
+        }
+        if self.appeal_attempt_frames != 0 {
+            self.appeal_attempt_frames -= 1;
+            if (world.gkind == Some(gkind::INISHIE) || world.gkind == Some(gkind::YOSTER))
+                && self.on_platform(f, world)
+            {
+                return -1;
+            }
+            if self.target_dist > 2500.0
+                && matches!(
+                    status,
+                    AnyStatus::Common(
+                        Status::Wait
+                            | Status::WalkSlow
+                            | Status::WalkMiddle
+                            | Status::WalkFast
+                            | Status::Dash
+                            | Status::Run
+                            | Status::RunBrake
+                            | Status::Squat
+                            | Status::SquatWait
+                            | Status::SquatRv
+                            | Status::LandingLight
+                            | Status::OttottoWait
+                            | Status::Ottotto
+                    )
+                )
+            {
+                self.appeal_attempt_frames = 0;
+                self.set_command_wait_short(grounded, input::STICK_N_BUTTON_L);
+                return 0;
+            }
+        }
         -1
     }
 

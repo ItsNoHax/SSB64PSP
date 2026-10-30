@@ -172,6 +172,11 @@ pub struct Computer {
     pub input_repeat_count: u8,
     /// The per-attack weight counters.
     pub attack_counts: attack::AttackCounts,
+    /// `computer.attack_count`: the fighter's `attack_count` last seen by
+    /// `ftComputerGetObjectiveStatus`.
+    pub attack_count: u16,
+    /// `appeal_attempt_frames`: frames left to taunt after a strong hit.
+    pub appeal_attempt_frames: u16,
 }
 
 impl Computer {

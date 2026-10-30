@@ -296,3 +296,35 @@ fn a_hurt_team_cpu_draws_to_leave_the_objective_to_its_behaviour() {
         assert_eq!(crate::rng::seed(), 11, "{behavior:?} {damage}");
     }
 }
+
+#[test]
+fn a_strong_hit_makes_a_far_standing_cpu_taunt() {
+    // ftcomputer.c:6222-6268: a new `attack_count` with more than 160
+    // knockback opens 60 frames in which a far target lets it taunt.
+    let w = world(&[]);
+    let mut f = standing_mario(0.0);
+    f.status.status = AnyStatus::Common(Status::Wait);
+    let mut com = cpu(&f, Behavior::Default);
+    com.target_dist = 3000.0;
+    f.attack_count = 1;
+    f.attack_knockback = 161.0;
+    assert_eq!(com.objective_status(&f, &w), 0);
+    assert_eq!(com.command.map(|c| c.0), Some(input::STICK_N_BUTTON_L));
+    assert_eq!((com.attack_count, com.appeal_attempt_frames), (1, 0));
+
+    // A near target: the window counts down instead.
+    let mut com = cpu(&f, Behavior::Default);
+    com.target_dist = 2500.0;
+    assert_eq!(com.objective_status(&f, &w), -1);
+    assert_eq!(com.appeal_attempt_frames, 59);
+    // The same count again opens no new window.
+    assert_eq!(com.objective_status(&f, &w), -1);
+    assert_eq!(com.appeal_attempt_frames, 58);
+
+    // 160 knockback or less opens none.
+    let mut com = cpu(&f, Behavior::Default);
+    com.target_dist = 3000.0;
+    f.attack_knockback = 160.0;
+    assert_eq!(com.objective_status(&f, &w), -1);
+    assert_eq!((com.attack_count, com.appeal_attempt_frames), (1, 0));
+}

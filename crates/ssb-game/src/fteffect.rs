@@ -156,6 +156,9 @@ pub enum FighterEffect {
     /// `efManagerReflectBreakMakeEffect(&pos, lr)`, called directly from
     /// `ftCommonShieldBreakFlyReflectorSetStatus`.
     ReflectBreak { pos: Vec3, lr: i8 },
+    /// `efManagerShieldBreakMakeEffect(&pos)`: common-bank generator 3,
+    /// called directly from `ftCommonShieldBreakFlyCommonSetStatus`.
+    ShieldBreak { pos: Vec3 },
     /// `efManagerQuakeMakeEffect(magnitude)`, called directly (no
     /// `ftParamMakeEffect` demo check).
     Quake(u8),
@@ -413,6 +416,9 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
             }
             FighterEffect::ReflectBreak { pos, lr } => {
                 rt.effects.reflect_break(pos, lr);
+            }
+            FighterEffect::ShieldBreak { pos } => {
+                rt.effects.generator_at(rt.particles, rt.banks, 3, pos);
             }
             FighterEffect::Quake(magnitude) => {
                 rt.effects.quake(magnitude);

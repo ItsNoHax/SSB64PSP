@@ -255,6 +255,10 @@ fn set_egg(f: &mut Fighter) {
     // ([`take_lay_sweep`]).
     f.grab.release_sweep = Some((holder.pos, holder.coll));
     f.physics.vel_air = Vec3::new(-lr * LAY_VEL_X, LAY_VEL_Y, 0.0);
+    // `damage_mul = FTCOMMON_YOSHIEGG_DAMAGE_MUL` (ftcommoncaptureyoshi.c:381):
+    // the egg's hits register at half (`ftParamGetCapturedDamage`) until
+    // `ftMainSetStatus` resets it.
+    f.damage_mul = DAMAGE_MUL;
     f.grab.capture = None;
     f.grab.holder = None;
     f.egg.lr = lr;
@@ -376,19 +380,19 @@ pub fn physics(f: &mut Fighter) {
     }
 }
 
-/// `ftCommonYoshiEggProcTrap` for a registered hit: the egg takes half
-/// damage (`damage_mul`), no knockback or damage status
+/// `ftCommonYoshiEggProcTrap` for a registered hit: the egg took half
+/// damage (`damage_mul`), and takes no knockback or damage status
 /// (`damage_kind = nFTDamageKindNone`), and each point of it takes four
 /// frames off the escape wait.
 ///
 /// Acid (`damage_object_class` Ground, `damage_object_kind` Acid, the
 /// last `ftParamUpdate1PGameDamageStats`) breaks the egg on its next
 /// update ([`update_egg`]).
-pub fn on_hit(f: &mut Fighter, damage: i32) {
-    let queued = (damage as f32 * DAMAGE_MUL + 0.999) as i32;
-    f.add_damage(queued);
+pub fn on_hit(f: &mut Fighter, damage_queue: i32) {
+    // `ftMainProcParams` already added the queue, which `damage_mul`
+    // ([`set_egg`]) halved as the hit registered.
     if !f.egg.breaking {
-        f.egg.escape_wait -= ((2.0 * queued as f32) / 0.5) as i32;
+        f.egg.escape_wait -= ((2.0 * damage_queue as f32) / 0.5) as i32;
     }
     if f.stats.damage_object == crate::spgame::bonus::DamageObject::Acid {
         f.egg.escape_wait = 0;
@@ -800,10 +804,29 @@ mod tests {
         assert_eq!(f.egg.effect.wiggle, [-WIGGLE_GFX_RANGE_XY, 0.0]);
     }
 
+    /// `damage_mul` 0.5 halves the hit as it registers
+    /// (`ftParamGetCapturedDamage`); `ftMainProcParams` adds that once and
+    /// `ftCommonYoshiEggProcTrap` takes `2 * damage_queue / 0.5` frames off
+    /// the wait, with no damage status.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     #[test]
-    fn a_hit_on_the_egg_halves_the_damage_and_shortens_the_wait() {
+    fn a_hit_on_the_egg_counts_its_halved_damage_once() {
         let mut f = egg();
-        on_hit(&mut f, 9);
+        assert_eq!(f.damage, 5);
+        let hitbox = crate::attack::Hitbox {
+            damage: 9,
+            ..crate::attack::mario_jab1_hitbox()
+        };
+        assert!(crate::combat::direct_hit(
+            &mut f,
+            hitbox,
+            Vec3::new(-100.0, 0.0, 0.0),
+            1.0,
+            9,
+            crate::combat::DamageBy::Player(0),
+        ));
+        assert_eq!(f.hits.damage_queue, 5);
+        crate::combat::finish_frame(&mut [&mut f]);
         assert_eq!(f.damage, 5 + 5);
         assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_MAX - 20);
         assert_eq!(f.status.status, Status::YoshiEgg);

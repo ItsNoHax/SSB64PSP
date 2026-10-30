@@ -458,6 +458,25 @@ pub fn init_damage_vars_sfx(
     }
     // `ftcommondamage.c:641`.
     f.is_hitstun = true;
+    // ftcommondamage.c:649-658: `ftParamGetPlayerNumGObj(damage_player_num)`
+    // counts the hit for its attacker. The caller sets `damage_player_num`
+    // (the source's argument) before calling.
+    if let Some(port) = f.damage_player_num {
+        credit_attacker(f, port, knockback);
+    }
+}
+
+/// `attacker_fp->attack_count++; attacker_fp->attack_knockback = knockback`.
+/// Another fighter's credit waits on `f` for
+/// [`crate::combat::flush_attack_credits`] (PSP-port deviation: no shared
+/// fighter pointers; the only reader, the CPU's objective, runs next frame).
+pub fn credit_attacker(f: &mut Fighter, port: u8, knockback: f32) {
+    if port == f.port {
+        f.attack_count = f.attack_count.wrapping_add(1);
+        f.attack_knockback = knockback;
+    } else if let Some(slot) = f.attack_credits.iter_mut().find(|c| c.is_none()) {
+        *slot = Some((port, knockback));
+    }
 }
 
 /// A status's figatree length as its timing.
@@ -485,7 +504,13 @@ pub fn update_damage_e(f: &mut Fighter) {
         f.hitstun,
     );
     let timing = anim_timing(f, status);
-    status::set_any_status_preserve(f, status, 0.0, timing, status::Preserve::DAMAGE_PLAYER);
+    // `FTSTATUS_PRESERVE_DAMAGEPLAYER | FTSTATUS_PRESERVE_SHUFFLETIME`.
+    let preserve = status::Preserve {
+        damage_player: true,
+        shuffle_time: true,
+        ..status::Preserve::NONE
+    };
+    status::set_any_status_preserve(f, status, 0.0, timing, preserve);
     status::play_anim_events(f);
     f.physics.vel_knockback = vel;
     f.physics.vel_damage_ground = ground;

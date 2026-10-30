@@ -317,6 +317,23 @@ pub const LIST: &[DArray] = &[
         Elem::F32,
         &[4],
     ),
+    DArray::new(
+        "FT_PARAM_SHUFFLE_FRAME_INDEX_MAX",
+        "dFTParamShuffleFrameIndexMax",
+        OVL2,
+        0x8012B7B0,
+        Elem::U8,
+        &[2],
+    ),
+    // `ft/ftdisplaymain.c`: `Vec2f[2][4]`, non-electric then electric.
+    DArray::new(
+        "FT_DISPLAY_MAIN_SHUFFLE_POSITIONS",
+        "dFTDisplayMainShufflePositions",
+        OVL2,
+        0x8012B930,
+        Elem::F32,
+        &[2, 4, 2],
+    ),
     // `wp/wpdisplay.c`: `wpDisplayPKThunderProcDisplay`'s PRIM and ENV by
     // `pkthunder_trail.trail_id`, `SYColorRGB[4]` each.
     DArray::new(

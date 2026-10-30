@@ -18,10 +18,9 @@
 
 ## Current work
 
+- Landed (batch 108): hit shake (damage shuffle, N64 RDRAM matched), no-ammo item drop on hit, attacker credit and CPU appeal, shield-break effect incl. Yoshi, Yoshi egg damage once at half; goldens `f1-training-item-bumper-lit`, `f1-training-pokemon-a`, `-b` rebaselined, each N64-traced (RE-587).
 - Landed (batch 107): every weapon's ROM `can_rehit_item` rehits Damage items every 16 updates (group members too); clanked and absorbed shots keep no timer; a shot set off earlier in the frame skips a later fighter's body; item despawn sparkle (RE-545). Goldens unchanged.
 - Landed (batch 106): Yoshi Bomb landing stars from motion-script flag 0; weapon reflect records clear after 16 updates (`WEAPON_REHIT_TIME_DEFAULT`), every weapon counts down; Reflect Break traced on the N64 and matched; scene `cpufx-r`, goldens `f1-cpufx-reflect-break`, `f1-cpufx-reflect-fly` (RE-351, RE-586).
-- Landed (batch 105): Falcon Dive flag 2 counts on falling map frames only; Yoshi Bomb start ledge/landing gate reads motion-script flag 1 (RE-586). Goldens unchanged.
-- Landed (batch 104): proc_map audit, 24 fixes (Ness air PSI Magnet ledge, Samus Screw Attack ledge, Yoshi/Link/Captain/Kirby ceiling stops; RE-586); Reflect Break effect made and drawn; stale module docs. Goldens unchanged.
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
 - Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).
 - Landed (batch 89): Master Hand Fall wallpaper translucent (two-pass texel alpha; N64 MAE 30.4 to 5.6 / 26.3 to 7.3; PSP-2000 matches PPSSPP); new goldens `f1-onep-boss-fall-fadein`, `-full`; pack v138; boss low_free -133,376 B; link order re-searched (s7), Slim vs4 -0.15, intro -1.43, battle -0.48 ms, Fall +0.44 (RE-321, RE-585).
@@ -40,7 +39,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 106 (hardware: RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 108 (hardware: RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

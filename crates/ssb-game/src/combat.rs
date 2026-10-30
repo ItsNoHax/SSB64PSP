@@ -1615,6 +1615,14 @@ pub fn process_hit_collision(this: &mut Fighter) {
     this.damage_joint_id = entry.damage_joint;
     this.hits.damage_knockback = best;
     crate::spgame::live::hit(this, entry.attacker, entry.stat, entry.object);
+    // `damage_player_num`: the attacker's player (the thrower's for a thrown
+    // fighter), 0 for the fighter's own weapon or item and every stage
+    // attack, Acid included. The POW Block's `ip->damage_player_num` is not
+    // carried (see `hazard::update_damage_stat_ground`).
+    this.damage_player_num = match entry.attacker {
+        DamageBy::Player(p) => Some(p),
+        DamageBy::World | DamageBy::Keep => None,
+    };
     if this.hits.damage_element == Element::Electric {
         this.hits.hitlag_mul = 1.5;
     }
@@ -1775,6 +1783,9 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         if f.hits.damage_knockback <= 0.0 {
             f.hits.damage_knockback = 0.0;
         }
+        // `ftParamUpdateDamage` (ftparam.c:1527). Its other callers (thrown,
+        // captured, Twister, Kirby inhale) run on fighters whose capture
+        // already dropped the item (`ftSetupDropItem` in each capture setter).
         f.add_damage(f.hits.damage_queue);
         if f.items.held.is_some()
             && !f.items.held.is_some_and(|i| {
@@ -1784,7 +1795,8 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
             && (f.hitlag == 0
                 || !f.is_knockback_paused
                 || f.hits.damage_knockback >= f.damage_knockback_stack + 30.0)
-            && f.hits.damage_queue > crate::rng::rand_int_range(60)
+            && (f.hits.damage_queue > crate::rng::rand_int_range(60)
+                || (shoot_no_ammo(f) && crate::rng::rand_int_range(2) == 0))
         {
             crate::item_throw::drop_item(f);
         }
@@ -1809,12 +1821,17 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         }
         damage = f.hits.damage_lag;
         is_knockback_paused = true;
+        f.shuffle.set(
+            f.hits.damage_element == Element::Electric,
+            damage,
+            status_before,
+            f.hits.hitlag_mul,
+        );
         // ftmain.c:3921: `ftParamMakeRumble(fp, 0, damage_queue * 0.75 + 4)`.
         crate::rumble::on_damage(f, f.hits.damage_queue);
     } else if f.hits.shield_damage != 0 {
         if is_shieldbreak {
-            record_shield_break(f);
-            crate::reaction::set_shield_break_fly(f);
+            status::set_shield_break_fly(f);
         } else {
             status::set_guard_set_off(f, f.hits.shield_damage as f32, f.hits.shield_lr);
         }
@@ -1941,6 +1958,18 @@ fn update_afterimage(f: &mut Fighter) {
     if a.drawstatus <= 2 {
         a.drawstatus += 1;
     }
+}
+
+/// `itMainCheckShootNoAmmo` (itmain.c:281): the held item is a Star Rod,
+/// Ray Gun or Fire Flower with no ammo left.
+fn shoot_no_ammo(f: &Fighter) -> bool {
+    use crate::item::equipment::Kind;
+    f.items.held.is_some_and(|i| {
+        matches!(
+            i.kind,
+            crate::item::ItemKind::Equipment(Kind::StarRod | Kind::RayGun | Kind::FireFlower)
+        )
+    }) && f.items.held_multi == 0
 }
 
 /// `ftParamGetHitLag` (US), with the electric multiplier.
@@ -2248,6 +2277,9 @@ pub fn end_finish(
     // `ftMainProcParams` runs fighter by fighter, and a grab link reads and
     // writes the partner's unprocessed hit.
     let mut landed = [false; 4];
+    // The credits of this frame's fighter updates (throws), before those of
+    // the damage statuses below.
+    flush_attack_credits(fighters);
     for i in 0..n {
         let link = fighters[i].grab.catch.or(fighters[i].grab.capture);
         let partner = link.and_then(|port| (0..n).find(|&j| j != i && fighters[j].port == port));
@@ -2258,6 +2290,7 @@ pub fn end_finish(
             }
             None => proc_params(fighters[i]),
         };
+        flush_attack_credits(fighters);
         // The damage statuses' effects, in this fighter's `ftMainProcParams`.
         for f in fighters.iter_mut() {
             effects.fighter(f);
@@ -2267,6 +2300,20 @@ pub fn end_finish(
         }
     }
     landed
+}
+
+/// Applies every fighter's pending [`attack::credit_attacker`] credits to
+/// their attackers, in fighter then credit order.
+pub fn flush_attack_credits(fighters: &mut [&mut Fighter]) {
+    for i in 0..fighters.len() {
+        let credits = core::mem::take(&mut fighters[i].attack_credits);
+        for (port, knockback) in credits.into_iter().flatten() {
+            if let Some(f) = fighters.iter_mut().find(|f| f.port == port) {
+                f.attack_count = f.attack_count.wrapping_add(1);
+                f.attack_knockback = knockback;
+            }
+        }
+    }
 }
 
 fn flush_thrown_stale(fighters: &mut [&mut Fighter]) {
@@ -2333,5 +2380,216 @@ mod bumper_angle_tests {
         let mut f = fighter_at(100.0, 0.0, 361);
         bumper_damage_angle(&mut f, Vec3::new(0.0, 100.0, 0.0));
         assert_eq!((f.hits.damage_angle, f.hits.damage_lr), (361, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod update_damage_tests {
+    use super::*;
+    use crate::item::{equipment, HeldItem, ItemKind, ItemType, ItemWeight};
+
+    fn holding(kind: equipment::Kind, ammo: u16) -> Fighter {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.items.held = Some(HeldItem {
+            slot: 0,
+            kind: ItemKind::Equipment(kind),
+            ty: ItemType::Shoot,
+            weight: ItemWeight::Light,
+        });
+        f.items.held_multi = ammo;
+        f.hits.damage_knockback = 50.0;
+        f.hits.damage_queue = 1;
+        f.hits.damage_lag = 1;
+        f.hits.damage_kind = DamageKind::ColAnim;
+        f
+    }
+
+    /// A seed whose first draw misses `damage > rand(60)` and whose second
+    /// passes `rand(2) == 0`.
+    fn seed_for_ammo_branch() -> i32 {
+        (1..)
+            .find(|&s| {
+                crate::rng::set_seed(s);
+                crate::rng::rand_int_range(60) >= 1 && crate::rng::rand_int_range(2) == 0
+            })
+            .unwrap()
+    }
+
+    /// `ftParamUpdateDamage` (ftparam.c:1547): an empty shooting item
+    /// drops on half the hits the damage roll spares
+    /// (`itMainCheckShootNoAmmo`); a loaded one stays.
+    #[test]
+    fn an_empty_shooter_drops_on_the_ammo_roll() {
+        let seed = seed_for_ammo_branch();
+        for kind in [
+            equipment::Kind::RayGun,
+            equipment::Kind::StarRod,
+            equipment::Kind::FireFlower,
+        ] {
+            let mut empty = holding(kind, 0);
+            crate::rng::set_seed(seed);
+            proc_params(&mut empty);
+            assert!(empty.items.held.is_none(), "{kind:?} empty kept");
+
+            let mut loaded = holding(kind, 1);
+            crate::rng::set_seed(seed);
+            proc_params(&mut loaded);
+            assert!(loaded.items.held.is_some(), "{kind:?} loaded dropped");
+        }
+        // Not a shooting item: the ammo roll never runs.
+        let mut sword = holding(equipment::Kind::Sword, 0);
+        crate::rng::set_seed(seed);
+        proc_params(&mut sword);
+        assert!(sword.items.held.is_some());
+    }
+
+    /// `ftCommonDamageInitDamageVars` (ftcommondamage.c:649-658): the
+    /// damage status counts the hit for its attacker, with its knockback;
+    /// a stage hit counts for no one.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn a_damage_status_credits_its_attacker() {
+        let hitbox = attack::Hitbox {
+            kb_base: 200,
+            kb_scale: 100,
+            kb_weight: 0,
+            ..attack::mario_jab1_hitbox()
+        };
+        for (by, credited) in [(DamageBy::Player(0), true), (DamageBy::World, false)] {
+            let mut attacker = Fighter::new(FighterKind::Mario, 0, 3);
+            let mut victim = Fighter::new(FighterKind::Mario, 1, 3);
+            assert!(direct_hit(
+                &mut victim,
+                hitbox,
+                Vec3::new(-100.0, 0.0, 0.0),
+                1.0,
+                9,
+                by
+            ));
+            finish_frame(&mut [&mut attacker, &mut victim]);
+            assert!(victim.is_hitstun);
+            if credited {
+                assert_eq!(attacker.attack_count, 1);
+                assert_eq!(attacker.attack_knockback, victim.damage_knockback_stack);
+                assert!(attacker.attack_knockback > 160.0);
+            } else {
+                assert_eq!(attacker.attack_count, 0);
+            }
+            assert_eq!(victim.attack_count, 0);
+        }
+    }
+
+    /// `ftCommonShieldBreakFlyCommonSetStatus` (ftcommonshieldbreakfly.c:49-56):
+    /// a broken shield makes common generator 3 at YRotN, except Yoshi's,
+    /// which makes the egg explosion and egg shards at TopN instead.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_broken_shield_makes_its_break_effect() {
+        use crate::fteffect::{kind, FighterEffect};
+        for fkind in [FighterKind::Mario, FighterKind::Yoshi] {
+            let mut f = Fighter::new(fkind, 0, 3);
+            f.pos = Vec3::new(120.0, 40.0, 7.0);
+            status::set_guard_on(&mut f);
+            f.effects.clear();
+            f.guard.shield_player = Some(1);
+            f.hits.shield_damage = 60;
+            f.hits.shield_damage_total = 60;
+            // YRotN in the pose the break is processed in.
+            let yrot = f.joint_query(crate::yoshi::EGGTHROW_JOINT, Vec3::ZERO);
+            proc_params(&mut f);
+            assert_eq!(f.status.status, status::Status::ShieldBreakFly);
+            let queued: std::vec::Vec<_> = f.effects.iter().copied().collect();
+            if fkind == FighterKind::Yoshi {
+                let pos = Vec3::new(120.0, 40.0, 0.0);
+                assert_eq!(
+                    queued[..2],
+                    [
+                        FighterEffect::YoshiEggExplode { pos },
+                        FighterEffect::At {
+                            kind: kind::EGG_BREAK,
+                            pos
+                        }
+                    ]
+                );
+                assert!(!queued
+                    .iter()
+                    .any(|e| matches!(e, FighterEffect::ShieldBreak { .. })));
+            } else {
+                let pos = yrot;
+                assert_ne!(pos, f.pos);
+                assert_eq!(
+                    queued
+                        .iter()
+                        .filter(|e| matches!(e, FighterEffect::ShieldBreak { .. }))
+                        .count(),
+                    1
+                );
+                assert!(queued.contains(&FighterEffect::ShieldBreak { pos }));
+            }
+        }
+    }
+
+    /// `ftParamSetDamageShuffle` (ftmain.c:3918, ftparam.c:234), its tick
+    /// (ftmain.c:1478) and `ftMainSetStatus`'s clear (ftmain.c:4525): a hit
+    /// shakes the model for `hitlag * 1.3` frames through the four
+    /// non-electric offsets; an electric hit cycles three and keeps shaking
+    /// across `ftCommonDamageSetStatus`'s hand-over
+    /// (`FTSTATUS_PRESERVE_SHUFFLETIME`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_hit_shakes_the_model_for_its_shuffle_time() {
+        use crate::fighter::shuffle_position;
+        for element in [Element::Normal, Element::Electric] {
+            let electric = element == Element::Electric;
+            let hitbox = attack::Hitbox {
+                damage: 9,
+                element,
+                ..attack::mario_jab1_hitbox()
+            };
+            let mut attacker = Fighter::new(FighterKind::Mario, 0, 3);
+            let mut victim = Fighter::new(FighterKind::Mario, 1, 3);
+            assert!(direct_hit(
+                &mut victim,
+                hitbox,
+                Vec3::new(-100.0, 0.0, 0.0),
+                1.0,
+                9,
+                DamageBy::Player(0)
+            ));
+            finish_frame(&mut [&mut attacker, &mut victim]);
+            let lag = victim.hitlag;
+            assert!(lag > 0);
+            assert_eq!(victim.damage_e_status.is_some(), electric);
+            let tics = (f32::from(lag) * 1.3) as u16;
+            assert!(tics > lag);
+            assert_eq!(victim.shuffle.tics, tics);
+            assert_eq!(victim.shuffle.is_electric, electric);
+            let max = if electric { 3 } else { 4 };
+            assert_eq!(victim.shuffle.offset(), Some(shuffle_position(electric, 0)));
+            for n in 1..=lag {
+                victim.tick_timers();
+                if electric {
+                    crate::attack::update_damage_e(&mut victim);
+                }
+                assert_eq!(victim.shuffle.tics, tics - n);
+                let i = usize::from(n % max);
+                assert_eq!(usize::from(victim.shuffle.frame_index), i);
+                assert_eq!(victim.shuffle.offset(), Some(shuffle_position(electric, i)));
+            }
+            assert_eq!(victim.hitlag, 0);
+            if electric {
+                // `DamageE` handed over and the shake runs on.
+                assert!(victim.damage_e_status.is_none());
+                assert_eq!(victim.shuffle.tics, tics - lag);
+            }
+            status::set_status(
+                &mut victim,
+                status::Status::Wait,
+                0.0,
+                status::StatusTiming::unknown(),
+            );
+            assert_eq!(victim.shuffle.tics, 0);
+            assert_eq!(victim.shuffle.offset(), None);
+        }
     }
 }
