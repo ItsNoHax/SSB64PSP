@@ -956,7 +956,11 @@ impl Item {
 
     /// `itMainCopyDamageStats`: the attacker becomes the owner. The source
     /// copies `player_num` onto itself (itmain.c:259), so
-    /// [`Item::player_num`] stays.
+    /// [`Item::player_num`] stays. `display_mode = damage_display_mode`
+    /// (itmain.c:261) is not modelled: every source of the value
+    /// (`ftmanager.c:732`, `itmanager.c:161`, `wpmanager.c:46`) is
+    /// `nDBDisplayModeMaster` and nothing writes another, so the copy never
+    /// changes it.
     pub(crate) fn copy_damage_stats(&mut self) {
         self.owner = self.damage_by;
         self.team = self.damage_team;

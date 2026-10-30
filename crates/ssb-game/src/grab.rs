@@ -515,6 +515,13 @@ pub struct Holder {
     pub handicap: u8,
     /// Kirby's `status_vars.kirby.specialn.dist` during an Inhale.
     pub kirby_dist: ssb_engine::math::Vec2,
+    /// `capture_fp->motion_attack_id`, `->motion_count` and the catcher's
+    /// stale queue: what `ftParamGetStaledDamage(capture_fp->player, ...)`
+    /// reads when the held side deals the catcher's damage (Yoshi's egg
+    /// lay, `ftcommoncaptureyoshi.c:367`).
+    pub attack_id: MotionAttackId,
+    pub motion_count: u16,
+    pub stale: crate::stale::StaleQueue,
 }
 
 /// A throw's damage staled by the catcher at the moment it queued the
@@ -590,6 +597,14 @@ pub enum GrabEvent {
     KirbyEat { is_kirby: bool },
     /// `ftKirbySpecialNApplyCaptureDamage`: spit or copy damage, staled.
     KirbyDamage { staled: StaledThrow },
+    /// `ftParamUpdateStaleQueue(capture_fp->player, this_fp->player, ...)`
+    /// written by the held side: Yoshi's egg lay
+    /// (`ftKirbySpecialNApplyCaptureDamage(capture_gobj, fighter_gobj, 5)`)
+    /// records Yoshi's motion in Yoshi's queue.
+    StaleQueue {
+        attack_id: MotionAttackId,
+        motion_count: u16,
+    },
     /// `ftCommonThrownKirbyStarSetStatus` / `...CopyStarSetStatus`.
     KirbyStar { copy: bool, vel: Vec3 },
     /// Sent by the swallowed fighter: `ftCommonCaptureWaitKirbyUpdateBreakoutVars`
@@ -2535,6 +2550,9 @@ pub(crate) fn holder_of(f: &Fighter) -> Holder {
         percent: f.damage,
         handicap: f.handicap,
         kirby_dist: f.kirby.inhale_dist,
+        attack_id: f.motion.attack_id,
+        motion_count: f.motion.count,
+        stale: f.stale,
     }
 }
 
@@ -2578,6 +2596,18 @@ fn record_throw(catcher: &mut Fighter, held: &mut Fighter, staled: StaledThrow, 
         held.record_combo_damage(Some(catcher.port), damage);
         catcher.stale.push(staled.attack_id, staled.motion_count);
     }
+}
+
+/// `ftKirbySpecialNApplyCaptureDamage`'s writes to the victim, in order:
+/// `ftCommonDamageUpdateDamageColAnim(victim, knockback, 0)`, then
+/// `ftParamUpdateDamage(victim, damage)` with the already staled damage. A
+/// normal-element hit is `DamageCommon` at any knockback, so of
+/// `ftParamGetCommonKnockback` only the tampered-save random draw (RE-460)
+/// is kept.
+pub(crate) fn apply_capture_damage(to: &mut Fighter, damage: i32) {
+    let kb = crate::attack::random_knockback(0.0);
+    crate::colanim::update_damage_colanim(to, kb, crate::combat::Element::Normal);
+    crate::combat::update_damage(to, damage);
 }
 
 fn clear_damage_stats(f: &mut Fighter) {
@@ -2677,13 +2707,16 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::CaptureKirby => crate::capture_kirby::capture(to, from.port, holder_of(from)),
         GrabEvent::KirbyEat { is_kirby } => crate::capture_kirby::on_eaten(to, is_kirby),
         GrabEvent::KirbyDamage { staled } => {
-            // `ftCommonDamageUpdateDamageColAnim(victim, knockback, 0)`: a
-            // normal-element hit is `DamageCommon` at any knockback, so only
-            // the tampered-save random draw (RE-460) is kept.
-            let kb = crate::attack::random_knockback(0.0);
-            crate::colanim::update_damage_colanim(to, kb, crate::combat::Element::Normal);
-            crate::combat::update_damage(to, staled.damage);
+            apply_capture_damage(to, staled.damage);
             record_throw(from, to, staled, staled.damage);
+        }
+        GrabEvent::StaleQueue {
+            attack_id,
+            motion_count,
+        } => {
+            if to.port != from.port {
+                to.stale.push(attack_id, motion_count);
+            }
         }
         GrabEvent::KirbyStar { copy, vel } => {
             crate::capture_kirby::set_star(to, copy, vel, crate::thrown::ThrowOwner::of(from));
@@ -3002,6 +3035,95 @@ mod tests {
         assert!(
             held.items.held.is_none(),
             "kept: queue {queue}, throw {damage}"
+        );
+    }
+
+    /// A seed whose first two `rand(60)` draws fall in `first` and `second`.
+    fn seed_with_draws(first: core::ops::Range<i32>, second: core::ops::Range<i32>) -> i32 {
+        (1..)
+            .find(|&s| {
+                crate::rng::set_seed(s);
+                let a = crate::rng::rand_int_range(60);
+                let b = crate::rng::rand_int_range(60);
+                first.contains(&a) && second.contains(&b)
+            })
+            .unwrap()
+    }
+
+    /// Held fighter in the earlier slot (port 0), so its `ftMainProcParams`
+    /// runs before its catcher's (slot order; a catcher in an earlier slot
+    /// reaches ftcommondamage.c:732 first instead): its
+    /// own `ftParamUpdateDamage(fp, damage_queue)` (ftmain.c:3878) rolls
+    /// first, then `ftCommonDamageUpdateMain` reaches
+    /// `ftCommonThrownUpdateDamageStats(this_fp)` (ftcommondamage.c:777),
+    /// whose `ftParamUpdateDamage` rolls the throw damage on the next draw.
+    /// The catcher's later `ProcParams` finds the held side's
+    /// `damage_knockback` cleared (ftmain.c:4017) and rolls nothing.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_hold_hit_on_both_sides_rolls_the_held_fighters_own_damage_first() {
+        // Where a draw falls: `Mid` spares the queue's roll but not the
+        // throw damage's, `High` spares both.
+        #[derive(Clone, Copy)]
+        enum Draw {
+            Mid,
+            High,
+        }
+        // Whether the item drops, with the held fighter first in
+        // `ftMainProcParams` order. Reversed rolls would flip each outcome.
+        let run = |first: Draw, second: Draw| {
+            let mut held = grounded(FighterKind::Mario, 0, 150.0);
+            let mut catcher = grounded(FighterKind::Mario, 1, 0.0);
+            grab(&mut catcher, &mut held);
+            to_catch_wait(&mut catcher, &mut held);
+            held.items.held = holding_light(0).items.held;
+            let desc = catcher
+                .grab
+                .throw_desc
+                .map(|d| d[1])
+                .unwrap_or(MARIO_CATCH[1]);
+            let damage = StaledThrow::of(&catcher, desc.damage).damage;
+            let at = held.pos;
+            assert!(crate::combat::direct_hit(
+                &mut catcher,
+                light_hit(),
+                at,
+                1.0,
+                9,
+                crate::combat::DamageBy::World,
+            ));
+            let small = attack::Hitbox {
+                damage: 2,
+                ..light_hit()
+            };
+            assert!(crate::combat::direct_hit(
+                &mut held,
+                small,
+                catcher.pos,
+                -1.0,
+                9,
+                crate::combat::DamageBy::World,
+            ));
+            let queue = held.hits.damage_queue;
+            assert!(attack::capture_keep_hold(queue), "{queue}");
+            assert!(queue < damage, "queue {queue}, throw {damage}");
+            let range = |d: Draw| match d {
+                Draw::Mid => queue..damage,
+                Draw::High => damage..60,
+            };
+            crate::rng::set_seed(seed_with_draws(range(first), range(second)));
+            crate::combat::finish_frame(&mut [&mut held, &mut catcher]);
+            assert!(held.grab.capture.is_none());
+            held.items.held.is_none()
+        };
+        // Own roll spared by a draw the throw damage would beat; the
+        // throw's roll spared too.
+        assert!(!run(Draw::Mid, Draw::High), "the throw damage rolled first");
+        // Own roll spared by a draw that also spares the throw damage; the
+        // throw's roll then drops.
+        assert!(
+            run(Draw::High, Draw::Mid),
+            "no second roll on the throw damage"
         );
     }
 

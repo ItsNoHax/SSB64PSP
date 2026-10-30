@@ -46,7 +46,8 @@ pub const ESCAPE_OFF_Y: f32 = 10.0;
 pub const ESCAPE_VEL_Y: f32 = 70.0;
 /// Each mash input takes 12 frames off the escape wait.
 const MASH_FRAMES: i32 = 12;
-/// `ftKirbySpecialNApplyCaptureDamage(capture_gobj, fighter_gobj, 5)`.
+/// `ftKirbySpecialNApplyCaptureDamage(capture_gobj, fighter_gobj, 5)`:
+/// the base damage, staled against Yoshi's queue.
 pub const LAY_DAMAGE: u16 = 5;
 /// Length of `llYoshiSpecial3EggLayBreakAnimJoint`.
 pub const EGG_BREAK_FRAMES: u8 = 10;
@@ -234,18 +235,22 @@ fn set_egg(f: &mut Fighter) {
     f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
     grab::init_breakout(f, BREAKOUT_INPUTS_MIN);
-    crate::combat::update_damage(f, i32::from(LAY_DAMAGE));
+    // `ftKirbySpecialNApplyCaptureDamage(capture_gobj, fighter_gobj, 5)`
+    // (`ftcommoncaptureyoshi.c:367`, `ftkirbyspecialn.c:20-32`): Yoshi's
+    // current motion staled against Yoshi's queue, the damage colanim,
+    // `ftParamUpdateDamage`, `ftParamUpdatePlayerBattleStats`, then
+    // `ftParamUpdateStaleQueue` on Yoshi (through the grab outbox).
     let player = f.grab.capture;
-    f.record_combo_damage(player, i32::from(LAY_DAMAGE));
-    crate::spgame::live::hit(
-        f,
-        player.map_or(
-            crate::combat::DamageBy::World,
-            crate::combat::DamageBy::Player,
-        ),
-        holder.stat,
-        crate::spgame::bonus::DamageObject::Other,
-    );
+    let damage =
+        holder
+            .stale
+            .staled_damage(i32::from(LAY_DAMAGE), holder.attack_id, holder.motion_count);
+    grab::apply_capture_damage(f, damage);
+    f.record_combo_damage(player, damage);
+    f.grab.send(grab::GrabEvent::StaleQueue {
+        attack_id: holder.attack_id,
+        motion_count: holder.motion_count,
+    });
     // `ftParamSetPlayerTagWait(fighter_gobj, 1)`: the tag marks the hidden
     // fighter for the egg's whole life.
     f.interface.tag_wait = 1;
@@ -264,6 +269,17 @@ fn set_egg(f: &mut Fighter) {
     f.grab.holder = None;
     f.egg.lr = lr;
     f.egg.is_damagefloor = false;
+    // `ftParamUpdate1PGameDamageStats(this_fp, capture_fp->player, ...)`
+    // (`ftcommoncaptureyoshi.c:391`).
+    crate::spgame::live::hit(
+        f,
+        player.map_or(
+            crate::combat::DamageBy::World,
+            crate::combat::DamageBy::Player,
+        ),
+        holder.stat,
+        crate::spgame::bonus::DamageObject::Other,
+    );
 }
 
 /// The lay's map sweep, `(Yoshi's TopN, Yoshi's diamond)`, on the frame
@@ -444,6 +460,9 @@ mod tests {
             percent: 0,
             handicap: crate::stale::HANDICAP_DEFAULT,
             kirby_dist: ssb_engine::math::Vec2::ZERO,
+            attack_id: crate::stale::MotionAttackId::None,
+            motion_count: 0,
+            stale: crate::stale::StaleQueue::default(),
         }
     }
 
@@ -803,6 +822,45 @@ mod tests {
         );
         physics(&mut f);
         assert_eq!(f.egg.effect.wiggle, [-WIGGLE_GFX_RANGE_XY, 0.0]);
+    }
+
+    /// `ftKirbySpecialNApplyCaptureDamage(capture_gobj, fighter_gobj, 5)`
+    /// (`ftcommoncaptureyoshi.c:367`, `ftkirbyspecialn.c:20-32`): the lay's 5
+    /// is staled against Yoshi's queue by Yoshi's current motion, the egg
+    /// flashes `DamageCommon`, the staled damage is credited, and Yoshi's
+    /// motion lands in Yoshi's queue.
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    #[test]
+    fn the_egg_lay_stales_flashes_and_records_yoshis_motion() {
+        use crate::stale::{MotionAttackId, STALE_TABLE};
+        let mut yoshi = Fighter::new(FighterKind::Yoshi, 0, 3);
+        let mut held = Fighter::new(FighterKind::Mario, 1, 3);
+        yoshi.motion.attack_id = MotionAttackId::SpecialN;
+        yoshi.motion.count = 7;
+        // The previous lay is the newest entry: `STALE_TABLE[0]`.
+        yoshi.stale.push(MotionAttackId::SpecialN, 6);
+        yoshi.grab.send(grab::GrabEvent::CaptureYoshi);
+        grab::exchange(&mut yoshi, &mut held);
+        assert_eq!(held.status.status, Status::CaptureYoshi);
+        held.egg.stage = 3;
+        update_held(&mut held, Vec3::ZERO);
+        assert_eq!(held.status.status, Status::YoshiEgg);
+
+        let staled = (5.0 * STALE_TABLE[0] + 0.999) as i32;
+        assert!(staled < 5, "the queue stales the lay");
+        assert_eq!(i32::from(held.damage), staled);
+        assert_eq!(held.combo_damage_foe, staled as u32);
+        assert_eq!(held.combo_count_foe, 1);
+        assert_eq!(
+            held.colanim.id,
+            crate::colanim::ColAnimId::FIGHTER_DAMAGE_COMMON
+        );
+
+        // `ftParamUpdateStaleQueue(capture_fp->player, ...)` reaches Yoshi.
+        assert_eq!(yoshi.stale.next, 1);
+        grab::exchange(&mut held, &mut yoshi);
+        assert_eq!(yoshi.stale.next, 2);
+        assert_eq!(yoshi.stale.entries[1], (MotionAttackId::SpecialN, 7));
     }
 
     /// `damage_mul` 0.5 halves the hit as it registers
