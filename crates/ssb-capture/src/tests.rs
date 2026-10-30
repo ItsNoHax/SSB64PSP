@@ -200,6 +200,7 @@ fn cpufx_scenes_parse_with_their_dashes_and_ticks() {
         ("cpufx-n", GameScene::CpuFxN),
         ("cpufx-k", GameScene::CpuFxK),
         ("cpufx-s", GameScene::CpuFxS),
+        ("cpufx-r", GameScene::CpuFxR),
     ] {
         let text = std::format!("{name}@472");
         let spec = crate::GameSpec::parse(&text).unwrap();
@@ -230,6 +231,7 @@ fn entry_scenes_pin_their_n64_reference_focus() {
         GameScene::CpuFxN,
         GameScene::CpuFxK,
         GameScene::CpuFxS,
+        GameScene::CpuFxR,
     ] {
         assert_eq!(s.entry_focus(), Some(2), "{s}");
     }
@@ -237,5 +239,5 @@ fn entry_scenes_pin_their_n64_reference_focus() {
         .iter()
         .filter(|s| s.entry_focus().is_some())
         .count();
-    assert_eq!(pinned, 10);
+    assert_eq!(pinned, 11);
 }

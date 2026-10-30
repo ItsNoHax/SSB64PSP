@@ -1749,7 +1749,7 @@ pub struct WeaponPool {
     /// one.
     set_off: [bool; MAX_WEAPONS],
     /// Each record's `timer_rehit` (`WEAPON_REHIT_TIME_DEFAULT` on a
-    /// `can_rehit_fighter` item weapon's hit; zero otherwise).
+    /// reflect, or a `can_rehit_fighter` item weapon's hit; zero otherwise).
     rehit: [[u8; 4]; MAX_WEAPONS],
     /// Onix's rocks' events for [`crate::item::ItemPool::observe_weapons`].
     rock_events: [Option<(u32, bool)>; 2 * MAX_WEAPONS],
@@ -1804,6 +1804,21 @@ fn record_weapon_victim(records: &mut [Option<u8>; 4], victim: u8) {
     }
     let slot = records.iter().position(Option::is_none).unwrap_or(0);
     records[slot] = Some(victim);
+}
+
+/// `WEAPON_REHIT_TIME_DEFAULT`: a rehit record's updates before it clears.
+const WEAPON_REHIT_TIME: u8 = 16;
+
+/// `ftMainUpdateReflectorStatWeapon`'s `nGMHitTypeReflect` record, made
+/// whether the reflector holds or breaks: `wpProcessSetHitInteractStats`
+/// gives it `WEAPON_REHIT_TIME_DEFAULT`, so a shot reflected back and forth
+/// meets its first reflector again once the record clears
+/// (`wpProcessUpdateAttackRecords`).
+fn record_reflector(records: &mut [Option<u8>; 4], rehit: &mut [u8; 4], port: u8) {
+    record_weapon_victim(records, port);
+    if let Some(i) = records.iter().position(|r| *r == Some(port)) {
+        rehit[i] = WEAPON_REHIT_TIME;
+    }
 }
 
 fn recorded_fighter_ports(records: &[Option<u8>; 4]) -> u8 {
@@ -2491,6 +2506,7 @@ fn pre_hit_at(
 /// The pool state one Arwing laser's fighter search writes.
 struct LaserHit<'a> {
     records: &'a mut [Option<u8>; 4],
+    rehit: &'a mut [u8; 4],
     /// The fighter ports in `records`.
     ports: u8,
     stale: crate::stale::WeaponStale,
@@ -2567,13 +2583,13 @@ fn laser_hit(laser: &ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) {
         PreHit::None | PreHit::SetOff => {}
         // `ftMainUpdateReflectorStatWeapon` records the reflector.
         PreHit::Reflected => {
-            record_weapon_victim(h.records, defender.port);
+            record_reflector(h.records, h.rehit, defender.port);
             h.pending.reflect = Some(Reflector::of(defender));
             return;
         }
         // The 2D shot's `proc_hit` (the 3D shot cannot be reflected).
         PreHit::ReflectorBroke => {
-            record_weapon_victim(h.records, defender.port);
+            record_reflector(h.records, h.rehit, defender.port);
             *h.proc_hit = true;
             return;
         }
@@ -2692,7 +2708,7 @@ fn record_shot_victim(h: &mut MonsterHit<'_>, port: u8, rehit: bool) {
     record_weapon_victim(h.records, port);
     if rehit {
         if let Some(i) = h.records.iter().position(|r| *r == Some(port)) {
-            h.rehit[i] = 16;
+            h.rehit[i] = WEAPON_REHIT_TIME;
         }
     }
 }
@@ -2749,12 +2765,12 @@ fn monster_hit(
         }
         // `ftMainUpdateReflectorStatWeapon` records the reflector.
         PreHit::Reflected => {
-            record_shot_victim(&mut h, defender.port, rehit);
+            record_reflector(h.records, h.rehit, defender.port);
             h.pending.reflect = Some(Reflector::of(defender));
             return;
         }
         PreHit::ReflectorBroke => {
-            record_shot_victim(&mut h, defender.port, rehit);
+            record_reflector(h.records, h.rehit, defender.port);
             *h.proc_hit = true;
             return;
         }
@@ -3972,6 +3988,7 @@ impl WeaponPool {
                 if !l.exploded {
                     l.explode();
                     self.hit_records[i] = [None; 4];
+                    self.rehit[i] = [0; 4];
                 }
             }
             Weapon::Monster(m) if m.survives(ShotProc::Hit) => {}
@@ -4127,6 +4144,7 @@ impl WeaponPool {
                                     self.teams[i],
                                     self.lrs[i],
                                     self.hit_records[i],
+                                    self.rehit[i],
                                 ));
                             }
                             // `wpPikachuThunderHeadProcDead` notifies
@@ -4181,6 +4199,7 @@ impl WeaponPool {
                         // `wpMainClearAttackRecord`.
                         if burst {
                             self.hit_records[i] = [None; 4];
+                            self.rehit[i] = [0; 4];
                         }
                         alive
                     }
@@ -4191,9 +4210,9 @@ impl WeaponPool {
                         || !bounds.is_some_and(|b| out_of_bounds(b, weapon.position())));
                 if !alive {
                     destroy(&mut self.slots, i);
-                } else if matches!(weapon, Weapon::Monster(_)) {
-                    // `wpProcessUpdateAttackRecords`: a rehit record clears
-                    // when its timer runs out.
+                } else {
+                    // `wpProcessUpdateAttackRecords`, every weapon's: a
+                    // rehit record clears when its timer runs out.
                     for (r, t) in self.hit_records[i].iter_mut().zip(&mut self.rehit[i]) {
                         if r.is_some() && *t > 0 {
                             *t -= 1;
@@ -4210,9 +4229,10 @@ impl WeaponPool {
         }
         // `wpPikachuThunderTrailMakeWeapon` copies the head's attack
         // records: an item the group hit stays recorded.
-        for (trail, stale, team, lr, records) in trails.into_iter().flatten() {
+        for (trail, stale, team, lr, records, rehit) in trails.into_iter().flatten() {
             if let Some(j) = self.insert_at(Weapon::Trail(trail), stale, team, lr) {
                 self.hit_records[j] = records;
+                self.rehit[j] = rehit;
             }
         }
     }
@@ -4336,6 +4356,7 @@ impl WeaponPool {
                     laser,
                     LaserHit {
                         records,
+                        rehit: &mut self.rehit[i],
                         ports,
                         stale: self.stale[i],
                         team: self.teams[i],
@@ -4475,19 +4496,19 @@ impl WeaponPool {
                     continue;
                 }
                 // `ftMainUpdateReflectorStatWeapon` records the reflector
-                // (`nGMHitTypeReflect`), kept through the reflection: the
-                // shot passes it from then on. `reflect_gobj`: the last
-                // reflector wins.
+                // (`nGMHitTypeReflect`) for `WEAPON_REHIT_TIME_DEFAULT`
+                // updates: the shot passes it until then.
+                // `reflect_gobj`: the last reflector wins.
                 PreHit::Reflected => {
                     weapon_saw(weapon, bit);
-                    record_weapon_victim(records, defender.port);
+                    record_reflector(records, &mut self.rehit[i], defender.port);
                     self.pending[i].reflect = Some(Reflector::of(defender));
                     continue;
                 }
                 // `hit_normal_damage`: the weapon's `proc_hit`.
                 PreHit::ReflectorBroke => {
                     weapon_saw(weapon, bit);
-                    record_weapon_victim(records, defender.port);
+                    record_reflector(records, &mut self.rehit[i], defender.port);
                     self.proc_hit[i] = true;
                     continue;
                 }
@@ -4760,6 +4781,7 @@ impl WeaponPool {
                             self.next_seq = self.next_seq.wrapping_add(1);
                             self.seq[i] = self.next_seq;
                             self.hit_records[i] = [None; 4];
+                            self.rehit[i] = [0; 4];
                         }
                         // A later reflection keeps the `group_id` on the
                         // N64, whose trails then outlive the head's
@@ -6318,6 +6340,50 @@ mod tests {
         crate::combat::resolve(&mut first);
         assert_eq!(first.damage, 0);
         assert!(weapons.first_fireball().is_some());
+    }
+
+    /// The reflect record lasts `WEAPON_REHIT_TIME_DEFAULT` (16) updates
+    /// (`wpProcessSetHitInteractStats`, `wpProcessUpdateAttackRecords`): a
+    /// Blaster shot two Foxes reflect back and forth meets the first again
+    /// on the 16th update, as the N64 trace's shot does every 20 frames
+    /// between Reflectors 3200 units apart.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_reflect_record_clears_after_sixteen_updates() {
+        let mut weapons = WeaponPool::default();
+        assert!(weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::FoxBlaster,
+            owner_port: 0,
+            team: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(100.0, 60.0, 0.0),
+            facing: -1.0,
+        }));
+        // A reflecting Fox 100 units behind the shot, as it moves.
+        let reflect = |weapons: &mut WeaponPool, port: u8| {
+            let shot = weapons.blasters().next().unwrap();
+            let mut fox = Fighter::new(FighterKind::Fox, port, 3);
+            fox.pos = Vec3::new(shot.position.x - 100.0, 0.0, 0.0);
+            fox.situation = Situation::Ground;
+            crate::status::set_fox_special_lw_start(&mut fox);
+            crate::status::set_any_status(
+                &mut fox,
+                crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwLoop),
+                0.0,
+                crate::status::StatusTiming::unknown(),
+            );
+            weapons.apply_hits(&mut fox);
+            crate::combat::resolve(&mut fox);
+            weapons.blasters().next().unwrap().owner_port
+        };
+        assert_eq!(reflect(&mut weapons, 1), 1);
+        assert_eq!(reflect(&mut weapons, 2), 2);
+        for _ in 0..15 {
+            weapons.tick(open_air, None);
+        }
+        assert_eq!(reflect(&mut weapons, 1), 2, "recorded for 15 updates");
+        weapons.tick(open_air, None);
+        assert_eq!(reflect(&mut weapons, 1), 1, "cleared on the 16th");
     }
 
     /// `ftMainSearchHitWeapon` walks `gGCCommonLinks[nGCCommonLinkIDWeapon]`:

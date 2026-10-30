@@ -193,4 +193,6 @@ crates/ssb-game/src/rumble.rs	SCRIPTS	port constant: decomp gmrumble.c source sc
 crates/ssb-engine/src/rdp_noise.rs	LEVELS	port constant: angrylion RDP noise levels (emulator model, not read from the ROM)
 crates/ssb-rom/tests/weapon_graphic_play.rs	SPIN_WEAPON_SOURCE	layout: a (file, offset) pair naming the Spin Attack weapon object in the pack
 crates/ssb-capture/src/script.rs	DAMAGE_SEEDS	port constant: capture-script damage values written to Master Hand (scene input, not read from the ROM)
+crates/ssb-capture/src/script.rs	DUMMY	port constant: capture-script controller frames for the cpufx-r dummy (scene input, not read from the ROM)
+crates/ssb-capture/src/script.rs	LEAD	port constant: capture-script controller frames for the cpufx-r lead (scene input, not read from the ROM)
 tools/romtool/src/main.rs	BOSS_WALLPAPER_GRAPHS	layout: (file, offset) pairs naming the wallpaper display-proc graphs in the pack

@@ -45,6 +45,10 @@ pub struct Dummy {
     /// Capture only (`cpufx-*`): the fighter reads the player's pad, as
     /// the N64 reference ROM's humans all read controller 0.
     pub mirror: bool,
+    /// Capture only (`cpufx-r`): a mirror dummy's own scripted pad, read
+    /// instead of the player's, as the N64 reference's port 2 reads
+    /// controller 1.
+    pub pad: Option<ssb_engine::input::ControllerState>,
     /// Its place in the fighter link, which orders every process
     /// (`gcMakeGObjSPAfter`): the port for the battle's own fighters, then
     /// increasing for a 1P Game team's next members, which link last.
@@ -160,7 +164,7 @@ impl Dummy {
     ) {
         use core::ptr::addr_of_mut;
         // SAFETY: the caller initialised the scene.
-        ssb_engine::all_fields!(Dummy { scene, computer, is_1p_game, key, mirror, link });
+        ssb_engine::all_fields!(Dummy { scene, computer, is_1p_game, key, mirror, pad, link });
         let scene = unsafe { &mut *addr_of_mut!((*dst).scene) };
         scene.fighter.port = port;
         scene.fighter.costume = costume;
@@ -183,6 +187,7 @@ impl Dummy {
             addr_of_mut!((*dst).is_1p_game).write(false);
             addr_of_mut!((*dst).key).write(None);
             addr_of_mut!((*dst).mirror).write(false);
+            addr_of_mut!((*dst).pad).write(None);
             addr_of_mut!((*dst).link).write(u32::from(port));
         }
     }
@@ -417,8 +422,9 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
             }
             Player::Dummy { dummy, controller } => {
                 if dummy.mirror && !view.locked {
+                    let controller = dummy.pad.unwrap_or(*controller);
                     let jump_held = controller.buttons.contains(crate::JUMP_BUTTON_MASK);
-                    dummy.tick_fighter_interrupt(pack, stage, *controller, jump_held, groups);
+                    dummy.tick_fighter_interrupt(pack, stage, controller, jump_held, groups);
                 } else {
                     // The items as the fighters before it left them this
                     // pass.

@@ -721,6 +721,13 @@ pub enum GameScene {
     /// tapped at `el` 120 and 140. Kirby's Stone start and cancel (bank
     /// scripts 2 and 5) and Pikachu's ground Thunder Jolt (RE-541).
     CpuFxS,
+    /// `cpufx-r`: two Foxes on Dream Land's side platforms, ports 0 and 2
+    /// on spawns 1 and 3, each on its own pad ([`script::cpufx_reflect`]):
+    /// both roll back to the platform ends, port 2's Blaster shot ping-pongs
+    /// between their Reflectors, and its fifth pass breaks port 0's
+    /// (`ftMainUpdateReflectorStatWeapon`: the Reflect Break effect and
+    /// `ShieldBreakFly`).
+    CpuFxR,
     /// `explain`: How to Play (`scExplain`, RE-465) from the title, its
     /// fighters on their input scripts. Diagnostic: outside the manifest.
     Explain,
@@ -856,7 +863,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 211] = [
+    pub const ALL: [GameScene; 212] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -1033,6 +1040,7 @@ impl GameScene {
         GameScene::CpuFxN,
         GameScene::CpuFxK,
         GameScene::CpuFxS,
+        GameScene::CpuFxR,
         GameScene::Explain,
         GameScene::AutoDemo,
         GameScene::Opening,
@@ -1249,6 +1257,7 @@ impl GameScene {
             GameScene::CpuFxN => "cpufx-n",
             GameScene::CpuFxK => "cpufx-k",
             GameScene::CpuFxS => "cpufx-s",
+            GameScene::CpuFxR => "cpufx-r",
             GameScene::Explain => "explain",
             GameScene::AutoDemo => "autodemo",
             GameScene::Opening => "opening",
@@ -1312,7 +1321,8 @@ impl GameScene {
             | GameScene::CpuFxU
             | GameScene::CpuFxN
             | GameScene::CpuFxK
-            | GameScene::CpuFxS => Some(2),
+            | GameScene::CpuFxS
+            | GameScene::CpuFxR => Some(2),
             _ => None,
         }
     }

@@ -466,3 +466,24 @@ fn pikachu_special_n_matches_the_n64_colanim_read() {
     // `nEFKindShockSmall` (10), once per outer loop.
     assert_eq!(effects, [(10, 10)]);
 }
+
+/// `dGMColScriptsFighterShieldBreakFly` against an N64 RDRAM read of a Fox
+/// whose reflector broke (batch 106, `colanim` 36 from el 195): `color1`
+/// `80000080` for two updates, then `BlendColor1` steps alpha by
+/// `(0x14 - 0x80) / 10` = -10 for ten updates to `0x1C`, `ClearColorAll` for
+/// two, and the loop starts again.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn shield_break_fly_matches_the_n64_colanim_read() {
+    let red = |a: u8| Some([0x80, 0x00, 0x00, a]);
+    let mut c = ColAnim::default();
+    assert!(c.check_set(ColAnimId::FIGHTER_SHIELD_BREAK_FLY, 0));
+    let colours: Vec<_> = run(&mut c, 15)
+        .into_iter()
+        .map(|(rgba, _, _)| rgba)
+        .collect();
+    let mut want = vec![red(0x80), red(0x80)];
+    want.extend((1..=10).map(|k| red(0x80 - 10 * k)));
+    want.extend([None, None, red(0x80)]);
+    assert_eq!(colours, want);
+}

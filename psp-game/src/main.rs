@@ -138,9 +138,13 @@ const fn cpufx_tick(el: u64) -> u64 {
     VS_GO_TICK + 1 + el
 }
 
-/// The `cpufx-*` scenes, which mirror the player's pad to the CPUs.
+/// The `cpufx-*` scenes, which mirror the player's pad to the CPUs
+/// (`cpufx-r`'s dummy reads its own, [`play::Dummy::pad`]).
 const fn is_cpufx(scene: GameScene) -> bool {
-    matches!(scene, GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS)
+    matches!(
+        scene,
+        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS | GameScene::CpuFxR
+    )
 }
 
 /// Whether a `cpufx-*` scene holds its press on `tick`: 40 frames for
@@ -151,6 +155,8 @@ const fn cpufx_held(scene: GameScene, tick: u64) -> bool {
     let hold = match scene {
         GameScene::CpuFxD | GameScene::CpuFxS => 41,
         GameScene::CpuFxU => 31,
+        // `cpufx-r` holds its own script ([`ssb_capture::script::cpufx_reflect`]).
+        GameScene::CpuFxR => return false,
         _ => 61,
     };
     is_cpufx(scene) && tick >= CPUFX_PRESS_TICK && tick < CPUFX_PRESS_TICK + hold
@@ -326,6 +332,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // The N64 reference's frame with every effect of `cpufx-k` and
         // `cpufx-n` on screen (`el` 74).
         GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS => cpufx_tick(74),
+        // The Reflect Break's third frame (anim frame 2).
+        GameScene::CpuFxR => ssb_capture::script::cpufx_reflect::tick(ssb_capture::script::cpufx_reflect::BREAK_EL + 2),
         // "Go" at 398; Luigi, held left, falls off Dream Land and the
         // one-stock battle ends. The results make the fighters 120 tics
         // in; this is past the end of Kirby's Win clip.
@@ -724,10 +732,12 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::CpuFxN
             | GameScene::CpuFxK
             | GameScene::CpuFxS
+            | GameScene::CpuFxR
     ) {
         return match tick {
             4 | 8 => N64Buttons(N64Buttons::A),
             t if cpufx_held(scene, t) || cpufx_s_tap(scene, t) => N64Buttons(N64Buttons::B),
+            t if scene == GameScene::CpuFxR => N64Buttons(ssb_capture::script::cpufx_reflect::lead(t).buttons),
             // `vsshield`: the shield is held from "Go".
             t if scene == GameScene::VsShield && t >= 398 => N64Buttons(N64Buttons::Z),
             // `vsmagnify`: Kirby's air jumps.
@@ -927,6 +937,10 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::VsMagnify {
         return ssb_capture::script::vs_magnify::stick_x(tick);
     }
+    // `cpufx-r`: the player's back roll.
+    if scene == GameScene::CpuFxR {
+        return ssb_capture::script::cpufx_reflect::lead(tick).stick_x;
+    }
     if matches!(
         scene,
         GameScene::Vs
@@ -954,6 +968,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
             | GameScene::CpuFxN
             | GameScene::CpuFxK
             | GameScene::CpuFxS
+            | GameScene::CpuFxR
     ) {
         return 0;
     }
@@ -1078,11 +1093,13 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
             | GameScene::CpuFxN
             | GameScene::CpuFxK
             | GameScene::CpuFxS
+            | GameScene::CpuFxR
     ) {
         return match tick {
             6 => -80,
             t if matches!(scene, GameScene::CpuFxD | GameScene::CpuFxS) && cpufx_held(scene, t) => -80,
             t if scene == GameScene::CpuFxU && cpufx_held(scene, t) => 80,
+            t if scene == GameScene::CpuFxR => ssb_capture::script::cpufx_reflect::lead(t).stick_y,
             _ => 0,
         };
     }
@@ -1174,8 +1191,9 @@ fn log_entry_state(
     player: Option<&play::FighterScene>,
     dummy: Option<&play::Dummy>,
 ) {
-    // `explain`'s fighters each frame, against an N64 trace (RE-465).
-    if capture_scene == Some(GameScene::Explain) {
+    // `explain`'s fighters each frame, against an N64 trace (RE-465), and
+    // `cpufx-r`'s.
+    if matches!(capture_scene, Some(GameScene::Explain | GameScene::CpuFxR)) {
         for f in [player.map(|p| &p.fighter), dummy.map(|d| &d.fighter)].into_iter().flatten() {
             let line = alloc::format!(
                 "re465 tick={} port={} status={:?} damage={} x={:.2} y={:.2} lr={:?} af={:.2} vg={:.3} va={:.3},{:.3} lag={} id={} seed={}\n",
@@ -2885,7 +2903,12 @@ fn vs_rules(scene: GameScene) -> VsRules {
             ..VsRules::DEFAULT
         },
         // The N64 reference: stock 3, items off.
-        GameScene::CpuFxD | GameScene::CpuFxU | GameScene::CpuFxN | GameScene::CpuFxK | GameScene::CpuFxS => VsRules {
+        GameScene::CpuFxD
+        | GameScene::CpuFxU
+        | GameScene::CpuFxN
+        | GameScene::CpuFxK
+        | GameScene::CpuFxS
+        | GameScene::CpuFxR => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 3,
             items: ssb_game::item::normal::Switches {
@@ -3958,6 +3981,7 @@ fn capture_roster(scene: GameScene, training: ssb_game::fighter_select::SceneDat
             return roster;
         }
         GameScene::VsArwing | GameScene::VsCar => return vs_pair_roster([FighterKind::Fox, FighterKind::Captain]),
+        GameScene::CpuFxR => return cpufx_reflect_roster(),
         GameScene::VsLinkEntry => return vs_pair_roster([FighterKind::Link, FighterKind::Mario]),
         GameScene::VsMagnify => return vs_pair_roster([FighterKind::Kirby, FighterKind::Mario]),
         GameScene::VsBall | GameScene::VsRays => return vs_pair_roster([FighterKind::Pikachu, FighterKind::Purin]),
@@ -4016,6 +4040,28 @@ fn vs_pair_roster(kinds: [ssb_game::fighter::FighterKind; 2]) -> Roster {
             human: port == 0,
         })
     })
+}
+
+/// `cpufx-r`'s Foxes, as its N64 reference build places them: ports 0
+/// and 2, both humans (the reference's two controllers), in costumes 0
+/// and 1, on Dream Land's side-platform spawns 1 and 3.
+fn cpufx_reflect_roster() -> Roster {
+    use ssb_game::fighter::FighterKind;
+    let fox = |port: u8, spawn: u16| Entrant {
+        kind: FighterKind::Fox,
+        shade: 0,
+        // The tag and colour of a human at `port`.
+        tag: Some(port),
+        // The reference build's `players[].costume`, 0 and 1.
+        costume: port / 2,
+        level: 3,
+        handicap: ssb_game::stale::HANDICAP_DEFAULT,
+        spawn,
+        team: port,
+        color: port,
+        human: port == 0,
+    };
+    [Some(fox(0, 1)), None, Some(fox(2, 3)), None]
 }
 
 /// `vsresults`' fighters: the player's Luigi against a Kirby CPU, each in
@@ -4705,7 +4751,7 @@ unsafe fn session_frame(
                     capture_scene,
                     sim_frame_index,
                     s.world.as_deref().and_then(|w| w.play_state.as_deref()),
-                    s.world.as_deref().and_then(|w| w.dummies[0].as_deref()),
+                    s.world.as_deref().and_then(|w| w.dummies.iter().find_map(|d| d.as_deref())),
                 );
                 // In a VS battle START is the pause menu's (`training_frame`).
                 if s.vs_battle.is_none() && s.demo.is_none() {
@@ -4806,6 +4852,19 @@ unsafe fn session_frame(
             s.updated_scene = Some(battle_key);
             let (campaign_session, bonus_stage, boss_scene) = s.campaign.as_mut().map_or((None, None, None), |c|
                 (c.frontend.session.as_deref_mut(), c.bonus.as_deref_mut(), c.boss.as_deref_mut()));
+            // `cpufx-r`'s dummy reads its own script, the N64 reference's
+            // controller 1.
+            if capture_scene == Some(GameScene::CpuFxR) {
+                let pad = ssb_capture::script::cpufx_reflect::dummy(sim_frame_index);
+                for d in dummies.iter_mut().flatten() {
+                    d.pad = Some(ControllerState {
+                        buttons: N64Buttons(pad.buttons),
+                        stick_x: pad.stick_x,
+                        stick_y: pad.stick_y,
+                        connected: true,
+                    });
+                }
+            }
             vs_done = training_frame(
                 p,
                 s.training_stage,

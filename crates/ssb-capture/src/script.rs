@@ -196,6 +196,88 @@ pub mod vs_magnify {
     }
 }
 
+/// `cpufx-r`'s two pads, a VS scene's and so outside [`fighter_pad`]: the
+/// N64 reference trace's scripts for controller 0 (port 0, the player) and
+/// controller 1 (port 2, the dummy), in frames since "Go" (`el`). On the
+/// `cpufx` clock `el` is tick `VS_GO_TICK + 1 + el` and the N64 reads a
+/// release a frame late, so each hold lasts a tick longer here (RE-554).
+pub mod cpufx_reflect {
+    use super::{button, Pad, VS_GO_TICK};
+
+    /// A pad held for `el` in `start..end`.
+    struct Hold {
+        start: u64,
+        end: u64,
+        pad: Pad,
+    }
+
+    const fn hold(start: u64, end: u64, buttons: u16, stick_x: i8, stick_y: i8) -> Hold {
+        Hold {
+            start,
+            end,
+            pad: Pad {
+                buttons,
+                stick_x,
+                stick_y,
+            },
+        }
+    }
+
+    /// Port 0, facing right: the shield at 30, a roll back (left) to the
+    /// platform's end at 32, then the Reflector from 70, held.
+    const LEAD: [Hold; 3] = [
+        hold(30, 32, button::Z, 0, 0),
+        hold(32, 36, button::Z, -80, 0),
+        hold(70, 600, button::B, 0, -80),
+    ];
+
+    /// Port 2, facing left: the same roll back (right), a Blaster shot at
+    /// 70, then its own Reflector from 126, held.
+    const DUMMY: [Hold; 4] = [
+        hold(30, 32, button::Z, 0, 0),
+        hold(32, 36, button::Z, 80, 0),
+        hold(70, 72, button::B, 0, 0),
+        hold(126, 600, button::B, 0, -80),
+    ];
+
+    /// The tick of the N64 reference's frame `el` (its screenshot, the
+    /// picture after that frame's update).
+    pub const fn tick(el: u64) -> u64 {
+        VS_GO_TICK + 1 + el
+    }
+
+    /// The reference's frame that breaks port 0's Reflector: the shot's
+    /// fifth pass, past `special_coll->damage_resist`, makes
+    /// `ShieldBreakFly` and the Reflect Break effect, drawn on frames 195
+    /// to 202 (anim frames 0 to 7).
+    pub const BREAK_EL: u64 = 195;
+
+    fn pad(script: &[Hold], at_tick: u64) -> Pad {
+        let Some(el) = at_tick.checked_sub(tick(0)) else {
+            return Pad::default();
+        };
+        let at = |el: u64| {
+            script
+                .iter()
+                .find(|h| (h.start..h.end).contains(&el))
+                .map(|h| h.pad)
+        };
+        at(el)
+            .or_else(|| el.checked_sub(1).and_then(at))
+            .unwrap_or_default()
+    }
+
+    /// The player's pad (port 0) at `tick`.
+    pub fn lead(tick: u64) -> Pad {
+        pad(&LEAD, tick)
+    }
+
+    /// The dummy's pad (port 2) at `tick`.
+    pub fn dummy(tick: u64) -> Pad {
+        pad(&DUMMY, tick)
+    }
+}
+
 /// The delay of the jump route the dummy scenes follow. The route was
 /// found for a fighter standing free from tick 13; the jab runs to tick 25
 /// (Mario, Kirby) or 31 (Yoshi) and swallowed its first jump (RE-516).
@@ -845,5 +927,34 @@ mod tests {
                 "{scene:?}"
             );
         }
+    }
+
+    /// `cpufx-r`'s pads start on the tick of the reference's frame and
+    /// release a tick late; nothing is held before "Go".
+    #[test]
+    fn cpufx_reflect_holds_start_on_the_reference_frame_and_release_late() {
+        use cpufx_reflect::{dummy, lead, tick};
+        let none = Pad::default();
+        assert_eq!(lead(0), none);
+        assert_eq!(lead(tick(29)), none);
+        assert_eq!(lead(tick(30)).buttons, button::Z);
+        assert_eq!(
+            (lead(tick(32)).buttons, lead(tick(32)).stick_x),
+            (button::Z, -80)
+        );
+        assert_eq!(lead(tick(36)).stick_x, -80);
+        assert_eq!(lead(tick(37)), none);
+        assert_eq!(
+            (lead(tick(70)).buttons, lead(tick(70)).stick_y),
+            (button::B, -80)
+        );
+        assert_eq!(dummy(tick(32)).stick_x, 80);
+        assert_eq!(dummy(tick(72)).buttons, button::B);
+        assert_eq!(dummy(tick(73)), none);
+        assert_eq!(dummy(tick(125)), none);
+        assert_eq!(
+            (dummy(tick(126)).buttons, dummy(tick(126)).stick_y),
+            (button::B, -80)
+        );
     }
 }

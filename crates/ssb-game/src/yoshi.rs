@@ -53,8 +53,6 @@ const SPECIAL_N_RELEASE_LENGTH: f32 = 35.0;
 /// makes the egg, `SetFlag2(2)` at frame 23 throws it.
 const EGG_MAKE_FRAME: f32 = 4.0;
 const EGG_THROW_FRAME: f32 = 23.0;
-/// `GroundPoundLanding`: `Wait(3)` then `SetFlag0(1)` makes the stars.
-const BOMB_STARS_FRAME: f32 = 3.0;
 /// `EggLay_0x1730` (both Egg Lay statuses): the catch box exists from
 /// `WaitAsync(18)` until the clear after `Wait(6)`.
 pub const EGG_LAY_CATCH_FRAMES: core::ops::Range<f32> = 18.0..24.0;
@@ -452,8 +450,11 @@ pub fn update(f: &mut Fighter) {
             }
         }
         YoshiStatus::SpecialAirLwLoop => {}
+        // `ftYoshiSpecialLwLandingProcUpdate`: the `GroundPoundLanding`
+        // script raises flag 0 (`Wait(3)`, `SetFlag0(1)`).
         YoshiStatus::SpecialLwLanding => {
-            if crossed(f, BOMB_STARS_FRAME) {
+            if f.motion_script.flags[0] != 0 {
+                f.motion_script.flags[0] = 0;
                 make_stars(f);
             }
             if f.status.animation_ended() {
@@ -816,8 +817,41 @@ mod tests {
         for frame in 1..=3 {
             status::update(&mut f);
             assert_eq!(f.weapon_spawn.is_some(), frame == 3);
+            assert_eq!(f.motion_script.flags[0], 0, "the proc lowers flag 0");
         }
         assert_eq!(f.take_weapon_spawn().unwrap().kind, WeaponKind::YoshiStars);
+    }
+
+    /// `ftYoshiSpecialLwLandingProcUpdate` makes the stars from flag 0, not
+    /// from a frame: the script's `SetFlag0(1)` after `Wait(3)` is the only
+    /// source, and the proc lowers the flag when it reads it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn yoshi_bomb_landing_stars_follow_flag0() {
+        let mut f = yoshi(false);
+        set_special_air_lw_start(&mut f);
+        f.motion_script.flags[1] = 1;
+        f.physics.vel_air.y = 0.0;
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Yoshi(YoshiStatus::SpecialLwLanding)
+        );
+        // A raised flag makes the stars on the next update, frame 1.
+        f.motion_script.flags[0] = 1;
+        status::update(&mut f);
+        assert_eq!(f.motion_script.flags[0], 0);
+        assert_eq!(f.take_weapon_spawn().unwrap().kind, WeaponKind::YoshiStars);
+        status::update(&mut f);
+        assert!(f.weapon_spawn.is_none());
+        // The script raises it again at frame 3.
+        status::update(&mut f);
+        assert_eq!(f.motion_script.flags[0], 0);
+        assert_eq!(f.take_weapon_spawn().unwrap().kind, WeaponKind::YoshiStars);
+        for _ in 4..30 {
+            status::update(&mut f);
+            assert!(f.weapon_spawn.is_none());
+        }
     }
 
     /// `ftYoshiSpecialLwStartProcStatus` lowers flag 1 and the
