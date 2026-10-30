@@ -290,7 +290,10 @@ fn duplicate_stat_keeps_flags_but_changes_hit_owner_and_object_every_time() {
 
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
-fn thrown_damage_uses_catcher_statistics_and_actual_amount_once() {
+/// `ftCommonThrownUpdateDamageStats` (ftcommonthrown2.c:187-197) credits
+/// the battle totals but never calls `ftParamUpdate1PGameDamageStats`: the
+/// held fighter's last hit owner, object, count and defend bonus stay.
+fn thrown_damage_credits_totals_but_not_the_held_fighters_hit_record() {
     let (mut s, _) = session(Stage::Link);
     let mut catcher = fighter(&mut s, 0);
     let mut held = fighter(&mut s, 1);
@@ -300,6 +303,13 @@ fn thrown_damage_uses_catcher_statistics_and_actual_amount_once() {
         0.0,
         status::StatusTiming::unknown(),
     );
+    super::live::hit(
+        &mut held,
+        DamageBy::Player(2),
+        stat(HitAttackId::AttackS4, 7),
+        DamageObject::PokemonWeapon,
+    );
+    let (count, record) = (held.stats.damage_count, held.stats.damage);
     crate::grab::thrown_update_damage_stats(&mut held, &mut catcher);
     let damage = u32::from(held.damage);
     assert!(damage > 0);
@@ -307,11 +317,13 @@ fn thrown_damage_uses_catcher_statistics_and_actual_amount_once() {
     s.collect_fighter(&mut catcher);
     assert_eq!(s.state.players[1].total_damage_all, damage);
     assert_eq!(s.state.players[0].total_damage_given, damage);
-    assert_eq!(held.damage_player, Some(0));
-    assert_eq!(held.stats.damage, catcher.stats.attack);
+    assert_eq!(held.damage_player, Some(2));
+    assert_eq!(held.stats.damage_object, DamageObject::PokemonWeapon);
+    assert_eq!(held.stats.damage_count, count);
+    assert_eq!(held.stats.damage, record);
     assert_eq!(
         s.game.as_ref().unwrap().bonus.defend_id_count[HitAttackId::ThrowF as usize],
-        1
+        0
     );
 }
 

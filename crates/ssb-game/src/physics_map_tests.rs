@@ -269,6 +269,46 @@ fn the_cliff_catch_wait_counts_in_the_physics_pass_outside_hitlag() {
     assert_eq!(f.cliffcatch_wait, crate::status::CLIFF_CATCH_WAIT - 1);
 }
 
+/// `ftCommonDamageGotoDamageStatus` (ftcommondamage.c:664-667) resets the
+/// regrab wait whenever `is_cliff_hold` is set: every ledge status that
+/// sets it (CliffCatch/Wait, Quick/Slow and the climb, attack and escape
+/// phase 1s), not phase 2 or any other status.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_hit_on_any_cliff_hold_status_resets_the_regrab_wait() {
+    let hold = [
+        Status::CliffCatch,
+        Status::CliffWait,
+        Status::CliffQuick,
+        Status::CliffSlow,
+        Status::CliffClimbQuick1,
+        Status::CliffClimbSlow1,
+        Status::CliffAttackQuick1,
+        Status::CliffAttackSlow1,
+        Status::CliffEscapeQuick1,
+        Status::CliffEscapeSlow1,
+    ];
+    let other = [
+        Status::CliffClimbQuick2,
+        Status::CliffEscapeSlow2,
+        Status::Fall,
+    ];
+    for (status, want) in hold
+        .iter()
+        .map(|s| (*s, crate::status::CLIFF_CATCH_WAIT))
+        .chain(other.iter().map(|s| (*s, 0)))
+    {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        crate::status::set_status(&mut f, status, 0.0, StatusTiming::unknown());
+        f.cliffcatch_wait = 0;
+        f.hits.damage_knockback = 50.0;
+        f.hits.damage_angle = 45;
+        f.hits.damage_lr = 1.0;
+        crate::combat::goto_damage_status(&mut f);
+        assert_eq!(f.cliffcatch_wait, want, "{status:?}");
+    }
+}
+
 fn grounded_wait(kind: FighterKind) -> Fighter {
     let mut f = Fighter::new(kind, 0, 3);
     crate::status::set_status(&mut f, Status::Wait, 0.0, StatusTiming::unknown());

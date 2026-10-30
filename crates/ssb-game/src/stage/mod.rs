@@ -650,7 +650,8 @@ impl Stage {
 
     /// Makes the effects this frame's stage process made
     /// (`grYosterCloudVaporMakeEffect`, `efManagerSparkleWhiteScaleMakeEffect`,
-    /// Hyrule's Twister, Dream Land's leaves and dust), in order. The runtime
+    /// Hyrule's Twister, Dream Land's leaves and dust, Whispy's and the
+    /// acid's quakes), in order. The runtime
     /// calls it right after [`Stage::tick`], where the source makes them.
     pub fn flush_effects(&mut self, sink: &mut dyn crate::effect::HitEffectSink) {
         let fx = match &mut self.controller {
@@ -658,6 +659,7 @@ impl Stage {
             Controller::Inishie(c) => core::mem::take(&mut c.fx),
             Controller::Hyrule(c) => core::mem::take(&mut c.fx),
             Controller::Pupupu(c) => core::mem::take(&mut c.fx),
+            Controller::Zebes(c) => core::mem::take(&mut c.fx),
             _ => return,
         };
         for e in fx.iter() {

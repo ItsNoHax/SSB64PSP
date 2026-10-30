@@ -18,11 +18,11 @@
 
 ## Current work
 
+- Landed (batch 112): throw-hold damage no longer rewrites the held fighter's 1P hit record; a hit on any cliff-hold status resets the regrab wait; jab item throw before the Z catch; Whispy wind and Zebes acid quakes (camera N64 RDRAM matched); `f1-training-whispy-wind`, `f1-vs-time-up` rebaselined (RE-508); found two VS RNG gaps (PLAN).
 - Landed (batch 111): Yoshi egg lay damage staled against Yoshi's queue, DamageCommon flash, lay recorded in Yoshi's stale queue (`ftKirbySpecialNApplyCaptureDamage`); held-first same-frame double roll tested. Goldens unchanged.
 - Landed (batch 110): light-item drop roll on every UpdateDamage site (reachable: same-frame hold hit); item `player_num` stays stale on hit (damage credit, CPU appeal); item despawn N64-traced, golden `f1-training-item-despawn-sparkle` (RE-545).
 - Landed (batch 109): throw releases subtract knockback resist and zero damage for any non-normal hit status; every capture drops a heavy item; DK cargo stagger resists twice and keeps the element; ghosts skip the hazard search; POW damage credited to its hitter; barrel shot clears the player-tag wait. Goldens unchanged.
 - Landed (batch 108): hit shake (damage shuffle, N64 RDRAM matched), no-ammo item drop on hit, attacker credit and CPU appeal, shield-break effect incl. Yoshi, Yoshi egg damage once at half; goldens `f1-training-item-bumper-lit`, `f1-training-pokemon-a`, `-b` rebaselined, each N64-traced (RE-587).
-- Landed (batch 106): Yoshi Bomb landing stars from motion-script flag 0; weapon reflect records clear after 16 updates (`WEAPON_REHIT_TIME_DEFAULT`), every weapon counts down; Reflect Break traced on the N64 and matched; scene `cpufx-r`, goldens `f1-cpufx-reflect-break`, `f1-cpufx-reflect-fly` (RE-351, RE-586).
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
 - Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 111 (hardware: RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 112 (hardware: RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

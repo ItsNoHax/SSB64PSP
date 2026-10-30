@@ -124,6 +124,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
+| VS start RNG draw | Port `efGroundMakeAppearActor` (efground.c:1590, `rand(10000)+6000`, non-Training); VS seed equals N64 after `scVSBattleStartBattle`; host test | RE-508 |
+| Bob-omb explosion RNG | N64 draws 12, port 17 at the explosion (particles, fire damage, flame effects); decomp-exact draw count; `f1-vs-time-up` capture frame N64-matched | RE-508 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)

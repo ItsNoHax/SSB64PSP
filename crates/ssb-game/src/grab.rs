@@ -904,9 +904,14 @@ pub fn check_catch_dash_run(f: &mut Fighter) -> bool {
     check_catch_common(f)
 }
 
-/// `ftCommonCatchCheckInterruptAttack11` @ 0x80149E24: Z tapped in a jab's
-/// first two frames.
+/// `ftCommonCatchCheckInterruptAttack11` @ 0x80149E24 (ftcommoncatch1.c:
+/// 165-183): a held item uses `LightThrowDash` first, as in
+/// [`check_catch_dash_run`]; else Z tapped in a jab's first two frames.
 pub fn check_catch_attack11(f: &mut Fighter) -> bool {
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowDash);
+        return true;
+    }
     if tapped(f).contains(N64Buttons::Z) && has_catch(f.kind) {
         set_catch(f);
         return true;
@@ -1823,8 +1828,11 @@ pub fn release_on_hit(f: &mut Fighter) {
     }
 }
 
-/// `ftCommonThrownUpdateDamageStats`: the held fighter takes its catcher's
-/// staled `throw_desc[1]` damage, which stales the catcher's move.
+/// `ftCommonThrownUpdateDamageStats` (ftcommonthrown2.c:187-197): the held
+/// fighter takes its catcher's staled `throw_desc[1]` damage, which stales
+/// the catcher's move. No `ftParamUpdate1PGameDamageStats`: unlike the two
+/// release paths (:166, :249) it leaves the held fighter's 1P hit owner,
+/// object, count and defend bonus alone.
 pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
     let desc = catcher
         .grab
@@ -1834,12 +1842,6 @@ pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
     let staled = StaledThrow::of(catcher, desc.damage);
     crate::combat::update_damage(held, staled.damage);
     held.record_combo_damage(Some(catcher.port), staled.damage);
-    crate::spgame::live::hit(
-        held,
-        crate::combat::DamageBy::Player(catcher.port),
-        catcher.stats.attack,
-        crate::spgame::bonus::DamageObject::Other,
-    );
     if catcher.port != held.port {
         catcher.stale.push(staled.attack_id, staled.motion_count);
     }
@@ -4066,6 +4068,44 @@ mod tests {
         grab(&mut mario, &mut dummy);
         assert_eq!(mario.grab.catch, None);
         assert_eq!(dummy.status.status, Status::Wait);
+    }
+
+    /// `ftCommonCatchCheckInterruptAttack11` checks the item throw before
+    /// the Z catch (ftcommoncatch1.c:170-175): a jab holding a throwable
+    /// item with Z+A tapped throws it as `LightThrowDash`; empty-handed, the
+    /// same input catches.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_jab_holding_an_item_throws_it_before_the_z_catch() {
+        for holding in [true, false] {
+            let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+            if holding {
+                mario.items.held = Some(crate::item::HeldItem {
+                    slot: 0,
+                    kind: crate::item::ItemKind::Target,
+                    ty: crate::item::ItemType::Throw,
+                    weight: crate::item::ItemWeight::Light,
+                });
+            }
+            status::set_status(
+                &mut mario,
+                Status::Attack11,
+                0.0,
+                status::StatusTiming::unknown(),
+            );
+            press(&mut mario, N64Buttons::A | N64Buttons::Z, 0);
+            assert!(check_catch_attack11(&mut mario));
+            let want = if holding {
+                Status::LightThrowDash
+            } else {
+                Status::Catch
+            };
+            assert_eq!(
+                mario.status.status,
+                AnyStatus::from(want),
+                "holding {holding}"
+            );
+        }
     }
 
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]

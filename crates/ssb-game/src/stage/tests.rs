@@ -328,6 +328,73 @@ fn acid_rises_to_its_next_level_and_burns() {
     assert_eq!(g.hits.log_len, 0);
 }
 
+/// `grPupupuWhispyUpdateWindRumble` (grpupupu.c:309-318): every blow frame
+/// counts the rumble wait, and each time it is 0 makes
+/// `efManagerQuakeMakeEffect(0)` and rewinds to 18, the wind's last frame
+/// included.
+#[test]
+fn whispy_wind_quakes_every_eighteen_blow_frames() {
+    use crate::wpeffect::WeaponEffect as W;
+    let mut w = pupupu::Pupupu::new();
+    w.status = pupupu::WindStatus::Blow;
+    w.wind_duration = 37;
+    w.rumble_wait = 0;
+    w.blink_wait = 30_000;
+    let mut clocks = Clocks::with_len(5.0);
+    let mut f = airborne(Vec3::new(0.0, 100.0, 0.0));
+    let mut quakes = Vec::new();
+    for frame in 0..37 {
+        clocks.advance();
+        w.tick(&mut [&mut f], &mut clocks, true);
+        let fx = core::mem::take(&mut w.fx);
+        let n = fx.iter().filter(|e| *e == W::Quake(0)).count();
+        quakes.extend(core::iter::repeat_n(frame, n));
+    }
+    assert_eq!(w.status, pupupu::WindStatus::Stop);
+    assert_eq!(quakes, [0, 18, 36]);
+    // Stopped: no more rumble.
+    clocks.advance();
+    w.tick(&mut [&mut f], &mut clocks, true);
+    assert!(!w.fx.iter().any(|e| e == W::Quake(0)));
+}
+
+/// `grZebesAcidUpdateRumble` (grzebes.c:127-136), run by the Shake and Rise
+/// updates: a magnitude-0 quake on the first shake frame and every 18th
+/// after, made through [`Stage::flush_effects`]; Normal makes none.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn acid_shake_and_rise_quake_every_eighteen_frames() {
+    use crate::wpeffect::WeaponEffect as W;
+    let objects = [];
+    let mut i = init(StageKind::Zebes, &objects);
+    i.hazard_attack = Some(hazard::GroundAttack::from_words([0, 10, 90, 100, 0, 60, 1]));
+    let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
+    let mut sink = TwisterSink {
+        calls: Vec::new(),
+        made: true,
+    };
+    let mut quakes = Vec::new();
+    for frame in 0..(1 + 18 + 240 + 5) {
+        let Controller::Zebes(z) = &mut stage.controller else {
+            panic!()
+        };
+        if frame == 0 {
+            z.status = zebes::AcidStatus::Normal;
+            z.wait = 1;
+        }
+        z.tick(true, &mut NoObjects);
+        stage.flush_effects(&mut sink);
+        let n = core::mem::take(&mut sink.calls)
+            .iter()
+            .filter(|e| **e == W::Quake(0))
+            .count();
+        quakes.extend(core::iter::repeat_n(frame, n));
+    }
+    // Shake runs frames 1..=18, Rise 19..=258, then Normal.
+    let want: Vec<i32> = (1..=258).step_by(18).collect();
+    assert_eq!(quakes, want);
+}
+
 /// The acid object the source writes and reads: root Y is the level, the
 /// surface is the root plus the child's animated Y.
 #[derive(Default)]

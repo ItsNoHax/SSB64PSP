@@ -2033,11 +2033,9 @@ fn update_catch_resist(f: &mut Fighter) {
 pub fn goto_damage_status(f: &mut Fighter) {
     crate::fighter_sound::stop_voice(f);
 
-    // `is_cliff_hold`: set by the ledge-hang statuses.
-    if matches!(
-        f.status.status,
-        AnyStatus::Common(Status::CliffCatch | Status::CliffWait)
-    ) {
+    // `is_cliff_hold` (ftcommondamage.c:666): set by every ledge status up
+    // to phase 1 of a climb, attack or escape; cleared by `ftMainSetStatus`.
+    if crate::map::is_cliff_hold(f.status.status) {
         f.cliffcatch_wait = status::CLIFF_CATCH_WAIT;
     }
     let (kb, angle, lr, index, element) = (

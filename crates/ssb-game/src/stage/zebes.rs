@@ -43,6 +43,9 @@ pub struct Zebes {
     /// `llGRZebesMapAcidAnimJoint` moves it; [`Zebes::tick`] reads it after
     /// the priority-5 animation, before any fighter's hit search.
     pub surface_y: f32,
+    /// This frame's `efManagerQuakeMakeEffect` calls, made by
+    /// [`super::Stage::flush_effects`].
+    pub fx: crate::wpeffect::Emit,
 }
 
 impl Zebes {
@@ -62,6 +65,7 @@ impl Zebes {
             attr_id: 0,
             rumble_wait: 0,
             surface_y: init.acid_surface_y,
+            fx: crate::wpeffect::Emit::default(),
         };
         z.set_random_wait();
         objects.set_translate_y(StageObj::Acid, z.level);
@@ -91,9 +95,11 @@ impl Zebes {
         self.level_step = (target - self.level) / 240.0;
     }
 
-    /// `grZebesAcidUpdateRumble`: only the quake timer.
+    /// `grZebesAcidUpdateRumble` @ 0x80108268 (grzebes.c:127-136), run by
+    /// the Shake and Rise updates.
     fn rumble(&mut self) {
         if self.rumble_wait == 0 {
+            self.fx.push(crate::wpeffect::WeaponEffect::Quake(0));
             self.rumble_wait = 18;
         }
         self.rumble_wait -= 1;

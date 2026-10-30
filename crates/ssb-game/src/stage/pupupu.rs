@@ -212,8 +212,10 @@ impl Pupupu {
                     self.status = WindStatus::Stop;
                     self.fx.push(WeaponEffect::PupupuLeavesEject);
                 }
-                // `grPupupuWhispyUpdateWindRumble`: only the quake effect.
+                // `grPupupuWhispyUpdateWindRumble` @ 0x80105D20
+                // (grpupupu.c:309-318), every blow frame including the last.
                 if self.rumble_wait == 0 {
+                    self.fx.push(WeaponEffect::Quake(0));
                     self.rumble_wait = WIND_RUMBLE_WAIT;
                 }
                 self.rumble_wait -= 1;
