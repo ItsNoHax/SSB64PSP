@@ -1749,7 +1749,9 @@ pub struct WeaponPool {
     /// one.
     set_off: [bool; MAX_WEAPONS],
     /// Each record's `timer_rehit` (`WEAPON_REHIT_TIME_DEFAULT` on a
-    /// reflect, or a `can_rehit_fighter` item weapon's hit; zero otherwise).
+    /// reflect, a `can_rehit_fighter` item weapon's hit on a fighter's body,
+    /// or a `can_rehit_item` weapon's hit on a `nITTypeDamage` item; zero
+    /// otherwise).
     rehit: [[u8; 4]; MAX_WEAPONS],
     /// Onix's rocks' events for [`crate::item::ItemPool::observe_weapons`].
     rock_events: [Option<(u32, bool)>; 2 * MAX_WEAPONS],
@@ -1815,9 +1817,17 @@ const WEAPON_REHIT_TIME: u8 = 16;
 /// meets its first reflector again once the record clears
 /// (`wpProcessUpdateAttackRecords`).
 fn record_reflector(records: &mut [Option<u8>; 4], rehit: &mut [u8; 4], port: u8) {
-    record_weapon_victim(records, port);
-    if let Some(i) = records.iter().position(|r| *r == Some(port)) {
-        rehit[i] = WEAPON_REHIT_TIME;
+    record_victim(records, rehit, port, true);
+}
+
+/// `wpProcessSetHitInteractStats` with `nGMHitTypeDamage` or, when
+/// `rehit`, `nGMHitTypeDamageRehit` (`WEAPON_REHIT_TIME_DEFAULT`).
+fn record_victim(records: &mut [Option<u8>; 4], timers: &mut [u8; 4], victim: u8, rehit: bool) {
+    record_weapon_victim(records, victim);
+    if rehit {
+        if let Some(i) = records.iter().position(|r| *r == Some(victim)) {
+            timers[i] = WEAPON_REHIT_TIME;
+        }
     }
 }
 
@@ -1932,6 +1942,39 @@ impl Weapon {
                 K::StarRod => wp::STARROD,
                 K::FireFlower => wp::FFLOWER_FLAME,
             },
+        }
+    }
+
+    /// `wp->attack_coll.can_rehit_item`, copied from the weapon's
+    /// `WPAttributes` by `wpManagerMakeWeapon`: a `nITTypeDamage` item it
+    /// hits is recorded with `nGMHitTypeDamageRehit`
+    /// (`itProcessUpdateDamageStatWeapon`), so the record clears after
+    /// `WEAPON_REHIT_TIME_DEFAULT` updates. A reflected PK Thunder head uses
+    /// the head's record (`dWPNessPKReflectHeadWeaponDesc`).
+    fn can_rehit_item(&self) -> bool {
+        use crate::monster_weapon::weapon_attributes as wa;
+        match self {
+            Weapon::Fireball(f) if f.index == 0 => wa::MARIO_FIREBALL.can_rehit_item,
+            Weapon::Fireball(_) => wa::LUIGI_FIREBALL.can_rehit_item,
+            Weapon::Blaster(_) => wa::FOX_BLASTER.can_rehit_item,
+            Weapon::ChargeShot(_) => wa::SAMUS_CHARGE_SHOT.can_rehit_item,
+            Weapon::Bomb(_) => wa::SAMUS_BOMB.can_rehit_item,
+            Weapon::Boomerang(_) => wa::LINK_BOOMERANG.can_rehit_item,
+            Weapon::Egg(_) => wa::YOSHI_EGG_THROW.can_rehit_item,
+            Weapon::Star(_) => wa::YOSHI_STAR.can_rehit_item,
+            Weapon::Cutter(_) => wa::KIRBY_CUTTER.can_rehit_item,
+            Weapon::Jolt(j) if j.grounded() => wa::PIKACHU_THUNDER_JOLT_GROUND.can_rehit_item,
+            Weapon::Jolt(_) => wa::PIKACHU_THUNDER_JOLT_AIR.can_rehit_item,
+            Weapon::Thunder(_) => wa::PIKACHU_THUNDER_HEAD.can_rehit_item,
+            Weapon::Trail(_) => wa::PIKACHU_THUNDER_TRAIL.can_rehit_item,
+            Weapon::PKFire(_) => wa::NESS_PK_FIRE.can_rehit_item,
+            Weapon::PKThunder(_) => wa::NESS_PK_THUNDER.can_rehit_item,
+            Weapon::PKTrail(_) => wa::NESS_PK_THUNDER_TRAIL.can_rehit_item,
+            Weapon::Laser(l) if l.three_d => wa::ARWING_LASER_3D.can_rehit_item,
+            Weapon::Laser(_) => wa::ARWING_LASER_2D.can_rehit_item,
+            Weapon::BossBullet(b) if b.hard => wa::BOSS_BULLET_HARD.can_rehit_item,
+            Weapon::BossBullet(_) => wa::BOSS_BULLET_NORMAL.can_rehit_item,
+            Weapon::Monster(m) => m.attributes().can_rehit_item,
         }
     }
 
@@ -2401,17 +2444,23 @@ enum PreHit {
     ReflectorBroke,
     /// Taken by PSI Magnet (`absorb_gobj`, `proc_absorb`).
     Absorbed,
+    /// Met an attack after an earlier fighter's attack set it off this
+    /// frame (`hit_attack_damage != 0`, `goto next_gobj`): no record, no
+    /// shield or hurtbox test.
+    Passed,
 }
 
 /// `ftMainSearchHitWeapon` up to the shield: the attack-versus-weapon clank,
 /// then the reflector and absorber special collisions. `damage` is the
 /// weapon's staled damage and `slot` identifies it in attack records;
-/// `team` is the weapon's.
+/// `team` is the weapon's; `set_off`: an earlier fighter's attack set it
+/// off this frame (`hit_attack_damage`).
 #[allow(clippy::too_many_arguments)]
 fn pre_hit(
     defender: &mut Fighter,
     flags: WeaponFlags,
     grounded: bool,
+    set_off: bool,
     owner: u8,
     team: u8,
     rules: crate::team::TeamRules,
@@ -2424,6 +2473,7 @@ fn pre_hit(
         defender,
         flags,
         grounded,
+        set_off,
         owner,
         team,
         rules,
@@ -2441,6 +2491,7 @@ fn pre_hit_at(
     defender: &mut Fighter,
     flags: WeaponFlags,
     grounded: bool,
+    set_off: bool,
     owner: u8,
     team: u8,
     rules: crate::team::TeamRules,
@@ -2470,18 +2521,18 @@ fn pre_hit_at(
     let thrown_spares = crate::combat::throw_team(defender).is_some_and(|throw_team| {
         crate::combat::throw_port(defender) == Some(owner) || rules.spares(throw_team, team)
     });
-    if flags.can_setoff
-        && !defender.grab.is_catchstatus
-        && !thrown_spares
-        && reflector.is_none()
-        && crate::combat::weapon_attack_clank(
+    if flags.can_setoff && !defender.grab.is_catchstatus && !thrown_spares && reflector.is_none() {
+        match crate::combat::weapon_attack_clank(
             defender,
             &w,
             crate::combat::WEAPON_RECORD_BASE + slot as u8,
             grounded,
-        )
-    {
-        return PreHit::SetOff;
+            set_off,
+        ) {
+            crate::combat::WeaponClank::Missed => {}
+            crate::combat::WeaponClank::Lost => return PreHit::SetOff,
+            crate::combat::WeaponClank::Passed => return PreHit::Passed,
+        }
     }
     if !crate::combat::weapon_in_range(defender, &w) {
         return PreHit::None;
@@ -2571,6 +2622,7 @@ fn laser_hit(laser: &ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) {
         defender,
         flags,
         false,
+        false,
         owner,
         h.team,
         h.rules,
@@ -2580,7 +2632,8 @@ fn laser_hit(laser: &ArwingLaser, h: LaserHit<'_>, defender: &mut Fighter) {
         laser.velocity,
     );
     match pre {
-        PreHit::None | PreHit::SetOff => {}
+        // `can_setoff` is clear: neither happens.
+        PreHit::None | PreHit::SetOff | PreHit::Passed => {}
         // `ftMainUpdateReflectorStatWeapon` records the reflector.
         PreHit::Reflected => {
             record_reflector(h.records, h.rehit, defender.port);
@@ -2705,12 +2758,7 @@ struct MonsterHit<'a> {
 /// `wpProcessSetHitInteractStats` for a fighter: a `can_rehit_fighter`
 /// weapon's record clears after `WEAPON_REHIT_TIME_DEFAULT` updates.
 fn record_shot_victim(h: &mut MonsterHit<'_>, port: u8, rehit: bool) {
-    record_weapon_victim(h.records, port);
-    if rehit {
-        if let Some(i) = h.records.iter().position(|r| *r == Some(port)) {
-            h.rehit[i] = WEAPON_REHIT_TIME;
-        }
-    }
+    record_victim(h.records, h.rehit, port, rehit);
 }
 
 /// `ftMainSearchHitWeapon` for one item-made weapon against one fighter
@@ -2743,13 +2791,14 @@ fn monster_hit(
         attr.can_absorb,
     );
     let mut pre = pre_hit_at(
-        defender, flags, false, owner, *h.team, h.rules, h.slot, staled, curr, prev, m.velocity,
+        defender, flags, false, *h.set_off, owner, *h.team, h.rules, h.slot, staled, curr, prev,
+        m.velocity,
     );
     if matches!(pre, PreHit::None) && m.kind == ShotKind::RayGun {
         if let Some((tail, old)) = m.attack_tail {
             pre = pre_hit_at(
-                defender, flags, false, owner, *h.team, h.rules, h.slot, staled, tail, old,
-                m.velocity,
+                defender, flags, false, *h.set_off, owner, *h.team, h.rules, h.slot, staled, tail,
+                old, m.velocity,
             );
         }
     }
@@ -2757,10 +2806,12 @@ fn monster_hit(
     // ([`WeaponPool::react_to_fighter_hits`]).
     match pre {
         PreHit::None => {}
+        PreHit::Passed => return,
         PreHit::SetOff => {
             *h.set_off = true;
             h.pending.set_off = true;
-            record_shot_victim(&mut h, defender.port, rehit);
+            // `ftMainUpdateAttackStatWeapon`: `nGMHitTypeAttack`, no timer.
+            record_shot_victim(&mut h, defender.port, false);
             return;
         }
         // `ftMainUpdateReflectorStatWeapon` records the reflector.
@@ -2774,8 +2825,9 @@ fn monster_hit(
             *h.proc_hit = true;
             return;
         }
+        // `ftMainUpdateAbsorbStatWeapon`: `nGMHitTypeAbsorb`, no timer.
         PreHit::Absorbed => {
-            record_shot_victim(&mut h, defender.port, rehit);
+            record_shot_victim(&mut h, defender.port, false);
             h.pending.absorb = true;
             return;
         }
@@ -3805,7 +3857,8 @@ impl WeaponPool {
                             );
                         }
                         if w.priority <= item.attack.priority {
-                            self.record_item_victim(i, id);
+                            // `nGMHitTypeAttack`: no rehit timer.
+                            self.record_item_victim(i, id, false);
                             self.clash_damage[i] = self.clash_damage[i].max(w.damage);
                             self.clash_fx.push(
                                 0,
@@ -3853,16 +3906,11 @@ impl WeaponPool {
             {
                 continue;
             }
-            // `itProcessUpdateDamageStatWeapon`.
-            self.record_item_victim(i, id);
-            // `is_rehit`: only a `nITTypeDamage` item is rehit.
-            if item.ty == crate::item::ItemType::Damage
-                && matches!(self.slots.values()[i], Some(Weapon::Monster(m)) if m.attributes().can_rehit_item)
-            {
-                if let Some(r) = self.hit_records[i].iter().position(|r| *r == Some(id)) {
-                    self.rehit[i][r] = 16;
-                }
-            }
+            // `itProcessUpdateDamageStatWeapon`: `is_rehit` only for a
+            // `nITTypeDamage` item.
+            let is_rehit = item.ty == crate::item::ItemType::Damage
+                && self.slots.values()[i].is_some_and(|w| w.can_rehit_item());
+            self.record_item_victim(i, id, is_rehit);
             let lr = if vel.x.abs() < 5.0 {
                 if item.pos.x < pos.x {
                     1.0
@@ -3925,7 +3973,9 @@ impl WeaponPool {
     /// `group_id` records it for every weapon of its group. PK Thunder's
     /// trails share one group; a reflected head shares its trails' group
     /// (`wpNessPKReflectHeadMakeWeapon`), the first head's is 0.
-    fn record_item_victim(&mut self, i: usize, id: u8) {
+    /// `nGMHitTypeDamageRehit` (`rehit`) gives each member's record
+    /// `WEAPON_REHIT_TIME_DEFAULT`.
+    fn record_item_victim(&mut self, i: usize, id: u8, rehit: bool) {
         let group = |w: &Option<Weapon>| match w {
             Some(Weapon::PKTrail(t)) => Some(t.group),
             Some(Weapon::PKThunder(h)) if h.reflected => Some(h.group),
@@ -3936,12 +3986,12 @@ impl WeaponPool {
             _ => None,
         };
         let Some(g) = group(&self.slots.values()[i]) else {
-            record_weapon_victim(&mut self.hit_records[i], id);
+            record_victim(&mut self.hit_records[i], &mut self.rehit[i], id, rehit);
             return;
         };
         for j in 0..MAX_WEAPONS {
             if group(&self.slots.values()[j]) == Some(g) {
-                record_weapon_victim(&mut self.hit_records[j], id);
+                record_victim(&mut self.hit_records[j], &mut self.rehit[j], id, rehit);
             }
         }
     }
@@ -4473,6 +4523,7 @@ impl WeaponPool {
                 defender,
                 weapon.flags(),
                 weapon.is_grounded(),
+                self.set_off[i],
                 owner,
                 self.teams[i],
                 rules,
@@ -4487,6 +4538,7 @@ impl WeaponPool {
             // later this frame still meets the weapon as it was.
             match pre {
                 PreHit::None => {}
+                PreHit::Passed => continue,
                 // `hit_attack_damage`: `proc_setoff`.
                 PreHit::SetOff => {
                     self.set_off[i] = true;
@@ -5936,6 +5988,82 @@ mod tests {
         );
     }
 
+    /// `itProcessUpdateDamageStatWeapon`: the Cutter's `can_rehit_item`
+    /// (ROM) records a `nITTypeDamage` item with `nGMHitTypeDamageRehit`,
+    /// so `wpProcessUpdateAttackRecords` clears it 16 updates later and the
+    /// Cutter hits the item again; any other item type stays recorded.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn can_rehit_item_weapon_hits_a_damage_item_again_after_sixteen_updates() {
+        let mut items = flames_at_damage_centres(&[Vec3::ZERO; 2]);
+        items.get_mut(0).unwrap().ty = crate::item::ItemType::Damage;
+        items.get_mut(1).unwrap().ty = crate::item::ItemType::Swing;
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::KirbyCutter { floor_line: None },
+            owner_port: 1,
+            team: 1,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        let take = |items: &mut crate::item::ItemPool| {
+            [0, 1].map(|slot| core::mem::take(&mut items.get_mut(slot).unwrap().damage_queue))
+        };
+        let d = KIRBY_CUTTER_HITBOX.damage;
+        items.search_hurt(&mut [], &mut weapons);
+        assert_eq!(take(&mut items), [d, d]);
+        for update in 1..=17 {
+            weapons.tick(open_air, None);
+            // Hold the Cutter over both items.
+            for (_, w) in weapons.slots.iter_mut() {
+                if let Weapon::Cutter(c) = w {
+                    c.position = Vec3::ZERO;
+                }
+            }
+            items.search_hurt(&mut [], &mut weapons);
+            let expect = if update == 16 { [d, 0] } else { [0, 0] };
+            assert_eq!(take(&mut items), expect, "update {update}");
+        }
+    }
+
+    /// `wpProcessUpdateHitInteractStats`: a Thunder trail's
+    /// `nGMHitTypeDamageRehit` reaches every weapon of its `group_id`, each
+    /// record with its own `WEAPON_REHIT_TIME_DEFAULT`; another group's
+    /// weapon is untouched.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_group_rehit_gives_every_member_the_rehit_timer() {
+        let mut items = flames_at_damage_centres(&[Vec3::ZERO]);
+        items.get_mut(0).unwrap().ty = crate::item::ItemType::Damage;
+        let mut weapons = WeaponPool::default();
+        let trail = |x: f32, group: u16| {
+            Weapon::Trail(ThunderTrail {
+                owner_port: 1,
+                position: Vec3::new(x, 0.0, 0.0),
+                lifetime: 10,
+                group,
+                hit_ports: 0,
+                texture: 0,
+            })
+        };
+        let fresh = crate::stale::WeaponStale::FRESH;
+        let near = weapons.insert_at(trail(0.0, 5), fresh, 1, 1.0).unwrap();
+        let mate = weapons.insert_at(trail(5000.0, 5), fresh, 1, 1.0).unwrap();
+        let other = weapons.insert_at(trail(-5000.0, 6), fresh, 1, 1.0).unwrap();
+        items.search_hurt(&mut [], &mut weapons);
+        assert_ne!(items.get(0).unwrap().damage_queue, 0);
+        for i in [near, mate] {
+            let r = weapons.hit_records[i].iter().position(Option::is_some);
+            assert_eq!(
+                r.map(|r| weapons.rehit[i][r]),
+                Some(WEAPON_REHIT_TIME),
+                "{i}"
+            );
+        }
+        assert_eq!(weapons.hit_records[other], [None; 4]);
+    }
+
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn item_victims_share_the_four_records_with_fighter_victims() {
@@ -6496,6 +6624,79 @@ mod tests {
         weapons.apply_hits(&mut f);
         assert_eq!(weapons.active_count(), 0);
         assert_eq!(f.hits.attack_shield_push, 2);
+    }
+
+    /// `ftMainUpdateAttackStatWeapon` records the fighter with
+    /// `nGMHitTypeAttack` (a `group_id`, no `timer_rehit`), even for a
+    /// `can_rehit_fighter` weapon: Clefairy's swarm, set off by an attack,
+    /// never reaches that fighter's body while it overlaps it.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_clanked_rehit_swarm_does_not_hit_the_fighter_after_sixteen_updates() {
+        let attr = crate::monster_weapon::weapon_attributes::PIPPI_SWARM;
+        assert!(attr.can_rehit_fighter && attr.can_setoff);
+        let at = Vec3::new(0.0, 100.0, 0.0);
+        let mut weapons = WeaponPool::default();
+        let mut swarm = crate::monster_weapon::MonsterShot::swarm(
+            crate::monster_weapon::ShotParent::GROUND,
+            at,
+            true,
+        );
+        swarm.velocity = Vec3::ZERO;
+        assert!(weapons.spawn_monster_shot(swarm));
+        let mut f = swinging(FighterKind::Mario, 15, at);
+        weapons.apply_hits(&mut f);
+        assert_eq!(weapons.monster_shots().count(), 1);
+        assert_eq!(f.hits.attack_shield_push, 15);
+        crate::combat::resolve(&mut f);
+        assert_eq!(f.damage, 0);
+        f.attack_colls[0].state = crate::combat::AttackState::Off;
+        for update in 1..=17 {
+            weapons.tick(open_air, None);
+            weapons.apply_hits(&mut f);
+            crate::combat::resolve(&mut f);
+            assert_eq!(f.damage, 0, "update {update}");
+        }
+        assert_eq!(weapons.monster_shots().count(), 1);
+    }
+
+    /// `ftMainSearchHitWeapon`: after an attack meets the weapon, a
+    /// `hit_attack_damage` set by an earlier fighter's attack this frame
+    /// ends the search (`goto next_gobj`). The second fighter's 1-damage
+    /// attack cannot beat the 12-damage swarm (`12 - 10 < 1` fails), yet
+    /// its body is not hit.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_weapon_set_off_this_frame_skips_a_later_fighters_body() {
+        let at = Vec3::new(0.0, 100.0, 0.0);
+        let shot = || {
+            let mut swarm = crate::monster_weapon::MonsterShot::swarm(
+                crate::monster_weapon::ShotParent::GROUND,
+                at,
+                true,
+            );
+            swarm.velocity = Vec3::ZERO;
+            let mut weapons = WeaponPool::default();
+            assert!(weapons.spawn_monster_shot(swarm));
+            weapons
+        };
+        let mut a = swinging(FighterKind::Mario, 15, at);
+        let mut b = swinging(FighterKind::Mario, 1, at);
+        b.port = 2;
+        let mut weapons = shot();
+        weapons.search_hits(&mut a);
+        weapons.search_hits(&mut b);
+        weapons.react_to_fighter_hits();
+        crate::combat::resolve(&mut b);
+        assert_eq!(b.damage, 0);
+        // Alone, the weak attack neither beats the swarm nor saves the body.
+        let mut b = swinging(FighterKind::Mario, 1, at);
+        b.port = 2;
+        let mut weapons = shot();
+        weapons.search_hits(&mut b);
+        weapons.react_to_fighter_hits();
+        crate::combat::resolve(&mut b);
+        assert_eq!(b.damage, 12);
     }
 
     /// The Blaster's `can_setoff` is clear: it passes through attacks.

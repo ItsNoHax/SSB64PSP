@@ -125,6 +125,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
+| Item despawn | Sparkle on pickup-timer expiry: N64 comparison and golden (scene with an item left 1400 frames) | RE-545 |
 
 ### Front end and 1P (`MS6`)
 

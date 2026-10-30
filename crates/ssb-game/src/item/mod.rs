@@ -2477,6 +2477,10 @@ where
         item.pickup_wait = item.pickup_wait.wrapping_sub(1) & 0xFFF;
         if item.pickup_wait <= DESPAWN_FLASH_BEGIN {
             if item.pickup_wait == 0 {
+                // `efManagerSparkleWhiteScaleMakeEffect(translate, 1.0F)`,
+                // then `itMainDestroyItem`.
+                ctx.fx
+                    .push(crate::wpeffect::WeaponEffect::SparkleWhiteScale(item.pos));
                 return false;
             }
             if !item.pickup_wait.is_multiple_of(2) {

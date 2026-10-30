@@ -23,6 +23,8 @@ struct Attr {
     can_hop: bool,
     can_reflect: bool,
     can_absorb: bool,
+    can_rehit_item: bool,
+    can_rehit_fighter: bool,
 }
 
 fn decode(d: &[u8], off: usize) -> Attr {
@@ -37,6 +39,8 @@ fn decode(d: &[u8], off: usize) -> Attr {
         can_hop: (w2 >> 5) & 1 != 0,
         can_reflect: (w2 >> 4) & 1 != 0,
         can_absorb: (w2 >> 3) & 1 != 0,
+        can_rehit_item: (w2 >> 7) & 1 != 0,
+        can_rehit_fighter: (w2 >> 6) & 1 != 0,
     }
 }
 
@@ -102,5 +106,48 @@ fn every_ported_weapon_has_the_clash_priority_and_flags_the_port_uses() {
         let two = matches!(name, "Boomerang" | "Thunder trail");
         assert_eq!(a.attack_count, if two { 2 } else { 1 }, "{name}");
         assert!(a.size > 0 || name == "Charge Shot", "{name}");
+    }
+}
+
+/// `can_rehit_item` and `can_rehit_fighter` (`wpManagerMakeWeapon` copies
+/// both into `attack_coll`): `ssb_game::weapon` gives a `nITTypeDamage`
+/// item hit by a `can_rehit_item` weapon a `WEAPON_REHIT_TIME_DEFAULT`
+/// record. Luigi's Fireball sets the item bit, Mario's does not (raw words
+/// at 0x2C: `0x0160E1BC`, `0x0160E13C`).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn every_fighter_weapon_has_the_rehit_bits_the_port_uses() {
+    let Some(path) = ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+        return;
+    };
+    let rom = std::fs::read(path).unwrap();
+    let info = ssb_rom::rom::identify(&rom).unwrap();
+    let archive = Archive::open(&rom, info.region).unwrap();
+    // (name, file id, record offset, can_rehit_item, can_rehit_fighter).
+    for (name, file, off, item, fighter) in [
+        ("Mario Fireball", 0xCC, 0x00, false, false),
+        ("Luigi Fireball", 0xDE, 0x00, true, false),
+        ("Blaster", 0xD2, 0x00, false, false),
+        ("Charge Shot", 0xDA, 0x00, false, false),
+        ("Bomb", 0xD9, 0x0C, false, false),
+        ("Boomerang", 0xE2, 0x00, true, false),
+        ("Final Cutter", 0xE5, 0x08, true, false),
+        ("PK Thunder", 0xEF, 0x0C, false, false),
+        ("PK Thunder trail", 0xEF, 0x40, true, false),
+        ("PK Fire", 0xF0, 0x00, false, false),
+        ("Thunder head", 0xF3, 0x0C, true, true),
+        ("Thunder trail", 0xF3, 0x40, true, false),
+        ("Thunder Jolt (air)", 0xF4, 0x00, false, false),
+        ("Thunder Jolt (ground)", 0xF4, 0x34, false, false),
+        ("Egg", 0xF7, 0x0C, false, false),
+        ("Star", 0xF7, 0x40, true, false),
+    ] {
+        let f = archive.load(file).unwrap();
+        let a = decode(&f.data, off);
+        assert_eq!(
+            (a.can_rehit_item, a.can_rehit_fighter),
+            (item, fighter),
+            "{name}"
+        );
     }
 }

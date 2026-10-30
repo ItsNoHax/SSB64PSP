@@ -928,3 +928,28 @@ fn bob_omb_dust_needs_a_fresh_floor_bit_or_the_override() {
         assert_eq!(dusts(&fx), want, "{status:?}");
     }
 }
+
+/// `itProcessProcItemMain`: a pickup item whose `pickup_wait` runs out makes
+/// `efManagerSparkleWhiteScaleMakeEffect` at its position, then
+/// `itMainDestroyItem` its dust.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn an_item_left_on_the_floor_sparkles_as_it_despawns() {
+    let mut pool = ItemPool::default();
+    let slot = resting(&mut pool, 4, 0.0);
+    pool.get_mut(slot).unwrap().pickup_wait = 2;
+    drain_fx(&mut pool);
+    tick(&mut pool);
+    assert!(pool.get(slot).is_some());
+    assert!(drain_fx(&mut pool).is_empty());
+    let pos = pool.get(slot).unwrap().pos;
+    tick(&mut pool);
+    assert!(pool.get(slot).is_none());
+    assert_eq!(
+        drain_fx(&mut pool),
+        [
+            crate::wpeffect::WeaponEffect::SparkleWhiteScale(pos),
+            crate::wpeffect::WeaponEffect::DustExpandLarge(pos),
+        ]
+    );
+}

@@ -638,14 +638,16 @@ pub fn absorb_weapon(f: &mut Fighter, damage: i32, weapon_pos: Vec3) {
 /// On contact, `ftMainUpdateAttackStatWeapon`: a weapon doing more than the
 /// attack's damage minus 10 records itself on the attack and rebounds the
 /// fighter; an attack doing more than the weapon's damage minus 10 beats the
-/// weapon (`hit_attack_damage`). Returns whether the weapon lost, which ends
-/// its search against this fighter.
+/// weapon (`hit_attack_damage`). After each contact the search against this
+/// fighter ends if the weapon's `hit_attack_damage` is set, by this attack
+/// or by an earlier fighter's this frame (`set_off`).
 pub fn weapon_attack_clank(
     f: &mut Fighter,
     w: &WeaponAttack,
     weapon_id: u8,
     weapon_grounded: bool,
-) -> bool {
+    set_off: bool,
+) -> WeaponClank {
     let mut detect = [false; 4];
     for (i, coll) in f.attack_colls.iter().enumerate() {
         detect[i] = coll.state != AttackState::Off
@@ -653,7 +655,7 @@ pub fn weapon_attack_clank(
             && coll.record(weapon_id).group_id == NO_GROUP;
     }
     if !detect.contains(&true) {
-        return false;
+        return WeaponClank::Missed;
     }
     let damage = w.hitbox.damage;
     let w_state = weapon_state(w.pos_curr, w.pos_prev);
@@ -682,10 +684,26 @@ pub fn weapon_attack_clank(
         }
         if damage - 10 < coll.damage {
             f.hits.push_set_off(impact, damage);
-            return true;
+            return WeaponClank::Lost;
+        }
+        if set_off {
+            return WeaponClank::Passed;
         }
     }
-    false
+    WeaponClank::Missed
+}
+
+/// [`weapon_attack_clank`]'s outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaponClank {
+    /// No attack beat the weapon: its reflector, absorb, shield and
+    /// hurtbox tests follow.
+    Missed,
+    /// This fighter's attack beat it (`hit_attack_damage`, `proc_setoff`).
+    Lost,
+    /// An attack met it after an earlier fighter's set it off this frame:
+    /// `goto next_gobj`, nothing recorded.
+    Passed,
 }
 
 /// `FTAttributes` fields the hit pipeline reads.
