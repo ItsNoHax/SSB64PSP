@@ -57,13 +57,13 @@
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
-| `.rodata` line re-screen | Batch 114 grew `.rodata` ~39 KB (`END_BLOCKS`, `MotionDesc` 16 B): re-screen `PSP_LINK_RODATA_LINE` + `relink.py` on the PSP-2000, five standard scenes | RE-584 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| Master Hand stage | onepbosshit comets 17.3-19.3 ms, Fall 18.4-19.9 ms busy on the PSP-2000: effect CPU skinning; cut to 16.7 ms | RE-584 |
-| Electric hit drop | vs4@1340 4xL9 Pikachu on the PSP-2000: 17.48 no hit, 18.23 shock ms busy; cut to 16.7 ms. Fighters 6.9 ms (profile): skin 1.2, corners 0.9, material 0.7, compose 0.8. Memo, normal-length table, skin product: measured loss. Left: prepass matrix reuse alone (≤0.2 ms, `.bss` 8 KB pad, re-search); profile audio (~22% of instructions) and stage draw/update | RE-584, RE-585 |
+| Master Hand stage | onepbosshit Comets 18.07, Fall 19.78 ms busy on the PSP-2000 (batch 121): effect CPU skinning; cut to 16.7 ms | RE-584, RE-585 |
+| Electric hit drop | vs4@1340 4xL9 Pikachu on the PSP-2000: windows changed at 6c692905 (VS RNG); re-map no-hit/shock reports (report 8 now holds an off-screen magnify burst), re-baseline; cut to 16.7 ms. Fighters 6.9 ms (profile): skin 1.2, corners 0.9, material 0.7, compose 0.8. Memo, normal-length table, skin product: measured loss. Left: prepass matrix reuse alone (≤0.2 ms, `.bss` 8 KB pad, re-search); profile audio (~22% of instructions) and stage draw/update | RE-584, RE-585 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v140; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
-| Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
+| Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping; re-map VS windows after any VS RNG or golden-rebaseline commit | RE-574, RE-585 |
+| Link-order upkeep | Re-search (RE-494) when cmpaddr shows >25% of ordered functions moved; timer-only functions (`capture_*`, `scripted_*`, `frame_timer`) after the searched block, `cmpaddr --elf` release vs timer differs only in the tail; accept on a PSP-2000 five-scene interleaved round | RE-494, RE-585 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
 | Acid tile-0 duplicates | Zebes acid `textures[1..3]` duplicate the TEXEL1 images (~520 KiB): drop the duplicate slots | RE-364 |
 | `vs4@2400` | Busy time back under RE-500's 13.64 ms; rise = small gameplay and draw additions | RE-533–RE-539 |
