@@ -106,14 +106,25 @@ pub enum Span {
     /// Inside the draw: the select shadows' `NOISE` texels on the CPU
     /// (`meshdraw::draw_sprite_noise`).
     Noise,
+    /// Inside the draw: a battle's display effects (`DisplayEffects`
+    /// group, and the ground effects drawn before the stage's link 0).
+    DrawDisplay,
+    /// Inside the draw: a battle's particle groups (links 10, 15, 18).
+    DrawParticles,
+    /// Inside the draw: a battle's entry, egg, KO and link-15 effects.
+    DrawEffects,
+    /// Inside the draw: a battle's other groups (entry fighters, shadows,
+    /// demo fade, items, container pieces, sword trails, weapons,
+    /// monsters).
+    DrawObjects,
 }
 
-const SPANS: usize = 40;
+const SPANS: usize = 44;
 #[cfg_attr(not(feature = "profile"), allow(dead_code))]
 const NAMES: [&str; SPANS] = [
     "update", "interrupt", "physics", "hit", "effects", "draw", "ge", "vblank", "fphys", "items", "weapons", "camera", "anim",
     "map", "joints", "dstage", "dfighters", "dhud", "dmagnify", "mmask", "mmodel", "io", "demand", "files", "mpose", "mmesh", "skin", "msprites", "nodemat", "material", "submit", "prims", "sound", "sndcalls",
-    "compose", "allocs", "kallocs", "billboard", "bbnodes", "noise",
+    "compose", "allocs", "kallocs", "billboard", "bbnodes", "noise", "ddisplay", "dparticles", "deffects", "dobjects",
 ];
 
 /// Frames per report: two seconds at 60 FPS.

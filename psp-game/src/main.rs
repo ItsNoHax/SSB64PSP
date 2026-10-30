@@ -9751,6 +9751,7 @@ unsafe fn draw_training(
             _ => draw_state.heads = meshdraw::Heads::Both,
         }
         let heads = draw_state.heads;
+        let group_t = profile::start();
         match step.group {
             G::Stage => {
                 if step.link == 0 && step.head == H::Zero {
@@ -9762,6 +9763,7 @@ unsafe fn draw_training(
                         &damage_hud.effects,
                         &pl.camera,
                     );
+                    profile::stop(profile::Span::DrawDisplay, group_t);
                 }
                 // The stage's own spans: layers 0 and 1 (RE-422).
                 let t = (step.last <= 8).then(profile::start);
@@ -9955,6 +9957,17 @@ unsafe fn draw_training(
                 draw_link18_monsters(gpu, p, draw_state, assets, pl, items, effect_visuals);
                 draw_state.finish_fighter_light();
             }
+        }
+        // The groups' own spans; the stage and fighter groups have theirs.
+        let group_span = match step.group {
+            G::Stage | G::Fighters => None,
+            G::DisplayEffects => Some(profile::Span::DrawDisplay),
+            G::Particles => Some(profile::Span::DrawParticles),
+            G::EntryEffects | G::EggEffects | G::KoEffects | G::Link15Effects => Some(profile::Span::DrawEffects),
+            _ => Some(profile::Span::DrawObjects),
+        };
+        if let Some(span) = group_span {
+            profile::stop(span, group_t);
         }
         if step.head == H::Zero && split {
             head1_pending[step.group as usize] = draw_state.head1_pending;
