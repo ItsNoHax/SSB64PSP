@@ -196,3 +196,4 @@ crates/ssb-capture/src/script.rs	DAMAGE_SEEDS	port constant: capture-script dama
 crates/ssb-capture/src/script.rs	DUMMY	port constant: capture-script controller frames for the cpufx-r dummy (scene input, not read from the ROM)
 crates/ssb-capture/src/script.rs	LEAD	port constant: capture-script controller frames for the cpufx-r lead (scene input, not read from the ROM)
 tools/romtool/src/main.rs	BOSS_WALLPAPER_GRAPHS	layout: (file, offset) pairs naming the wallpaper display-proc graphs in the pack
+crates/ssb-game/src/ground_effect.rs	STAGE_FILES	layout: each battle gkind's Stage*File2 archive file ID, the base of the ground-effect descs' o_* offsets (the tablegen copy reads the ROM at build time)

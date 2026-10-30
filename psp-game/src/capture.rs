@@ -107,6 +107,23 @@ pub fn hold() -> bool {
     HOLD.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// Set for `vsground`: the ground-effect actor's first wait becomes 60
+/// frames after its RNG draw, as the N64 warp ROM's patched
+/// efground.c:1590 (`syUtilsRandIntRange(10000) * 0 + 60`) does.
+static GROUND_WAIT_CUT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// `vsground`'s first ground-effect wait in frames, if this run cuts it.
+pub fn ground_wait_cut() -> Option<i32> {
+    GROUND_WAIT_CUT
+        .load(core::sync::atomic::Ordering::Relaxed)
+        .then_some(60)
+}
+
+/// Cuts the first ground-effect wait for the rest of the run.
+pub fn cut_ground_wait() {
+    GROUND_WAIT_CUT.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Picks this run's capture scene once at startup.
 pub fn select() -> Option<Capture> {
     #[cfg(feature = "capture_scene_file")]

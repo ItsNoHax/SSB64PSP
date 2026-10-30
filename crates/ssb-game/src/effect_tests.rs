@@ -950,3 +950,130 @@ fn an_unowned_light_spark_takes_the_fifth_script() {
     assert_ne!(pc, NIL);
     assert_eq!(NORMAL_HEAVY_ENV[4], [0xFF; 3]);
 }
+
+/// `efGroundCheckEffectInBounds`'s bounds for the ground-effect tests.
+fn ground_bounds() -> crate::status::BlastZone {
+    crate::status::BlastZone {
+        top: 10000.0,
+        bottom: -10000.0,
+        left: -10000.0,
+        right: 10000.0,
+    }
+}
+
+/// `efGroundMakeEffect` holds a non-forced struct from its make until
+/// `efGroundCheckEffectInBounds` ejects it past the far bound; the root
+/// moves only when the child's script ends, by the child's end translate
+/// times the root's scale.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn ground_effect_holds_its_struct_until_it_leaves_the_bound() {
+    use crate::ground_effect as g;
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    e.map_bounds = Some(ground_bounds());
+    // Castle's right-facing Lakitu (desc 0), flying left.
+    crate::rng::set_seed(1);
+    assert!(e.ground_effect(0, -1));
+    assert_ne!(crate::rng::seed(), 1, "efGroundUpdatePhysics's altitude");
+    assert_eq!(e.used(), 1);
+    let d = *e.displays().next().unwrap();
+    assert_eq!(d.kind, DisplayKind::Ground { desc: 0 });
+    assert_eq!(d.translate.x, 9500.0);
+    assert_eq!(d.translate.z, g::POS_Z[0]);
+    assert!((g::ALT_LOW[0]..=g::ALT_HIGH[0]).contains(&d.translate.y));
+    assert_eq!(d.scale, Vec3::splat(g::SCALE[0]));
+    assert_eq!(d.ticks, 1);
+    let life = u32::from(g::cycle::LIFE[0]);
+    assert!(life > 2);
+    // The expected flight: one jump each `life - 1` frames, from the
+    // first frame after the make (`efManagerFuncRun`).
+    let mut x = 9500.0f32;
+    let mut first = true;
+    let mut frames = 1u32;
+    let mut expect_eject = 0;
+    for f in 1..=20_000u32 {
+        if x <= -9500.0 {
+            expect_eject = f;
+            break;
+        }
+        if f % (life - 1) == 0 {
+            x += g::cycle::END[0][usize::from(!first)][0] * g::SCALE[0];
+            first = false;
+        }
+    }
+    assert!(expect_eject > 0);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    // The make's frame: not started yet.
+    rt.effects.process(rt.particles, rt.banks);
+    loop {
+        rt.frame();
+        if rt.effects.displays().next().is_none() {
+            break;
+        }
+        frames += 1;
+        assert!(frames < 20_000);
+    }
+    assert_eq!(frames, expect_eject);
+    assert_eq!(rt.effects.used(), 0, "efManagerSetPrevStructAlloc");
+}
+
+/// No non-forced struct: `efGroundMakeEffect` returns `NULL` before
+/// `efGroundUpdatePhysics`'s random draw.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn ground_effect_without_a_struct_makes_nothing() {
+    let (_p, mut e) = runtime();
+    e.map_bounds = Some(ground_bounds());
+    while e.get_no_force().is_some() {}
+    crate::rng::set_seed(1);
+    assert!(!e.ground_effect(0, -1));
+    assert_eq!(crate::rng::seed(), 1);
+    assert!(e.displays().next().is_none());
+}
+
+/// Sector Z's distant rocket (`efGroundSetStepPositions`,
+/// `efGroundUpdateStepPositions`): the root grows by `scale * 10 / (1000 -
+/// x)` a frame until it passes x = 1000.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn sector_rocket_grows_until_it_passes_the_step_position() {
+    use crate::ground_effect as g;
+    let desc = (0..g::DESC_COUNT).find(|&k| g::step_positions(k)).unwrap();
+    assert!(g::set_step_positions(desc));
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    e.map_bounds = Some(ground_bounds());
+    assert!(e.ground_effect(desc as u8, 1));
+    let d = *e.displays().next().unwrap();
+    assert_eq!(d.translate.x, -9500.0);
+    assert_eq!(d.rotate.y, core::f32::consts::PI);
+    let step = (g::SCALE[desc] * 10.0) / (1000.0 - -9500.0);
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    rt.effects.process(rt.particles, rt.banks);
+    rt.frame();
+    let d = *rt.effects.displays().next().unwrap();
+    assert_eq!(d.scale.x, g::SCALE[desc] + step);
+    // Past x = 1000 the step stops.
+    let mut last = d.scale.x;
+    let mut grew_after = false;
+    loop {
+        let Some(d) = rt.effects.displays().next().copied() else {
+            break;
+        };
+        if d.translate.x >= 1000.0 && d.scale.x != last {
+            grew_after = true;
+        }
+        last = d.scale.x;
+        rt.frame();
+    }
+    assert!(!grew_after);
+}

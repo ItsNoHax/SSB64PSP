@@ -70,6 +70,10 @@ use ssb_psp_runtime::profile;
 /// no fighters yet, so they started after 640 and the fighters come after
 /// 760; Kirby's 161-frame Win clips have ended by 1041.
 const VS_RESULTS_CAPTURE_TICK: u64 = 1100;
+/// `vsground`'s frame, "Go" on the countdown: the first ambient debris
+/// (desc 6, made at tick 68) top left, in its second anim cycle; N64 warp
+/// frame 392 (port tick = N64 frame + 8).
+const VS_GROUND_CAPTURE_TICK: u64 = 400;
 /// `vsteamsteal`'s stick-left windows, the START tap that steals and the
 /// capture: the icon in flight (RE-464).
 const VS_TEAM_STEAL_RUNS: [core::ops::RangeInclusive<u64>; 2] = [398..=520, 800..=900];
@@ -351,6 +355,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // preview camera has bobbed and the model played 36 ticks.
         GameScene::StageSelectView | GameScene::StageSelectYoshi => 60,
         GameScene::VsSector | GameScene::VsYoshi => 300,
+        GameScene::VsGround => VS_GROUND_CAPTURE_TICK,
         // Tick 400, the frame of the N64 warp-boot captures RE-422 compares:
         // both fighters stand at their spawns and the camera has settled.
         GameScene::TrainingJungle
@@ -706,6 +711,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
         GameScene::Vs
             | GameScene::VsSector
             | GameScene::VsYoshi
+            | GameScene::VsGround
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
@@ -949,6 +955,7 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
         GameScene::Vs
             | GameScene::VsSector
             | GameScene::VsYoshi
+            | GameScene::VsGround
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
@@ -1069,6 +1076,7 @@ fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
         GameScene::Vs
             | GameScene::VsSector
             | GameScene::VsYoshi
+            | GameScene::VsGround
             | GameScene::VsTimeUp
             | GameScene::VsTimeUpSign
             | GameScene::VsSuddenDeath
@@ -2397,7 +2405,7 @@ fn capture_stage_gkind(scene: Option<GameScene>) -> u8 {
         return g;
     }
     match scene {
-        Some(GameScene::VsSector) => ssb_game::stage_select::gkind::SECTOR,
+        Some(GameScene::VsSector | GameScene::VsGround) => ssb_game::stage_select::gkind::SECTOR,
         Some(GameScene::VsYoshi) => ssb_game::stage_select::gkind::YOSTER,
         Some(GameScene::TrainingJungle | GameScene::KirbyStoneSlope | GameScene::CatchSlope) => {
             ssb_game::stage_select::gkind::JUNGLE
@@ -4181,6 +4189,14 @@ fn enter_training(
     );
     // `efGroundMakeAppearActor` next, outside Training (`vs` is `None`).
     world.stage_ctl.ground_effect = ssb_game::ground_effect::GroundActor::make(gkind, vs.is_none());
+    // `vsground` (capture only): the first wait after its draw, as the N64
+    // warp ROM's patch sets it.
+    if let (Some(actor), Some(wait)) = (
+        world.stage_ctl.ground_effect.as_mut(),
+        capture::ground_wait_cut(),
+    ) {
+        actor.make_wait = wait;
+    }
     // `ftManagerMakeFighter` for each player in turn, each built in its
     // arena slot.
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
@@ -5433,6 +5449,9 @@ unsafe fn run() -> ! {
     // The save scenes run another scene's route and script.
     let capture_spec = capture.map(|c| c.scene);
     let capture_scene = capture_spec.map(GameScene::script);
+    if capture_scene == Some(GameScene::VsGround) {
+        capture::cut_ground_wait();
+    }
     #[cfg(not(feature = "boot_log"))]
     boot_log::log("run_start");
     #[cfg(feature = "boot_log")]
@@ -7118,7 +7137,8 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         | K::NessPKThunderTrail
         | K::NessPKReflectTrail
         | K::CaptureKirbyStar
-        | K::LoseKirbyStar => return None,
+        | K::LoseKirbyStar
+        | K::Ground { .. } => return None,
     })
 }
 
@@ -7820,6 +7840,201 @@ fn draw_one_display(
         );
     }
     draw_state.color_override = None;
+}
+
+/// Link 4's ground effects (`efGroundMakeEffect`), drawn before the stage's
+/// layer 0: `gcMoveGObjDLHead` puts each at the head of link 4's
+/// equal-priority band, so the newest made draws first, and
+/// `gcDrawDObjTreeForGObj` draws every list under head 0.
+#[inline(never)]
+fn draw_ground_effects(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    scratch: &mut DisplayScratch,
+    effects: &ssb_game::effect::Effects,
+    camera: &ssb_game::camera::Camera,
+) {
+    let heads = draw_state.heads;
+    draw_state.heads = meshdraw::Heads::Both;
+    for d in effects.displays_in_make_order().rev() {
+        if let ssb_game::effect::DisplayKind::Ground { desc } = d.kind {
+            draw_ground_effect(gpu, p, draw_state, scratch, d, usize::from(desc), camera);
+        }
+    }
+    draw_state.heads = heads;
+}
+
+/// One ground effect: a bare `TraRotRpyRSca` root at the effect's
+/// translate, rotate and scale, over desc `k`'s `DObjDesc` tree
+/// (`efGroundSetupEffectDObjs`). Every node is `TraRotRpyR` (its scale
+/// unused); a node with id bits `0xF000` (packed `FLAG_BILLBOARD`) adds
+/// kind 0x2E (`Kind46`, spun by `rotate.z`) when the maker's `lr` was
+/// +/-3, else 0x48 (`func_ovl0_800CAB48`, turned by `rotate.x`/`.y` in
+/// the camera's frame), both scaled by `gGCScaleX`. With `lr` +1 the first
+/// such node and every later one add half a turn to `rotate.y`.
+#[inline(never)]
+fn draw_ground_effect(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    scratch: &mut DisplayScratch,
+    d: &ssb_game::effect::Display,
+    k: usize,
+    camera: &ssb_game::camera::Camera,
+) {
+    use ssb_game::ground_effect as g;
+    use ssb_rom::pack::NodeDesc;
+    use ssb_rom::scene::Mat4;
+    let ms = meshdraw::MODEL_SCALE;
+    let Some(file) = g::desc_file(k) else {
+        return;
+    };
+    let Some(object) = ssb_psp_runtime::scene::object_keyed(p, (file, g::O_DOBJSETUP[k])) else {
+        return;
+    };
+    // `lbCommonAddTreeDObjsAnimAll(.., 0.0F)` and the make's (or the
+    // cycle's re-add's) `gcPlayAnimAll`, then one play per frame: `ticks`
+    // counts them since the last add. The previous cycle's `AObj`s are not
+    // carried over (only `ground_effect::cycle::END` keeps them).
+    match p.effect_anim(ssb_rom::effect::GROUND_EFFECT_ANIM_SLOT + k as u32) {
+        Some(anim) => {
+            scratch.anim.start_changed(p, &anim);
+            if let Some(script) = p.anim_script(&anim) {
+                for _ in 0..d.ticks {
+                    let _ = scratch.anim.tick(script);
+                }
+            }
+        }
+        None => scratch.anim.clear(),
+    }
+    // Each `MObj` plays this desc's `o_matanim_joint` script: descs that
+    // share a tree bind one entry, restarted on the desc's own.
+    scratch.materials.start(p, object_mat_anims(p, &object));
+    if g::O_MATANIM_JOINT[k] != 0 {
+        for n in 0..object.node_count {
+            let Some(mesh) = p
+                .node(object.first_node + n)
+                .and_then(|node| p.mesh(node.mesh))
+            else {
+                continue;
+            };
+            for j in 0..mesh.prim_count {
+                let Some(prim) = p
+                    .prim(mesh.first_prim + j)
+                    .filter(|prim| prim.mat_anim != ssb_rom::pack::TextureDesc::NO_ANIM)
+                else {
+                    continue;
+                };
+                let Some(desc) = p.mat_anim(prim.mat_anim) else {
+                    continue;
+                };
+                let script = p.mat_anim_file(&desc).and_then(|f| {
+                    ssb_rom::matanim::mobj_script(
+                        f,
+                        g::O_MATANIM_JOINT[k],
+                        g::O_MOBJSUB[k],
+                        n as usize,
+                        desc.source_offset,
+                    )
+                });
+                if let Some(script) = script {
+                    scratch.materials.restart(prim.mat_anim, script);
+                }
+            }
+        }
+    }
+    for _ in 0..d.ticks {
+        scratch.materials.tick(p);
+    }
+    // `efGroundUpdateEffectYaw`: after each frame's proc, the root's
+    // grandchild's `rotate.z` (keyed by both its descs' scripts) is
+    // negated; not on the frame it is made.
+    let yaw_node = (g::effect_yaw(k) && d.lr == 1 && (d.looped || d.ticks > 1)).then_some(1u32);
+    let raw_lr_right = d.lr == 1 && !d.lr_bool;
+    let root = Mat4::from_trs_display(
+        [d.translate.x, d.translate.y, d.translate.z],
+        [d.rotate.x, d.rotate.y, d.rotate.z],
+        [d.scale.x, d.scale.y, d.scale.z],
+    );
+    let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
+    let count = (object.node_count as usize).min(ssb_rom::skeleton::MAX_NODES);
+    let mut world = [Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    // `gGCScaleX` under each node: the root's `scale.x`, times each
+    // billboard ancestor's (`gcDrawDObjTree` restores it per subtree).
+    let mut gscale = [1.0f32; ssb_rom::skeleton::MAX_NODES];
+    let mut rotate_step = 0.0;
+    for i in 0..count {
+        let index = object.first_node + i as u32;
+        let Some(node) = p.node(index) else {
+            return;
+        };
+        let parent = node
+            .parent
+            .checked_sub(object.first_node)
+            .filter(|&parent| parent < i as u32)
+            .map(|parent| parent as usize);
+        let (parent_world, parent_scale) =
+            parent.map_or((root, d.scale.x), |q| (world[q], gscale[q]));
+        let mut pose =
+            scratch
+                .anim
+                .node_pose(index)
+                .copied()
+                .unwrap_or(ssb_rom::figatree::JointPose {
+                    translate: node.rest_translate,
+                    rotate: node.rest_rotate,
+                    scale: node.rest_scale,
+                });
+        // The packer flags ids `0x4000`, `0x2000` and `0x1000` as
+        // billboards: the descs' trees use `0x4000` alone and no `0x8000`.
+        let billboard = node.flags & NodeDesc::FLAG_BILLBOARD != 0;
+        if billboard && raw_lr_right {
+            rotate_step = core::f32::consts::PI;
+        }
+        // The setup's half turn lasts until a `RotY` key overwrites it.
+        if scratch.anim.track_value(index, 1).is_none() {
+            pose.rotate[1] += rotate_step;
+        }
+        if yaw_node == Some(i as u32) {
+            pose.rotate[2] = -pose.rotate[2];
+        }
+        world[i] = parent_world.mul(&Mat4::from_tr_display(pose.translate, pose.rotate));
+        gscale[i] = if billboard {
+            parent_scale * pose.scale[0]
+        } else {
+            parent_scale
+        };
+        if !scratch.anim.visible(p, index) || node.mesh == NodeDesc::NO_MESH {
+            continue;
+        }
+        let Some(mesh) = p.mesh(node.mesh) else {
+            continue;
+        };
+        if billboard {
+            let [x, y, z] = world[i].translation();
+            let pos = ssb_engine::math::Vec3::new(x, y, z);
+            let scale = [ms * gscale[i], ms * pose.scale[1] * parent_scale];
+            if d.lr_bool {
+                billboard_transform(gpu, camera, pos, pose.rotate[2], scale);
+            } else {
+                gpu.model_transform_camera_rotated_scaled(
+                    pos,
+                    camera.eye,
+                    camera.at,
+                    [pose.rotate[0], pose.rotate[1]],
+                    scale,
+                );
+            }
+        } else {
+            let m = psp_matrix(&world[i].mul(&units));
+            gpu.load_model(&m);
+            draw_state.set_model_matrix(m);
+        }
+        // SAFETY: the mesh is the pack's, drawn under the frame's display
+        // list like every display effect's.
+        unsafe { meshdraw::draw_mesh(p, &mesh, draw_state, None, Some(&scratch.materials)) };
+    }
 }
 
 /// The opened Poké Ball's rays (RE-443), drawn as the entry's rays are
@@ -9512,6 +9727,16 @@ unsafe fn draw_training(
         let heads = draw_state.heads;
         match step.group {
             G::Stage => {
+                if step.link == 0 && step.head == H::Zero {
+                    draw_ground_effects(
+                        gpu,
+                        p,
+                        draw_state,
+                        &mut damage_hud.display_scratch,
+                        &damage_hud.effects,
+                        &pl.camera,
+                    );
+                }
                 // The stage's own spans: layers 0 and 1 (RE-422).
                 let t = (step.last <= 8).then(profile::start);
                 stage_pass(step.link..=step.last, heads, draw_state);

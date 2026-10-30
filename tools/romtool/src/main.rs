@@ -4008,6 +4008,22 @@ fn resolve_layer_mat_anims(
         }
     }
 
+    // Ground effects (`efGroundMakeEffect`): each desc drawing this graph
+    // adds its own `o_matanim_joint` table to the tree
+    // (`lbCommonAddTreeDObjsAnimAll`); descs share graphs (Sector Z's two
+    // ships, Dream Land's 0x33B8 with two tables), as the boss wallpapers do.
+    let effect_tables: Vec<u32> = (0..ssb_game::ground_effect::DESC_COUNT)
+        .filter(|&k| {
+            ssb_game::ground_effect::desc_file(k) == Some(file.id)
+                && ssb_game::ground_effect::O_DOBJSETUP[k] == graph_offset
+                && ssb_game::ground_effect::O_MATANIM_JOINT[k] != 0
+        })
+        .map(|k| ssb_game::ground_effect::O_MATANIM_JOINT[k])
+        .collect();
+    if !effect_tables.is_empty() {
+        return resolve_boss_mat_anims(file, &effect_tables, materials, mat_anim_data);
+    }
+
     let ground = ground_mat_scripts(loaded, file, graph_offset, materials);
     if !ground.is_empty() {
         return resolve_ground_mat_anims(file, &ground, materials, mat_anim_data);
@@ -6760,6 +6776,57 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &joints,
             );
         }
+    }
+
+    // The ground effects' `o_anim_joint` tables (`efGroundMakeEffect`:
+    // `lbCommonAddTreeDObjsAnimAll` on the root's child, the DObj array's
+    // first node), one slot per desc: descs share graphs but not tables.
+    for desc in 0..ssb_game::ground_effect::DESC_COUNT {
+        let table = ssb_game::ground_effect::O_ANIM_JOINT[desc];
+        let Some(file_id) = ssb_game::ground_effect::desc_file(desc) else {
+            continue;
+        };
+        if table == 0 {
+            continue;
+        }
+        let graph_at = ssb_game::ground_effect::O_DOBJSETUP[desc];
+        let slot = ssb_rom::effect::GROUND_EFFECT_ANIM_SLOT + desc as u32;
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("ground effect {desc}: file {file_id} missing"))?;
+        let graph = loaded
+            .graphs
+            .get(&file_id)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
+            .ok_or_else(|| format!("ground effect {desc}: graph missing"))?;
+        let object = object_index
+            .get(&(file_id, graph_at))
+            .and_then(|&index| writer.object(index))
+            .ok_or_else(|| format!("ground effect {desc}: packed object missing"))?;
+        let joints: Vec<_> = ssb_rom::objanim::joint_scripts(&file.data, table, graph.nodes.len())
+            .into_iter()
+            .enumerate()
+            .filter_map(|(node, script)| {
+                script.map(|script| (Some(script), Some(object.first_node + node as u32)))
+            })
+            .collect();
+        if joints.is_empty() {
+            return Err(
+                format!("ground effect {desc}: no animation scripts at 0x{table:X}").into(),
+            );
+        }
+        effect_anim_joints += joints.len();
+        effect_anims += 1;
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::EFFECT,
+            slot,
+            file_id,
+            0,
+            &file.data,
+            &joints,
+        );
     }
 
     // RE-425: the entry makers' own tables and single scripts
@@ -10954,6 +11021,31 @@ fn load_all(archive: &Archive) -> Loaded {
         (114u32, 0x11268u32, 0x10788u32), // GRLastMapEffects2_1 / Effects3_0
         (152u32, 0x10F0u32, 0xF00u32),    // GRPupupuMapWhispyEyesTransformKinds
     ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
+    // The other ground effects: every `EFGroundDesc` names its DObj array
+    // and its `MObjSub` table together (`o_dobjsetup`, `o_mobjsub`), which
+    // `efGroundMakeEffect` hands to `lbCommonAddMObjForTreeDObjs`. Kongo
+    // Jungle's bird and Sector Z's ship above are two of them.
+    for desc in 0..ssb_game::ground_effect::DESC_COUNT {
+        let table = ssb_game::ground_effect::O_MOBJSUB[desc];
+        let Some(file) = ssb_game::ground_effect::desc_file(desc) else {
+            continue;
+        };
+        if table == 0 {
+            continue;
+        }
+        let graph = ssb_game::ground_effect::O_DOBJSETUP[desc];
         let nodes = graphs
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))

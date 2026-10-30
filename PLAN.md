@@ -61,7 +61,7 @@
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
 | Master Hand stage | onepbosshit comets 17.3-19.3 ms, Fall 18.4-19.9 ms busy on the PSP-2000: effect CPU skinning; cut to 16.7 ms | RE-584 |
 | Electric hit drop | vs4@1340 4xL9 Pikachu on the PSP-2000: 17.48 no hit, 18.23 shock ms busy; cut to 16.7 ms. Fighters 6.9 ms (profile): skin 1.2, corners 0.9, material 0.7, compose 0.8. Memo, normal-length table, skin product: measured loss. Left: prepass matrix reuse alone (≤0.2 ms, `.bss` 8 KB pad, re-search); profile audio (~22% of instructions) and stage draw/update | RE-584, RE-585 |
-| Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v138; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
+| Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v139; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | Opening figatree waits | Misses behind a chunk in flight: Room tic 57 (8 ms), Jungle battle start (≤13.7 ms), fighter-scene posed fighter tic 15 (≤8 ms). Smaller chunk or later prefetch start; acceptance: no frame over 16.7 ms from reads | RE-575 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping | RE-574 |
 | Select NOISE cost | Measure `noise` span (~1.0 ms avg, 3.0 peak on PPSSPP) on a PSP-2000; acceptance: busy time unchanged within noise or cheaper path | RE-569 |
@@ -125,8 +125,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
-| Ground ambient effects | Draw and fly efGround effects (Lakitu, birds, Arwings…: `efGroundMakeEffect` DObj trees, `efGroundCommonProcUpdate`) and hold their effect struct (RNG gate parity); N64 capture | RE-508 |
-| Hidden-part order history | END_BLOCKS models fresh insertion; parts kept across motions stay put (ftmain.c:4638-4652, `ftMainAddHiddenPartID` re-interposes TransN as kind 3): check fighters with two parts on one parent; trees longer than the table read past it | RE-474 |
+| objanim linear rate | `ssb_rom::objanim` multiplies by the reciprocal and zeroes the rate at payload 0; decomp divides and keeps it (objanim.c:395-397); Zebes ship end X 1 ulp off; goldens may move (D-051) | RE-508 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)

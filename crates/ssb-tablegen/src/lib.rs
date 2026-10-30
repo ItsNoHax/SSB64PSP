@@ -82,6 +82,7 @@ mod emit;
 mod ending_data;
 mod fighters;
 mod ground;
+mod ground_effect;
 mod hurtbox;
 mod ifcommon;
 mod item_attributes;
@@ -124,7 +125,8 @@ pub enum Crate {
     /// joint masks and hidden/texture parts, hurtboxes, Falcon Dive's
     /// capture offsets, the items' `ITAttributes`, the item weapons'
     /// `WPAttributes` and the Smog's scale, Mario's `FTAttributes` physics,
-    /// Kirby's copy table and the quakes' and Thunder Shock's lives.
+    /// Kirby's copy table, the quakes' and Thunder Shock's lives and the
+    /// stage ambient effects' flight cycles.
     Game,
     /// `ssb-rom`: the fighter animation table, the offsets the stage
     /// clear's and staff roll's data arrays hold, the stage clear's pictures,
@@ -182,6 +184,10 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
                 Generated {
                     name: "effect_life.rs",
                     text: effect_life::generate(rom)?,
+                },
+                Generated {
+                    name: "ground_effects.rs",
+                    text: ground_effect::generate(rom)?,
                 },
                 Generated {
                     name: "hurtboxes.rs",

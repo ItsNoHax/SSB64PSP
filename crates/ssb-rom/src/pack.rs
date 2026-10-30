@@ -498,7 +498,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 138 grows `LodBlendDesc` to 60 bytes with `texel_alpha`: Master Hand's
 // Fall wallpaper draws its two-tile blend translucent by its texels' alpha
 // (`AlphaBlend::Prim` per pass, RE-321).
-pub const VERSION: u32 = 138;
+// 139 adds the ground effects' animation rows (`AnimDesc::EFFECT` from
+// `effect::GROUND_EFFECT_ANIM_SLOT`, one per `EFGroundDesc`), their
+// `MObjSub` pairings and their material-animation bindings. No table
+// layout change.
+pub const VERSION: u32 = 139;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

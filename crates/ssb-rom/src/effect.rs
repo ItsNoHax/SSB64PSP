@@ -163,6 +163,11 @@ pub const ENTRY_CAR_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT + 2;
 pub const ENTRY_BALL_R_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT + 3;
 pub const ENTRY_KIRBY_STAR_R_ANIM_SLOT: u32 = ENTRY_ANIM_SLOT + 4;
 
+/// The first of the ground effects' `o_anim_joint` tables
+/// (`EFGroundDesc`, `ssb_game::ground_effect`): one slot per desc, past
+/// the arrows' (`player_interface::ARROWS_SLOT`).
+pub const GROUND_EFFECT_ANIM_SLOT: u32 = 0x130;
+
 /// File 35, `FTEmblemModels` (`llFTEmblemModelsFileID`): the series
 /// emblems `mnVSResultsMakeEmblem` and `mnCharactersMakeEmblem` make.
 pub const EMBLEM_FILE: u32 = 35;

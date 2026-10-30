@@ -1650,6 +1650,15 @@ impl Gpu {
         }
     }
 
+    /// Loads `m` as the model matrix: a transform the caller composed
+    /// itself, such as one node of a `DObj` tree under its root.
+    pub fn load_model(&mut self, m: &sys::ScePspFMatrix4) {
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            sys::sceGumLoadMatrix(m);
+        }
+    }
+
     /// Loads a real view matrix (RE-131) -- an `eye`/`at`/`up` camera, not
     /// just a translation. `m` is expected column-major, matching
     /// [`ssb_engine::math::Mat4::as_array`]'s own documented output.

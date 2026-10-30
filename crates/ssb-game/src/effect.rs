@@ -1023,10 +1023,12 @@ pub trait HitEffectSink {
     fn twister_made(&mut self) -> bool {
         true
     }
-    /// Whether `efGroundMakeEffect` makes the stage's ambient effect
-    /// ([`crate::ground_effect`]): a free struct for
-    /// `efManagerGetEffectNoForce`. Without a runtime it is made.
-    fn ground_effect_made(&mut self) -> bool {
+    /// `efGroundMakeEffect` then `efGroundUpdatePhysics` for
+    /// `EFGroundDesc` `desc` and the actor's `lr` ([`crate::ground_effect`]):
+    /// `false`, with no random draw, when `efManagerGetEffectNoForce` has
+    /// no struct. Without a runtime it is made and only draws its altitude.
+    fn ground_effect(&mut self, _desc: u8, _lr: i32) -> bool {
+        let _altitude = rng::rand_float();
         true
     }
 }
@@ -1088,8 +1090,8 @@ impl HitEffectSink for EffectRuntime<'_> {
         self.effects.twister_xf != NIL
     }
 
-    fn ground_effect_made(&mut self) -> bool {
-        self.effects.no_force_available()
+    fn ground_effect(&mut self, desc: u8, lr: i32) -> bool {
+        self.effects.ground_effect(desc, lr)
     }
 
     fn pk_fire_flame(&mut self, pos: Vec3) -> u8 {
@@ -1293,6 +1295,13 @@ pub enum DisplayKind {
     /// [`Display::rotate`] are the child's position (kind `Tra`) and spin
     /// (kind 0x2E). Unanimated.
     LoseKirbyStar,
+    /// `efGroundMakeEffect`: the stage's ambient effect from
+    /// `EFGroundDesc` `desc` (an index from `dEFGroundCastleEffectDescs`,
+    /// [`crate::ground_effect`]). Its tree (`efGroundSetupEffectDObjs`)
+    /// flies the root's child by its animation; each time the child's
+    /// script ends the root jumps to where the child reached and the
+    /// animation restarts, until the root passes the far map bound.
+    Ground { desc: u8 },
 }
 
 /// Which side of the camera's process (priority 3, Camera link 9) a quake's
@@ -1391,6 +1400,7 @@ impl DisplayKind {
                 d::EF_MANAGER_CAPTURE_KIRBY_STAR_EFFECT_DESC_DL_LINK[0]
             }
             DisplayKind::LoseKirbyStar => d::EF_MANAGER_LOSE_KIRBY_STAR_EFFECT_DESC_DL_LINK[0],
+            DisplayKind::Ground { desc } => d::EF_GROUND_DESCS_DL_LINK[usize::from(desc)],
         }
     }
 
@@ -1422,7 +1432,8 @@ impl DisplayKind {
             | DisplayKind::NessPKThunderTrail
             | DisplayKind::NessPKReflectTrail
             | DisplayKind::CaptureKirbyStar
-            | DisplayKind::LoseKirbyStar => return None,
+            | DisplayKind::LoseKirbyStar
+            | DisplayKind::Ground { .. } => return None,
         })
     }
 
@@ -1480,7 +1491,9 @@ pub struct Display {
     add: [f32; 2],
     add_timer: u16,
     pub(crate) lifetime: i32,
-    pub(crate) lr: i8,
+    /// `effect_vars.*.lr`: a ground effect's direction, -1 or +1 (the
+    /// maker's +/-3 kept in [`Self::lr_bool`]); the host draw reads it.
+    pub lr: i8,
     /// A spawner's point.
     pos: Vec3,
     /// `effect_vars.impact_wave`: its colour index and alpha.
@@ -1499,6 +1512,13 @@ pub struct Display {
     /// `effect_vars.pkthunder.status` is still `Active`: the head lived
     /// through this frame's weapon pass ([`Effects::pk_trail_pose`]).
     pk_alive: bool,
+    /// `effect_vars.ground_effect.lr_bool`: the actor's `lr` was -3 or 3.
+    pub lr_bool: bool,
+    /// `effect_vars.ground_effect.scale_step`.
+    scale_step: f32,
+    /// A ground effect's animation has been re-added at least once: its
+    /// child's `AObj`s carry the last cycle's values.
+    pub looped: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1548,6 +1568,9 @@ impl Display {
             paused: false,
             pk_head: 0,
             pk_alive: false,
+            lr_bool: false,
+            scale_step: 0.0,
+            looped: false,
         }
     }
 }
@@ -1568,7 +1591,7 @@ impl Effects {
     /// priority 2 and `gcDLLinkGObjTail` keeps equal priorities in creation
     /// order, so this is make order, not the pool's first-free-slot order
     /// (RE-513).
-    pub fn displays_in_make_order(&self) -> impl Iterator<Item = &Display> + '_ {
+    pub fn displays_in_make_order(&self) -> impl DoubleEndedIterator<Item = &Display> + '_ {
         let mut order = [(0u32, 0u8); DISPLAY_MAX];
         let mut n = 0;
         for (i, d) in self.displays.iter().enumerate() {
@@ -1957,7 +1980,96 @@ impl Effects {
                 }
                 self.spawner_tick(i, d);
             }
+            DisplayKind::Ground { desc } => self.ground_proc(i, d, desc),
         }
+    }
+
+    /// `efGroundMakeEffect` (every `EFGroundDesc` has
+    /// `EFFECT_FLAG_USERDATA` and an animation: a non-forced struct, the
+    /// tree, and the creation's `gcPlayAnimAll`), then
+    /// `efGroundMakeEffectID`'s `lr` and `efGroundUpdatePhysics`. `false`
+    /// as the source returns `NULL`, before any random draw.
+    pub fn ground_effect(&mut self, desc: u8, lr: i32) -> bool {
+        use crate::ground_effect as g;
+        let Some(i) = self.make_display(DisplayKind::Ground { desc }) else {
+            return false;
+        };
+        let bounds = self.map_bounds;
+        let k = usize::from(desc);
+        let d = self.display_mut(i);
+        d.lr_bool = lr == -3 || lr == 3;
+        d.lr = match lr {
+            -3 => -1,
+            3 => 1,
+            _ => lr as i8,
+        };
+        // `efGroundUpdatePhysics`.
+        d.translate.z = g::POS_Z[k];
+        d.translate.y = (g::ALT_HIGH[k] - g::ALT_LOW[k]) * rng::rand_float() + g::ALT_LOW[k];
+        d.scale = Vec3::splat(g::SCALE[k]);
+        let (left, right) = bounds.map_or((0.0, 0.0), |b| (b.left, b.right));
+        if d.lr == 1 {
+            d.rotate.y = core::f32::consts::PI;
+            d.translate.x = left + 500.0;
+        } else {
+            d.translate.x = right - 500.0;
+        }
+        if g::set_step_positions(k) {
+            // `efGroundSetStepPositions`.
+            let step_div = if d.lr == 1 {
+                d.pos.x = 1000.0;
+                1000.0 - d.translate.x
+            } else {
+                d.pos.x = -1000.0;
+                1000.0 + d.translate.x
+            };
+            d.scale_step = (d.scale.x * 10.0) / step_div;
+        }
+        true
+    }
+
+    /// A ground effect's `proc_update`: `efGroundCommonProcUpdate`, then
+    /// `efGroundUpdateStepPositions`'s scale (`efGroundUpdateEffectYaw`'s
+    /// mirrored spin is drawn by the host).
+    fn ground_proc(&mut self, i: usize, mut d: Display, desc: u8) {
+        use crate::ground_effect as g;
+        let k = usize::from(desc);
+        // `efGroundCheckEffectInBounds`.
+        if let Some(b) = self.map_bounds {
+            let out = if d.lr == -1 {
+                d.translate.x <= b.left + 500.0
+            } else {
+                d.translate.x >= b.right - 500.0
+            };
+            if out {
+                self.eject_display(i);
+                return;
+            }
+        }
+        d.ticks = d.ticks.saturating_add(1);
+        // The child's `anim_wait == AOBJ_ANIM_NULL`; `effect_status` is
+        // always `0xFFFF`, never 0.
+        if d.ticks >= g::cycle::LIFE[k] && g::EFFECT_STATUS[k] != 0 {
+            let [x, y] = g::cycle::END[k][usize::from(d.looped)];
+            if d.lr == -1 {
+                d.translate.x += x * d.scale.x;
+            } else {
+                d.translate.x -= x * d.scale.x;
+            }
+            d.translate.y += y * d.scale.y;
+            // `lbCommonAddTreeDObjsAnimAll(.., 0.0F)` and `gcPlayAnimAll`.
+            d.ticks = 1;
+            d.looped = true;
+        }
+        if g::step_positions(k) {
+            if (d.lr == 1 && d.pos.x <= d.translate.x) || (d.lr == -1 && d.pos.x >= d.translate.x) {
+                d.scale_step = 0.0;
+            }
+            d.scale.x += d.scale_step;
+            d.scale.y += d.scale_step;
+            d.scale.z += d.scale_step;
+        }
+        self.displays[i] = Some(d);
     }
 
     /// `efManagerYoshiEggEscapeMakeEffect`: keep the forced struct until

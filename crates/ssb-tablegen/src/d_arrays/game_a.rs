@@ -334,6 +334,140 @@ pub const LIST: &[DArray] = &[
         &[33],
     )
     .stride(12),
+    // `dEFGroundDatas.effect_descs` (16-byte rows as above), then the
+    // seven stages' `EFGroundDesc` arrays (64 bytes: `f32 alt_high,
+    // alt_low, pos_z, scale`, `u16 effect_status`, `proc_groundeffect`,
+    // then the `EFDesc`: `u8 flags, dl_link`, `file_head`, two
+    // `DObjTransformTypes`, `proc_update`, `proc_display`, `o_dobjsetup`,
+    // `o_mobjsub`, `o_anim_joint`, `o_matanim_joint`), contiguous from
+    // `dEFGroundCastleEffectDescs` to the end of
+    // `dEFGroundYamabukiEffectDescs`.
+    DArray::new(
+        "EF_GROUND_DATAS_EFFECT_DESCS",
+        "dEFGroundDatas.effect_descs",
+        OVL2,
+        0x8012_F84C,
+        Elem::X32,
+        &[9],
+    )
+    .stride(16),
+    DArray::new(
+        "EF_GROUND_DESCS_ALT_HIGH",
+        "dEFGroundCastleEffectDescs.alt_high",
+        OVL2,
+        0x8012_F240,
+        Elem::F32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_ALT_LOW",
+        "dEFGroundCastleEffectDescs.alt_low",
+        OVL2,
+        0x8012_F244,
+        Elem::F32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_POS_Z",
+        "dEFGroundCastleEffectDescs.pos_z",
+        OVL2,
+        0x8012_F248,
+        Elem::F32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_SCALE",
+        "dEFGroundCastleEffectDescs.scale",
+        OVL2,
+        0x8012_F24C,
+        Elem::F32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_EFFECT_STATUS",
+        "dEFGroundCastleEffectDescs.effect_status",
+        OVL2,
+        0x8012_F250,
+        Elem::U16,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_PROC_GROUNDEFFECT",
+        "dEFGroundCastleEffectDescs.proc_groundeffect",
+        OVL2,
+        0x8012_F254,
+        Elem::X32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_FLAGS",
+        "dEFGroundCastleEffectDescs.effect_desc.flags",
+        OVL2,
+        0x8012_F258,
+        Elem::U8,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_DL_LINK",
+        "dEFGroundCastleEffectDescs.effect_desc.dl_link",
+        OVL2,
+        0x8012_F259,
+        Elem::U8,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_PROC_UPDATE",
+        "dEFGroundCastleEffectDescs.effect_desc.proc_update",
+        OVL2,
+        0x8012_F268,
+        Elem::X32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_O_DOBJSETUP",
+        "dEFGroundCastleEffectDescs.effect_desc.o_dobjsetup",
+        OVL2,
+        0x8012_F270,
+        Elem::X32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_O_MOBJSUB",
+        "dEFGroundCastleEffectDescs.effect_desc.o_mobjsub",
+        OVL2,
+        0x8012_F274,
+        Elem::X32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_O_ANIM_JOINT",
+        "dEFGroundCastleEffectDescs.effect_desc.o_anim_joint",
+        OVL2,
+        0x8012_F278,
+        Elem::X32,
+        &[24],
+    )
+    .stride(64),
+    DArray::new(
+        "EF_GROUND_DESCS_O_MATANIM_JOINT",
+        "dEFGroundCastleEffectDescs.effect_desc.o_matanim_joint",
+        OVL2,
+        0x8012_F27C,
+        Elem::X32,
+        &[24],
+    )
+    .stride(64),
     // `gr/grdisplay.c`: `GRDisplayDesc[4]` (16 bytes: two procs, `u8 dl_link`
     // in the third word's top byte, `proc_update`).
     DArray::new(

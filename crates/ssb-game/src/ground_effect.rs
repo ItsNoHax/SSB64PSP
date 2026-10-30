@@ -1,21 +1,94 @@
-//! The stage's ambient effect actor (`efground.c`): `efGroundMakeAppearActor`
-//! and `EFGroundActorProcUpdate`, which every 6000–15999 frames picks a
-//! weighted effect (Lakitu, birds, Arwings, ...) and makes it.
-//!
-//! PSP deviation: only the actor's schedule and its random draws are
-//! ported. The made effect (`efGroundMakeEffect`'s DObj tree, animation and
-//! flight) is not drawn and holds no effect struct; whether it would be made
-//! is [`crate::effect::HitEffectSink::ground_effect_made`].
+//! The stage's ambient effects (`ef/efground.c`): the actor
+//! (`efGroundMakeAppearActor`, `EFGroundActorProcUpdate`), which every
+//! 6000–15999 frames picks a weighted effect (Lakitu, birds, Arwings, ...)
+//! and makes it, and the descs the made effects fly by
+//! ([`crate::effect::DisplayKind::Ground`]: `efGroundMakeEffect`,
+//! `efGroundUpdatePhysics` and the three `proc_update`s).
 
 use crate::d_arrays::{
-    EF_GROUND_DATAS_EFFECT_PARAMS, EF_GROUND_DATAS_PARAMS_NUM, EF_GROUND_PARAMS_EFFECT_ID,
+    EF_GROUND_DATAS_EFFECT_DESCS, EF_GROUND_DATAS_EFFECT_PARAMS, EF_GROUND_DATAS_PARAMS_NUM,
+    EF_GROUND_DESCS_PROC_GROUNDEFFECT, EF_GROUND_DESCS_PROC_UPDATE, EF_GROUND_PARAMS_EFFECT_ID,
     EF_GROUND_PARAMS_EFFECT_WEIGHT, EF_GROUND_PARAMS_LR, EF_GROUND_PARAMS_MAKE_QUEUE,
+};
+pub use crate::d_arrays::{
+    EF_GROUND_DESCS_ALT_HIGH as ALT_HIGH, EF_GROUND_DESCS_ALT_LOW as ALT_LOW,
+    EF_GROUND_DESCS_EFFECT_STATUS as EFFECT_STATUS, EF_GROUND_DESCS_FLAGS as FLAGS,
+    EF_GROUND_DESCS_O_ANIM_JOINT as O_ANIM_JOINT, EF_GROUND_DESCS_O_DOBJSETUP as O_DOBJSETUP,
+    EF_GROUND_DESCS_O_MATANIM_JOINT as O_MATANIM_JOINT, EF_GROUND_DESCS_O_MOBJSUB as O_MOBJSUB,
+    EF_GROUND_DESCS_POS_Z as POS_Z, EF_GROUND_DESCS_SCALE as SCALE,
 };
 use crate::effect::HitEffectSink;
 use crate::rng;
 
+/// Each desc's flight cycle, generated from the ROM's scripts by
+/// `crates/ssb-tablegen` (`ground_effect.rs`; D-048, zeros in a stub
+/// build): `LIFE`, the `gcPlayAnimAll` call (the add's counted as 1) on
+/// which the root's child ends its script, and `END`, the child's
+/// `translate.x`, `.y` there on the first cycle and on later ones (its
+/// `AObj`s outlive the re-add).
+pub mod cycle {
+    include!(concat!(env!("OUT_DIR"), "/ground_effects.rs"));
+}
+
+/// `dEFGroundCastleEffectDescs`, the first `EFGroundDesc` (64 bytes each).
+const DESCS_BASE: u32 = 0x8012_F240;
+const DESC_SIZE: u32 = 64;
+/// The descs, from `dEFGroundCastleEffectDescs` to the end of
+/// `dEFGroundYamabukiEffectDescs`.
+pub const DESC_COUNT: usize = 24;
+/// `efGroundSetStepPositions`, the one `proc_groundeffect`.
+const SET_STEP_POSITIONS: u32 = 0x8011_61A0;
+/// `efGroundUpdateStepPositions`, a `proc_update`.
+const UPDATE_STEP_POSITIONS: u32 = 0x8011_60E8;
+/// `efGroundUpdateEffectYaw`, a `proc_update`.
+const UPDATE_EFFECT_YAW: u32 = 0x8011_6090;
+
+/// Desc `desc`'s `proc_groundeffect` is `efGroundSetStepPositions`.
+pub fn set_step_positions(desc: usize) -> bool {
+    EF_GROUND_DESCS_PROC_GROUNDEFFECT[desc] == SET_STEP_POSITIONS
+}
+
+/// Desc `desc`'s `proc_update` is `efGroundUpdateStepPositions`.
+pub fn step_positions(desc: usize) -> bool {
+    EF_GROUND_DESCS_PROC_UPDATE[desc] == UPDATE_STEP_POSITIONS
+}
+
+/// Desc `desc`'s `proc_update` is `efGroundUpdateEffectYaw`: with `lr` +1,
+/// the root's grandchild's `rotate.z` is negated after each play.
+pub fn effect_yaw(desc: usize) -> bool {
+    EF_GROUND_DESCS_PROC_UPDATE[desc] == UPDATE_EFFECT_YAW
+}
+
 /// `nGRKindBattleEnd`.
 const GKIND_BATTLE_END: u8 = 8;
+
+/// The first of `gkind`'s `EFGroundDesc`s (`dEFGroundDatas[gkind]
+/// .effect_descs`), or `None` for a battle stage without ground effects.
+pub fn first_desc(gkind: u8) -> Option<usize> {
+    if gkind >= GKIND_BATTLE_END {
+        return None;
+    }
+    let descs = EF_GROUND_DATAS_EFFECT_DESCS[usize::from(gkind)];
+    (descs != 0).then(|| (descs.wrapping_sub(DESCS_BASE) / DESC_SIZE) as usize)
+}
+/// The file `sEFGroundActor.file_head` points at, by battle `gkind`: the
+/// stage's `Stage*File2` (`relocData/1NN_Stage*File2.c`), which a desc's
+/// `o_dobjsetup`, `o_mobjsub`, `o_anim_joint` and `o_matanim_joint` are
+/// relative to. Layout, as `ssb_tablegen::ground_effect::STAGE_FILES`.
+pub const STAGE_FILES: [u32; 8] = [106, 109, 108, 105, 0, 111, 104, 112];
+
+/// The stage file desc `desc` belongs to: that of the battle stage whose
+/// descs it falls among, or `None` past them (or in a stub build).
+pub fn desc_file(desc: usize) -> Option<u32> {
+    if desc >= DESC_COUNT {
+        return None;
+    }
+    (0..GKIND_BATTLE_END)
+        .filter_map(|g| Some((first_desc(g)?, STAGE_FILES[usize::from(g)])))
+        .filter(|&(first, _)| first <= desc)
+        .max_by_key(|&(first, _)| first)
+        .map(|(_, file)| file)
+}
 /// `dEFGroundCastleParams`, the first `EFGroundParam` (12 bytes each).
 const PARAMS_BASE: u32 = 0x8012_F8C0;
 const PARAM_SIZE: u32 = 12;
@@ -29,6 +102,8 @@ pub struct GroundActor {
     pub lr: i32,
     /// The stage's first `EFGroundParam` in the generated tables.
     params: usize,
+    /// The stage's first `EFGroundDesc` (`effect_data->effect_descs`).
+    descs: usize,
     /// `effect_ids[..effect_count]`: a param index per weight unit.
     effect_ids: [u8; 255],
     pub effect_count: u8,
@@ -49,12 +124,15 @@ impl GroundActor {
             return None;
         }
         let params = ((ptr - PARAMS_BASE) / PARAM_SIZE) as usize;
+        let descs = EF_GROUND_DATAS_EFFECT_DESCS[usize::from(gkind)];
+        let descs = (descs.wrapping_sub(DESCS_BASE) / DESC_SIZE) as usize;
         let mut actor = Self {
             make_wait: rng::rand_int_range(10000) + 6000,
             effect_id: 0,
             make_queue: 0,
             lr: 0,
             params,
+            descs,
             effect_ids: [0; 255],
             effect_count: 0,
             made: 0,
@@ -113,12 +191,12 @@ impl GroundActor {
     }
 
     /// `efGroundMakeEffectID`.
-    fn make_effect_id(&mut self, _effect_id: u16, effects: &mut dyn HitEffectSink) {
+    fn make_effect_id(&mut self, effect_id: u16, effects: &mut dyn HitEffectSink) {
         // `efGroundMakeEffect`: every desc has `EFFECT_FLAG_USERDATA`, so
         // no free struct makes nothing. Made, `efGroundUpdatePhysics`
         // draws the altitude (`alt_low + (alt_high - alt_low) * rand`).
-        if effects.ground_effect_made() {
-            let _altitude = rng::rand_float();
+        let desc = self.descs + usize::from(effect_id);
+        if effects.ground_effect(desc as u8, self.lr) {
             self.made += 1;
         }
         self.make_wait = if self.make_queue == 0 {

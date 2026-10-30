@@ -864,10 +864,15 @@ pub enum GameScene {
     /// `ftParamUpdateAnimKeys`, RE-510). `Guard` would not show it: its
     /// setter preserves nothing and its motion sets no contour.
     CatchSlope,
+    /// `vsground`: `vssector`'s route with the ground-effect actor's first
+    /// wait cut to 60 frames, its RNG draw kept (`efGroundMakeAppearActor`,
+    /// efground.c:1590): Sector Z's first ambient ship in flight, matching
+    /// an N64 warp ROM with the same patch. `stage=` picks another stage.
+    VsGround,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 213] = [
+    pub const ALL: [GameScene; 214] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -1081,6 +1086,7 @@ impl GameScene {
         GameScene::PurinThrow,
         GameScene::KirbyStarBounce,
         GameScene::CatchSlope,
+        GameScene::VsGround,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -1299,6 +1305,7 @@ impl GameScene {
             GameScene::PurinThrow => "purinthrow",
             GameScene::KirbyStarBounce => "kirbystarbounce",
             GameScene::CatchSlope => "catchslope",
+            GameScene::VsGround => "vsground",
         }
     }
 
