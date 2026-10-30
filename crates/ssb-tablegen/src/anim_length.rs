@@ -29,10 +29,10 @@ fn values_per_track(op: u16) -> u32 {
     }
 }
 
-/// The figatree's joint scripts, by byte offset: the pointer table that opens
-/// the file runs to the first script it names, or to the first word that
-/// cannot be a script pointer.
-fn joint_scripts(data: &[u8]) -> Option<Vec<usize>> {
+/// The figatree's pointer table, one word per entry (0 for a joint without
+/// a script): it runs to the first script it names, or to the first word
+/// that cannot be a script pointer.
+fn joint_table(data: &[u8]) -> Option<Vec<u32>> {
     let word = |i: usize| be_u32(data, i * 4).ok();
     let first = (0..data.len() / 4).filter_map(word).find(|&p| p != 0)?;
     if !first.is_multiple_of(4) || first as usize > data.len() {
@@ -40,19 +40,29 @@ fn joint_scripts(data: &[u8]) -> Option<Vec<usize>> {
     }
     let mut end = first as usize / 4;
     let mut out = Vec::new();
-    let mut len = 0;
-    while len < end {
-        let ptr = word(len)?;
+    while out.len() < end {
+        let ptr = word(out.len())?;
         if ptr != 0 {
             if !ptr.is_multiple_of(2) || ptr as usize >= data.len() {
                 break;
             }
             end = end.min(ptr as usize / 4);
-            out.push(ptr as usize);
         }
-        len += 1;
+        out.push(ptr);
     }
-    (len != 0 && len <= 64).then_some(out)
+    (!out.is_empty() && out.len() <= 64).then_some(out)
+}
+
+/// The figatree's joint scripts, by byte offset, in table order.
+fn joint_scripts(data: &[u8]) -> Option<Vec<usize>> {
+    let table = joint_table(data)?;
+    Some(
+        table
+            .into_iter()
+            .filter(|&p| p != 0)
+            .map(|p| p as usize)
+            .collect(),
+    )
 }
 
 /// One joint's script: `(frames until End or the first Loop, loops)`.
@@ -191,15 +201,25 @@ impl Lengths {
         })
     }
 
-    /// The last scripted joint's block payloads to its `End`: the joint whose
-    /// `ftAnimParseDObjFigatree` writes `gobj->anim_frame` last each play
-    /// (`ftParamUpdateAnimKeys` walks `fp->joints` in order), so its `wait`
-    /// countdown decides the frame `ftAnimEndCheckSetStatus` sees the end.
-    /// `None` when the file loops or is not a figatree.
-    pub fn end_blocks(&self, rom: &Source, file: u32) -> Option<Vec<u16>> {
+    /// The deciding joint's block payloads to its `End`: the joint whose
+    /// `ftAnimParseDObjFigatree` writes `gobj->anim_frame` last each play,
+    /// so whose `wait` countdown decides the frame `ftAnimEndCheckSetStatus`
+    /// sees the end. `lbCommonAddFighterPartsFigatree` binds table entry `k`
+    /// to the `k`-th `DObj` of `order` (`joints` ids in tree pre-order,
+    /// hidden parts inserted; entries past it bind nothing), and
+    /// `ftParamUpdateAnimKeys` walks `fp->joints` by id: the deciding joint
+    /// is the highest id with a script. `None` when the file loops or is
+    /// not a figatree.
+    pub fn end_blocks(&self, rom: &Source, file: u32, order: &[u32]) -> Option<Vec<u16>> {
         let data = rom.file(file).ok()?.data;
-        let last = *joint_scripts(&data)?.last()?;
-        script_blocks(&data, last)
+        let table = joint_table(&data)?;
+        let (_, start) = table
+            .iter()
+            .zip(order)
+            .filter(|(&ptr, _)| ptr != 0)
+            .map(|(&ptr, &joint)| (joint, ptr))
+            .max_by_key(|&(joint, _)| joint)?;
+        script_blocks(&data, start as usize)
     }
 
     /// The frames to the animation's `End` or first `Loop`, and whether it

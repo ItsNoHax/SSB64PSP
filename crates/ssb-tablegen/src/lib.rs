@@ -41,6 +41,10 @@ pub mod sprite_offsets;
 #[path = "../../ssb-rom/src/figatree.rs"]
 #[allow(dead_code)]
 pub mod figatree;
+// `ssb-rom`'s figatree binding order, for the joint whose script decides a
+// fighter animation's end (`motion`'s `END_BLOCKS`).
+#[path = "../../ssb-rom/src/figatree_order.rs"]
+pub mod figatree_order;
 #[path = "../../ssb-rom/src/interp.rs"]
 #[allow(dead_code)]
 pub mod interp;

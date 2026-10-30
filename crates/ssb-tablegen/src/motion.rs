@@ -16,10 +16,12 @@ use std::fmt::Write;
 
 use crate::anim_length::Lengths;
 use crate::emit::{self, f32_lit};
+use crate::figatree_order::{figatree_order, TreeJoint};
 use crate::fighters::{
     self, demo_words, motion_descs, Fighter, MainMotion, MotionDesc, RegionKind,
     ANIM_FLAG_SUBMOTION_SCRIPT, COMMON_MOVESET, FIGHTERS, NO_OFFSET,
 };
+use crate::model_parts::{skeleton, Skeleton};
 use crate::{Result, Source};
 
 /// A pointer outside the blob.
@@ -80,25 +82,53 @@ struct Motion {
 /// `MotionDesc::end_blocks` without a run in `END_BLOCKS`.
 const NO_END_BLOCKS: u32 = 0xFFFF;
 
+/// `MotionDesc::anim_desc`'s hidden-part bits (`ftMainSetStatus` masks out
+/// the five low flags; bit `31 - i` is `hiddenparts[i]`).
+const HIDDEN_PART_BITS: u32 = 0xFFFF_FFE0;
+
 /// The `END_BLOCKS` pool: length-prefixed runs of the deciding joint's block
-/// payloads, shared by the files whose runs are equal.
+/// payloads, shared by the motions whose runs are equal.
 #[derive(Default)]
 struct EndPool {
     words: Vec<u8>,
-    at: std::collections::HashMap<u32, u32>,
+    /// By `(FTKind, anim_file, hidden-part bits)`: the deciding joint
+    /// depends on the fighter's tree as well as the file.
+    at: std::collections::HashMap<(usize, u32, u32), u32>,
     runs: std::collections::HashMap<Vec<u8>, u32>,
 }
 
 impl EndPool {
-    /// The run for `desc`'s figatree, when it ends after `length` frames.
-    fn end_of(&mut self, rom: &Source, lengths: &Lengths, desc: &MotionDesc, length: u32) -> u32 {
+    /// The run for `desc`'s figatree on fighter `k`, when it ends after
+    /// `length` frames.
+    fn end_of(
+        &mut self,
+        rom: &Source,
+        lengths: &Lengths,
+        skeleton: &Skeleton,
+        k: usize,
+        desc: &MotionDesc,
+        length: u32,
+    ) -> u32 {
         if desc.anim_file == 0 || length == 0 || length == 0xFFFF {
             return NO_END_BLOCKS;
         }
-        if let Some(&at) = self.at.get(&desc.anim_file) {
+        let parts = desc.anim_desc & HIDDEN_PART_BITS;
+        if let Some(&at) = self.at.get(&(k, desc.anim_file, parts)) {
             return at;
         }
-        let at = match lengths.end_blocks(rom, desc.anim_file) {
+        let order: Vec<u32> =
+            figatree_order(&skeleton.depths, skeleton.mask, &skeleton.hidden, parts)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}: motion file {} parts 0x{parts:08X} names a hidden part whose parent \
+                     does not exist",
+                        FIGHTERS[k].name, desc.anim_file
+                    )
+                })
+                .into_iter()
+                .map(TreeJoint::joint_id)
+                .collect();
+        let at = match lengths.end_blocks(rom, desc.anim_file, &order) {
             Some(b)
                 if b.iter().map(|&p| u32::from(p)).sum::<u32>() == length
                     && b.len() <= 0xFF
@@ -116,9 +146,17 @@ impl EndPool {
             }
             _ => NO_END_BLOCKS,
         };
-        self.at.insert(desc.anim_file, at);
+        self.at.insert((k, desc.anim_file, parts), at);
         at
     }
+}
+
+/// `f`'s `FTKind`: its index in `FIGHTERS`.
+fn fighter_index(f: &Fighter) -> usize {
+    FIGHTERS
+        .iter()
+        .position(|g| g.name == f.name)
+        .expect("a fighter of FIGHTERS")
 }
 
 fn length_of(rom: &Source, lengths: &Lengths, desc: &MotionDesc) -> (u32, u32) {
@@ -414,6 +452,8 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
         let (mut words, mut motions, mut special) = (Vec::new(), Vec::new(), Vec::new());
         if let Some(rom) = rom {
             words = motion_words(rom, &mm, 0)?;
+            let k = fighter_index(f);
+            let skel = skeleton(rom, k)?;
             for d in motion_descs(rom, f.motion_descs)? {
                 let script = if d.offset == NO_OFFSET {
                     NONE_PTR
@@ -421,7 +461,7 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                     d.offset / 4
                 };
                 let (length, clip) = length_of(rom, &lengths, &d);
-                let end = pool.end_of(rom, &lengths, &d, length);
+                let end = pool.end_of(rom, &lengths, &skel, k, &d, length);
                 motions.push(Motion {
                     script,
                     length,
@@ -493,6 +533,8 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
         };
         let mut motions = Vec::new();
         if let Some(rom) = rom {
+            let k = fighter_index(f);
+            let skel = skeleton(rom, k)?;
             for d in motion_descs(rom, f.motion_descs)? {
                 let script = if d.offset == NO_OFFSET {
                     NONE_PTR
@@ -510,7 +552,7 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                     }
                 };
                 let (length, clip) = length_of(rom, &lengths, &d);
-                let end = pool.end_of(rom, &lengths, &d, length);
+                let end = pool.end_of(rom, &lengths, &skel, k, &d, length);
                 motions.push(Motion {
                     script,
                     length,
@@ -565,4 +607,56 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
     w.truncate(w.trim_end().len());
     w.push('\n');
     Ok(w)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The deciding joint's run for fighter `name`'s motions on `file`.
+    fn end_run(rom: &Source, name: &str, file: u32) -> Vec<u16> {
+        let k = FIGHTERS.iter().position(|f| f.name == name).unwrap();
+        let desc = motion_descs(rom, FIGHTERS[k].motion_descs)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.anim_file == file)
+            .unwrap();
+        let skel = skeleton(rom, k).unwrap();
+        let parts = desc.anim_desc & HIDDEN_PART_BITS;
+        let order: Vec<u32> = figatree_order(&skel.depths, skel.mask, &skel.hidden, parts)
+            .unwrap()
+            .into_iter()
+            .map(TreeJoint::joint_id)
+            .collect();
+        Lengths::default().end_blocks(rom, file, &order).unwrap()
+    }
+
+    /// The table's last script is not always the deciding joint's: hidden
+    /// parts (Kirby's guard, `anim_desc` 0xA0000000, inserts `TransN` and
+    /// `YRotN`) move entries onto other joints, and Mario's `DamageAir2`
+    /// table runs past his tree. Each run is the script of the highest
+    /// joint id bound to one (`lbCommonAddFighterPartsFigatree`,
+    /// `ftParamUpdateAnimKeys`).
+    #[test]
+    fn the_deciding_joint_follows_the_bound_tree() {
+        let Some(path) = crate::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+            return;
+        };
+        let rom = Source::open(&path).unwrap();
+        // Kirby GuardOn: the last entry's script is one 4-frame block.
+        assert_eq!(end_run(&rom, "Kirby", 1320), [1, 1, 1, 1]);
+        assert_eq!(end_run(&rom, "NKirby", 1320), [1, 1, 1, 1]);
+        assert_eq!(
+            end_run(&rom, "Kirby", 1321),
+            [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        );
+        assert_eq!(
+            end_run(&rom, "Mario", 533),
+            [1, 1, 1, 1, 6, 1, 8, 1, 1, 2, 1]
+        );
+        assert_eq!(end_run(&rom, "Purin", 1486), [3, 1, 1, 1, 1, 1]);
+        let yoshi = end_run(&rom, "Yoshi", 1944);
+        assert_eq!(yoshi[..4], [3, 1, 1, 7]);
+        assert_eq!(yoshi.len(), 31);
+    }
 }

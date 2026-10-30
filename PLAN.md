@@ -126,8 +126,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | Ground ambient effects | Draw and fly efGround effects (Lakitu, birds, Arwings…: `efGroundMakeEffect` DObj trees, `efGroundCommonProcUpdate`) and hold their effect struct (RNG gate parity); N64 capture | RE-508 |
-| Anim end edges | (a) deciding joint = last pre-order figatree DObj; hidden parts (`ftMainUpdateHiddenPartID` kinds 0-3) can reorder: check `hiddenparts` × `anim_desc` in tablegen; (b) after End N64 holds `anim_frame` ≈ -1.1e38, port the leftover wait (PauseScript resumes in port, ftmain.c:723-727); (c) Thunder trail's copied rehit timers skip the make-frame decrement (wpprocess.c:197-198) | RE-474 |
-| cpufx-s tick 430 particle draws | N64 6 draws at 430, port 6 at 431 (Kirby Stone start generators, bank 3 script 2); fighters equal; N64 call-site trace needed | RE-508 |
+| Hidden-part order history | END_BLOCKS models fresh insertion; parts kept across motions stay put (ftmain.c:4638-4652, `ftMainAddHiddenPartID` re-interposes TransN as kind 3): check fighters with two parts on one parent; trees longer than the table read past it | RE-474 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)

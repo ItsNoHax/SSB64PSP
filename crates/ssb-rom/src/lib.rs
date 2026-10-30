@@ -30,6 +30,7 @@ pub mod effect;
 pub mod ending;
 pub mod explain;
 pub mod figatree;
+pub mod figatree_order;
 pub mod fighter;
 pub mod filter_compensation;
 pub mod ground_obj;

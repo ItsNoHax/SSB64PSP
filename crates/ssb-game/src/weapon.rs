@@ -1882,6 +1882,19 @@ pub(crate) fn play_weapon_fgm(
 }
 
 /// `wpMainDestroyWeapon`: the slot empties and the weapon's sound stops.
+/// `wpProcessUpdateAttackRecords`, every live weapon's at the end of its
+/// update: a rehit record clears when its timer runs out.
+fn update_attack_records(records: &mut [Option<u8>; 4], rehit: &mut [u8; 4]) {
+    for (r, t) in records.iter_mut().zip(rehit) {
+        if r.is_some() && *t > 0 {
+            *t -= 1;
+            if *t == 0 {
+                *r = None;
+            }
+        }
+    }
+}
+
 fn destroy(slots: &mut WeaponSlots, i: usize) {
     if let Some(w) = slots.remove_at(i) {
         stop_weapon_fgm(w.sfx());
@@ -4262,16 +4275,7 @@ impl WeaponPool {
                 if !alive {
                     destroy(&mut self.slots, i);
                 } else {
-                    // `wpProcessUpdateAttackRecords`, every weapon's: a
-                    // rehit record clears when its timer runs out.
-                    for (r, t) in self.hit_records[i].iter_mut().zip(&mut self.rehit[i]) {
-                        if r.is_some() && *t > 0 {
-                            *t -= 1;
-                            if *t == 0 {
-                                *r = None;
-                            }
-                        }
-                    }
+                    update_attack_records(&mut self.hit_records[i], &mut self.rehit[i]);
                 }
             }
         }
@@ -4284,7 +4288,10 @@ impl WeaponPool {
         // running weapon's at its priority, and `gcRunAll` walks on into it:
         // the trail runs its first `wpPikachuThunderTrailProcUpdate` (life
         // 10 -> 9, a texture draw) on the frame it is made, as a PK Thunder
-        // trail does above (cpufx-s N64 trace, ticks 453-476).
+        // trail does above (cpufx-s N64 trace, ticks 453-476). That
+        // `wpProcessProcWeaponMain` ends in `wpProcessUpdateAttackRecords`
+        // (wpprocess.c:197-198): the copied rehit timers count down that
+        // frame too.
         for (trail, stale, team, lr, records, rehit) in trails.into_iter().flatten() {
             if let Some(j) = self.insert_at(Weapon::Trail(trail), stale, team, lr) {
                 self.hit_records[j] = records;
@@ -4292,8 +4299,14 @@ impl WeaponPool {
                 if let Some(Weapon::Trail(t)) = self.slots.slot_value_mut(j) {
                     let mut emit = Emit::default();
                     // Life 10: the first update only picks a frame.
-                    t.tick(&mut emit);
+                    let alive =
+                        t.tick(&mut emit) && !bounds.is_some_and(|b| out_of_bounds(b, t.position));
                     self.fx.extend(self.seq[j], &emit);
+                    if alive {
+                        update_attack_records(&mut self.hit_records[j], &mut self.rehit[j]);
+                    } else {
+                        destroy(&mut self.slots, j);
+                    }
                 }
             }
         }
@@ -6037,6 +6050,43 @@ mod tests {
             let expect = if update == 16 { [d, 0] } else { [0, 0] };
             assert_eq!(take(&mut items), expect, "update {update}");
         }
+    }
+
+    /// `wpPikachuThunderTrailMakeWeapon` copies the head's attack records
+    /// in the head's `proc_update`, before the head's own
+    /// `wpProcessUpdateAttackRecords`; the trail's process then runs that
+    /// frame and ends in its own (wpprocess.c:197-198). Both timers have
+    /// counted one update, and a record on its last update clears in both.
+    #[test]
+    fn a_new_thunder_trail_counts_its_copied_rehit_timers_down_that_frame() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::PikachuThunder,
+            owner_port: 0,
+            team: 0,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::new(0.0, 1000.0, 0.0),
+            facing: 1.0,
+        });
+        let head = weapons
+            .slots
+            .values()
+            .iter()
+            .position(|w| matches!(w, Some(Weapon::Thunder(_))))
+            .unwrap();
+        weapons.hit_records[head] = [Some(1), Some(2), None, None];
+        weapons.rehit[head] = [5, 1, 0, 0];
+        weapons.tick(open_air, None);
+        let trail = weapons
+            .slots
+            .values()
+            .iter()
+            .position(|w| matches!(w, Some(Weapon::Trail(_))))
+            .unwrap();
+        assert_eq!(weapons.rehit[head], [4, 0, 0, 0]);
+        assert_eq!(weapons.hit_records[head], [Some(1), None, None, None]);
+        assert_eq!(weapons.rehit[trail], [4, 0, 0, 0]);
+        assert_eq!(weapons.hit_records[trail], [Some(1), None, None, None]);
     }
 
     /// `wpProcessUpdateHitInteractStats`: a Thunder trail's

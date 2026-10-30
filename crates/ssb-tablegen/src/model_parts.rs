@@ -14,6 +14,7 @@
 use std::fmt::Write;
 
 use crate::archive::File;
+use crate::figatree_order::HiddenPart;
 use crate::fighters::FIGHTERS;
 use crate::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
 use crate::source::{be_u32, OverlayData, OVL2};
@@ -136,6 +137,59 @@ fn hidden_parts(main: &File, attributes: u32, count: u8, dl: u64) -> Result<Vec<
         }
     }
     Ok(parts)
+}
+
+/// What `figatree_order::figatree_order` builds a fighter's tree from.
+pub struct Skeleton {
+    /// Every high-detail `DObjDesc`'s `id & 0xFFF`, to the `DOBJ_ARRAY_MAX`
+    /// entry.
+    pub depths: Vec<u32>,
+    /// `setup_parts`.
+    pub mask: u64,
+    /// `hiddenparts[0..HIDDEN_PART_COUNTS[k]]`, every root joint included.
+    pub hidden: Vec<HiddenPart>,
+}
+
+/// Fighter `k`'s [`Skeleton`]: `lbCommonSetupFighterPartsDObjs` builds the
+/// tree from `commonparts[0].dobjdesc` and `setup_parts`, and
+/// `ftMainUpdateHiddenPartID` inserts `hiddenparts[i]` (RE-432).
+pub fn skeleton(rom: &Source, k: usize) -> Result<Skeleton> {
+    let f = &FIGHTERS[k];
+    let main = rom.file(f.main_file)?;
+    let mask = flag_pair(&main, f.attributes + SETUP_PARTS_OFFSET)?;
+    let container = intern(&main, f.attributes + COMMONPARTS_OFFSET)?;
+    let (file, at) = extern_at(&main, container).ok_or_else(|| missing(&main, container))?;
+    let model = rom.file(file)?;
+    let mut depths = Vec::new();
+    loop {
+        let id = be_u32(
+            &model.data,
+            (at + depths.len() as u32 * DOBJDESC_SIZE) as usize,
+        )?;
+        if id == DOBJ_ARRAY_MAX {
+            break;
+        }
+        if depths.len() == 64 {
+            return Err(missing(&model, at));
+        }
+        depths.push(id & 0xFFF);
+    }
+    let table = intern(&main, f.attributes + HIDDENPARTS_OFFSET)?;
+    let hidden = (0..u32::from(HIDDEN_PART_COUNTS[k]))
+        .map(|i| {
+            let word = |w: u32| be_u32(&main.data, (table + i * HIDDENPART_SIZE + w * 4) as usize);
+            Ok(HiddenPart {
+                root_joint_id: word(0)?,
+                parent_joint_id: word(1)?,
+                joint_kind: word(3)?,
+            })
+        })
+        .collect::<Result<_>>()?;
+    Ok(Skeleton {
+        depths,
+        mask,
+        hidden,
+    })
 }
 
 /// Each texture part's `(joint, [high-detail MObj, low-detail MObj])`.
