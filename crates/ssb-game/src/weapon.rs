@@ -4280,10 +4280,21 @@ impl WeaponPool {
         }
         // `wpPikachuThunderTrailMakeWeapon` copies the head's attack
         // records: an item the group hit stays recorded.
+        // `wpManagerMakeWeapon` queues the trail's process behind every
+        // running weapon's at its priority, and `gcRunAll` walks on into it:
+        // the trail runs its first `wpPikachuThunderTrailProcUpdate` (life
+        // 10 -> 9, a texture draw) on the frame it is made, as a PK Thunder
+        // trail does above (cpufx-s N64 trace, ticks 453-476).
         for (trail, stale, team, lr, records, rehit) in trails.into_iter().flatten() {
             if let Some(j) = self.insert_at(Weapon::Trail(trail), stale, team, lr) {
                 self.hit_records[j] = records;
                 self.rehit[j] = rehit;
+                if let Some(Weapon::Trail(t)) = self.slots.slot_value_mut(j) {
+                    let mut emit = Emit::default();
+                    // Life 10: the first update only picks a frame.
+                    t.tick(&mut emit);
+                    self.fx.extend(self.seq[j], &emit);
+                }
             }
         }
     }

@@ -1758,6 +1758,64 @@ pub enum Clip {
     Stopped,
 }
 
+/// The `wait` countdown of the figatree's last scripted joint
+/// (`ftAnimParseDObjFigatree`, `ftanim.c:74-121`), whose `End` decides the
+/// play `ftAnimEndCheckSetStatus` sees `anim_frame <= 0` on. Each play
+/// takes `anim_speed` off `wait` and, once it is `<= 0`, adds the next
+/// block's payload until it is positive again or the script ends. At a
+/// speed that is not dyadic the `f32` rounding differs from
+/// [`StatusState::clock`]'s: Fox's `LandingAirNull` at
+/// `F_PCT_TO_DEC(20)` ends on play 40, where the clock reaches 8 on 41.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EndCount {
+    blocks: &'static [u8],
+    next: u16,
+    /// `DObj::anim_wait`.
+    pub wait: f32,
+    /// The parse reached `End`.
+    pub ended: bool,
+}
+
+impl EndCount {
+    /// The `AOBJ_ANIM_CHANGED` parse: `wait = -anim_frame`, no advance.
+    pub fn start(blocks: &'static [u8], frame_begin: f32) -> Self {
+        let mut c = EndCount {
+            blocks,
+            next: 0,
+            wait: -frame_begin,
+            ended: false,
+        };
+        c.parse();
+        c
+    }
+
+    fn parse(&mut self) {
+        while self.wait <= 0.0 {
+            match self.blocks.get(usize::from(self.next)) {
+                Some(&b) => {
+                    self.wait += f32::from(b);
+                    self.next += 1;
+                }
+                None => {
+                    self.ended = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// One play; whether the script has ended.
+    pub fn play(&mut self, speed: f32) -> bool {
+        if !self.ended {
+            self.wait -= speed;
+            if self.wait <= 0.0 {
+                self.parse();
+            }
+        }
+        self.ended
+    }
+}
+
 /// What `ftMainSetStatus` does to the figatree when it enters a status.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ClipStart {
@@ -1911,6 +1969,10 @@ pub struct StatusState {
     /// a figatree restarted outside `ftMainSetStatus`. The drawn skeleton
     /// restarts when it changes; [`entry`](Self::entry) covers status sets.
     pub clip_restarts: u8,
+    /// The figatree's end countdown, when the status's own figatree ends
+    /// after its [`StatusTiming::anim_length`]: it, not
+    /// [`clock`](Self::clock), decides [`StatusState::animation_ended`].
+    pub end_count: Option<EndCount>,
     /// The status clock: `frame_begin` plus `anim_speed` per play, past
     /// the figatree's end (wrapped only by [`StatusTiming::looping`]). The
     /// port's [`StatusState::animation_ended`] and the drawn clip's start
@@ -2000,6 +2062,7 @@ impl Default for StatusState {
             clip: Clip::Unknown,
             clip_paused: false,
             clip_changed: false,
+            end_count: None,
             clip_restarts: 0,
             clock: 0.0,
             timing: StatusTiming::unknown(),
@@ -2023,6 +2086,7 @@ impl StatusState {
     pub fn set_time(&mut self, t: f32) {
         self.anim_frame = t;
         self.clock = t;
+        self.end_count = None;
     }
 
     /// Whether the animation has run out (`ftAnimEndCheckSetStatus`'s
@@ -2037,6 +2101,9 @@ impl StatusState {
     pub fn animation_ended(&self) -> bool {
         // The compare reads a defined length, never a `None`'s unwritten
         // payload, which LLVM may compare before the tag test (RE-531).
+        if let Some(c) = &self.end_count {
+            return c.ended;
+        }
         let (known, len) = ssb_engine::math::defined_or(self.timing.anim_length, 0.0);
         if known {
             return self.clock >= len;
@@ -4205,12 +4272,23 @@ pub fn play_anim(f: &mut Fighter) {
         return;
     }
     if core::mem::take(&mut s.clip_changed) {
+        // Another figatree: its own countdown, which nothing walked.
+        s.end_count = None;
         s.clip_restarts = s.clip_restarts.wrapping_add(1);
         return;
     }
     if !s.clip_paused && s.clip != Clip::Stopped {
         s.anim_frame += speed;
-        s.clip.settle(&mut s.anim_frame);
+        match s.end_count.as_mut() {
+            // `End`: `anim_frame = gobj->anim_frame = anim_wait`.
+            Some(c) => {
+                if c.play(speed) {
+                    s.anim_frame = c.wait;
+                    s.clip = Clip::Stopped;
+                }
+            }
+            None => s.clip.settle(&mut s.anim_frame),
+        }
     }
 }
 
@@ -4380,8 +4458,19 @@ pub fn set_any_status_preserve(
     if crate::motion::sets_motion(f.kind, status) {
         f.clear_joint_queries();
     }
+    f.status.end_count = None;
     match crate::motion::clip_on_set_status(f.kind, status) {
         ClipStart::Restart(clip) => {
+            // The status ends with its own figatree's last scripted joint
+            // (`ftAnimEndCheckSetStatus`) when it lasts that figatree.
+            if let (Some(blocks), false) =
+                (crate::motion::end_blocks(f.kind, status), timing.looping)
+            {
+                let len: u32 = blocks.iter().map(|&b| u32::from(b)).sum();
+                if timing.anim_length == Some(len as f32) {
+                    f.status.end_count = Some(EndCount::start(blocks, anim_frame_begin));
+                }
+            }
             // ... and resets joint 4 on and TransN's `rotate.z` to their
             // `DObjDesc` values (`ftmain.c:4657`): a pose write queued
             // before this status is gone.
@@ -9486,6 +9575,26 @@ mod tests {
         for _ in 0..19 {
             update(&mut f);
             assert_eq!(f.status.status, Status::LandingAirNull);
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_landing_at_a_fifth_speed_ends_with_its_last_joints_countdown() {
+        // Fox's `LandingAirNull` figatree (8 frames) at `F_PCT_TO_DEC(20)`:
+        // its last scripted joint's `wait` (blocks 4, 2, 2) reaches `End`
+        // on play 40, while 40 plays of 0.2 sum to 7.9999967 < 8. The vs4
+        // N64 trace leaves for Wait there (RE-474).
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        let status = AnyStatus::from(Status::LandingAirNull);
+        f.anim.landing = crate::motion::anim_length(f.kind, status).unwrap();
+        assert_eq!(f.anim.landing, 8.0);
+        set_landing_air_null(&mut f, 20.0 * 0.01);
+        for play in 1..40 {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::LandingAirNull, "play {play}");
         }
         update(&mut f);
         assert_eq!(f.status.status, Status::Wait);

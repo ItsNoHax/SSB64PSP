@@ -892,8 +892,12 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
             f.fighter.pos =
                 ssb_engine::math::Vec3::new(f32::from(pt.x), f32::from(pt.y), 0.0) + desc.offset;
         }
-        f.fighter
-            .init_floor(ssb_psp_runtime::scene::FloorSegments::new(p, &stage));
+        // `ftManagerInitFighter`'s floor projection on the map as the
+        // ground's setup left it (moving groups where they are).
+        let groups = w.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
+        f.fighter.init_floor_map(&|| {
+            ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
+        });
         ssb_game::status::set_wait_or_fall(&mut f.fighter);
         f.fighter.facing = if desc.lr < 0 {
             ssb_game::fighter::Facing::Left

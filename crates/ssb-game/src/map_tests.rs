@@ -788,6 +788,29 @@ fn moving(mut s: MapSurface, offset: Vec2, speed: Vec3) -> MapSurface {
 }
 
 #[test]
+fn a_spawn_over_a_moved_group_stands_where_the_group_is() {
+    // `ftManagerInitFighter`'s `mpCollisionCheckProjectFloor` tests a
+    // moving group's lines where the group stands. The vs-yoshi N64 trace
+    // puts Mario's Entry at y -299.635 on the sunk island floor, not on
+    // the floor's file position (-239), where the static projection put
+    // him.
+    let line = surface(Kind::Floor, 3, (-1000, -239), (1000, -239), 0);
+    let floor = moving(line, Vec2::new(0.0, -60.635), Vec3::ZERO);
+    let spawn = Vec3::new(629.0, -239.0, 0.0);
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.pos = spawn;
+    assert!(f.init_floor_map(&|| [floor]));
+    assert_eq!(f.situation, Situation::Ground);
+    assert_eq!(f.pos.y, -299.635);
+    assert_eq!(f.floor.map(|s| s.line), Some(3));
+    // The file position, as the static projection read it.
+    let mut g = Fighter::new(FighterKind::Mario, 0, 3);
+    g.pos = spawn;
+    assert!(g.init_floor(floors([line])));
+    assert_eq!(g.pos.y, -239.0);
+}
+
+#[test]
 fn rising_fractional_floor_lands_a_stationary_body() {
     let floor = moving(
         surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0),

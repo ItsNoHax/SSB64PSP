@@ -2445,6 +2445,8 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
+    // Its own body, not [`project_floor_below`]'s: the PSP link order
+    // names this function's instance (`psp-game/link-order.txt`).
     // A flag beside written values, as in [`edge`].
     let mut found = false;
     let mut best = (0u16, 0.0f32);
@@ -2468,6 +2470,17 @@ where
 /// `mpCollisionCheckProjectFloor`'s line id, flags and angle: the nearest
 /// floor at or below `pos` (see [`project_floor_line`]).
 pub fn project_floor<I, F>(surfaces: &F, pos: Vec3) -> Option<Standing>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    project_floor_below(surfaces, pos).map(|(s, _)| s)
+}
+
+/// `mpCollisionCheckProjectFloor`'s every output: the nearest floor at or
+/// below `pos` (line id, flags, angle) and `ga_dist`, the signed distance
+/// down to it. A moving group's lines are tested in its own local frame.
+pub fn project_floor_below<I, F>(surfaces: &F, pos: Vec3) -> Option<(Standing, f32)>
 where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
@@ -2496,7 +2509,7 @@ where
             );
         }
     }
-    found.then_some(best.0)
+    found.then_some(best)
 }
 
 /// `mpCollisionCheckProjectRWall`'s `ga_dist`: the signed X distance from

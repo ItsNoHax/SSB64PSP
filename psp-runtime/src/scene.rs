@@ -1175,11 +1175,12 @@ impl FighterScene {
         kind: FighterKind,
         spawn_index: u16,
         counts: &ssb_game::manager_counts::ManagerCounts,
+        groups: &[ssb_game::map::MapGroup],
     ) -> FighterScene {
         let pos = pack
             .spawn(stage, spawn_index)
             .map(|spawn| ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0));
-        Self::at_position(pack, stage, kind, spawn_index as u8, pos, counts)
+        Self::at_position(pack, stage, kind, spawn_index as u8, pos, counts, groups)
     }
 
     /// [`FighterScene::at_spawn`] at an explicit position, such as the drop
@@ -1193,11 +1194,12 @@ impl FighterScene {
         port: u8,
         pos: Option<ssb_engine::math::Vec3>,
         counts: &ssb_game::manager_counts::ManagerCounts,
+        groups: &[ssb_game::map::MapGroup],
     ) -> FighterScene {
         let mut scene = core::mem::MaybeUninit::<FighterScene>::uninit();
         // SAFETY: `write_at_position` writes every field.
         unsafe {
-            Self::write_at_position(scene.as_mut_ptr(), pack, stage, kind, port, pos, counts);
+            Self::write_at_position(scene.as_mut_ptr(), pack, stage, kind, port, pos, counts, groups);
             scene.assume_init()
         }
     }
@@ -1214,12 +1216,13 @@ impl FighterScene {
         kind: FighterKind,
         spawn_index: u16,
         counts: &ssb_game::manager_counts::ManagerCounts,
+        groups: &[ssb_game::map::MapGroup],
     ) {
         let pos = pack
             .spawn(stage, spawn_index)
             .map(|spawn| ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0));
         // SAFETY: the caller's contract.
-        unsafe { Self::write_at_position(dst, pack, stage, kind, spawn_index as u8, pos, counts) }
+        unsafe { Self::write_at_position(dst, pack, stage, kind, spawn_index as u8, pos, counts, groups) }
     }
 
     /// [`Self::at_position`] built in `*dst`, its final home (the battle's
@@ -1240,6 +1243,7 @@ impl FighterScene {
         port: u8,
         pos: Option<ssb_engine::math::Vec3>,
         counts: &ssb_game::manager_counts::ManagerCounts,
+        groups: &[ssb_game::map::MapGroup],
     ) {
         use core::ptr::addr_of_mut;
         let spawn_index = port;
@@ -1285,10 +1289,12 @@ impl FighterScene {
             fighter.pos = pos;
             fighter.facing = ssb_game::fighter::Facing::at_spawn_x(fighter.pos.x);
             fighter.topn_lr = fighter.facing.sign();
-            // `ftManagerInitFighter`: stood on the floor below, if near;
-            // then `mpCommonSetFighterWaitOrFall` (an entry or a demo sets
-            // its own status after).
-            placed = fighter.init_floor(FloorSegments::new(pack, stage));
+            // `ftManagerInitFighter`: stood on the floor below, if near,
+            // on the map as the ground's setup left it (a moving group's
+            // lines where the group is: Yoshi's Island's clouds); then
+            // `mpCommonSetFighterWaitOrFall` (an entry or a demo sets its
+            // own status after).
+            placed = fighter.init_floor_map(&|| MapSegments::with_groups(pack, stage, groups));
             ssb_game::status::set_wait_or_fall(fighter);
         }
         // `MPGroundData`'s `map_bound_*` and `camera_bound_*`, and the

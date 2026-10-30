@@ -895,6 +895,9 @@ fn set_stone_end(f: &mut Fighter, grounded: bool) {
         K::SpecialAirLwEnd
     };
     set_frames(f, s, 0.0, SPECIAL_LW_END_LENGTH);
+    // Both setters play one frame on (`ftkirbyspeciallw.c:321-325,361-365`):
+    // the first `ftPhysicsApplyAirVelTransNAll` step is the clip's second.
+    status::play_anim_events(f);
 }
 
 /// `ftKirbySpecialLwUnkDecideNextStatus`.
@@ -2365,6 +2368,10 @@ mod tests {
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialLwEnd));
         assert!(!f.is_grounded());
+        // `ftKirbySpecialLwEndSetStatus`'s `ftMainPlayAnimEventsAll`: the
+        // clip stands one play past frame 0, so the TransN rise starts on
+        // the release frame (cpufx-s N64 trace: y 11.885 there).
+        assert_eq!(f.status.clock, 1.0);
     }
 
     #[test]

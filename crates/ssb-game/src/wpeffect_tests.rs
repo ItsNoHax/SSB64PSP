@@ -363,31 +363,38 @@ fn a_fireball_sparkles_where_it_hits() {
 /// Pikachu's Thunder segment picks a frame every frame it lives
 /// (`WPPIKACHUTHUNDER_TEXTURES_NUM - 1`) and becomes a fading effect below
 /// `WPPIKACHUTHUNDER_EXPIRE`. The flush draws the frame itself and keeps it
-/// on the trail for its draw (RE-417); the sink sees only the effect.
+/// on the trail for its draw (RE-417); the sink sees only the effect. The
+/// segment's process runs on the frame it is made (`gcRunAll` walks on
+/// into the queued process): life 10 -> 9 and a drawn frame there already.
 #[test]
 fn a_thunder_segment_draws_its_frame_and_ends_as_an_effect() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(WeaponKind::PikachuThunder, 0, 0.0, 1.0));
+    rng::set_seed(7);
     pool.tick(open_air, None);
+    let before = rng::seed();
     let mut r = Record::default();
     pool.flush_effects(&mut r);
     assert!(r.0.is_empty(), "{:?}", r.0);
-    // The first trail was made that frame, at `gcAddMObjForDObj`'s 0.
     let first = |pool: &WeaponPool| {
         pool.thunder_trails()
             .next()
             .map(|t| (t.position.y, t.texture))
     };
+    // The first trail was made that frame and drew its frame there.
+    rng::set_seed(before);
+    let want = rng::rand_int_range(3) as u8;
     let (made_at, texture) = first(&pool).unwrap();
-    assert_eq!(texture, 0);
-    // Four frames with a drawn texture, then the effect on its fifth.
+    assert_eq!(texture, want);
+    // Three more frames with a drawn texture, then the effect on the
+    // fourth.
     rng::set_seed(11);
-    for frame in 0..5 {
+    for frame in 0..4 {
         let before = rng::seed();
         pool.tick(open_air, None);
         let mut r = Record::default();
         pool.flush_effects(&mut r);
-        if frame < 4 {
+        if frame < 3 {
             assert!(
                 !r.0.iter()
                     .any(|e| matches!(e, WeaponEffect::TextureRand(_))),

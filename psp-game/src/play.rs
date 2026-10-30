@@ -99,7 +99,7 @@ impl Dummy {
         // `assume_init`; a panic between leaves the slot uninitialised, never
         // dropped.
         unsafe {
-            FighterScene::write_at_spawn(core::ptr::addr_of_mut!((*dst).scene), pack, stage, kind, spawn, counts);
+            FighterScene::write_at_spawn(core::ptr::addr_of_mut!((*dst).scene), pack, stage, kind, spawn, counts, groups);
             Self::write_around_scene(dst, pack, stage, costume, level, port, groups);
             Some(b.assume_init())
         }
@@ -139,7 +139,7 @@ impl Dummy {
         // then every field is written anew (the scene first).
         unsafe {
             core::ptr::drop_in_place(dst);
-            FighterScene::write_at_position(core::ptr::addr_of_mut!((*dst).scene), pack, stage, kind, port, Some(pos), counts);
+            FighterScene::write_at_position(core::ptr::addr_of_mut!((*dst).scene), pack, stage, kind, port, Some(pos), counts, groups);
             Self::write_around_scene(dst, pack, stage, costume, level, port, groups);
         }
         core::mem::forget(guard);

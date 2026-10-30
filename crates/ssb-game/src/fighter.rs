@@ -1082,26 +1082,50 @@ impl Fighter {
         }
     }
 
-    /// `ftManagerInitFighter`'s floor projection: a fighter made over a
-    /// floor less than 300 units below stands on it from the start
-    /// (`mpCollisionCheckProjectFloor`); otherwise it starts airborne with
-    /// one jump spent. Master Hand always starts airborne. Returns whether a
-    /// floor was found.
+    /// `ftManagerInitFighter`'s floor projection over static segments only
+    /// (a stage without moving groups; see [`Self::init_floor_map`]).
+    /// Returns whether a floor was found.
     pub fn init_floor<I>(&mut self, floors: I) -> bool
     where
         I: IntoIterator<Item = (u16, Segment)>,
     {
         let below =
             collision::project_floor(floors, ssb_engine::math::Vec2::new(self.pos.x, self.pos.y));
-        match below {
-            Some(b) if b.dist > -300.0 && self.kind != FighterKind::Boss => {
-                self.situation = Situation::Ground;
-                self.pos.y += b.dist;
-                self.floor = Some(Standing {
+        self.init_floor_below(below.map(|b| {
+            (
+                Standing {
                     line: b.line,
                     flags: b.flags,
                     normal: b.normal,
-                });
+                },
+                b.dist,
+            )
+        }))
+    }
+
+    /// `ftManagerInitFighter`'s floor projection on the map as it stands
+    /// (`mpCollisionCheckProjectFloor`): a moving group's lines are tested
+    /// where the group is, so a spawn over Yoshi's Island's cloud finds the
+    /// cloud. Returns whether a floor was found.
+    pub fn init_floor_map<I, F>(&mut self, surfaces: &F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        let below = crate::map::project_floor_below(surfaces, self.pos);
+        self.init_floor_below(below)
+    }
+
+    /// `ftManagerInitFighter` (ftmanager.c:541-571): a fighter made over a
+    /// floor less than 300 units below stands on it from the start;
+    /// otherwise it starts airborne with one jump spent. Master Hand always
+    /// starts airborne.
+    fn init_floor_below(&mut self, below: Option<(Standing, f32)>) -> bool {
+        match below {
+            Some((standing, dist)) if dist > -300.0 && self.kind != FighterKind::Boss => {
+                self.situation = Situation::Ground;
+                self.pos.y += dist;
+                self.floor = Some(standing);
             }
             _ => {
                 self.situation = Situation::Air;

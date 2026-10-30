@@ -126,6 +126,38 @@ fn script_frames(data: &[u8], start: usize) -> Option<Option<u32>> {
     }
 }
 
+/// One joint's script: the clock payloads of its blocks up to `End` (zero
+/// payloads left out: `ftAnimParseDObjFigatree` adds them to a `wait` that
+/// stays `<= 0`), `None` when it loops.
+fn script_blocks(data: &[u8], start: usize) -> Option<Vec<u16>> {
+    let word = |i: usize| be_u16(data, start + i * 2).ok();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    loop {
+        let w = word(i)?;
+        let (op, flags, toggle) = (w >> 11, (w >> 1) & 0x3FF, w & 1);
+        i += 1;
+        match op {
+            OP_END => return Some(out),
+            OP_LOOP => return None,
+            OP_TRANSLATE_INTERP => {
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        let mut payload = 0;
+        if toggle != 0 {
+            payload = word(i)?;
+            i += 1;
+        }
+        if is_block(op) && payload != 0 {
+            out.push(payload);
+        }
+        i += (values_per_track(op) * flags.count_ones()) as usize;
+    }
+}
+
 /// Every joint's value, when they all agree.
 fn agreed<T: PartialEq + Copy>(data: &[u8], walk: impl Fn(&[u8], usize) -> Option<T>) -> Option<T> {
     let joints = joint_scripts(data)?;
@@ -157,6 +189,17 @@ impl Lengths {
             let data = rom.file(file).ok()?.data;
             agreed(&data, script_frames)
         })
+    }
+
+    /// The last scripted joint's block payloads to its `End`: the joint whose
+    /// `ftAnimParseDObjFigatree` writes `gobj->anim_frame` last each play
+    /// (`ftParamUpdateAnimKeys` walks `fp->joints` in order), so its `wait`
+    /// countdown decides the frame `ftAnimEndCheckSetStatus` sees the end.
+    /// `None` when the file loops or is not a figatree.
+    pub fn end_blocks(&self, rom: &Source, file: u32) -> Option<Vec<u16>> {
+        let data = rom.file(file).ok()?.data;
+        let last = *joint_scripts(&data)?.last()?;
+        script_blocks(&data, last)
     }
 
     /// The frames to the animation's `End` or first `Loop`, and whether it

@@ -738,6 +738,8 @@ unsafe fn run() -> ! {
                 ssb_game::fighter::FighterKind::Mario,
                 0,
                 &ssb_game::manager_counts::ManagerCounts::new(),
+                // The viewer's stage is static: no moving groups.
+                &[],
             )
         }),
         _ => None,
@@ -1019,6 +1021,8 @@ unsafe fn run() -> ! {
                                 ssb_game::fighter::FighterKind::Mario,
                                 0,
                                 &ssb_game::manager_counts::ManagerCounts::new(),
+                                // The viewer's stage is static: no moving groups.
+                                &[],
                             )
                         });
                         if cfg!(feature = "camera_audit_capture") {

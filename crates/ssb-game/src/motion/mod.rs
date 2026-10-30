@@ -67,7 +67,15 @@ pub struct MotionDesc {
     pub clip: u16,
     /// `FTMotionDesc.anim_desc` (`FTANIM_FLAG_*`).
     pub anim_flags: u32,
+    /// Index of the figatree's run in `END_BLOCKS` (see [`end_blocks`]), or
+    /// [`NO_END_BLOCKS`].
+    pub end_blocks: u16,
 }
+
+/// [`MotionDesc::end_blocks`] for a figatree without a run: it loops, its
+/// last scripted joint does not run [`MotionDesc::anim_length`] frames, or a
+/// payload or the block count passes 255 (none do in the US ROM).
+pub const NO_END_BLOCKS: u16 = 0xFFFF;
 
 /// [`MotionDesc::clip`]'s loop bit: the figatree ends in `Loop` (back to
 /// its first frame) rather than `End`.
@@ -502,6 +510,17 @@ pub fn clip_on_set_status(kind: FighterKind, status: AnyStatus) -> crate::status
             Some(c) => ClipStart::Restart(Clip::Ends(f32::from(c))),
         },
     }
+}
+
+/// The block payloads of the status's figatree's last scripted joint, in
+/// order: the `wait` countdown whose `End` sets `gobj->anim_frame <= 0`
+/// (`ftAnimParseDObjFigatree`, `ftanim.c:82-121`; `ftParamUpdateAnimKeys`
+/// parses `fp->joints` in order, so that joint writes it last). `None`
+/// without a figatree that ends after [`anim_length`] frames.
+pub fn end_blocks(kind: FighterKind, status: AnyStatus) -> Option<&'static [u8]> {
+    let at = usize::from(motion_desc(kind, status)?.end_blocks);
+    let len = usize::from(*scripts::END_BLOCKS.get(at)?);
+    scripts::END_BLOCKS.get(at + 1..at + 1 + len)
 }
 
 /// The status's figatree length in frames, for statuses that end with their

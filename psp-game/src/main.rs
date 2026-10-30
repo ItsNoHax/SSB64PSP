@@ -4184,7 +4184,9 @@ fn enter_training(
     // `ftManagerMakeFighter` for each player in turn, each built in its
     // arena slot.
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());
-    let scene = world.play_state.insert(new_lead_scene(p, &stage, lead.kind, lead.spawn, &counts));
+    let groups = world.stage_map.as_ref().map_or(&[][..], |map| map.groups.as_slice());
+    let scene = new_lead_scene(p, &stage, lead.kind, lead.spawn, &counts, groups);
+    let scene = world.play_state.insert(scene);
     // `ftManagerMakeFighter`'s `ftComputerSetFighterDamageDetectSize`: the
     // CPUs read the player's hurtbox extent.
     scene.set_damage_detect_size(p);
@@ -4310,12 +4312,13 @@ fn new_lead_scene(
     kind: ssb_game::fighter::FighterKind,
     spawn: u16,
     counts: &ssb_game::manager_counts::ManagerCounts,
+    groups: &[ssb_game::map::MapGroup],
 ) -> SceneBox<play::FighterScene> {
     let mut b = ssb_psp_runtime::memory::scene_alloc_uninit::<play::FighterScene>();
     // SAFETY: `write_at_spawn` writes every field before `assume_init`; a
     // panic between leaves the slot uninitialised, never dropped.
     unsafe {
-        play::FighterScene::write_at_spawn(b.as_mut_ptr(), p, stage, kind, spawn, counts);
+        play::FighterScene::write_at_spawn(b.as_mut_ptr(), p, stage, kind, spawn, counts, groups);
         b.assume_init()
     }
 }

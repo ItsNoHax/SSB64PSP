@@ -57,6 +57,7 @@
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
+| `.rodata` line re-screen | Batch 114 grew `.rodata` ~39 KB (`END_BLOCKS`, `MotionDesc` 16 B): re-screen `PSP_LINK_RODATA_LINE` + `relink.py` on the PSP-2000, five standard scenes | RE-584 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
 | Master Hand stage | onepbosshit comets 17.3-19.3 ms, Fall 18.4-19.9 ms busy on the PSP-2000: effect CPU skinning; cut to 16.7 ms | RE-584 |
 | Electric hit drop | vs4@1340 4xL9 Pikachu on the PSP-2000: 17.48 no hit, 18.23 shock ms busy; cut to 16.7 ms. Fighters 6.9 ms (profile): skin 1.2, corners 0.9, material 0.7, compose 0.8. Memo, normal-length table, skin product: measured loss. Left: prepass matrix reuse alone (≤0.2 ms, `.bss` 8 KB pad, re-search); profile audio (~22% of instructions) and stage draw/update | RE-584, RE-585 |
@@ -125,7 +126,8 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | Ground ambient effects | Draw and fly efGround effects (Lakitu, birds, Arwings…: `efGroundMakeEffect` DObj trees, `efGroundCommonProcUpdate`) and hold their effect struct (RNG gate parity); N64 capture | RE-508 |
-| VS N64 trace residue | vs-yoshi: Mario Entry y -239.0 vs N64 -299.635 from tick 9, port +2 draws from tick 269; vs-four: Fox status tick 781; cpufx-stone: Kirby input 1 tick late from 520; trace route `~/ppsspp-test/b113ev/` | RE-508, RE-554 |
+| Anim end edges | (a) deciding joint = last pre-order figatree DObj; hidden parts (`ftMainUpdateHiddenPartID` kinds 0-3) can reorder: check `hiddenparts` × `anim_desc` in tablegen; (b) after End N64 holds `anim_frame` ≈ -1.1e38, port the leftover wait (PauseScript resumes in port, ftmain.c:723-727); (c) Thunder trail's copied rehit timers skip the make-frame decrement (wpprocess.c:197-198) | RE-474 |
+| cpufx-s tick 430 particle draws | N64 6 draws at 430, port 6 at 431 (Kirby Stone start generators, bank 3 script 2); fighters equal; N64 call-site trace needed | RE-508 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)

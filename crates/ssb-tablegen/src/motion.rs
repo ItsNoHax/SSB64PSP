@@ -74,6 +74,51 @@ struct Motion {
     length: u32,
     clip: u32,
     flags: u32,
+    end: u32,
+}
+
+/// `MotionDesc::end_blocks` without a run in `END_BLOCKS`.
+const NO_END_BLOCKS: u32 = 0xFFFF;
+
+/// The `END_BLOCKS` pool: length-prefixed runs of the deciding joint's block
+/// payloads, shared by the files whose runs are equal.
+#[derive(Default)]
+struct EndPool {
+    words: Vec<u8>,
+    at: std::collections::HashMap<u32, u32>,
+    runs: std::collections::HashMap<Vec<u8>, u32>,
+}
+
+impl EndPool {
+    /// The run for `desc`'s figatree, when it ends after `length` frames.
+    fn end_of(&mut self, rom: &Source, lengths: &Lengths, desc: &MotionDesc, length: u32) -> u32 {
+        if desc.anim_file == 0 || length == 0 || length == 0xFFFF {
+            return NO_END_BLOCKS;
+        }
+        if let Some(&at) = self.at.get(&desc.anim_file) {
+            return at;
+        }
+        let at = match lengths.end_blocks(rom, desc.anim_file) {
+            Some(b)
+                if b.iter().map(|&p| u32::from(p)).sum::<u32>() == length
+                    && b.len() <= 0xFF
+                    && b.iter().all(|&p| p <= 0xFF) =>
+            {
+                let b: Vec<u8> = b.iter().map(|&p| p as u8).collect();
+                let words = &mut self.words;
+                *self.runs.entry(b).or_insert_with_key(|b| {
+                    let at = words.len() as u32;
+                    assert!(at < NO_END_BLOCKS, "END_BLOCKS overflow");
+                    words.push(b.len() as u8);
+                    words.extend(b);
+                    at
+                })
+            }
+            _ => NO_END_BLOCKS,
+        };
+        self.at.insert(desc.anim_file, at);
+        at
+    }
 }
 
 fn length_of(rom: &Source, lengths: &Lengths, desc: &MotionDesc) -> (u32, u32) {
@@ -116,8 +161,8 @@ fn emit_motions(w: &mut String, label: &str, motions: &[Motion]) {
         };
         let _ = writeln!(
             w,
-            "    MotionDesc {{ script: {script}, anim_length: {}, clip: 0x{:04X}, anim_flags: 0x{:08X} }},",
-            m.length, m.clip, m.flags
+            "    MotionDesc {{ script: {script}, anim_length: {}, clip: 0x{:04X}, anim_flags: 0x{:08X}, end_blocks: 0x{:04X} }},",
+            m.length, m.clip, m.flags, m.end
         );
     }
     w.push_str("];\n\n");
@@ -321,6 +366,7 @@ fn blob_len(f: &Fighter, rom: &Source) -> usize {
 
 pub fn generate(rom: Option<&Source>) -> Result<String> {
     let lengths = Lengths::default();
+    let mut pool = EndPool::default();
     let mut w = emit::header("fighter motion scripts, motion tables and combat attributes");
     w.push_str("use super::{CombatAttrs, DemoScripts, FighterScripts, MotionDesc, NO_SCRIPT};\n\n");
 
@@ -375,11 +421,13 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                     d.offset / 4
                 };
                 let (length, clip) = length_of(rom, &lengths, &d);
+                let end = pool.end_of(rom, &lengths, &d, length);
                 motions.push(Motion {
                     script,
                     length,
                     clip,
                     flags: d.anim_desc,
+                    end,
                 });
             }
             if let Some((at, count)) = f.special_status_descs {
@@ -462,11 +510,13 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
                     }
                 };
                 let (length, clip) = length_of(rom, &lengths, &d);
+                let end = pool.end_of(rom, &lengths, &d, length);
                 motions.push(Motion {
                     script,
                     length,
                     clip,
                     flags: d.anim_desc,
+                    end,
                 });
             }
         }
@@ -498,6 +548,20 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
             ),
         )?;
     }
+    w.push_str(
+        "/// The deciding joint's figatree block payloads, one length-prefixed run\n\
+         /// per distinct run (`MotionDesc::end_blocks`).\n",
+    );
+    let _ = writeln!(
+        w,
+        "#[rustfmt::skip]\npub static END_BLOCKS: [u8; {}] = [",
+        pool.words.len()
+    );
+    for row in pool.words.chunks(16) {
+        let cells: Vec<String> = row.iter().map(u8::to_string).collect();
+        let _ = writeln!(w, "    {},", cells.join(", "));
+    }
+    w.push_str("];\n");
     w.truncate(w.trim_end().len());
     w.push('\n');
     Ok(w)
