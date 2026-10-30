@@ -285,6 +285,18 @@ fn init_special_hi(f: &mut Fighter) {
     f.grab.throw_desc = Some(DIVE_THROW);
 }
 
+/// `ftCaptainSpecialHiProcMap` (`ftcaptainspecialhi.c:107-116`): falling
+/// with flag 2 (`dive_cliff_wait`, 15 at the start) still up, the pass is
+/// `mpCommonProcFighterProject` only (no ledge, no landing) and flag 2
+/// counts down after it; rising frames never count it.
+pub(crate) fn special_hi_projects(f: &Fighter) -> bool {
+    matches!(
+        f.status.status,
+        AnyStatus::Captain(CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi)
+    ) && f.physics.vel_air.y < 0.0
+        && f.captain.dive_cliff_wait != 0
+}
+
 pub fn dive_searching(f: &Fighter) -> bool {
     matches!(
         f.status.status,
@@ -710,9 +722,6 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             );
             f.physics.vel_air.x += f.captain.dive_vel.x;
             f.physics.vel_air.y += f.captain.dive_vel.y;
-            if f.captain.dive_cliff_wait > 0 {
-                f.captain.dive_cliff_wait -= 1;
-            }
         }
         CaptainStatus::SpecialHiCatch => {
             physics::stop_all(&mut f.physics);

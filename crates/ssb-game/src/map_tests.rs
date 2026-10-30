@@ -1077,11 +1077,15 @@ fn aerial_jump_and_recovery_cliff_gates_follow_their_source_callbacks() {
     // `ftPikachuSpecialAirHiStartProcMap` is `mpCommonProcFighterCliff`.
     f.status.status = AnyStatus::Pikachu(PikachuStatus::SpecialAirHiStart);
     assert!(allows_cliff(&f));
+    // `ftYoshiSpecialLwStartProcMap`: the ledge once flag 1 is up and Yoshi
+    // is not rising.
     f.status.status = AnyStatus::Yoshi(status::YoshiStatus::SpecialAirLwStart);
-    f.status.set_time(4.0);
+    f.motion_script.flags[1] = 0;
     assert!(!allows_cliff(&f));
-    f.status.set_time(5.0);
+    f.motion_script.flags[1] = 1;
     assert!(allows_cliff(&f));
+    f.physics.vel_air.y = 1.0;
+    assert!(!allows_cliff(&f));
 }
 
 // ---------------------------------------------------------------------------
@@ -1906,4 +1910,51 @@ fn over_floor_needs_the_point_above_a_floor_within_its_span() {
     assert!(at(0.0, 30.0));
     assert!(!at(150.0, 30.0));
     assert!(!at(0.0, -30.0));
+}
+
+/// `ftCaptainSpecialHiProcMap` (`ftcaptainspecialhi.c:107-116`): flag 2
+/// (15, `:135`) counts down only on falling map frames, after the pass. A
+/// rising dive keeps it; the falling frame that takes it from 1 to 0 still
+/// projects onto the floor without landing, and the next one lands.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn falcon_dive_counts_flag2_on_falling_map_frames_only() {
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0);
+    let mut f = fighter(
+        FighterKind::Captain,
+        AnyStatus::Captain(CaptainStatus::SpecialAirHi),
+        Vec3::ZERO,
+    );
+    f.situation = Situation::Air;
+    f.pos = Vec3::new(0.0, 1000.0, 0.0);
+    assert_eq!(f.captain.dive_cliff_wait, 15);
+    f.captain.dive_vel = Vec3::new(0.0, 5.0, 0.0);
+    for _ in 0..10 {
+        f.tick_physics_map(&|| [floor]);
+        assert!(f.physics.vel_air.y > 0.0);
+    }
+    assert_eq!(f.captain.dive_cliff_wait, 15);
+
+    f.captain.dive_vel.y = -5.0;
+    for n in 1..=14 {
+        f.tick_physics_map(&|| [floor]);
+        assert!(f.physics.vel_air.y < 0.0);
+        assert_eq!(f.captain.dive_cliff_wait, 15 - n);
+    }
+    f.pos.y = 3.0;
+    f.tick_physics_map(&|| [floor]);
+    assert_eq!(f.captain.dive_cliff_wait, 0);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Captain(CaptainStatus::SpecialAirHi)
+    );
+    assert_eq!(f.situation, Situation::Air);
+
+    f.pos.y = 3.0;
+    f.tick_physics_map(&|| [floor]);
+    assert_eq!(f.situation, Situation::Ground);
+    assert_ne!(
+        f.status.status,
+        AnyStatus::Captain(CaptainStatus::SpecialAirHi)
+    );
 }

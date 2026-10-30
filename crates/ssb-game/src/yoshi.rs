@@ -53,9 +53,6 @@ const SPECIAL_N_RELEASE_LENGTH: f32 = 35.0;
 /// makes the egg, `SetFlag2(2)` at frame 23 throws it.
 const EGG_MAKE_FRAME: f32 = 4.0;
 const EGG_THROW_FRAME: f32 = 23.0;
-/// `GroundPound` sets flag 1 at frame 30, `GroundPoundAir` at frame 5.
-const BOMB_GROUND_FLAG1_FRAME: f32 = 30.0;
-const BOMB_AIR_FLAG1_FRAME: f32 = 5.0;
 /// `GroundPoundLanding`: `Wait(3)` then `SetFlag0(1)` makes the stars.
 const BOMB_STARS_FRAME: f32 = 3.0;
 /// `EggLay_0x1730` (both Egg Lay statuses): the catch box exists from
@@ -347,6 +344,7 @@ fn update_egg(f: &mut Fighter) {
 pub fn set_special_lw_start(f: &mut Fighter) {
     f.become_airborne();
     set(f, YoshiStatus::SpecialLwStart, 0.0, SPECIAL_LW_START_LENGTH);
+    init_special_lw_start(f);
     // The setter plays the first frame (RE-473).
     status::play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
@@ -360,8 +358,22 @@ pub fn set_special_air_lw_start(f: &mut Fighter) {
         0.0,
         SPECIAL_AIR_LW_START_LENGTH,
     );
+    init_special_lw_start(f);
     status::play_anim_events(f);
     f.physics.jumps_used = f.attributes.jumps_max;
+}
+
+/// `ftYoshiSpecialLwStartProcStatus`: flags 0 and 1 down. The scripts
+/// raise flag 1 (`GroundPound` at frame 30, `GroundPoundAir` at frame 5).
+fn init_special_lw_start(f: &mut Fighter) {
+    f.motion_script.flags[0] = 0;
+    f.motion_script.flags[1] = 0;
+}
+
+/// `ftYoshiSpecialLwStartProcMap` (`ftyoshispeciallw.c:52`): with flag 1
+/// up and Yoshi not rising, the start lands and catches ledges.
+pub(crate) fn special_lw_start_lands(f: &Fighter) -> bool {
+    f.motion_script.flags[1] != 0 && f.physics.vel_air.y <= 0.0
 }
 
 /// `ftYoshiSpecialAirLwLoopSetStatus`: the pose and the box hold, the
@@ -643,12 +655,7 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
         // is up and Yoshi is falling. Before that the floor holds him and
         // the status continues.
         YoshiStatus::SpecialLwStart | YoshiStatus::SpecialAirLwStart => {
-            let flag1_frame = if current == YoshiStatus::SpecialLwStart {
-                BOMB_GROUND_FLAG1_FRAME
-            } else {
-                BOMB_AIR_FLAG1_FRAME
-            };
-            if frame >= flag1_frame && f.physics.vel_air.y <= 0.0 {
+            if special_lw_start_lands(f) {
                 set_special_lw_landing(f, floor_y);
             } else {
                 f.pos.y = floor_y;
@@ -811,6 +818,54 @@ mod tests {
             assert_eq!(f.weapon_spawn.is_some(), frame == 3);
         }
         assert_eq!(f.take_weapon_spawn().unwrap().kind, WeaponKind::YoshiStars);
+    }
+
+    /// `ftYoshiSpecialLwStartProcStatus` lowers flag 1 and the
+    /// `GroundPound`/`GroundPoundAir` scripts raise it at frame 30/5
+    /// (`246_YoshiMainMotion.c`); `ftYoshiSpecialLwStartProcMap` lands and
+    /// catches ledges from that flag with Yoshi not rising.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn yoshi_bomb_start_lands_and_catches_ledges_from_flag1() {
+        for (ground, flag_frame) in [(true, 30), (false, 5)] {
+            let mut f = yoshi(ground);
+            f.motion_script.flags[1] = 1;
+            if ground {
+                set_special_lw_start(&mut f);
+            } else {
+                set_special_air_lw_start(&mut f);
+            }
+            for frame in 1..flag_frame {
+                assert_eq!(f.motion_script.flags[1], 0, "ground={ground} frame {frame}");
+                status::update(&mut f);
+            }
+            assert_eq!(f.motion_script.flags[1], 1, "ground={ground}");
+        }
+
+        let mut f = yoshi(false);
+        set_special_air_lw_start(&mut f);
+        f.physics.vel_air.y = -1.0;
+        assert!(!crate::map::allows_cliff(&f));
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwStart)
+        );
+        f.motion_script.flags[1] = 1;
+        assert!(crate::map::allows_cliff(&f));
+        f.physics.vel_air.y = 1.0;
+        assert!(!crate::map::allows_cliff(&f));
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwStart)
+        );
+        f.physics.vel_air.y = 0.0;
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Yoshi(YoshiStatus::SpecialLwLanding)
+        );
     }
 
     /// `ftYoshiSpecialAirLwLoopSetStatus` passes `FTSTATUS_PRESERVE_HIT`

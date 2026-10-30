@@ -18,6 +18,7 @@
 
 ## Current work
 
+- Landed (batch 105): Falcon Dive flag 2 counts on falling map frames only; Yoshi Bomb start ledge/landing gate reads motion-script flag 1 (RE-586). Goldens unchanged.
 - Landed (batch 104): proc_map audit, 24 fixes (Ness air PSI Magnet ledge, Samus Screw Attack ledge, Yoshi/Link/Captain/Kirby ceiling stops; RE-586); Reflect Break effect made and drawn; stale module docs. Goldens unchanged.
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
 - Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).

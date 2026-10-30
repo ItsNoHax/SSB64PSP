@@ -2713,6 +2713,21 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        // `ftCaptainSpecialHiProcMap` (`ftcaptainspecialhi.c:107-116`): a
+        // falling Falcon Dive with flag 2 up only projects, then counts
+        // flag 2 down.
+        let dive_project = crate::captain::special_hi_projects(self);
+        self.air_map_pass(from, want, surfaces);
+        if dive_project {
+            self.captain.dive_cliff_wait -= 1;
+        }
+    }
+
+    fn air_map_pass<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         // `ftPikachuSpecialAirHiProcMap` (`ftpikachuspecialhi.c:216`).
         let pikachu_zip = self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi);

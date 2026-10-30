@@ -2235,13 +2235,7 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
                 || matches!(
                     s,
                     status::YoshiStatus::SpecialLwStart | status::YoshiStatus::SpecialAirLwStart
-                ) && f.physics.vel_air.y <= 0.0
-                    && f.status.clock
-                        >= if s == status::YoshiStatus::SpecialLwStart {
-                            30.0
-                        } else {
-                            5.0
-                        }
+                ) && crate::yoshi::special_lw_start_lands(f)
         }
         AnyStatus::Purin(s) => matches!(
             s,
