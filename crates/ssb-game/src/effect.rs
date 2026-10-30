@@ -65,6 +65,64 @@ pub const KIRBY_PARTICLE_BANK: u8 = 3;
 /// the fighter). Like the others it keeps a fixed id of its own.
 pub const NESS_PARTICLE_BANK: u8 = 4;
 
+/// `gFTDataKirbyParticleBankID`, `gFTNessParticleBankID` and
+/// `gFTDataYoshiParticleBankID` as a battle scene leaves them: its
+/// `ftManagerSetupFilesPlayablesAll` (after the fighters are made) sets each
+/// to `efParticleGetBankID` of that fighter's scripts, the bank's id when
+/// the scene loaded it and -1 ([`None`]) when not (RE-475).
+///
+/// A -1 bank makes nothing: `lbParticleMakeChildScriptID` reads bank
+/// `-1 & 7 = 7`, and no scene loads eight banks (at most six: items, a
+/// stage's, the common one and these three), so its script count is 0
+/// (0 in RDRAM on the 1P Kirby Team stage). The port's bank ids are fixed
+/// (7 is Dream Land's), so [`None`] stands for -1 and the makers return
+/// what the source's `NULL` make returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FighterBanks {
+    /// Kirby's ([`KIRBY_PARTICLE_BANK`]).
+    pub kirby: Option<u8>,
+    /// Ness's ([`NESS_PARTICLE_BANK`]).
+    pub ness: Option<u8>,
+    /// Yoshi's ([`YOSHI_PARTICLE_BANK`]).
+    pub yoshi: Option<u8>,
+}
+
+impl FighterBanks {
+    /// All three loaded.
+    pub const ALL: FighterBanks = FighterBanks {
+        kirby: Some(KIRBY_PARTICLE_BANK),
+        ness: Some(NESS_PARTICLE_BANK),
+        yoshi: Some(YOSHI_PARTICLE_BANK),
+    };
+
+    /// A battle scene's (VS, Training, 1P Game, bonus, title demo): a
+    /// fighter's bank is loaded when its kind holds a player slot
+    /// (`ftManagerSetupFilesAllKind` runs `ftManagerSetupFilesMainKind`'s
+    /// `efParticleGetLoadBankID`). The 1P Kirby Team stage also loads
+    /// Ness's, for a Ness copy's PK Fire, and drops the id
+    /// (`sc1pgame.c:2077-2089`); the playables pass then finds it.
+    pub fn for_battle(
+        kinds: impl IntoIterator<Item = crate::fighter::FighterKind>,
+        kirby_team_stage: bool,
+    ) -> FighterBanks {
+        use crate::fighter::FighterKind;
+        let mut b = FighterBanks {
+            kirby: None,
+            ness: kirby_team_stage.then_some(NESS_PARTICLE_BANK),
+            yoshi: None,
+        };
+        for kind in kinds {
+            match kind {
+                FighterKind::Kirby => b.kirby = Some(KIRBY_PARTICLE_BANK),
+                FighterKind::Ness => b.ness = Some(NESS_PARTICLE_BANK),
+                FighterKind::Yoshi => b.yoshi = Some(YOSHI_PARTICLE_BANK),
+                _ => {}
+            }
+        }
+        b
+    }
+}
+
 /// `itNessPKFireMakeItem`'s script in Ness's bank.
 const PK_FIRE_FLAME_SCRIPT: u16 = 0;
 
@@ -258,6 +316,9 @@ pub struct Effects {
     /// The fighters' own link-15 effects' creation stamps
     /// ([`Self::stamp_fighter`], RE-542).
     fighter_stamps: crate::effect_order::FighterStamps,
+    /// The fighter bank ids Kirby's, Ness's and Yoshi's makers read
+    /// ([`FighterBanks::ALL`] until a battle scene sets them).
+    pub fighter_banks: FighterBanks,
 }
 
 impl Default for Effects {
@@ -287,6 +348,7 @@ impl Effects {
             fighter_vel_air_x: [0.0; 4],
             map_bounds: None,
             fighter_stamps: crate::effect_order::FighterStamps::default(),
+            fighter_banks: FighterBanks::ALL,
         };
         for i in 0..EFFECT_ALLOC_NUM {
             e.slots[i].next = if i + 1 < EFFECT_ALLOC_NUM {
@@ -839,16 +901,13 @@ impl Effects {
     /// `efManagerYoshiEggExplodeMakeEffect`: Yoshi's script 3, first
     /// processed under a ready transform, then placed. No EFStruct.
     pub fn yoshi_egg_explode(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
-        self.start_bare(
-            p,
-            banks,
-            YOSHI_PARTICLE_BANK,
-            3,
-            TransformStatus::Ready,
-            |t| {
-                t.translate = pos;
-            },
-        )
+        // `gFTDataYoshiParticleBankID` -1: the make returns `NULL`.
+        let Some(bank) = self.fighter_banks.yoshi else {
+            return NIL;
+        };
+        self.start_bare(p, banks, bank, 3, TransformStatus::Ready, |t| {
+            t.translate = pos;
+        })
     }
 
     /// Makes one hit effect ([`HitEffect`]). The display effects (the
@@ -2503,7 +2562,11 @@ impl Effects {
         let Some(ep) = self.get_force() else {
             return false;
         };
-        let bank_id = KIRBY_PARTICLE_BANK | lb::genlink(0);
+        // `gFTDataKirbyParticleBankID` -1: the make fails, the struct stays.
+        let Some(bank) = self.fighter_banks.kirby else {
+            return false;
+        };
+        let bank_id = bank | lb::genlink(0);
         let pc = lb::make_script_id(p, banks, bank_id, KIRBY_INHALE_WIND_SCRIPT);
         if pc == NIL {
             return false;
@@ -2545,16 +2608,12 @@ impl Effects {
         script: u16,
         pos: Vec3,
     ) -> u8 {
-        self.start_bare(
-            p,
-            banks,
-            KIRBY_PARTICLE_BANK,
-            script,
-            TransformStatus::Ready,
-            |t| {
-                t.translate = pos;
-            },
-        )
+        let Some(bank) = self.fighter_banks.kirby else {
+            return NIL;
+        };
+        self.start_bare(p, banks, bank, script, TransformStatus::Ready, |t| {
+            t.translate = pos;
+        })
     }
 
     /// `itNessPKFireMakeItem`'s particle: Ness's script 0 (no
@@ -2563,7 +2622,10 @@ impl Effects {
     /// failed or the first update left it no users (`item_vars.pkfire.xf`).
     /// As in the source, a struct whose transform failed is ejected.
     pub fn pk_fire_flame(&mut self, p: &mut Particles, banks: &dyn Banks, pos: Vec3) -> u8 {
-        let pc = lb::make_script_id(p, banks, NESS_PARTICLE_BANK, PK_FIRE_FLAME_SCRIPT);
+        let Some(bank) = self.fighter_banks.ness else {
+            return NIL;
+        };
+        let pc = lb::make_script_id(p, banks, bank, PK_FIRE_FLAME_SCRIPT);
         if pc == NIL {
             return NIL;
         }

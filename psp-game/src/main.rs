@@ -3760,6 +3760,16 @@ fn reset_damage_hud(world: &mut BattleWorld) {
     // `efParticleInitAll` and `efManagerInitEffects`: a new battle scene.
     world.damage_hud.particles.reset();
     world.damage_hud.effects = ssb_game::effect::Effects::new(0);
+    // `ftManagerSetupFilesPlayablesAll`: the fighter banks this scene's
+    // slots loaded (RE-475).
+    let kinds = world
+        .play_state
+        .as_deref()
+        .map(|pl| pl.fighter.kind)
+        .into_iter()
+        .chain(world.dummies.iter().flatten().map(|d| d.fighter.kind));
+    let fighter_banks = ssb_game::effect::FighterBanks::for_battle(kinds, false);
+    world.damage_hud.effects.fighter_banks = fighter_banks;
     world.damage_hud.entry_focus = None;
     world.damage_hud.single_stock = None;
     // A battle scene makes its pause menu hidden: one left from a reset

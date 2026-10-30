@@ -285,6 +285,12 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     let Some(w) = s.world.as_deref_mut() else {
         return Err(Blocked::Assets(stage));
     };
+    // `sc1pgame.c:2077-2089`: the Kirby Team stage loads Ness's particle
+    // bank too, so a Ness copy's PK Fire finds it; Yoshi's stays -1 unless
+    // Yoshi holds a slot (RE-475).
+    if matches!(stage, Stage::Kirby) {
+        w.damage_hud.effects.fighter_banks.ness = Some(ssb_game::effect::NESS_PARTICLE_BANK);
+    }
     // `itManagerInitItems` with the 1P stage's switches.
     w.items.normal_switches = switches;
     w.items.normal_drops =

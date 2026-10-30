@@ -1077,3 +1077,49 @@ fn sector_rocket_grows_until_it_passes_the_step_position() {
     }
     assert!(!grew_after);
 }
+
+/// RE-475: on the 1P Kirby Team stage (Mario against Kirbys) the N64's
+/// playables pass leaves `gFTNessParticleBankID` 3 (the stage's own load)
+/// and `gFTDataYoshiParticleBankID` -1 (RDRAM, warp `warp1p_8`).
+#[test]
+fn kirby_team_stage_banks_hold_ness_and_not_yoshi() {
+    use crate::fighter::FighterKind as K;
+    let kinds = [K::Mario, K::Kirby, K::Kirby];
+    let b = FighterBanks::for_battle(kinds, true);
+    assert_eq!(b.kirby, Some(KIRBY_PARTICLE_BANK));
+    assert_eq!(b.ness, Some(NESS_PARTICLE_BANK));
+    assert_eq!(b.yoshi, None);
+    // Elsewhere only a fighter in a slot loads its bank.
+    let vs = FighterBanks::for_battle([K::Mario, K::Kirby], false);
+    assert_eq!(vs.ness, None);
+    // A Yoshi player on the stage brings Yoshi's.
+    let yoshi = FighterBanks::for_battle([K::Yoshi, K::Kirby, K::Kirby], true);
+    assert_eq!(yoshi.yoshi, Some(YOSHI_PARTICLE_BANK));
+}
+
+/// A Yoshi-copy Kirby's egg breaking on the Kirby Team stage: the explode
+/// reads bank -1 and makes nothing, while Ness's PK Fire flame still makes
+/// its particle from the stage-loaded bank.
+#[test]
+fn a_bank_left_minus_one_makes_nothing() {
+    use crate::fighter::FighterKind as K;
+    let bank = crate::particle::tests::any_bank();
+    let (mut p, mut e) = runtime();
+    e.fighter_banks = FighterBanks::for_battle([K::Mario, K::Kirby, K::Kirby], true);
+    let pos = Vec3::new(100.0, 0.0, 0.0);
+    assert_eq!(e.yoshi_egg_explode(&mut p, &bank, pos), NIL);
+    assert_eq!(p.used_num, 0, "no particle from Yoshi's bank");
+    assert_ne!(e.pk_fire_flame(&mut p, &bank, pos), NIL);
+    assert_eq!(p.used_num, 1);
+    // With Yoshi's bank loaded the same call makes its particle.
+    e.fighter_banks = FighterBanks::ALL;
+    assert_ne!(e.yoshi_egg_explode(&mut p, &bank, pos), NIL);
+    assert_eq!(p.used_num, 2);
+    // Kirby's bank -1: the inhale wind's forced struct stays allocated.
+    e.fighter_banks.kirby = None;
+    let free = e.free_num;
+    assert!(!e.kirby_inhale_wind(&mut p, &bank, 0, pos, 1));
+    assert_eq!(e.free_num, free - 1);
+    assert_eq!(e.kirby_bank_ready(&mut p, &bank, 2, pos), NIL);
+    assert_eq!(p.used_num, 2);
+}
