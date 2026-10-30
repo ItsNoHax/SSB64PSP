@@ -122,6 +122,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
+| Thrown release light-item drop | Damage release of a same-frame-hit fighter: `ftParamUpdateDamage` light-item drop roll (ftparam.c:1539-1553); port `add_damage` has no roll | - |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |

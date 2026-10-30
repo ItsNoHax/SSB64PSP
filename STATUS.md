@@ -18,6 +18,7 @@
 
 ## Current work
 
+- Landed (batch 109): throw releases subtract knockback resist and zero damage for any non-normal hit status; every capture drops a heavy item; DK cargo stagger resists twice and keeps the element; ghosts skip the hazard search; POW damage credited to its hitter; barrel shot clears the player-tag wait. Goldens unchanged.
 - Landed (batch 108): hit shake (damage shuffle, N64 RDRAM matched), no-ammo item drop on hit, attacker credit and CPU appeal, shield-break effect incl. Yoshi, Yoshi egg damage once at half; goldens `f1-training-item-bumper-lit`, `f1-training-pokemon-a`, `-b` rebaselined, each N64-traced (RE-587).
 - Landed (batch 107): every weapon's ROM `can_rehit_item` rehits Damage items every 16 updates (group members too); clanked and absorbed shots keep no timer; a shot set off earlier in the frame skips a later fighter's body; item despawn sparkle (RE-545). Goldens unchanged.
 - Landed (batch 106): Yoshi Bomb landing stars from motion-script flag 0; weapon reflect records clear after 16 updates (`WEAPON_REHIT_TIME_DEFAULT`), every weapon counts down; Reflect Break traced on the N64 and matched; scene `cpufx-r`, goldens `f1-cpufx-reflect-break`, `f1-cpufx-reflect-fly` (RE-351, RE-586).
@@ -39,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 108 (hardware: RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 109 (hardware: RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

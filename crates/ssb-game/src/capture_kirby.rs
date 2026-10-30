@@ -105,6 +105,7 @@ pub fn is_star(status: crate::status::AnyStatus) -> bool {
 pub fn capture(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     // `ftParamStopVoiceRunProcDamage`.
     crate::fighter_sound::stop_voice(f);
+    crate::item_throw::drop_heavy_item(f);
     grab::drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);

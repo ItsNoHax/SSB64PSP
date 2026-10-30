@@ -214,6 +214,11 @@ pub fn search_hit_hazard(
     objects: &mut dyn StageObjects,
     others: &[AnyStatus],
 ) {
+    // `if (!(fp->is_ghost))` wraps the whole search (`ftmain.c:1685`): a
+    // ghost's waits hold and no obstacle's `proc_update` runs for it.
+    if f.dead.is_ghost {
+        return;
+    }
     if f.hitlag == 0 {
         f.hazard.twister_wait = f.hazard.twister_wait.saturating_sub(1);
         f.hazard.tarucann_wait = f.hazard.tarucann_wait.saturating_sub(1);
@@ -263,18 +268,27 @@ pub fn search_ground_hit(f: &mut Fighter, stage: &Stage) {
     if best_hit_status_all(f) != HitStatus::Normal {
         return;
     }
-    if let Some((attack, handicap)) = stage.check_hazards(f) {
-        update_damage_stat_ground(f, attack, attack.kind, handicap);
+    if let Some((attack, handicap, damage_port)) = stage.check_hazards(f) {
+        update_damage_stat_ground(f, attack, attack.kind, handicap, damage_port);
     }
     if let Some(attack) = damage_floor(f) {
-        update_damage_stat_ground(f, attack, attack.kind, GROUND_HANDICAP);
+        update_damage_stat_ground(f, attack, attack.kind, GROUND_HANDICAP, None);
     }
 }
 
-/// `ftMainUpdateDamageStatGround`.
-fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, handicap: u8) {
+/// `ftMainUpdateDamageStatGround`. `damage_port` is the POW Block's
+/// `ip->damage_port`, `None` for every other attack.
+fn update_damage_stat_ground(
+    f: &mut Fighter,
+    attack: GroundAttack,
+    kind: i32,
+    handicap: u8,
+    damage_port: Option<u8>,
+) {
     let damage = crate::attack::captured_damage(f, attack.damage);
-    if combat::check_get_update_damage(f, damage) {
+    let queued = f.hits.damage_queue;
+    let accepted = combat::check_get_update_damage(f, damage);
+    if accepted {
         let entry = HitLogEntry {
             stat: crate::spgame::live::AttackStat::default(),
             object: if kind == ENV_ACID {
@@ -290,13 +304,14 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
             attack_handicap: handicap,
             placement: 0,
             damage_joint: 0,
-            // Acid keeps `damage_player`; the other stage attacks set
-            // `GMCOMMON_PLAYERS_MAX`. The POW Block's `damage_port` is not
-            // ported.
-            attacker: if kind == ENV_ACID {
-                combat::DamageBy::Keep
-            } else {
-                combat::DamageBy::World
+            // Acid keeps `damage_player`; the POW Block credits its
+            // `damage_port` (`ftmain.c:2966-2972`; the port carries one
+            // player for `damage_port` and `damage_player_num`); the other
+            // stage attacks set `GMCOMMON_PLAYERS_MAX`.
+            attacker: match (kind, damage_port) {
+                (ENV_ACID, _) => combat::DamageBy::Keep,
+                (ENV_POWER_BLOCK, Some(p)) => combat::DamageBy::Player(p),
+                _ => combat::DamageBy::World,
             },
             // `ftMainProcessHitCollisionStatsMain` makes no effect for the
             // stage.
@@ -308,6 +323,13 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
         ENV_ACID => {
             f.hazard.acid_wait = ACID_WAIT;
             crate::sound::play_fgm(crate::sound::id::nSYAudioFGMFloorDamageFire);
+        }
+        // `ftParamUpdatePlayerBattleStats(ip->damage_port, fp->player,
+        // damage)` with the damage `ftMainCheckGetUpdateDamage` let through.
+        ENV_POWER_BLOCK => {
+            if accepted {
+                f.record_combo_damage(damage_port, f.hits.damage_queue - queued);
+            }
         }
         4..=9 => {
             f.hazard.damagefloor_wait = DAMAGEFLOOR_WAIT;
@@ -328,12 +350,7 @@ fn update_damage_stat_ground(f: &mut Fighter, attack: GroundAttack, kind: i32, h
 /// The common entry of both setters: drop a heavy item and the grab, set
 /// the status at `anim_speed`, play its first frame and stop.
 fn enter(f: &mut Fighter, status: Status, anim_speed: f32) {
-    if f.items
-        .held
-        .is_some_and(|i| i.weight == crate::item::ItemWeight::Heavy)
-    {
-        crate::item_throw::drop_item(f);
-    }
+    crate::item_throw::drop_heavy_item(f);
     if f.grab.catch.is_some() {
         crate::grab::release_on_hit(f);
     } else {
@@ -507,6 +524,9 @@ fn shoot_tarucann(f: &mut Fighter, t: HazardThrow) {
         crate::spgame::live::AttackStat::default(),
         crate::spgame::bonus::DamageObject::Other,
     );
+    // `fp->playertag_wait = 0` (`ftcommontarucann.c:114`): the tag the
+    // launch's `ftParamSetPlayerTagWait` scheduled stays hidden.
+    f.interface.tag_wait = 0;
     f.hazard.tarucann_wait = TARUCANN_PICKUP_WAIT;
 }
 
@@ -735,6 +755,23 @@ mod tests {
                 flags: crate::spgame::live::Flags(0)
             }]
         );
+    }
+
+    /// A tumble of 130 or more schedules the tag at 10
+    /// (`ftcommondamage.c:646`); the barrel then clears it to 0
+    /// (`ftcommontarucann.c:114`), the Tornado does not.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn the_barrel_shot_clears_the_player_tag_wait() {
+        let t = HazardThrow::from_words([0, 10, 0, 100, 0, 3000, 0]);
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.interface.tag_wait = 1;
+        shoot_twister(&mut f, t);
+        assert_eq!(f.interface.tag_wait, 10, "twister");
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.interface.tag_wait = 1;
+        shoot_tarucann(&mut f, t);
+        assert_eq!(f.interface.tag_wait, 0, "barrel");
     }
 
     /// The Tornado and the barrel run `ftCommonDamageInitDamageVars`, so

@@ -1125,10 +1125,11 @@ impl ItemAnims for NoItemAnims {}
 pub enum StageItemEvent {
     TargetBroken,
     /// `grInishiePowerBlockSetDamage`: the quake, sparing `hitter`
-    /// (`ip->damage_gobj`).
+    /// (`ip->damage_gobj`) and crediting `damage_port` (`ip->damage_port`).
     PowerBlockDamage {
         handicap: u8,
         hitter: Option<u8>,
+        damage_port: Option<u8>,
     },
     /// `grInishiePowerBlockSetWait`: the block is gone.
     PowerBlockGone,

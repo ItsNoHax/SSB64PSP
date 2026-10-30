@@ -341,8 +341,13 @@ impl Inishie {
         registry: &mut Registry,
         handicap: u8,
         hitter: Option<u8>,
+        damage_port: Option<u8>,
     ) {
-        registry.add_hazard(Hazard::PowerBlock { handicap, hitter });
+        registry.add_hazard(Hazard::PowerBlock {
+            handicap,
+            hitter,
+            damage_port,
+        });
         self.pblock_wait = 2;
         self.pblock_status = PowerBlockStatus::Damage;
     }

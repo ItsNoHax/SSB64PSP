@@ -388,11 +388,13 @@ pub enum Obstacle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hazard {
     Acid,
-    /// The POW Block item, with its `damage_handicap` and the fighter that
-    /// hit it (`damage_gobj`), whom the quake spares.
+    /// The POW Block item, with its `damage_handicap`, the fighter that
+    /// hit it (`damage_gobj`), whom the quake spares, and the player its
+    /// damage is credited to (`damage_port`, `ftmain.c:2619`, `:2972`).
     PowerBlock {
         handicap: u8,
         hitter: Option<u8>,
+        damage_port: Option<u8>,
     },
 }
 
@@ -687,8 +689,12 @@ impl Stage {
             }
             if let Controller::Inishie(c) = &mut self.controller {
                 match e {
-                    StageItemEvent::PowerBlockDamage { handicap, hitter } => {
-                        c.set_power_block_damage(&mut self.registry, handicap, hitter)
+                    StageItemEvent::PowerBlockDamage {
+                        handicap,
+                        hitter,
+                        damage_port,
+                    } => {
+                        c.set_power_block_damage(&mut self.registry, handicap, hitter, damage_port)
                     }
                     StageItemEvent::PowerBlockGone => c.power_block_gone(),
                     _ => {}
@@ -794,8 +800,9 @@ impl Stage {
         hit
     }
 
-    /// The hazard loop of `ftMainSearchGroundHit`.
-    pub fn check_hazards(&self, f: &Fighter) -> Option<(GroundAttack, u8)> {
+    /// The hazard loop of `ftMainSearchGroundHit`: the attack, its
+    /// handicap and, for the POW Block, the item's `damage_port`.
+    pub fn check_hazards(&self, f: &Fighter) -> Option<(GroundAttack, u8, Option<u8>)> {
         let mut hit = None;
         for h in self.registry.hazards() {
             let result = match (h, &self.controller) {
@@ -803,13 +810,19 @@ impl Stage {
                     .check_acid(f)
                     .then_some(self.attack)
                     .flatten()
-                    .map(|a| (a, crate::hazard::GROUND_HANDICAP)),
+                    .map(|a| (a, crate::hazard::GROUND_HANDICAP, None)),
                 // `grInishiePowerBlockCheckGetDamageKind`.
-                (Hazard::PowerBlock { handicap, hitter }, _) => (f.is_grounded()
-                    && hitter != Some(f.port))
-                .then_some(self.attack)
-                .flatten()
-                .map(|a| (a, handicap)),
+                (
+                    Hazard::PowerBlock {
+                        handicap,
+                        hitter,
+                        damage_port,
+                    },
+                    _,
+                ) => (f.is_grounded() && hitter != Some(f.port))
+                    .then_some(self.attack)
+                    .flatten()
+                    .map(|a| (a, handicap, damage_port)),
                 _ => None,
             };
             if result.is_some() {

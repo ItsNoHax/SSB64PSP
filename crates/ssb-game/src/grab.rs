@@ -1125,6 +1125,7 @@ pub fn runs_in_capture_pass(f: &Fighter) -> bool {
 fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     // `ftParamStopVoiceRunProcDamage`.
     crate::fighter_sound::stop_voice(f);
+    crate::item_throw::drop_heavy_item(f);
     drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
@@ -1171,6 +1172,7 @@ pub(crate) fn captain_offset(kind: FighterKind) -> Vec3 {
 fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     // `ftParamStopVoiceRunProcDamage`.
     crate::fighter_sound::stop_voice(f);
+    crate::item_throw::drop_heavy_item(f);
     drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
@@ -1469,6 +1471,8 @@ fn release_with(
         return 0;
     };
     let catcher = f.grab.capture;
+    // `knockback_resist`, read first (`ftcommonthrown2.c:127`, `:212`).
+    let resist = knockback_resist(f);
     // `if (this_fp->hitstatus != nGMHitStatusNormal)`: a Yoshi's victim
     // (`ftcommonthrown2.c:133`, `:216`).
     if f.hitstatus != crate::combat::HitStatus::Normal {
@@ -1530,13 +1534,16 @@ fn release_with(
         holder.handicap,
         f.handicap,
     );
+    let knockback = resisted(knockback, resist);
     let is_throw = lr.is_some();
     let lr = lr.unwrap_or(if f.pos.x < holder.pos.x { 1.0 } else { -1.0 });
     let mut damage = staled.damage;
     if shield_catch {
         damage = (damage as f32 * 0.5 + 0.999) as i32;
     }
-    if f.invincible_frames > 0 {
+    // `ftParamGetBestHitStatusAll(fighter_gobj) != nGMHitStatusNormal`
+    // (`ftcommonthrown2.c:158`, `:240`), read after the reset above.
+    if crate::hazard::best_hit_status_all(f) != crate::combat::HitStatus::Normal {
         damage = 0;
     }
     f.thrown.pending = thrown;
@@ -1748,14 +1755,27 @@ fn cargo_common_interrupt(f: &mut Fighter) -> bool {
 /// resisted, so Donkey Kong staggers and keeps his hold. The forced status
 /// makes `ftCommonDamageInitDamageVars` treat it as a tumble-level hit, so he
 /// is always launched airborne.
-pub fn set_donkey_throwf_damage(f: &mut Fighter, knockback: f32, angle: i32, lr: f32) {
-    attack::init_damage_vars(
+///
+/// The hit's knockback, already resisted once by `ftMainProcUpdateInteract`,
+/// loses `knockback_resist` again (floored at 0); the hit's damage, element,
+/// direction and `damage_player_num` pass through, so an element hit plays
+/// its colour (`ftdonkeythrowfdamage.c:32-42`). The percent was already
+/// added (`ftmain.c:3878`).
+pub fn set_donkey_throwf_damage(f: &mut Fighter) {
+    let resist = knockback_resist(f);
+    f.hits.damage_knockback -= resist;
+    if f.hits.damage_knockback <= 0.0 {
+        f.hits.damage_knockback = 0.0;
+    }
+    attack::init_damage_vars_full(
         f,
         Some(AnyStatus::Donkey(DonkeyStatus::ThrowFDamage)),
-        0,
-        knockback,
-        angle,
-        lr,
+        f.hits.damage_queue,
+        f.hits.damage_knockback,
+        f.hits.damage_angle,
+        f.hits.damage_lr,
+        f.hits.damage_index,
+        f.hits.damage_element,
         true,
     );
 }
@@ -1835,6 +1855,22 @@ pub fn send_catcher_hitlag(f: &mut Fighter, damage_lag: i32) {
     }
 }
 
+/// The larger of `knockback_resist_status` and `knockback_resist_passive`,
+/// as every throw release reads it (`ftcommonthrown2.c:127`, `:212`, `:269`).
+fn knockback_resist(f: &Fighter) -> f32 {
+    f.knockback_resist.max(f.knockback_resist_passive)
+}
+
+/// `knockback_final = knockback_calc - knockback_resist`, `0` when
+/// `knockback_calc <= knockback_resist`.
+fn resisted(knockback: f32, resist: f32) -> f32 {
+    if knockback <= resist {
+        0.0
+    } else {
+        knockback - resist
+    }
+}
+
 /// `dFTCommonThrownNoDamageKnockback`, an `FTThrowHitDesc`: `{ status_id,
 /// damage, angle, kbs, kbw, kbb, element }` with `-1` for no forced status.
 const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = {
@@ -1846,6 +1882,7 @@ const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = {
 /// The attack handicap is the source's literal `9`, and the fighter keeps
 /// its facing (`lr = fp->lr`).
 fn set_no_damage_release(f: &mut Fighter) {
+    let resist = knockback_resist(f);
     f.pos.z = 0.0;
     let d = NO_DAMAGE_KNOCKBACK;
     let knockback = attack::knockback(
@@ -1859,6 +1896,7 @@ fn set_no_damage_release(f: &mut Fighter) {
         crate::stale::HANDICAP_DEFAULT,
         f.handicap,
     );
+    let knockback = resisted(knockback, resist);
     let lr = f.facing.sign();
     // `is_force_damage_sfx = TRUE`; `damage_player_num` 0
     // (ftcommonthrown2.c:285).
@@ -2808,6 +2846,39 @@ mod tests {
     use crate::fighter::FighterKind;
     use crate::team::TeamRules;
 
+    /// `ftCommonCapture{Pulled,Kirby,Yoshi,Captain}ProcCapture` call
+    /// `ftSetupDropItem` for a heavy held item only (`ftcommoncapturepulled.c:114`,
+    /// `...kirby.c:91`, `...yoshi.c:90`, `...captain.c:60`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn every_capture_drops_a_heavy_item_and_keeps_a_light_one() {
+        type Setter = fn(&mut Fighter, u8, Holder);
+        let setters: [(Setter, FighterKind, &str); 4] = [
+            (capture_pulled, FighterKind::Mario, "pulled"),
+            (crate::capture_kirby::capture, FighterKind::Kirby, "kirby"),
+            (crate::capture_yoshi::capture, FighterKind::Yoshi, "yoshi"),
+            (capture_captain, FighterKind::Captain, "captain"),
+        ];
+        for (set, catcher_kind, name) in setters {
+            for weight in [
+                crate::item::ItemWeight::Heavy,
+                crate::item::ItemWeight::Light,
+            ] {
+                let catcher = Fighter::new(catcher_kind, 0, 4);
+                let mut victim = Fighter::new(FighterKind::Mario, 1, 4);
+                victim.items.held = Some(crate::item::HeldItem {
+                    slot: 0,
+                    kind: crate::item::ItemKind::Target,
+                    ty: crate::item::ItemType::Throw,
+                    weight,
+                });
+                set(&mut victim, catcher.port, holder_of(&catcher));
+                let heavy = weight == crate::item::ItemWeight::Heavy;
+                assert_eq!(victim.items.held.is_none(), heavy, "{name} {weight:?}");
+            }
+        }
+    }
+
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn captain_capture_freezes_grounded_victim_and_pulls_airborne_victim() {
@@ -3217,6 +3288,97 @@ mod tests {
             if dive {
                 let start = crate::colanim::ColAnimId::DAMAGE_FIRE_START;
                 assert!((start..=start + 3).contains(&held.colanim.id.0));
+            }
+        }
+    }
+
+    /// A released fighter in `CapturePulled` by a Captain, for the release
+    /// tests below.
+    fn pulled_by_captain() -> (Fighter, Fighter) {
+        let mut catcher = grounded(FighterKind::Captain, 0, 0.0);
+        let mut held = grounded(FighterKind::Mario, 1, 150.0);
+        held.damage = 120;
+        catcher.grab.catch = Some(1);
+        capture_pulled(&mut held, 0, holder_of(&catcher));
+        (catcher, held)
+    }
+
+    fn release_event(catcher: &Fighter, throw: bool) -> GrabEvent {
+        let desc = crate::captain::DIVE_THROW[usize::from(!throw)];
+        let staled = StaledThrow::of(catcher, desc.damage);
+        if throw {
+            GrabEvent::Release {
+                lr: 1.0,
+                desc,
+                shield_catch: false,
+                staled,
+                script_id: None,
+            }
+        } else {
+            GrabEvent::DamageRelease {
+                desc,
+                shield_catch: false,
+                staled,
+            }
+        }
+    }
+
+    /// `ftCommonThrownReleaseThrownUpdateStats`,
+    /// `ftCommonThrownSetStatusDamageRelease` and
+    /// `...NoDamageRelease` subtract `max(knockback_resist_status,
+    /// knockback_resist_passive)` from the throw's knockback, floored at 0
+    /// (`ftcommonthrown2.c:142-147`, `:227-232`, `:276-281`).
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn throw_releases_subtract_the_knockback_resist() {
+        for throw in [false, true] {
+            let speed = |resist: f32| {
+                let (mut catcher, mut held) = pulled_by_captain();
+                held.knockback_resist_passive = resist;
+                let event = release_event(&catcher, throw);
+                deliver(event, &mut catcher, &mut held);
+                held.physics.vel_knockback.length()
+            };
+            let free = speed(0.0);
+            assert!(free > 20.0, "throw {throw}: {free}");
+            let resisted = speed(20.0);
+            assert!(
+                (free - resisted - 20.0).abs() < 0.01,
+                "throw {throw}: {free} {resisted}"
+            );
+            assert_eq!(speed(10_000.0), 0.0, "throw {throw}");
+        }
+        // The catcher's no-damage release, hit out of its own grab.
+        let speed = |resist: f32| {
+            let (mut catcher, mut held) = pulled_by_captain();
+            catcher.knockback_resist_passive = resist;
+            deliver(GrabEvent::CaptureHitRelease, &mut held, &mut catcher);
+            catcher.physics.vel_knockback.length()
+        };
+        assert!(speed(0.0) > 0.0);
+        assert_eq!(speed(10_000.0), 0.0);
+    }
+
+    /// Both releases zero the damage when `ftParamGetBestHitStatusAll` is
+    /// not `Normal` (`ftcommonthrown2.c:158`, `:240`): star, intangible and
+    /// invincible timers all count.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn throw_releases_deal_no_damage_to_an_untouchable_fighter() {
+        for throw in [false, true] {
+            for set in [
+                (|f: &mut Fighter| f.star_invincible_frames = 60) as fn(&mut Fighter),
+                |f: &mut Fighter| f.intangible_frames = 60,
+                |f: &mut Fighter| f.invincible_frames = 60,
+                |_: &mut Fighter| {},
+            ] {
+                let (mut catcher, mut held) = pulled_by_captain();
+                set(&mut held);
+                let untouchable =
+                    crate::hazard::best_hit_status_all(&held) != crate::combat::HitStatus::Normal;
+                let event = release_event(&catcher, throw);
+                deliver(event, &mut catcher, &mut held);
+                assert_eq!(held.damage == 120, untouchable, "throw {throw}");
             }
         }
     }

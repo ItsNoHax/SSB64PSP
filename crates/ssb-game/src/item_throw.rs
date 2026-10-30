@@ -633,6 +633,19 @@ pub fn check_air(f: &mut Fighter) -> bool {
 }
 
 /// `ftSetupDropItem`: release with zero velocity and ordinary damage.
+/// The capture setters' head (`ftcommoncapturepulled.c:114`,
+/// `...kirby.c:91`, `...yoshi.c:90`, `...captain.c:60`, `ftcommontwister.c`,
+/// `ftcommontarucann.c`): `ftSetupDropItem` only for a heavy held item; a
+/// light one stays in hand.
+pub fn drop_heavy_item(f: &mut Fighter) {
+    if f.items
+        .held
+        .is_some_and(|i| i.weight == crate::item::ItemWeight::Heavy)
+    {
+        drop_item(f);
+    }
+}
+
 pub fn drop_item(f: &mut Fighter) {
     if let Some(held) = f.items.held {
         crate::item::mark_hold_query(f, held.weight);

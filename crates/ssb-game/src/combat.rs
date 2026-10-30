@@ -1616,9 +1616,9 @@ pub fn process_hit_collision(this: &mut Fighter) {
     this.hits.damage_knockback = best;
     crate::spgame::live::hit(this, entry.attacker, entry.stat, entry.object);
     // `damage_player_num`: the attacker's player (the thrower's for a thrown
-    // fighter), 0 for the fighter's own weapon or item and every stage
-    // attack, Acid included. The POW Block's `ip->damage_player_num` is not
-    // carried (see `hazard::update_damage_stat_ground`).
+    // fighter, the POW Block's `ip->damage_player_num`), 0 for the
+    // fighter's own weapon or item and every other stage attack, Acid
+    // included.
     this.damage_player_num = match entry.attacker {
         DamageBy::Player(p) => Some(p),
         DamageBy::World | DamageBy::Keep => None,
@@ -1784,8 +1784,11 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
             f.hits.damage_knockback = 0.0;
         }
         // `ftParamUpdateDamage` (ftparam.c:1527). Its other callers (thrown,
-        // captured, Twister, Kirby inhale) run on fighters whose capture
-        // already dropped the item (`ftSetupDropItem` in each capture setter).
+        // shouldered, Twister, Kirby inhale) keep a light item through the
+        // capture (only a heavy one drops, `ftSetupDropItem` in each capture
+        // setter) but run outside the hit pass, where `damage_knockback` is
+        // 0, so their drop roll never runs. A damage release of a fighter
+        // hit in the same frame is the exception and is not ported.
         f.add_damage(f.hits.damage_queue);
         if f.items.held.is_some()
             && !f.items.held.is_some_and(|i| {
@@ -1999,13 +2002,8 @@ fn update_catch_resist(f: &mut Fighter) {
     if only_flashes(f) {
         set_damage_colanim(f);
     } else {
-        let (kb, angle, lr) = (
-            f.hits.damage_knockback,
-            f.hits.damage_angle,
-            f.hits.damage_lr,
-        );
         crate::fighter_sound::stop_voice(f);
-        crate::grab::set_donkey_throwf_damage(f, kb, angle, lr);
+        crate::grab::set_donkey_throwf_damage(f);
     }
 }
 
@@ -2591,5 +2589,34 @@ mod update_damage_tests {
             assert_eq!(victim.shuffle.tics, 0);
             assert_eq!(victim.shuffle.offset(), None);
         }
+    }
+
+    /// `ftDonkeyThrowFDamageSetStatus` (`ftdonkeythrowfdamage.c:32-42`):
+    /// the cargo stagger resists the knockback a second time and keeps the
+    /// hit's damage and element, so a fire hit shows its colour.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_cargo_stagger_resists_twice_and_keeps_the_element() {
+        let mut f = Fighter::new(FighterKind::GiantDonkey, 0, 3);
+        f.become_airborne();
+        f.hits.damage_queue = 12;
+        // Already resisted once by the interact pass.
+        f.hits.damage_knockback = 100.0;
+        f.hits.damage_angle = 45;
+        f.hits.damage_lr = 1.0;
+        f.hits.damage_element = Element::Fire;
+        update_catch_resist(&mut f);
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Donkey(crate::status::DonkeyStatus::ThrowFDamage)
+        );
+        let speed = f.physics.vel_knockback.length();
+        assert!((speed - (100.0 - 48.0)).abs() < 0.01, "{speed}");
+        let start = crate::colanim::ColAnimId::DAMAGE_FIRE_START;
+        assert!(
+            (start..=start + 3).contains(&f.colanim.id.0),
+            "{:?}",
+            f.colanim.id
+        );
     }
 }

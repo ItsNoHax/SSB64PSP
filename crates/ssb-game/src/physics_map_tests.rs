@@ -630,7 +630,10 @@ fn every_damage_entry_sets_the_lag_update() {
     // Donkey Kong hit while carrying.
     let mut f = Fighter::new(FighterKind::Donkey, 0, 3);
     f.become_airborne();
-    crate::grab::set_donkey_throwf_damage(&mut f, 50.0, 45, 1.0);
+    f.hits.damage_knockback = 50.0;
+    f.hits.damage_angle = 45;
+    f.hits.damage_lr = 1.0;
+    crate::grab::set_donkey_throwf_damage(&mut f);
     assert!(f.is_smash_di, "set_donkey_throwf_damage");
 }
 

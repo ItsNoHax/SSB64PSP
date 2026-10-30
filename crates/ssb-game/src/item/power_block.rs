@@ -99,6 +99,7 @@ pub(super) fn hit_proc(
             events(StageItemEvent::PowerBlockDamage {
                 handicap: item.damage_handicap,
                 hitter: item.damage_by,
+                damage_port: item.damage_port,
             });
             Some(true)
         }

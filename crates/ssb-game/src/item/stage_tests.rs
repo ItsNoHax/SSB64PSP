@@ -222,6 +222,7 @@ fn power_block_settles_squashes_and_leaves() {
         [StageItemEvent::PowerBlockDamage {
             handicap: 9,
             hitter: Some(2),
+            damage_port: Some(2),
         }]
     );
     // `efManagerQuakeMakeEffect(3)` in the damage proc.

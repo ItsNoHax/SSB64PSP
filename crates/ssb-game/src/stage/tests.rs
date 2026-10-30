@@ -632,6 +632,27 @@ fn gate_redraw_steps_past_the_previous_monster() {
     }
 }
 
+/// `ftMainSearchHitHazard` skips a ghost whole (`ftmain.c:1685`): the
+/// barrel does not take it, does not fill, and its waits hold.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_ghost_skips_the_hazard_search() {
+    let objects = [];
+    let mut i = init(StageKind::Jungle, &objects);
+    i.hazard_throw = Some(hazard::HazardThrow::from_words([0, 0, 0, 100, 50, 60, 0]));
+    let mut clocks = Clocks::with_len(3.0);
+    clocks.barrel = Vec3::new(-2000.0, -800.0, 0.0);
+    let mut stage = Stage::new(&i, &mut [], &mut clocks, &mut NoItems);
+    let mut f = airborne(Vec3::new(-2100.0, -700.0, 0.0));
+    f.dead.is_ghost = true;
+    f.hazard.twister_wait = 5;
+    f.hazard.tarucann_wait = 5;
+    hazard::search_hit_hazard(&mut f, &mut stage, &mut clocks, &[]);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::Fall));
+    assert!(!clocks.played.contains(&StageAnim::TaruCannFill));
+    assert_eq!((f.hazard.twister_wait, f.hazard.tarucann_wait), (5, 5));
+}
+
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn barrel_captures_and_fires_on_a_button_press() {
@@ -698,6 +719,7 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
         [crate::item::StageItemEvent::PowerBlockDamage {
             handicap: 9,
             hitter: Some(1),
+            damage_port: Some(1),
         }],
         &[],
         &mut NoObjects,
@@ -707,8 +729,8 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
     let flying = airborne(Vec3::ZERO);
     assert_eq!(stage.check_hazards(&hitter), None);
     assert_eq!(stage.check_hazards(&flying), None);
-    let (attack, handicap) = stage.check_hazards(&other).expect("the quake");
-    assert_eq!((attack.damage, handicap), (20, 9));
+    let (attack, handicap, port) = stage.check_hazards(&other).expect("the quake");
+    assert_eq!((attack.damage, handicap, port), (20, 9, Some(1)));
     let Controller::Inishie(s) = &stage.controller else {
         panic!()
     };
@@ -726,6 +748,37 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
     assert_eq!(s.pblock_status, inishie::PowerBlockStatus::Make);
     assert_eq!(s.pblock_wait, 1800);
     assert_eq!(s.pblock, None);
+}
+
+/// `ftMainUpdateDamageStatGround` credits the POW Block's `damage_port`
+/// (`ftParamUpdatePlayerBattleStats`, `ftmain.c:2619`) and the hit log
+/// gives it the KO credit and `damage_player_num` (`ftmain.c:2966-2972`);
+/// an unowned block credits nobody.
+#[test]
+fn power_block_damage_is_credited_to_its_hitter() {
+    for damage_port in [Some(1), None] {
+        let objects = [];
+        let mut i = init(StageKind::Inishie, &objects);
+        i.hazard_attack = Some(GroundAttack::from_words([1, 20, 90, 130, 0, 30, 0]));
+        let mut stage = Stage::new(&i, &mut [], &mut NoObjects, &mut NoItems);
+        stage.apply_item_events(
+            [crate::item::StageItemEvent::PowerBlockDamage {
+                handicap: 9,
+                hitter: Some(1),
+                damage_port,
+            }],
+            &[],
+            &mut NoObjects,
+        );
+        let mut f = standing(FighterKind::Fox, 0, Vec3::ZERO, 0, 0);
+        hazard::search_ground_hit(&mut f, &stage);
+        assert_eq!(f.hits.damage_queue, 20);
+        let credited = if damage_port.is_some() { 20 } else { 0 };
+        assert_eq!(f.combo_damage_foe, credited, "{damage_port:?}");
+        crate::combat::process_hit_collision(&mut f);
+        assert_eq!(f.damage_player, damage_port);
+        assert_eq!(f.damage_player_num, damage_port);
+    }
 }
 
 #[test]
