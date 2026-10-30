@@ -132,6 +132,13 @@ const PROCESSES: &[Process] = &[
         decomp: "wpmanager.c:305 wpProcessProcSearchHitWeapon",
     },
     Process {
+        phase: |_| Phase::GroundEffect,
+        per_fighter: false,
+        priority: 1,
+        link: 7,
+        decomp: "efground.c:1586 EFGroundActorProcUpdate",
+    },
+    Process {
         phase: |_| Phase::Params,
         per_fighter: false,
         priority: 0,

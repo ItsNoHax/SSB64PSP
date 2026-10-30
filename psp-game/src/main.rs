@@ -4179,6 +4179,8 @@ fn enter_training(
             .filter(|point| point.kind == ssb_game::stage::mapobj::ITEM)
             .map(|point| ssb_engine::math::Vec3::new(point.x as f32, point.y as f32, 0.0)),
     );
+    // `efGroundMakeAppearActor` next, outside Training (`vs` is `None`).
+    world.stage_ctl.ground_effect = ssb_game::ground_effect::GroundActor::make(gkind, vs.is_none());
     // `ftManagerMakeFighter` for each player in turn, each built in its
     // arena slot.
     let lead = roster[0].unwrap_or(training_roster(Default::default())[0].unwrap());

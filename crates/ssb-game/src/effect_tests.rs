@@ -935,3 +935,18 @@ fn a_broken_reflector_makes_the_reflect_break_at_its_special_coll() {
         .collect();
     assert_eq!(made, [(want, -1)], "the weapon came from Fox's left");
 }
+
+/// An unowned item's or a ground weapon's spark (`GMCOMMON_PLAYERS_MAX`)
+/// reads the byte after `dEFManagerDamageNormalLightIDs`, not player 1's
+/// script (itmain.c:200).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn an_unowned_light_spark_takes_the_fifth_script() {
+    assert!(!NORMAL_LIGHT_IDS[..4].contains(&NORMAL_LIGHT_IDS[4]));
+    let bank = bank(20);
+    let (mut p, mut e) = runtime();
+    rng::set_seed(1);
+    let pc = e.damage_normal_light(&mut p, &bank, Vec3::ZERO, 4, 20, false);
+    assert_ne!(pc, NIL);
+    assert_eq!(NORMAL_HEAVY_ENV[4], [0xFF; 3]);
+}

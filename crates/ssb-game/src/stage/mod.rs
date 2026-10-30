@@ -502,6 +502,9 @@ pub struct Stage {
     pub throw: Option<HazardThrow>,
     /// The pipes' map points, which [`Stage::tick`] hands every fighter.
     pub dokan: crate::dokan::Points,
+    /// `efGroundMakeAppearActor`'s actor ([`crate::ground_effect`]), made
+    /// by the host after the item appearance actor.
+    pub ground_effect: Option<crate::ground_effect::GroundActor>,
 }
 
 impl Stage {
@@ -514,6 +517,7 @@ impl Stage {
             registry: Registry::default(),
             attack: None,
             throw: None,
+            ground_effect: None,
             dokan: crate::dokan::Points::default(),
         }
     }
@@ -562,6 +566,7 @@ impl Stage {
             registry,
             attack: init.hazard_attack,
             throw: init.hazard_throw,
+            ground_effect: None,
             dokan: crate::dokan::Points {
                 left: point(crate::dokan::MAPOBJ_DOKAN_L),
                 right: point(crate::dokan::MAPOBJ_DOKAN_R),

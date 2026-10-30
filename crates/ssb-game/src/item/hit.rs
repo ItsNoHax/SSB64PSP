@@ -406,7 +406,7 @@ fn update_damage_stat_item(
         emit.push(damage_spark(
             attack.attack.element,
             pos,
-            attack.player.unwrap_or(0),
+            attack.player.unwrap_or(4),
             damage,
             None,
         ));
@@ -778,7 +778,9 @@ fn update_damage_stat(
                 // `ip->is_hitlag_victim` (`attr->is_give_hitlag`).
                 effect: item.attr.is_give_hitlag.then_some(combat::LogEffect {
                     pos: impact,
-                    player: item.player.unwrap_or(0),
+                    // `ip->player`: `ITEM_PORT_DEFAULT` (`GMCOMMON_PLAYERS_MAX`)
+                    // for an unowned item (itmain.c:200).
+                    player: item.player.unwrap_or(4),
                     from_fighter: false,
                     fgm_level: 0,
                     slash_rotate: 0.0,

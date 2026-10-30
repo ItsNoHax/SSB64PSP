@@ -75,8 +75,10 @@ const KIRBY_INHALE_WIND_SCRIPT: u16 = 0xC;
 const KIRBY_INHALE_WIND_OFF_X: f32 = 800.0;
 const KIRBY_INHALE_WIND_OFF_Y: f32 = 230.0;
 
-/// `dEFManagerDamageNormalLightIDs`, by the attacker's player.
-pub const NORMAL_LIGHT_IDS: [u16; 4] = widen(crate::d_arrays::EF_MANAGER_DAMAGE_NORMAL_LIGHT_IDS);
+/// `dEFManagerDamageNormalLightIDs`, by the attacker's player; [4]
+/// (`GMCOMMON_PLAYERS_MAX`: an unowned item, a ground weapon) is the byte
+/// after the array, as the original reads it.
+pub const NORMAL_LIGHT_IDS: [u16; 5] = widen(crate::d_arrays::EF_MANAGER_DAMAGE_NORMAL_LIGHT_IDS);
 /// `efManagerDamageNormalHeavyMakeEffect`'s script.
 pub const NORMAL_HEAVY_ID: u16 = 0x64;
 /// `efManagerDamageFireMakeEffect`.
@@ -95,8 +97,8 @@ pub const DEAD_EXPLODE_IDS: [u16; 8] = widen(crate::d_arrays::EF_MANAGER_DEAD_EX
 pub const SPARKLE_WHITE_DEAD_ID: u16 = 0x5C;
 
 /// `dEFManagerDamageNormalHeavyPrimColor*` (all white) and
-/// `...EnvColor*`, by player.
-pub const NORMAL_HEAVY_ENV: [[u8; 3]; 4] = rgb(
+/// `...EnvColor*`, by player; [4] is `GMCOMMON_PLAYERS_MAX`'s white.
+pub const NORMAL_HEAVY_ENV: [[u8; 3]; 5] = rgb(
     crate::d_arrays::EF_MANAGER_DAMAGE_NORMAL_HEAVY_ENV_COLOR_R,
     crate::d_arrays::EF_MANAGER_DAMAGE_NORMAL_HEAVY_ENV_COLOR_G,
     crate::d_arrays::EF_MANAGER_DAMAGE_NORMAL_HEAVY_ENV_COLOR_B,
@@ -301,6 +303,11 @@ impl Effects {
         self.live.iter().filter(|&&l| l).count()
     }
 
+    /// Whether `efManagerGetEffectNoForce` would return a struct now.
+    pub fn no_force_available(&self) -> bool {
+        self.free_num >= NO_FORCE_RESERVE && self.free != NIL
+    }
+
     /// `efManagerGetNextStructAlloc(FALSE)`.
     fn get_no_force(&mut self) -> Option<u8> {
         if self.free_num < NO_FORCE_RESERVE {
@@ -484,7 +491,7 @@ impl Effects {
         size: i32,
         is_static: bool,
     ) -> u8 {
-        let script = NORMAL_LIGHT_IDS[usize::from(player.min(3))];
+        let script = NORMAL_LIGHT_IDS[usize::from(player.min(4))];
         let Some((pc, xf, ep)) = self.start(
             p,
             banks,
@@ -516,7 +523,7 @@ impl Effects {
         player: u8,
         size: i32,
     ) -> u8 {
-        let player = player.min(3);
+        let player = player.min(4);
         let kind = Kind::NormalHeavy { player, size };
         let Some((pc, xf, _)) = self.start(
             p,
@@ -1016,6 +1023,12 @@ pub trait HitEffectSink {
     fn twister_made(&mut self) -> bool {
         true
     }
+    /// Whether `efGroundMakeEffect` makes the stage's ambient effect
+    /// ([`crate::ground_effect`]): a free struct for
+    /// `efManagerGetEffectNoForce`. Without a runtime it is made.
+    fn ground_effect_made(&mut self) -> bool {
+        true
+    }
 }
 
 /// Drops every effect (host tests, or a scene without particles).
@@ -1073,6 +1086,10 @@ impl HitEffectSink for EffectRuntime<'_> {
 
     fn twister_made(&mut self) -> bool {
         self.effects.twister_xf != NIL
+    }
+
+    fn ground_effect_made(&mut self) -> bool {
+        self.effects.no_force_available()
     }
 
     fn pk_fire_flame(&mut self, pos: Vec3) -> u8 {

@@ -245,6 +245,8 @@ pub enum Phase {
     /// P1, Weapon: `wpProcessProcSearchHitWeapon`'s reactions and
     /// set-offs; its search runs ahead of the fighters' (RE-416).
     WeaponHits,
+    /// P1, Effect (link 7): `EFGroundActorProcUpdate`.
+    GroundEffect,
     /// P0, Fighter: `ftMainProcParams` (after the P1 effects).
     Params,
     /// P0, Weapon: the weapons' hit collisions' effects.
@@ -843,6 +845,11 @@ where
         world.weapons.sync_hit_owner(f.fighter_mut());
     }
     world.weapons.flush_clash_effects(world.effects);
+    // `EFGroundActorProcUpdate` (priority 1, link 7: after the weapons').
+    hooks.phase(Phase::GroundEffect);
+    if let Some(actor) = &mut world.stage.ground_effect {
+        actor.tick(world.effects);
+    }
     hooks.phase(Phase::Params);
     crate::combat::end_finish(&mut fighters_mut(seats), world.effects, &mut |_| {});
     for f in seats.iter_mut().flatten() {

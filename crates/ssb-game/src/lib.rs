@@ -82,6 +82,7 @@ pub mod fighter_sound;
 pub mod fteffect;
 pub mod grab;
 pub mod ground;
+pub mod ground_effect;
 pub mod hazard;
 pub mod hud;
 pub mod hurtbox;

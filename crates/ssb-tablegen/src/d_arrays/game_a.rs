@@ -178,13 +178,17 @@ pub const LIST: &[DArray] = &[
         &[4],
     ),
     // effect.
+    // Five bytes: `efManagerDamageNormalLightMakeEffect` indexes by
+    // `hitlog->attacker_player`, which is `GMCOMMON_PLAYERS_MAX` (4) for an
+    // unowned item or a ground weapon; [4] is the next byte, the `flags` of
+    // `dEFManagerDamageSlashEffectDesc` (0x8012DF24).
     DArray::new(
         "EF_MANAGER_DAMAGE_NORMAL_LIGHT_IDS",
         "dEFManagerDamageNormalLightIDs",
         OVL2,
         0x8012_DF20,
         Elem::U8,
-        &[4],
+        &[5],
     ),
     DArray::new(
         "EF_MANAGER_DEAD_EXPLODE_GEN_ID",
@@ -268,6 +272,68 @@ pub const LIST: &[DArray] = &[
         Elem::U8,
         &[6, 4],
     ),
+    // `ef/efground.c`: `dEFGroundDatas` (`EFGroundData`, 16 bytes: `u8
+    // params_num`, then `effect_params`), by `gkind`. Nine rows:
+    // `efGroundMakeAppearActor` indexes up to `nGRKindBattleEnd` (8) and
+    // the table has eight, so Mushroom Kingdom's row is the first 16 bytes
+    // of `dEFGroundCastleParams`, which follows it.
+    DArray::new(
+        "EF_GROUND_DATAS_PARAMS_NUM",
+        "dEFGroundDatas.params_num",
+        OVL2,
+        0x8012_F840,
+        Elem::U8,
+        &[9],
+    )
+    .stride(16),
+    DArray::new(
+        "EF_GROUND_DATAS_EFFECT_PARAMS",
+        "dEFGroundDatas.effect_params",
+        OVL2,
+        0x8012_F844,
+        Elem::X32,
+        &[9],
+    )
+    .stride(16),
+    // The seven stages' `EFGroundParam` arrays (12 bytes: `u16 effect_id`,
+    // `u16 make_queue`, `s32 lr`, `u8 effect_weight`), contiguous from
+    // `dEFGroundCastleParams` to the end of `dEFGroundYamabukiParams`.
+    DArray::new(
+        "EF_GROUND_PARAMS_EFFECT_ID",
+        "dEFGroundCastleParams.effect_id",
+        OVL2,
+        0x8012_F8C0,
+        Elem::U16,
+        &[33],
+    )
+    .stride(12),
+    DArray::new(
+        "EF_GROUND_PARAMS_MAKE_QUEUE",
+        "dEFGroundCastleParams.make_queue",
+        OVL2,
+        0x8012_F8C2,
+        Elem::U16,
+        &[33],
+    )
+    .stride(12),
+    DArray::new(
+        "EF_GROUND_PARAMS_LR",
+        "dEFGroundCastleParams.lr",
+        OVL2,
+        0x8012_F8C4,
+        Elem::I32,
+        &[33],
+    )
+    .stride(12),
+    DArray::new(
+        "EF_GROUND_PARAMS_EFFECT_WEIGHT",
+        "dEFGroundCastleParams.effect_weight",
+        OVL2,
+        0x8012_F8C8,
+        Elem::U8,
+        &[33],
+    )
+    .stride(12),
     // `gr/grdisplay.c`: `GRDisplayDesc[4]` (16 bytes: two procs, `u8 dl_link`
     // in the third word's top byte, `proc_update`).
     DArray::new(
