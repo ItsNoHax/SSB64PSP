@@ -12,24 +12,24 @@
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy, ms0) | opening 1-39 8.99 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
 | PSP-2000 `vs4@2400` | 17.12 ms busy (Zebes 11.29) | RE-585 |
-| PSP-2000 1P intro | 14.96 ms (timer build); 1P battle 15.89 ms; Comets 18.07; Fall 19.78; `vs4@1340` electric reports 6-8 19.70, 9 20.35 (windows unmapped since 6c692905) | RE-585 |
+| PSP-2000 1P intro | 14.96 ms (timer build); 1P battle 15.89 ms; Comets 18.13; Fall 19.84; `vs4@2170` electric no-hit r18 18.56, shock r12 20.94 | RE-585 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 122): electric windows re-mapped to `vs4@2170` (r18 no-hit, r12 shock); Master Hand cost is `BossEffects::draw` per-mesh fixed cost, not skinning; no code change (RE-585).
 - Landed (batch 121): link order re-searched (s8b) after batches 100-120 moved 24-443 of 462 ordered functions; HEAD order cost +0.9 to +5.0 ms busy; `.rodata` line 0x00 kept (RE-585).
 - Landed (batch 120): fighter particle bank IDs per battle scene (`ftManagerSetupFilesPlayablesAll`); a -1 bank makes nothing (1P Kirby Team Yoshi-copy egg explode); goldens unchanged (RE-475).
 - Landed (batch 119): Kirby copy residency audited, no gap (copy specials in the swallowed fighter's closure or KirbySpecial1); VS stage select N64-equal on all 10 slots; 11 new goldens (RE-475).
 - Landed (batch 118): AObj track order closed: no ROM node keys an interp track beside its axis tracks (RE-508).
-- Landed (batch 117): objanim/matanim linear rate divided (objanim.c:397, 966), payload 0 keeps the rate, SetTargetRate rate-only, step zeroes `rate_target`, `length_invert` cubic-only; pack v140 (camera/title bakes 1 ulp); goldens unchanged (RE-508).
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
 - Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
-1. Playtest performance: electric hit (re-map `vs4@1340` windows after 6c692905; reports 6-8 19.70, 9 20.35 ms) and Master Hand (Comets 18.07, Fall 19.78 ms) above 16.7 ms.
+1. Playtest performance above 16.7 ms: Master Hand boss effects draw (Comets 18.13, Fall 19.84 ms; boss effects 8.2/10.4 ms) and electric shock (`vs4@2170` r12 20.94 vs no-hit r18 18.56 ms).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 121 (hardware: RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 122 (hardware: RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
