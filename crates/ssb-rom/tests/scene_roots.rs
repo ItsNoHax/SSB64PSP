@@ -99,3 +99,85 @@ fn stage_previews_are_their_maps_model_and_wallpaper() {
         );
     }
 }
+
+/// The special files Kirby's copy of `kind` reads when it fires, as
+/// `(FTKind, file_special index)` per `FTKind` 0..12: each copy's neutral
+/// special makes the original's weapon or effect, whose descriptor sits in
+/// the copied kind's special file.
+/// - Mario, Luigi: `gFTMarioFileSpecial1`, `gFTDataLuigiSpecial1`
+///   (`wpmariofireball.c`, `ftkirbycopymariospecialn.c`).
+/// - Fox: `gFTDataFoxSpecial1` (`wpfoxblaster.c`).
+/// - Samus: `gFTDataSamusSpecial1` (`wpsamuschargeshot.c`).
+/// - Link: `gFTDataLinkSpecial1` (`wplinkboomerang.c`).
+/// - Yoshi: `gFTDataYoshiSpecial3` (the swallowed foe's egg,
+///   `efManagerYoshiEggLayMakeEffect`, `ftcommoncaptureyoshi.c:132`).
+/// - Captain Falcon: `gFTDataCaptainSpecial3`
+///   (`dEFManagerCaptainFalconPunchEffectDesc`).
+/// - Pikachu: `gFTDataPikachuSpecial1`, `gFTDataPikachuSpecial3`
+///   (`wppikachuthunderjolt.c`).
+/// - Ness: `gFTNessFileSpecial1` (`wpnesspkfire.c`).
+/// - Donkey Kong, Kirby, Jigglypuff: none (no weapon or effect).
+const COPY_SPECIALS: [&[usize]; 12] = [
+    &[0],
+    &[0],
+    &[],
+    &[0],
+    &[0],
+    &[0],
+    &[2],
+    &[2],
+    &[],
+    &[0, 2],
+    &[],
+    &[0],
+];
+
+fn copy_files(kind: usize) -> Vec<u32> {
+    let specials = ssb_rom::fighter::FIGHTER_FILES[kind].specials;
+    COPY_SPECIALS[kind]
+        .iter()
+        .map(|&i| specials[i].unwrap_or_else(|| panic!("kind {kind} special {i}")))
+        .collect()
+}
+
+/// A Kirby's copy reads files only its copied kind loads
+/// (`ftManagerSetupFilesPlayablesAll` binds the special heads of kinds
+/// already loaded). Outside the Kirby Team a copy's kind swallowed is a
+/// fighter of the battle, whose main file's closure holds them; Giant
+/// Donkey Kong copies Donkey Kong, who reads none. The Kirby Team copies
+/// kinds no player slot loads: the stage's `llKirbySpecial1FileID` load
+/// (`sc1pgame.c:2077-2081`, [`r::KIRBY_TEAM`]) holds every one.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn kirby_copies_read_files_their_scene_holds() {
+    let Some(bytes) = pack_bytes() else {
+        eprintln!("skipping: SSB64_ROM unset or pack not built");
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    for swallowed in 0..27usize {
+        let copy = usize::from(ssb_game::kirby::COPY[swallowed].0);
+        if copy >= 12 {
+            continue;
+        }
+        let held = closure(&pack, &[r::FIGHTER_MAIN[swallowed]]);
+        for f in copy_files(copy) {
+            assert!(
+                held.contains(&f),
+                "swallowed {swallowed} (copy {copy}): {f:#x} not in {held:x?}"
+            );
+        }
+    }
+    let team = closure(&pack, &r::KIRBY_TEAM);
+    for kind in ssb_game::spgame::setup::KIRBY_TEAM_COPY_KINDS {
+        for f in copy_files(kind as usize) {
+            assert!(team.contains(&f), "{kind:?}: {f:#x} not in {team:x?}");
+        }
+    }
+    // Every copy, not only the team's seven.
+    for kind in 0..12 {
+        for f in copy_files(kind) {
+            assert!(team.contains(&f), "kind {kind}: {f:#x} not in {team:x?}");
+        }
+    }
+}

@@ -323,6 +323,11 @@ pub enum GameScene {
     /// `onepmario`: the Mario Bros. with the player's ally; Luigi's stage
     /// camera clears depth over Mario's (`sc1pintro.c:1343-1345`).
     OnePMario,
+    /// `onepkirby`: Mario against the Kirby Team on Dream Land, each Kirby
+    /// holding a copy (`dSC1PGameKirbyTeamCopyKinds`, `sc1pgame.c:1219`)
+    /// whose kind, Mario's aside, is in no player slot: its files come from
+    /// the stage's own `llKirbySpecial1FileID` load (`sc1pgame.c:2077-2081`).
+    OnePKirby,
     OnePContinue,
     OnePRetry,
     OnePClear,
@@ -500,6 +505,12 @@ pub enum GameScene {
     /// `stageselectyoshi`: the Training stage select on Yoshi's Island,
     /// the preview hiding the two nodes `mnMapsMakeModel` hides (RE-419).
     StageSelectYoshi,
+    /// `vsmaps`: the VS stage select (`nSCKindMaps` after
+    /// `nSCKindPlayersVS`) with Mushroom Kingdom unlocked, its cursor
+    /// walking every slot ([`script::vs_maps`]): each stage's preview over
+    /// its own wallpaper (`mnMapsMakePreviewWallpaper`), one golden per
+    /// stage by tick.
+    VsMaps,
     /// `vssector`: `vs`'s countdown on Sector Z, whose wallpaper scales
     /// with the camera's distance (RE-419).
     VsSector,
@@ -872,7 +883,7 @@ pub enum GameScene {
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 214] = [
+    pub const ALL: [GameScene; 216] = [
         GameScene::OnePGame,
         GameScene::OnePIntro,
         GameScene::OnePBonus,
@@ -894,6 +905,7 @@ impl GameScene {
         GameScene::OnePZako,
         GameScene::OnePYoshi,
         GameScene::OnePMario,
+        GameScene::OnePKirby,
         GameScene::OnePContinue,
         GameScene::OnePRetry,
         GameScene::OnePClear,
@@ -969,6 +981,7 @@ impl GameScene {
         GameScene::VsShield,
         GameScene::StageSelectView,
         GameScene::StageSelectYoshi,
+        GameScene::VsMaps,
         GameScene::VsSector,
         GameScene::VsYoshi,
         GameScene::TrainingSelect,
@@ -1112,6 +1125,7 @@ impl GameScene {
             GameScene::OnePZako => "onepzako",
             GameScene::OnePYoshi => "onepyoshi",
             GameScene::OnePMario => "onepmario",
+            GameScene::OnePKirby => "onepkirby",
             GameScene::OnePContinue => "onepcontinue",
             GameScene::OnePRetry => "onepretry",
             GameScene::OnePClear => "onepclear",
@@ -1187,6 +1201,7 @@ impl GameScene {
             GameScene::VsShield => "vsshield",
             GameScene::StageSelectView => "stageselectview",
             GameScene::StageSelectYoshi => "stageselectyoshi",
+            GameScene::VsMaps => "vsmaps",
             GameScene::VsSector => "vssector",
             GameScene::VsYoshi => "vsyoshi",
             GameScene::TrainingSelect => "trainingselect",

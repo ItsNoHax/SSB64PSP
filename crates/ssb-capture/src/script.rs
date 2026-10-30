@@ -196,6 +196,52 @@ pub mod vs_magnify {
     }
 }
 
+/// `vsmaps`'s walk over the VS stage select (`mnMapsFuncRun`): A at 4
+/// and 8 opens it on Peach's Castle (slot 0) at tick 8, its first input
+/// tick is 18; D-Right four times to Mushroom Kingdom (slot 4), D-Down to
+/// the random slot (9), D-Left four times back to Yoshi's Island (slot 5).
+/// Each move is [`STEP`] ticks after the last, past the select's 12-tick
+/// button scroll wait, and each stage is captured [`SETTLE`] ticks after
+/// the cursor lands on it.
+pub mod vs_maps {
+    /// N64 `CONT_RIGHT`, `CONT_DOWN`, `CONT_LEFT` (`PR/os_cont.h`).
+    const D_RIGHT: u16 = 0x0100;
+    const D_DOWN: u16 = 0x0400;
+    const D_LEFT: u16 = 0x0200;
+    /// The first move.
+    pub const FIRST_MOVE: u64 = 60;
+    /// Ticks between moves.
+    pub const STEP: u64 = 40;
+    /// Ticks from a move to its capture.
+    pub const SETTLE: u64 = 30;
+    /// Each move's button, in order.
+    pub const MOVES: [u16; 9] = [
+        D_RIGHT, D_RIGHT, D_RIGHT, D_RIGHT, D_DOWN, D_LEFT, D_LEFT, D_LEFT, D_LEFT,
+    ];
+    /// The slot the cursor rests on after each move, slot 0 first
+    /// (`mnMapsGetGroundKind`'s order).
+    pub const SLOTS: [usize; 10] = [0, 1, 2, 3, 4, 9, 8, 7, 6, 5];
+
+    /// The buttons at `tick`.
+    pub fn buttons(tick: u64) -> u16 {
+        match tick {
+            4 | 8 => 0x8000,
+            t if t >= FIRST_MOVE && (t - FIRST_MOVE).is_multiple_of(STEP) => MOVES
+                .get(((t - FIRST_MOVE) / STEP) as usize)
+                .copied()
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    /// The capture tick of the cursor's `n`th rest ([`SLOTS`]`[n]`): slot 0
+    /// [`SETTLE`] ticks before the first move, each later one [`SETTLE`]
+    /// ticks after its move.
+    pub const fn capture_tick(n: usize) -> u64 {
+        FIRST_MOVE + n as u64 * STEP - STEP + SETTLE
+    }
+}
+
 /// `cpufx-r`'s two pads, a VS scene's and so outside [`fighter_pad`]: the
 /// N64 reference trace's scripts for controller 0 (port 0, the player) and
 /// controller 1 (port 2, the dummy), in frames since "Go" (`el`). On the

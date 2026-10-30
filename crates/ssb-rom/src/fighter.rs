@@ -85,6 +85,10 @@ pub struct FighterFile {
     pub file: u32,
     /// Byte offset of `FTAttributes` within it — `dFT<Name>Data.o_attributes`.
     pub offset: u32,
+    /// `file_special1_id` ..= `file_special4_id`, each where its
+    /// `p_file_special*` head is declared: the files
+    /// `ftManagerSetupFilesPlayablesAll` binds once loaded (`ftmanager.c`).
+    pub specials: [Option<u32>; 4],
 }
 
 // `dFTManagerDataFiles`' main file and `o_attributes` for every `FTKind`,

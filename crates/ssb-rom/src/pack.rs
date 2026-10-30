@@ -7661,6 +7661,7 @@ mod tests {
                 name: "Mario",
                 file: 203,
                 offset: 0x0428,
+                specials: [None; 4],
             },
             setup_parts: 0x00FF_FFFF,
             animlock: 0,

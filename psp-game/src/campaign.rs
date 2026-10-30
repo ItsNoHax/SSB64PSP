@@ -1337,11 +1337,21 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
         GameScene::OnePMetal
         | GameScene::OnePGiant
         | GameScene::OnePZako
-        | GameScene::OnePYoshi | GameScene::OnePMario => {
+        | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePKirby => {
             if scene == GameScene::OnePYoshi {
                 // Yoshi in costume 0, so the Yoshi Team's costume-0 Yoshi
                 // takes shade 1 (`sc1pgame.c:1347`).
                 let kind = ssb_game::fighter::FighterKind::Yoshi;
+                let costume = ssb_game::costume::costume_common_id(kind, 0);
+                (sp.data.fkind, sp.data.costume) = (kind, costume);
+                let player = &mut sp.state.players[sp.data.player as usize];
+                (player.fkind, player.costume) = (kind, costume);
+            }
+            if scene == GameScene::OnePKirby {
+                // Mario costume 0, as the N64 warp-boot reference (RE-425):
+                // six of the Kirby Team's seven copy kinds are in no player
+                // slot.
+                let kind = ssb_game::fighter::FighterKind::Mario;
                 let costume = ssb_game::costume::costume_common_id(kind, 0);
                 (sp.data.fkind, sp.data.costume) = (kind, costume);
                 let player = &mut sp.state.players[sp.data.player as usize];
@@ -1353,6 +1363,7 @@ pub(crate) fn capture_fixture(s: &mut Session, scene: GameScene) {
                 GameScene::OnePGiant => Stage::Donkey,
                 GameScene::OnePYoshi => Stage::Yoshi,
                 GameScene::OnePMario => Stage::Mario,
+                GameScene::OnePKirby => Stage::Kirby,
                 _ => Stage::Zako,
             } as u8);
             // The stage's own setup (Giant Donkey Kong's random allies),
@@ -1497,7 +1508,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     // The fixture writes no stocks, falls or results.
     if matches!(
         scene,
-        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario
+        GameScene::OnePMetal | GameScene::OnePGiant | GameScene::OnePZako | GameScene::OnePYoshi | GameScene::OnePMario | GameScene::OnePKirby
     ) && s
         .vs_battle
         .as_ref()

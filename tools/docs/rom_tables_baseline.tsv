@@ -197,3 +197,5 @@ crates/ssb-capture/src/script.rs	DUMMY	port constant: capture-script controller 
 crates/ssb-capture/src/script.rs	LEAD	port constant: capture-script controller frames for the cpufx-r lead (scene input, not read from the ROM)
 tools/romtool/src/main.rs	BOSS_WALLPAPER_GRAPHS	layout: (file, offset) pairs naming the wallpaper display-proc graphs in the pack
 crates/ssb-game/src/ground_effect.rs	STAGE_FILES	layout: each battle gkind's Stage*File2 archive file ID, the base of the ground-effect descs' o_* offsets (the tablegen copy reads the ROM at build time)
+crates/ssb-rom/tests/scene_roots.rs	COPY_SPECIALS	fixture: per fighter kind, which FTData special slots (0-3) a Kirby copy reads, read from the decomp makers; slot indices, not ROM values
+crates/ssb-capture/src/script.rs	SLOTS	fixture: VS stage-select cursor slot after each scripted move (capture route), not ROM data

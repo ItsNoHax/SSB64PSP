@@ -139,6 +139,16 @@ f1-training-yoshi-shield	psp-game	yoshishield	pass	RE-418 RE-440
 f1-vs-shield-damage	psp-game	vsshield	pass	RE-418 RE-440
 f1-training-stage-select-view	psp-game	stageselectview	pass	RE-419
 f1-training-stage-select-yoshi	psp-game	stageselectyoshi	pass	RE-419
+f1-vs-maps-castle	psp-game	vsmaps@50	pass	RE-419
+f1-vs-maps-jungle	psp-game	vsmaps@90	pass	RE-419
+f1-vs-maps-hyrule	psp-game	vsmaps@130	pass	RE-419
+f1-vs-maps-zebes	psp-game	vsmaps@170	pass	RE-419
+f1-vs-maps-mushroom-kingdom	psp-game	vsmaps@210	pass	RE-419
+f1-vs-maps-random	psp-game	vsmaps@250	pass	RE-419
+f1-vs-maps-saffron-city	psp-game	vsmaps@290	pass	RE-419
+f1-vs-maps-sector-z	psp-game	vsmaps@330	pass	RE-419
+f1-vs-maps-dream-land	psp-game	vsmaps@370	pass	RE-419
+f1-vs-maps-yoshis-island	psp-game	vsmaps@410	pass	RE-419
 f1-vs-sector	psp-game	vssector	pass	RE-419 RE-440
 f1-vs-yoshi	psp-game	vsyoshi	pass	RE-419 RE-440
 f1-training-select	psp-game	trainingselect	pass	
@@ -247,6 +257,7 @@ f1-training-pikachu-smash	psp-game	pikachusmash	pass	RE-512
 f1-training-kirby-jab	psp-game	kirbyjab	pass	RE-513
 f1-onep-platforms-ride	psp-game	onepplatformsride	pass	RE-521 RE-524
 f1-onep-yoshi-shade	psp-game	onepyoshi	pass	RE-453
+f1-onep-kirby-team-copies	psp-game	onepkirby@1400	pass	RE-417 RE-475
 f1-bonus-pause	psp-game	bonuspause	pass	RE-456
 f1-cpufx-down	psp-game	cpufx-d@459	pass	
 f1-cpufx-up	psp-game	cpufx-u@465	pass	

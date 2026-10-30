@@ -22,6 +22,8 @@ const FT_DATA_FILE_IDS: u32 = 0;
 const FT_DATA_P_FILES: u32 = 0x28;
 const FT_DATA_FILES: u32 = 9;
 const FT_DATA_O_ATTRIBUTES: u32 = 0x60;
+/// `file_special1_id` ..= `file_special4_id`: the sixth to ninth file ids.
+const FT_DATA_SPECIALS: (usize, usize) = (5, 4);
 /// Each `FTKind`'s symbol prefix, for diagnostics (`FighterFile::name`).
 pub const FIGHTER_NAMES: [&str; 27] = [
     "Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain", "Kirby", "Pikachu",
@@ -212,8 +214,15 @@ fn fighter_files(d: OverlayData) -> Result<(String, Vec<(u32, u32)>)> {
     let _ = writeln!(w, "pub const FIGHTER_FILES: [FighterFile; {n}] = [");
     let mut heads: Vec<(u32, u32)> = Vec::new();
     for (kind, name) in FIGHTER_NAMES.iter().enumerate() {
+        let mut specials = [None; FT_DATA_SPECIALS.1];
         let (file, offset) = if d.rom.is_some() {
             let data = d.u32(at + kind as u32 * 4)?;
+            for (k, special) in specials.iter_mut().enumerate() {
+                let i = (FT_DATA_SPECIALS.0 + k) as u32;
+                if d.u32(data + FT_DATA_P_FILES + 4 * i)? != 0 {
+                    *special = Some(d.u32(data + FT_DATA_FILE_IDS + 4 * i)?);
+                }
+            }
             for i in 0..FT_DATA_FILES {
                 let head = d.u32(data + FT_DATA_P_FILES + 4 * i)?;
                 let id = d.u32(data + FT_DATA_FILE_IDS + 4 * i)?;
@@ -240,7 +249,7 @@ fn fighter_files(d: OverlayData) -> Result<(String, Vec<(u32, u32)>)> {
         };
         let _ = writeln!(
             w,
-            "    FighterFile {{ kind: {kind}, name: \"{name}\", file: {file}, offset: 0x{offset:04X} }},"
+            "    FighterFile {{ kind: {kind}, name: \"{name}\", file: {file}, offset: 0x{offset:04X}, specials: {specials:?} }},"
         );
     }
     w.push_str("];\n");

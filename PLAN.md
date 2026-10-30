@@ -73,8 +73,6 @@
 | Texture residency | Cost of remaining main-RAM texel reads after photo-region pool (`texture_probe`). More resident textures need VRAM → only via 16-bit colour buffers (changes every golden) | RE-076, RE-486, RE-489–RE-492, RE-539 |
 | Read-ahead gaps | 1P next stage, intro → battle (no side-effect-free next-stage prediction); bonus select → bonus battle; Characters scene; 1P intro proceed after a clear (N64 tic 81 vs PSP 60) and tally start (11-12 VIs) | RE-501 |
 | Select clip files | Players-training entry: 10–33 scattered files (+16–18 ms). `enter` drains unrelated in-flight job (battle waits 28 ms when maps left after 13 ticks) | RE-501 |
-| VS wallpapers | Capture a VS stage-select route; goldens cover training maps only | — |
-| Kirby copy kind | Absent kind → scene lists; not reproduced (`demand=` in capture logs) | RE-475, RE-476 |
 | Wallpaper padding | Trim twelve 5551 wallpapers' 512 × 256 padding (~1.5 MiB) | RE-419 |
 | Unpalettized mips | Mip levels never given to GE → drop (memory, not bandwidth) | RE-127, RE-491 |
 | GE state batching | Only where profiling shows submission cost. Refs: `sf64-psp` material hash, `oot-PSP` sampler cache | RE-124, [D-036](docs/decisions/D-036.md) |
@@ -125,6 +123,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
+| Kirby Team particle banks | 1P Kirby Team loads only Ness's particle bank (sc1pgame.c:2077-2089, ID discarded); Yoshi-copy egg explode reads `gFTDataYoshiParticleBankID` (stale/zero on N64): compare port vs N64 on that stage | RE-475 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)
