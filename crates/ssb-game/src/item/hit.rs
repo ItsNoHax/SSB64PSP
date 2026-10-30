@@ -70,6 +70,8 @@ pub(crate) struct Attacker {
     pub owner: Option<u8>,
     pub team: u8,
     pub player: Option<u8>,
+    /// `player_num` (itprocess.c:327, :515, :618).
+    pub player_num: Option<u8>,
     pub handicap: u8,
 }
 
@@ -132,6 +134,7 @@ pub(crate) fn queue_damage(
         victim.damage_lr = lr;
         victim.damage_by = by.owner;
         victim.damage_port = by.player;
+        victim.damage_player_num = by.player_num;
         victim.damage_team = by.team;
         victim.damage_handicap = by.handicap;
     }
@@ -418,6 +421,7 @@ fn update_damage_stat_item(
             owner: attack.owner,
             team: attack.team,
             player: attack.player,
+            player_num: attack.player_num,
             handicap: attack.handicap,
         },
         Knock {
@@ -504,6 +508,7 @@ fn fighter_attacks_item(
                     owner: Some(f.port),
                     team: f.team,
                     player: Some(f.port),
+                    player_num: Some(f.port),
                     handicap: f.handicap,
                 },
                 Knock {
@@ -763,6 +768,13 @@ fn update_damage_stat(
                 placement: hit.placement,
                 damage_joint: hit.joint,
                 attacker: combat::DamageBy::owner(item.player, f.port),
+                // `this_fp->player == hitlog->attacker_player` reads 0, else
+                // the item's `player_num` (ftmain.c:2931-2939).
+                attacker_num: if item.player == Some(f.port) {
+                    None
+                } else {
+                    item.player_num
+                },
                 // `ip->is_hitlag_victim` (`attr->is_give_hitlag`).
                 effect: item.attr.is_give_hitlag.then_some(combat::LogEffect {
                     pos: impact,

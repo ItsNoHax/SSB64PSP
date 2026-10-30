@@ -1418,7 +1418,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
     // `trainingitemflash`: the walking Bob-omb's `multi` goes from 2 to
     // `ITBOMBHEI_FLASH_WAIT` after its update, as the N64 reference build
     // does, so its next update starts the critical flash (batch 58).
-    if scene == GameScene::TrainingItemFlash {
+    if matches!(scene, GameScene::TrainingItemFlash | GameScene::TrainingItemDespawn) {
         use ssb_game::item::{bombhei, ItemKind, ItemStatus};
         for slot in 0..ssb_game::item::ITEM_ALLOC_MAX as u8 {
             if let Some(it) = w.items.get_mut(slot) {
@@ -1439,7 +1439,7 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
         }
         for it in w.items.items() {
             line += &alloc::format!(
-                " I[{:?} {:?} m{} pal{} col{} {:?} x{:.1} y{:.1}]",
+                " I[{:?} {:?} m{} pal{} col{} {:?} x{:.1} y{:.1} pw{} h{}]",
                 it.kind,
                 it.status,
                 it.multi,
@@ -1447,7 +1447,9 @@ pub(crate) fn capture_objectives(s: &mut Session, pack: Option<&Pack<'_>>, scene
                 it.colanim.id.0,
                 it.colanim.color(),
                 it.pos.x,
-                it.pos.y
+                it.pos.y,
+                it.pickup_wait,
+                u8::from(it.hidden)
             );
         }
         line += "\n";

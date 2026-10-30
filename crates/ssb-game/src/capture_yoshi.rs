@@ -234,7 +234,7 @@ fn set_egg(f: &mut Fighter) {
     f.grab.capture_immune_mask = crate::grab::catch_kind::ALL;
     f.is_invisible = true;
     grab::init_breakout(f, BREAKOUT_INPUTS_MIN);
-    f.add_damage(i32::from(LAY_DAMAGE));
+    crate::combat::update_damage(f, i32::from(LAY_DAMAGE));
     let player = f.grab.capture;
     f.record_combo_damage(player, i32::from(LAY_DAMAGE));
     crate::spgame::live::hit(

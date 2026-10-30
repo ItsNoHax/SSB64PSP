@@ -160,6 +160,7 @@ fn hit(pool: &mut ItemPool, slot: u8, by: u8, knock: Knock) {
             owner: Some(by),
             team: by,
             player: Some(by),
+            player_num: Some(by),
             handicap: 9,
         },
         knock,
@@ -223,6 +224,7 @@ fn power_block_settles_squashes_and_leaves() {
             handicap: 9,
             hitter: Some(2),
             damage_port: Some(2),
+            damage_player_num: Some(2),
         }]
     );
     // `efManagerQuakeMakeEffect(3)` in the damage proc.

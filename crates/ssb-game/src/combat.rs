@@ -299,6 +299,12 @@ pub struct HitLogEntry {
     /// Who `ftParamUpdate1PGameDamageStats` records as `damage_player`
     /// when this hit wins the frame.
     pub attacker: DamageBy,
+    /// The `damage_player_num` this hit leaves: `hitlog->attacker_player_num`
+    /// as the port of the fighter it numbers, `None` (0) for one's own
+    /// weapon or item and the stage. An item's is its stale
+    /// [`crate::item::Item::player_num`]; the POW Block's, its
+    /// `damage_player_num` (ftmain.c:2865-2977).
+    pub attacker_num: Option<u8>,
     /// What `ftMainProcessHitCollisionStatsMain` makes its hit effect from;
     /// `None` for a hit that makes none (a weapon without
     /// `is_hitlag_victim`, the stage).
@@ -353,6 +359,14 @@ pub enum DamageBy {
 }
 
 impl DamageBy {
+    /// The player a `Player` names.
+    pub fn player(self) -> Option<u8> {
+        match self {
+            DamageBy::Player(p) => Some(p),
+            DamageBy::World | DamageBy::Keep => None,
+        }
+    }
+
     /// A weapon or item hit: its owner, unless the owner is the victim.
     pub fn owner(owner: Option<u8>, victim: u8) -> DamageBy {
         match owner {
@@ -1247,6 +1261,7 @@ fn update_damage_stat(
                 placement: hit.placement,
                 damage_joint: hit.joint,
                 attacker: DamageBy::Player(player),
+                attacker_num: Some(player),
                 effect: Some(LogEffect {
                     pos: impact,
                     player,
@@ -1467,6 +1482,7 @@ fn weapon_hit_inner(victim: &mut Fighter, w: WeaponAttack, shield_only: bool) ->
                 placement: hit.placement,
                 damage_joint: hit.joint,
                 attacker: DamageBy::owner(w.owner, victim.port),
+                attacker_num: DamageBy::owner(w.owner, victim.port).player(),
                 // `is_hitlag_victim`: Link's Boomerang (and two Pokemon)
                 // make the hit's spark, at
                 // `gmCollisionGetWeaponAttackFighterDamagePosition`.
@@ -1555,6 +1571,7 @@ pub fn direct_hit_with_stat(
             placement: attack::DAMAGE_INDEX_N as u8,
             damage_joint: 0,
             attacker,
+            attacker_num: attacker.player(),
             effect: None,
         },
     );
@@ -1616,13 +1633,10 @@ pub fn process_hit_collision(this: &mut Fighter) {
     this.hits.damage_knockback = best;
     crate::spgame::live::hit(this, entry.attacker, entry.stat, entry.object);
     // `damage_player_num`: the attacker's player (the thrower's for a thrown
-    // fighter, the POW Block's `ip->damage_player_num`), 0 for the
-    // fighter's own weapon or item and every other stage attack, Acid
-    // included.
-    this.damage_player_num = match entry.attacker {
-        DamageBy::Player(p) => Some(p),
-        DamageBy::World | DamageBy::Keep => None,
-    };
+    // fighter, an item's stale `player_num`, the POW Block's
+    // `ip->damage_player_num`), 0 for the fighter's own weapon or item and
+    // every other stage attack, Acid included.
+    this.damage_player_num = entry.attacker_num;
     if this.hits.damage_element == Element::Electric {
         this.hits.hitlag_mul = 1.5;
     }
@@ -1783,26 +1797,7 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
         if f.hits.damage_knockback <= 0.0 {
             f.hits.damage_knockback = 0.0;
         }
-        // `ftParamUpdateDamage` (ftparam.c:1527). Its other callers (thrown,
-        // shouldered, Twister, Kirby inhale) keep a light item through the
-        // capture (only a heavy one drops, `ftSetupDropItem` in each capture
-        // setter) but run outside the hit pass, where `damage_knockback` is
-        // 0, so their drop roll never runs. A damage release of a fighter
-        // hit in the same frame is the exception and is not ported.
-        f.add_damage(f.hits.damage_queue);
-        if f.items.held.is_some()
-            && !f.items.held.is_some_and(|i| {
-                i.weight == crate::item::ItemWeight::Heavy && crate::grab::is_donkey(f.kind)
-            })
-            && f.hits.damage_knockback != 0.0
-            && (f.hitlag == 0
-                || !f.is_knockback_paused
-                || f.hits.damage_knockback >= f.damage_knockback_stack + 30.0)
-            && (f.hits.damage_queue > crate::rng::rand_int_range(60)
-                || (shoot_no_ammo(f) && crate::rng::rand_int_range(2) == 0))
-        {
-            crate::item_throw::drop_item(f);
-        }
+        update_damage(f, f.hits.damage_queue);
         if f.kind == FighterKind::Boss {
             // Master Hand takes no reaction: only the colour and his hit
             // points (`ftBossCommonUpdateDamageStats`).
@@ -1960,6 +1955,32 @@ fn update_afterimage(f: &mut Fighter) {
     a.desc_id = if a.desc_id == 2 { 0 } else { a.desc_id + 1 };
     if a.drawstatus <= 2 {
         a.drawstatus += 1;
+    }
+}
+
+/// `ftParamUpdateDamage` (ftparam.c:1527): the percent, then the held-item
+/// drop roll (ftparam.c:1539-1553). The roll needs this frame's unprocessed
+/// hit (`damage_knockback != 0`: set by the hit search, cleared at the end of
+/// `ftMainProcParams`, ftmain.c:4017), so outside `ftMainProcParams` it runs
+/// only for a fighter hit this frame whose own params have not run yet: in
+/// practice `ftCommonThrownUpdateDamageStats` from the partner's
+/// `ftCommonDamageUpdateMain` (ftcommondamage.c:733, :777). Every original
+/// caller goes through here; `rand(60)` is drawn first, `rand(2)` only for
+/// an empty shooter the first roll spared.
+pub fn update_damage(f: &mut Fighter, damage: i32) {
+    f.add_damage(damage);
+    if f.items.held.is_some()
+        && !f.items.held.is_some_and(|i| {
+            i.weight == crate::item::ItemWeight::Heavy && crate::grab::is_donkey(f.kind)
+        })
+        && f.hits.damage_knockback != 0.0
+        && (f.hitlag == 0
+            || !f.is_knockback_paused
+            || f.hits.damage_knockback >= f.damage_knockback_stack + 30.0)
+        && (damage > crate::rng::rand_int_range(60)
+            || (shoot_no_ammo(f) && crate::rng::rand_int_range(2) == 0))
+    {
+        crate::item_throw::drop_item(f);
     }
 }
 

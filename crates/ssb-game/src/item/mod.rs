@@ -567,6 +567,11 @@ pub struct Item {
     pub team: u8,
     /// `player` (`ITEM_PORT_DEFAULT` is `None`).
     pub player: Option<u8>,
+    /// `player_num`, as the port of the fighter it numbers (`None` for 0).
+    /// Set with `player` everywhere but `itMainCopyDamageStats`, which
+    /// leaves it (itmain.c:259): a shell hit by another fighter keeps its
+    /// last holder's number, or none.
+    pub player_num: Option<u8>,
     pub handicap: u8,
     pub percent_damage: i32,
     pub hitlag_tics: u32,
@@ -615,6 +620,9 @@ pub struct Item {
     /// `damage_gobj`'s port.
     pub damage_by: Option<u8>,
     pub damage_port: Option<u8>,
+    /// `damage_player_num`: the hitter's `player_num` (an item hitter's
+    /// [`Item::player_num`]), read only by the POW Block's quake.
+    pub damage_player_num: Option<u8>,
     pub damage_team: u8,
     pub damage_handicap: u8,
     pub damage_lag: i32,
@@ -740,6 +748,7 @@ impl Item {
             owner: None,
             team: crate::team::TEAM_DEFAULT,
             player: None,
+            player_num: None,
             handicap: crate::stale::HANDICAP_DEFAULT,
             percent_damage: 0,
             hitlag_tics: 0,
@@ -818,6 +827,7 @@ impl Item {
             damage_lr: 0.0,
             damage_by: None,
             damage_port: None,
+            damage_player_num: None,
             damage_team: crate::team::TEAM_DEFAULT,
             damage_handicap: crate::stale::HANDICAP_DEFAULT,
             damage_lag: 0,
@@ -938,12 +948,15 @@ impl Item {
         self.owner = None;
         self.team = crate::team::TEAM_DEFAULT;
         self.player = None;
+        self.player_num = None;
         self.handicap = crate::stale::HANDICAP_DEFAULT;
         self.attack.throw_mul = 1.0;
         map::set_ground(self);
     }
 
-    /// `itMainCopyDamageStats`: the attacker becomes the owner.
+    /// `itMainCopyDamageStats`: the attacker becomes the owner. The source
+    /// copies `player_num` onto itself (itmain.c:259), so
+    /// [`Item::player_num`] stays.
     pub(crate) fn copy_damage_stats(&mut self) {
         self.owner = self.damage_by;
         self.team = self.damage_team;
@@ -1125,11 +1138,13 @@ impl ItemAnims for NoItemAnims {}
 pub enum StageItemEvent {
     TargetBroken,
     /// `grInishiePowerBlockSetDamage`: the quake, sparing `hitter`
-    /// (`ip->damage_gobj`) and crediting `damage_port` (`ip->damage_port`).
+    /// (`ip->damage_gobj`) and crediting `damage_port` (`ip->damage_port`);
+    /// its victims take `damage_player_num` (`ip->damage_player_num`).
     PowerBlockDamage {
         handicap: u8,
         hitter: Option<u8>,
         damage_port: Option<u8>,
+        damage_player_num: Option<u8>,
     },
     /// `grInishiePowerBlockSetWait`: the block is gone.
     PowerBlockGone,
@@ -1564,6 +1579,7 @@ impl ItemPool {
         monster.owner = ball.owner;
         monster.team = ball.team;
         monster.player = ball.player;
+        monster.player_num = ball.player_num;
         monster.handicap = ball.handicap;
         self.alloc(monster)
     }
@@ -1585,6 +1601,7 @@ impl ItemPool {
         let mut ball = mball::make(&self.counts, pos, Vec3::ZERO);
         ball.owner = owner;
         ball.player = owner;
+        ball.player_num = owner;
         ball.team = team;
         self.make_mmonster(kind, &ball, surfaces)
     }
@@ -1938,6 +1955,7 @@ impl ItemPool {
         item.is_allow_pickup = false;
         item.is_hold = true;
         item.player = Some(f.port);
+        item.player_num = Some(f.port);
         item.handicap = f.handicap;
         item.vel_air = Vec3::ZERO;
         map::set_air(item);
@@ -2774,6 +2792,7 @@ fn hit_collisions(
         let reflector = fighters.iter().find(|f| f.port == port);
         item.owner = Some(port);
         item.player = Some(port);
+        item.player_num = Some(port);
         if let Some(r) = reflector {
             item.team = r.team;
             item.handicap = r.handicap;

@@ -720,6 +720,7 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
             handicap: 9,
             hitter: Some(1),
             damage_port: Some(1),
+            damage_player_num: Some(1),
         }],
         &[],
         &mut NoObjects,
@@ -729,8 +730,11 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
     let flying = airborne(Vec3::ZERO);
     assert_eq!(stage.check_hazards(&hitter), None);
     assert_eq!(stage.check_hazards(&flying), None);
-    let (attack, handicap, port) = stage.check_hazards(&other).expect("the quake");
-    assert_eq!((attack.damage, handicap, port), (20, 9, Some(1)));
+    let (attack, handicap, port, num) = stage.check_hazards(&other).expect("the quake");
+    assert_eq!(
+        (attack.damage, handicap, port, num),
+        (20, 9, Some(1), Some(1))
+    );
     let Controller::Inishie(s) = &stage.controller else {
         panic!()
     };
@@ -752,8 +756,9 @@ fn power_block_quake_spares_its_hitter_and_rearms_the_spawner() {
 
 /// `ftMainUpdateDamageStatGround` credits the POW Block's `damage_port`
 /// (`ftParamUpdatePlayerBattleStats`, `ftmain.c:2619`) and the hit log
-/// gives it the KO credit and `damage_player_num` (`ftmain.c:2966-2972`);
-/// an unowned block credits nobody.
+/// gives it the KO credit (`ftmain.c:2972`); an unowned block credits
+/// nobody. `damage_player_num` is the block's own, which a stale item
+/// hitter leaves apart from `damage_port` (`ftmain.c:2970`).
 #[test]
 fn power_block_damage_is_credited_to_its_hitter() {
     for damage_port in [Some(1), None] {
@@ -766,6 +771,7 @@ fn power_block_damage_is_credited_to_its_hitter() {
                 handicap: 9,
                 hitter: Some(1),
                 damage_port,
+                damage_player_num: Some(2),
             }],
             &[],
             &mut NoObjects,
@@ -777,7 +783,7 @@ fn power_block_damage_is_credited_to_its_hitter() {
         assert_eq!(f.combo_damage_foe, credited, "{damage_port:?}");
         crate::combat::process_hit_collision(&mut f);
         assert_eq!(f.damage_player, damage_port);
-        assert_eq!(f.damage_player_num, damage_port);
+        assert_eq!(f.damage_player_num, Some(2));
     }
 }
 

@@ -3953,6 +3953,7 @@ impl WeaponPool {
                     team: self.teams[i],
                     // A ground weapon's `wp->player` names no fighter.
                     player: (owner != sector::GROUND_PORT).then_some(owner),
+                    player_num: (owner != sector::GROUND_PORT).then_some(owner),
                     handicap: self.stale[i].handicap,
                 },
                 crate::item::Knock {

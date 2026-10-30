@@ -128,6 +128,7 @@ fn wait(item: &mut Item) {
     item.times_landed = 0;
     item.owner = None;
     item.player = None;
+    item.player_num = None;
     item.team = crate::team::TEAM_DEFAULT;
     item.handicap = crate::stale::HANDICAP_DEFAULT;
     item.attack.throw_mul = 1.0;

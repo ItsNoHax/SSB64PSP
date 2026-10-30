@@ -384,6 +384,7 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         | GameScene::TrainingSlide
         | GameScene::TrainingBumperThrow
         | GameScene::TrainingItemFlash
+        | GameScene::TrainingItemDespawn
         | GameScene::TrainingPokemonA
         | GameScene::TrainingPokemonB
         | GameScene::TrainingPokemonC
@@ -500,6 +501,7 @@ fn is_training_stage_scene(scene: GameScene) -> bool {
             | GameScene::TrainingSlide
             | GameScene::TrainingBumperThrow
             | GameScene::TrainingItemFlash
+            | GameScene::TrainingItemDespawn
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
             | GameScene::TrainingPokemonC
@@ -817,6 +819,7 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
             | GameScene::TrainingSlide
             | GameScene::TrainingBumperThrow
             | GameScene::TrainingItemFlash
+            | GameScene::TrainingItemDespawn
             | GameScene::TrainingPokemonA
             | GameScene::TrainingPokemonB
             | GameScene::TrainingPokemonC
@@ -2591,7 +2594,12 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
     }
     if matches!(
         scene,
-        Some(GameScene::TrainingSlide | GameScene::TrainingBumperThrow | GameScene::TrainingItemFlash)
+        Some(
+            GameScene::TrainingSlide
+                | GameScene::TrainingBumperThrow
+                | GameScene::TrainingItemFlash
+                | GameScene::TrainingItemDespawn
+        )
     ) {
         if let Some(pl) = w.play_state.as_deref() {
             // The thrown item in reach; the slide adds a Bob-omb that walks,
@@ -2600,7 +2608,7 @@ fn prepare_monster_capture(scene: Option<GameScene>, pack: Option<&Pack<'_>>, s:
             w.items.camera_at_x = pl.camera.at.x;
             let items: &[(u8, (f32, f32))] = if scene == Some(GameScene::TrainingSlide) {
                 &[(17, (75.0, 300.0)), (15, (750.0, 500.0))]
-            } else if scene == Some(GameScene::TrainingItemFlash) {
+            } else if matches!(scene, Some(GameScene::TrainingItemFlash | GameScene::TrainingItemDespawn)) {
                 &[(16, (75.0, 300.0)), (15, (-1000.0, 1100.0))]
             } else {
                 &[(16, (75.0, 300.0))]

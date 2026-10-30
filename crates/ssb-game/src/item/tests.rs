@@ -239,6 +239,7 @@ fn seven_damage_explodes_while_six_damage_recoils() {
                 owner: Some(1),
                 team: 1,
                 player: Some(1),
+                player_num: Some(1),
                 handicap: 9,
             },
             Knock {
@@ -931,6 +932,38 @@ fn a_teammates_item_passes_through_only_with_team_attack_off() {
         pool.search_fighter(&mut victim);
         crate::combat::resolve(&mut victim);
         assert_eq!(victim.damage > 0, lands, "{rules:?} team {victim_team}");
+    }
+}
+
+/// `itMainCopyDamageStats` hands the item to its hitter but copies
+/// `player_num` onto itself (itmain.c:259): a fighter the item then hits
+/// takes the old `player_num` as `damage_player_num` (whose CPU counts the
+/// hit, `ftcommondamage.c:650-657`), while the KO credit goes to the new
+/// owner. One it never numbered gives 0.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_hit_item_keeps_its_old_player_num() {
+    for (old, num) in [(Some(0), Some(0)), (None, None)] {
+        let mut pool = ItemPool::default();
+        let slot = make_flame(&mut pool);
+        {
+            let item = pool.get_mut(slot).unwrap();
+            item.player_num = old;
+            item.damage_by = Some(1);
+            item.damage_port = Some(1);
+            item.damage_team = 1;
+            item.copy_damage_stats();
+            assert_eq!((item.owner, item.player), (Some(1), Some(1)));
+        }
+        let pillar = pool.get(slot).unwrap().clone();
+        let mut victim = fighter(FighterKind::Mario, 2);
+        victim.team = 2;
+        victim.pos = pillar.pos + Vec3::new(0.0, 100.0, 0.0);
+        pool.search_fighter(&mut victim);
+        crate::combat::resolve(&mut victim);
+        assert!(victim.damage > 0);
+        assert_eq!(victim.damage_player, Some(1), "{old:?}");
+        assert_eq!(victim.damage_player_num, num, "{old:?}");
     }
 }
 

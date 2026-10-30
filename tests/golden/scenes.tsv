@@ -217,6 +217,7 @@ f1-training-slide-walk	psp-game	trainingslide@233	pass	RE-442
 f1-training-bumper-throw	psp-game	trainingbumperthrow@160	pass	RE-442
 f1-training-item-bumper-lit	psp-game	trainingitemflash@202	pass	RE-434 RE-442
 f1-training-item-bombhei-flash	psp-game	trainingitemflash@232	pass	RE-434
+f1-training-item-despawn-sparkle	psp-game	trainingitemdespawn@1443	pass	RE-545
 f1-training-utility-star-lit	psp-game	trainingutility@52	pass	RE-433 RE-442
 f1-training-link-bomb-bloat	psp-game	linkbomb@295	pass	RE-444
 f1-training-link-bomb-turn	psp-game	linkbomb@330	pass	RE-444

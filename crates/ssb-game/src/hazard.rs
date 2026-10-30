@@ -268,22 +268,31 @@ pub fn search_ground_hit(f: &mut Fighter, stage: &Stage) {
     if best_hit_status_all(f) != HitStatus::Normal {
         return;
     }
-    if let Some((attack, handicap, damage_port)) = stage.check_hazards(f) {
-        update_damage_stat_ground(f, attack, attack.kind, handicap, damage_port);
+    if let Some((attack, handicap, damage_port, damage_player_num)) = stage.check_hazards(f) {
+        update_damage_stat_ground(
+            f,
+            attack,
+            attack.kind,
+            handicap,
+            damage_port,
+            damage_player_num,
+        );
     }
     if let Some(attack) = damage_floor(f) {
-        update_damage_stat_ground(f, attack, attack.kind, GROUND_HANDICAP, None);
+        update_damage_stat_ground(f, attack, attack.kind, GROUND_HANDICAP, None, None);
     }
 }
 
-/// `ftMainUpdateDamageStatGround`. `damage_port` is the POW Block's
-/// `ip->damage_port`, `None` for every other attack.
+/// `ftMainUpdateDamageStatGround`. `damage_port` and `damage_player_num`
+/// are the POW Block's `ip->damage_port` and `ip->damage_player_num`,
+/// `None` for every other attack.
 fn update_damage_stat_ground(
     f: &mut Fighter,
     attack: GroundAttack,
     kind: i32,
     handicap: u8,
     damage_port: Option<u8>,
+    damage_player_num: Option<u8>,
 ) {
     let damage = crate::attack::captured_damage(f, attack.damage);
     let queued = f.hits.damage_queue;
@@ -305,13 +314,18 @@ fn update_damage_stat_ground(
             placement: 0,
             damage_joint: 0,
             // Acid keeps `damage_player`; the POW Block credits its
-            // `damage_port` (`ftmain.c:2966-2972`; the port carries one
-            // player for `damage_port` and `damage_player_num`); the other
-            // stage attacks set `GMCOMMON_PLAYERS_MAX`.
+            // `damage_port` and passes on its `damage_player_num`
+            // (`ftmain.c:2966-2972`); the other stage attacks set
+            // `GMCOMMON_PLAYERS_MAX` and 0.
             attacker: match (kind, damage_port) {
                 (ENV_ACID, _) => combat::DamageBy::Keep,
                 (ENV_POWER_BLOCK, Some(p)) => combat::DamageBy::Player(p),
                 _ => combat::DamageBy::World,
+            },
+            attacker_num: if kind == ENV_POWER_BLOCK {
+                damage_player_num
+            } else {
+                None
             },
             // `ftMainProcessHitCollisionStatsMain` makes no effect for the
             // stage.
@@ -479,7 +493,7 @@ fn shoot_twister(f: &mut Fighter, t: HazardThrow) {
         crate::spgame::bonus::DamageObject::Twister,
     );
     if damage != 0 {
-        f.add_damage(damage);
+        crate::combat::update_damage(f, damage);
     }
     f.hazard.twister_wait = TWISTER_PICKUP_WAIT;
 }

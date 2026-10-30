@@ -1356,8 +1356,8 @@ fn set_shouldered(f: &mut Fighter, staled: StaledThrow) -> i32 {
         // the tampered-save random draw (RE-460) is kept.
         let kb = crate::attack::random_knockback(0.0);
         crate::colanim::update_damage_colanim(f, kb, crate::combat::Element::Normal);
+        crate::combat::update_damage(f, damage);
     }
-    f.add_damage(damage);
     crate::rumble::make(f, 7, 0);
     damage
 }
@@ -1568,8 +1568,11 @@ fn release_with(
         true,
         is_throw,
     );
-    // The source updates percent after the damage status and its events.
-    f.add_damage(damage);
+    // The source updates percent after the damage status and its events,
+    // only for a non-zero damage (ftcommonthrown2.c:168, :251).
+    if damage != 0 {
+        crate::combat::update_damage(f, damage);
+    }
     damage
 }
 
@@ -1814,7 +1817,7 @@ pub fn thrown_update_damage_stats(held: &mut Fighter, catcher: &mut Fighter) {
         .map(|d| d[1])
         .unwrap_or(MARIO_CATCH[1]);
     let staled = StaledThrow::of(catcher, desc.damage);
-    held.add_damage(staled.damage);
+    crate::combat::update_damage(held, staled.damage);
     held.record_combo_damage(Some(catcher.port), staled.damage);
     crate::spgame::live::hit(
         held,
@@ -2679,7 +2682,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             // the tampered-save random draw (RE-460) is kept.
             let kb = crate::attack::random_knockback(0.0);
             crate::colanim::update_damage_colanim(to, kb, crate::combat::Element::Normal);
-            to.add_damage(staled.damage);
+            crate::combat::update_damage(to, staled.damage);
             record_throw(from, to, staled, staled.damage);
         }
         GrabEvent::KirbyStar { copy, vel } => {
@@ -2877,6 +2880,129 @@ mod tests {
                 assert_eq!(victim.items.held.is_none(), heavy, "{name} {weight:?}");
             }
         }
+    }
+
+    fn holding_light(port: u8) -> Fighter {
+        let mut f = Fighter::new(FighterKind::Mario, port, 4);
+        f.items.held = Some(crate::item::HeldItem {
+            slot: 0,
+            kind: crate::item::ItemKind::Target,
+            ty: crate::item::ItemType::Throw,
+            weight: crate::item::ItemWeight::Light,
+        });
+        f
+    }
+
+    /// A seed whose first `rand(60)` lies in `lo..hi`, and that draw.
+    fn seed_with_first_draw(lo: i32, hi: i32) -> (i32, i32) {
+        (1..)
+            .map(|s| {
+                crate::rng::set_seed(s);
+                (s, crate::rng::rand_int_range(60))
+            })
+            .find(|&(_, r)| (lo..hi).contains(&r))
+            .unwrap()
+    }
+
+    /// `ftCommonThrownUpdateDamageStats` adds the throw damage through
+    /// `ftParamUpdateDamage`, whose light-item drop roll (ftparam.c:1539-1553)
+    /// runs only while the held fighter's own hit is unprocessed
+    /// (`damage_knockback != 0`) and not hitlag-paused. It draws `rand(60)`
+    /// only then.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn thrown_damage_rolls_the_light_item_of_a_same_frame_hit_fighter() {
+        let mut catcher = Fighter::new(FighterKind::Mario, 0, 4);
+        let desc = catcher
+            .grab
+            .throw_desc
+            .map(|d| d[1])
+            .unwrap_or(MARIO_CATCH[1]);
+        let damage = StaledThrow::of(&catcher, desc.damage).damage;
+        assert!(damage > 1, "{damage}");
+        let (seed, first) = seed_with_first_draw(0, damage);
+
+        let mut hit = holding_light(1);
+        hit.hits.damage_knockback = 40.0;
+        crate::rng::set_seed(seed);
+        thrown_update_damage_stats(&mut hit, &mut catcher);
+        assert!(hit.items.held.is_none(), "kept through a {damage} roll");
+
+        // Rolled, not dropped: a draw at or above the damage.
+        let (seed_hi, _) = seed_with_first_draw(damage, 60);
+        let mut spared = holding_light(1);
+        spared.hits.damage_knockback = 40.0;
+        crate::rng::set_seed(seed_hi);
+        thrown_update_damage_stats(&mut spared, &mut catcher);
+        assert!(spared.items.held.is_some());
+
+        // No unprocessed hit, or a hitlag-paused one under the stack + 30:
+        // no roll, no draw.
+        let mut unhit = holding_light(1);
+        let mut paused = holding_light(1);
+        paused.hits.damage_knockback = 40.0;
+        paused.hitlag = 3;
+        paused.is_knockback_paused = true;
+        paused.damage_knockback_stack = 20.0;
+        for f in [&mut unhit, &mut paused] {
+            crate::rng::set_seed(seed);
+            thrown_update_damage_stats(f, &mut catcher);
+            assert!(f.items.held.is_some());
+            assert_eq!(crate::rng::rand_int_range(60), first, "drew");
+        }
+    }
+
+    /// Both sides of a hold hit in one frame, the catcher launched
+    /// (`ftCommonDamageUpdateMain`, ftcommondamage.c:729-733): the held
+    /// fighter takes the throw damage while its own hit is unprocessed, so
+    /// its light item gets the throw-damage roll before its own.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn a_hold_hit_on_both_sides_rolls_the_held_item_on_the_throw_damage() {
+        let mut catcher = grounded(FighterKind::Mario, 0, 0.0);
+        let mut held = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut catcher, &mut held);
+        to_catch_wait(&mut catcher, &mut held);
+        held.items.held = holding_light(1).items.held;
+        let desc = catcher
+            .grab
+            .throw_desc
+            .map(|d| d[1])
+            .unwrap_or(MARIO_CATCH[1]);
+        let damage = StaledThrow::of(&catcher, desc.damage).damage;
+        let at = held.pos;
+        assert!(crate::combat::direct_hit(
+            &mut catcher,
+            light_hit(),
+            at,
+            1.0,
+            9,
+            crate::combat::DamageBy::World,
+        ));
+        let small = attack::Hitbox {
+            damage: 2,
+            ..light_hit()
+        };
+        assert!(crate::combat::direct_hit(
+            &mut held,
+            small,
+            catcher.pos,
+            -1.0,
+            9,
+            crate::combat::DamageBy::World,
+        ));
+        let queue = held.hits.damage_queue;
+        assert!(attack::capture_keep_hold(queue), "{queue}");
+        // A first draw the held fighter's own roll (`queue > rand`) spares
+        // and the throw damage's does not.
+        let (seed, _) = seed_with_first_draw(queue, damage);
+        crate::rng::set_seed(seed);
+        crate::combat::finish_frame(&mut [&mut catcher, &mut held]);
+        assert!(held.grab.capture.is_none());
+        assert!(
+            held.items.held.is_none(),
+            "kept: queue {queue}, throw {damage}"
+        );
     }
 
     #[test]

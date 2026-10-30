@@ -220,6 +220,7 @@ fn reflector(item: &mut Item) {
         item.owner = Some(port);
         item.team = team;
         item.player = Some(port);
+        item.player_num = Some(port);
         item.handicap = handicap;
     }
 }
