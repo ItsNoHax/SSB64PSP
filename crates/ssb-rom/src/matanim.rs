@@ -571,6 +571,15 @@ fn reciprocal_or_one(payload: f32) -> f32 {
     1.0 / if payload == 0.0 { 1.0 } else { payload }
 }
 
+/// `SetVal`'s linear rate, `(target - base) / payload`
+/// (`gcParseMObjMatAnimJoint`, objanim.c:966), behind the same out-of-line
+/// nonzero denominator as [`reciprocal_or_one`]. Callers divide only for a
+/// nonzero payload, where this is the plain IEEE division.
+#[inline(never)]
+fn divide_or_one(delta: f32, payload: f32) -> f32 {
+    delta / if payload == 0.0 { 1.0 } else { payload }
+}
+
 impl MaterialJoint {
     pub fn start(script: u32, frame: f32) -> Self {
         MaterialJoint {
@@ -812,8 +821,8 @@ impl MaterialJoint {
                 let value = f32::from_bits(raw);
 
                 let t = &mut self.tracks[base + i];
-                // `SetTargetRate` writes the rate alone: no value, length or
-                // kind (`objanim.c`, `nGCAnimEvent32SetTargetRate`).
+                // `SetTargetRate` writes the rate alone: no value, length,
+                // `length_invert` or kind (`objanim.c`, `nGCAnimEvent32SetTargetRate`).
                 if opcode == OP_SET_TARGET_RATE {
                     t.rate_target = value;
                     continue;
@@ -862,9 +871,10 @@ impl MaterialJoint {
                     _ => {
                         // `SET_VAL(_BLOCK)`: a linear ramp. A zero payload
                         // keeps the previous rate, and `length_invert` is
-                        // left for a later cubic key.
+                        // left for a later cubic key. Divided, not
+                        // multiplied by the inverse (objanim.c:966).
                         if payload != 0.0 {
-                            t.rate_base = (t.value_target - t.value_base) * payload_inverse;
+                            t.rate_base = divide_or_one(t.value_target - t.value_base, payload);
                         }
                         t.rate_target = 0.0;
                         t.kind = Kind::Linear;
@@ -1316,6 +1326,22 @@ mod tick_tests {
             j.tick(&d, 1.0).expect("ticks");
         }
         assert_eq!(j.tracks[TRACK_TRA_U].rate_base, 2.0);
+    }
+
+    #[test]
+    fn a_linear_rate_is_divided_not_multiplied_by_the_inverse() {
+        // objanim.c:966: 100 / 3 is 33.333332; 100 * (1 / 3) is 33.333336.
+        let d = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1 << TRACK_TRA_U, 3),
+            100.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert_eq!(
+            j.tracks[TRACK_TRA_U].rate_base.to_bits(),
+            33.333332f32.to_bits()
+        );
     }
 
     #[test]

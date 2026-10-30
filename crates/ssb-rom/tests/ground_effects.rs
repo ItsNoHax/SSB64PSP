@@ -53,15 +53,14 @@ fn first_cycle_matches_the_objanim_replay() {
             }
         }
         assert_eq!(life, Some(u32::from(cycle::LIFE[k])), "desc {k} life");
-        // `ssb_rom::objanim` takes a linear rate as `(target - base) *
-        // (1 / payload)`; `gcParseDObjAnimJoint` (objanim.c:397) and the
-        // table divide. The Zebes ship's X (desc 8) ends one ulp apart, so
-        // this reading agrees to within one ulp; the table is decomp-exact.
+        // Both readings divide a linear rate as `gcParseDObjAnimJoint` does
+        // (objanim.c:395-397), so the ends agree bit for bit (the Zebes
+        // ship's X, desc 8, is -1800.0 only by division).
         let end = cycle::END[k][0];
         for axis in 0..2 {
-            let ulps = (pose.translate[axis].to_bits() as i64 - end[axis].to_bits() as i64).abs();
-            assert!(
-                ulps <= 1,
+            assert_eq!(
+                pose.translate[axis].to_bits(),
+                end[axis].to_bits(),
                 "desc {k} end {:?} vs {end:?}",
                 &pose.translate[..2]
             );

@@ -502,7 +502,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `effect::GROUND_EFFECT_ANIM_SLOT`, one per `EFGroundDesc`), their
 // `MObjSub` pairings and their material-animation bindings. No table
 // layout change.
-pub const VERSION: u32 = 139;
+// 140: `objanim`-baked frames (cameras, title) divide linear rates as
+// objanim.c:397/2616 do; 1-ulp value changes in the bakes owned by files
+// 56, 69, 167 and 250. No table layout change.
+pub const VERSION: u32 = 140;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

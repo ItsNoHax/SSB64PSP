@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v139 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v140 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 275 of 275 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -18,11 +18,11 @@
 
 ## Current work
 
-- Landed (batch 116): ground ambient effects (`efground`): slot held until the bounds eject, cycle ends from a generated table, drawn in psp-game; Sector and Castle seeds and effect root N64-equal ticks 69-700; new golden `f1-vs-ground`; pack v139; hidden-part order history closed (RE-474, RE-508).
+- Landed (batch 117): objanim/matanim linear rate divided (objanim.c:397, 966), payload 0 keeps the rate, SetTargetRate rate-only, step zeroes `rate_target`, `length_invert` cubic-only; pack v140 (camera/title bakes 1 ulp); goldens unchanged (RE-508).
+- Landed (batch 116): ground ambient effects (`efground`): slot held until the bounds eject, cycle ends from a generated table, drawn in psp-game; Sector and Castle seeds and effect root N64-equal ticks 69-700; new golden `f1-vs-ground`; hidden-part order history closed (RE-474, RE-508).
 - Landed (batch 115): status end decided by the highest bound scripted joint (pre-order with hidden parts, tablegen `END_BLOCKS`, 25 motions); Thunder trail copied rehit timers count down on its make frame; VS and cpufx traces N64-equal every tick (cpufx-s 430 was an N64 snapshot artifact); goldens unchanged (RE-474, RE-508).
 - Landed (batch 114): spawn floor on moved map groups; status end by the last scripted joint's f32 countdown (fractional speeds); Kirby Stone end; Thunder trail first update; VS and cpufx traces N64-equal every tick but cpufx-s tick 430; 6 goldens rebaselined (RE-474, RE-508).
 - Landed (batch 113): ground effect actor RNG (`efGroundMakeAppearActor`) and unowned item spark (player 4); VS, cpufx and opening seeds N64-equal every tick; 22 goldens rebaselined (RE-508).
-- Landed (batch 112): throw-hold damage no longer rewrites the held fighter's 1P hit record; a hit on any cliff-hold status resets the regrab wait; jab item throw before the Z catch; Whispy wind and Zebes acid quakes (camera N64 RDRAM matched); `f1-training-whispy-wind`, `f1-vs-time-up` rebaselined (RE-508); found two VS RNG gaps (PLAN).
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
 - Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 116 (hardware: RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 117 (hardware: RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

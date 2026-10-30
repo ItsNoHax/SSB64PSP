@@ -55,6 +55,16 @@ fn reciprocal_or_one(payload: f32) -> f32 {
     1.0 / if payload == 0.0 { 1.0 } else { payload }
 }
 
+/// `SetVal`'s linear rate, `(target - base) / payload` (objanim.c:395-397):
+/// a division, not a multiply by [`reciprocal_or_one`], which can round one
+/// ulp apart (the Zebes ground ship's end X, RE-508). The callers divide
+/// only for a nonzero payload; the same out-of-line nonzero denominator
+/// keeps PSPLink's trapping FPU safe from a speculated division.
+#[inline(never)]
+fn divide_or_one(delta: f32, payload: f32) -> f32 {
+    delta / if payload == 0.0 { 1.0 } else { payload }
+}
+
 /// Opcodes, `AObjEvent32Kind`. Shared with [`matanim`](crate::matanim), which
 /// reads the material half of the same instruction set.
 const OP_END: u32 = 0;
@@ -412,50 +422,55 @@ impl StageJoint {
                 None
             };
 
-            let payload_inverse = reciprocal_or_one(payload);
             let t = &mut self.tracks[i];
+            // `SetTargetRate` writes the outgoing rate alone: no value,
+            // length, kind or `length_invert` (objanim.c:451-471).
+            if opcode == OP_SET_TARGET_RATE {
+                t.rate_target = value;
+                continue;
+            }
             t.value_base = t.value_target;
             t.value_target = value;
             t.length = -self.anim_wait - speed;
-            if payload != 0.0 {
-                t.length_invert = payload_inverse;
-            }
 
+            // `gcParseDObjAnimJoint` (objanim.c:332-509). Only the cubic
+            // keys write `length_invert`, and a zero payload keeps the
+            // previous one; a later cubic key with payload 0 reads it.
             match opcode {
                 // Cubic with a zero outgoing rate.
                 OP_SET_VAL0_RATE_BLOCK | OP_SET_VAL0_RATE => {
                     t.rate_base = t.rate_target;
                     t.rate_target = 0.0;
                     t.kind = Kind::Cubic;
+                    if payload != 0.0 {
+                        t.length_invert = reciprocal_or_one(payload);
+                    }
                 }
                 // Cubic with both rates given.
                 OP_SET_VAL_RATE_BLOCK | OP_SET_VAL_RATE => {
                     t.rate_base = t.rate_target;
                     t.rate_target = second.unwrap_or(0.0);
                     t.kind = Kind::Cubic;
-                }
-                // Only the outgoing rate changes; the value is a target.
-                OP_SET_TARGET_RATE => {
-                    t.rate_target = value;
-                    t.value_target = t.value_base;
-                    t.kind = Kind::Cubic;
+                    if payload != 0.0 {
+                        t.length_invert = reciprocal_or_one(payload);
+                    }
                 }
                 // Steps to the value once `payload` frames have passed —
                 // `length_invert` holds the switch-over frame uninverted here,
                 // exactly as the 16-bit `Step` does.
                 OP_SET_VAL_AFTER_BLOCK | OP_SET_VAL_AFTER => {
-                    t.length_invert = payload;
                     t.kind = Kind::Step;
-                }
-                // Linear ramp over `payload` frames.
-                _ => {
-                    t.rate_base = if payload != 0.0 {
-                        (t.value_target - t.value_base) * payload_inverse
-                    } else {
-                        0.0
-                    };
+                    t.length_invert = payload;
                     t.rate_target = 0.0;
+                }
+                // Linear ramp over `payload` frames, divided; a zero payload
+                // keeps the previous rate.
+                _ => {
                     t.kind = Kind::Linear;
+                    if payload != 0.0 {
+                        t.rate_base = divide_or_one(t.value_target - t.value_base, payload);
+                    }
+                    t.rate_target = 0.0;
                 }
             }
         }
@@ -695,5 +710,108 @@ mod tests {
             joint_scripts(&data, 0, 3),
             alloc::vec![None, Some(0x40), None]
         );
+    }
+
+    /// `gcPlayDObjAnimJoint`'s cubic for one track state.
+    fn cubic(length: f32, length_invert: f32, base: f32, target: f32, rates: [f32; 2]) -> f32 {
+        Aobj {
+            kind: Kind::Cubic,
+            length,
+            length_invert,
+            value_base: base,
+            value_target: target,
+            rate_base: rates[0],
+            rate_target: rates[1],
+        }
+        .value()
+    }
+
+    fn ticks(data: &[u8], n: usize) -> JointPose {
+        let mut j = StageJoint::start(0, 0.0);
+        let mut pose = JointPose::default();
+        for _ in 0..n {
+            j.tick(data, 1.0, &mut pose).expect("ticks");
+        }
+        pose
+    }
+
+    #[test]
+    fn a_linear_rate_is_divided_not_multiplied_by_the_inverse() {
+        // objanim.c:397. 100 / 3 rounds to 33.333332, and three frames of
+        // it land on 100.0 exactly; 100 * (1 / 3) is 33.333336, which ends
+        // on 100.00001.
+        let data = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1 << 5, 3),
+            100.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        assert_eq!(ticks(&data, 3).translate[1].to_bits(), 100.0f32.to_bits());
+    }
+
+    #[test]
+    fn a_zero_payload_linear_key_keeps_the_previous_rate() {
+        // objanim.c:395: `rate_base` is written only for a nonzero
+        // payload. The ramp to 8 runs at 2 a frame; the zero-payload key
+        // to 100 rebases at 8 and keeps climbing at 2.
+        let data = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1 << 4, 4),
+            8.0f32.to_bits(),
+            cmd(OP_SET_VAL, 1 << 4, 0),
+            100.0f32.to_bits(),
+            cmd(OP_WAIT, 0, 4),
+            cmd(OP_END, 0, 0),
+        ]);
+        assert_eq!(ticks(&data, 5).translate[0], 10.0);
+    }
+
+    #[test]
+    fn set_target_rate_writes_only_the_outgoing_rate() {
+        // objanim.c:451-471: the cubic from 0 to 1 over 4 frames keeps its
+        // values, length and `length_invert`; only `rate_target` changes.
+        let data = script(&[
+            cmd(OP_SET_VAL0_RATE, 1, 4),
+            1.0f32.to_bits(),
+            cmd(OP_SET_TARGET_RATE, 1, 0),
+            0.5f32.to_bits(),
+            cmd(OP_WAIT, 0, 4),
+            cmd(OP_END, 0, 0),
+        ]);
+        let want = cubic(1.0, 0.25, 0.0, 1.0, [0.0, 0.5]);
+        assert_eq!(ticks(&data, 1).rotate[0].to_bits(), want.to_bits());
+    }
+
+    #[test]
+    fn a_linear_key_leaves_length_invert_for_a_later_cubic() {
+        // objanim.c:371-407 never writes `length_invert`, so the
+        // zero-payload cubic key reads `gcAddAObjForDObj`'s 1.0, not the
+        // ramp's 1/2.
+        let data = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1 << 4, 2),
+            4.0f32.to_bits(),
+            cmd(OP_SET_VAL0_RATE_BLOCK, 1 << 4, 0),
+            10.0f32.to_bits(),
+            cmd(OP_WAIT, 0, 4),
+            cmd(OP_END, 0, 0),
+        ]);
+        let want = cubic(1.0, 1.0, 4.0, 10.0, [0.0, 0.0]);
+        assert_eq!(ticks(&data, 3).translate[0].to_bits(), want.to_bits());
+    }
+
+    #[test]
+    fn a_step_key_zeroes_the_rate_a_later_cubic_inherits() {
+        // objanim.c:502: `SetValAfter` sets `rate_target = 0`, which the
+        // next cubic key moves into `rate_base`.
+        let data = script(&[
+            cmd(OP_SET_VAL_RATE_BLOCK, 1 << 4, 2),
+            1.0f32.to_bits(),
+            3.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << 4, 0),
+            2.0f32.to_bits(),
+            cmd(OP_SET_VAL0_RATE_BLOCK, 1 << 4, 2),
+            5.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let want = cubic(1.0, 0.5, 2.0, 5.0, [0.0, 0.0]);
+        assert_eq!(ticks(&data, 3).translate[0].to_bits(), want.to_bits());
     }
 }
