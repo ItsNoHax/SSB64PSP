@@ -4,7 +4,7 @@
 //! KOs, falls and points, the places they sort into, the winner, when the
 //! fighters appear and when START may leave. The fighters themselves are
 //! [`crate::results_scene`]; the text, table and wallpaper are
-//! [`crate::results_layer`]; the confetti is not ported. The announcer,
+//! [`crate::results_layer`]. The announcer,
 //! the winner's fanfare and the results BGM after it
 //! (`mnVSResultsAnnounceWinner`, `mnVSResultsPlayWinBGM`,
 //! `mnVSResultsAudioThreadUpdate`) run in [`Results::tick`].

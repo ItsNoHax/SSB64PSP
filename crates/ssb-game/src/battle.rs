@@ -145,8 +145,8 @@ pub struct Battle {
     pub status: GameStatus,
     pub rule: Rule,
     pub is_team_battle: bool,
-    /// Team Attack: `dSCManagerDefaultBattleState`'s FALSE, as VS Options
-    /// is not ported.
+    /// Team Attack: `dSCManagerDefaultBattleState`'s FALSE until VS Options
+    /// sets it.
     pub is_team_attack: bool,
     /// Minutes, or [`TIMELIMIT_INFINITE`].
     pub time_limit: u8,

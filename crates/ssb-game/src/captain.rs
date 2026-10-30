@@ -345,8 +345,13 @@ pub fn on_kick_hit(f: &mut Fighter) {
 /// `ftCaptainSpecialLwDecideMapCollide`'s ground probe: once the script's
 /// `SetFlag3(1)` (motion frame 36) runs, `mpCommonProcFighterOnEdge` stops
 /// the kick at the floor's edge instead of `mpCommonProcFighterOnFloor`.
+/// `SpecialLwAir` shares it (`ftCaptainSpecialLwAirProcMap`,
+/// `ftcaptainspeciallw.c:170`) once a landing grounds it.
 pub(crate) fn special_lw_stops_at_edge(f: &Fighter) -> bool {
-    f.status.status == AnyStatus::Captain(CaptainStatus::SpecialLw) && f.motion_script.flags[3] != 0
+    matches!(
+        f.status.status,
+        AnyStatus::Captain(CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir)
+    ) && f.motion_script.flags[3] != 0
 }
 
 /// `ftCaptainSpecialLwProcMap` after `ftCaptainSpecialLwDecideMapCollide`

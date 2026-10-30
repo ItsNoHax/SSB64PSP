@@ -18,19 +18,19 @@
 
 ## Current work
 
+- Landed (batch 104): proc_map audit, 24 fixes (Ness air PSI Magnet ledge, Samus Screw Attack ledge, Yoshi/Link/Captain/Kirby ceiling stops; RE-586); Reflect Break effect made and drawn; stale module docs. Goldens unchanged.
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
 - Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).
 - Landed (batch 89): Master Hand Fall wallpaper translucent (two-pass texel alpha; N64 MAE 30.4 to 5.6 / 26.3 to 7.3; PSP-2000 matches PPSSPP); new goldens `f1-onep-boss-fall-fadein`, `-full`; pack v138; boss low_free -133,376 B; link order re-searched (s7), Slim vs4 -0.15, intro -1.43, battle -0.48 ms, Fall +0.44 (RE-321, RE-585).
 - Landed (batches 93-94): anim-less display effects reuse one `StageAnimator` (electric hit window 23.1 to 19.1 ms, Fall 22.2 to 18.4 ms on the Slim); `.rodata` pinned at line offset 0 (RE-584).
 - Landed (batch 90): boot audio start and first save at tick 2 (no sound call precedes it); PSP-2000 `psp_main` to frame 1 534 to about 417 ms, boot-to-opening unchanged; frame stack pinned at d-cache way offset 0x1600 (RE-583); `psp-link.py` warns on unmatched link-order lines; `boot_log` buffered to frame 60; pack of another version stops on a fatal screen naming both versions (RE-582).
 - Landed (batch 84): in-place battle locals, order re-searched on the timed build, `.bss` pinned to a data-cache way. Slim ms0: vs4 17.16 to 16.76, intro 18.29 to 17.86, battle 16.41 to 15.90, Zebes 11.53 to 11.36; low_free -1,280 B (RE-580).
-- Landed (batches 86-88): Master Hand return matches the N64 per tick (PSP = N64 + 106); Giant DK intro matches ParaLLEl-RDP; new golden `f1-onep-intro-giant`; mouth line closed as RDP coverage and sample-point deviation (RE-581).
-- Batch 75: battle allocations 0 after load (vs4@2400 except 2 FxPool grows; vsmagnify 0); eager battle slabs (46 training rows -76,800 B, f1-onep-zako-clear/-ko-flash -471,552 B); OOM reaches the fatal screen (ballast 14.5 MB: 23,124 B @4); rust-psp 6c3f2c33; peak 14,615,040 B.
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
-1. Playtest performance: electric hit (17.48 no hit, 18.23 shock) and Master Hand windows still above 16.7 ms.
+1. Reflect Break N64 trace + golden (`PLAN.md`).
+2. Playtest performance: electric hit (17.48 no hit, 18.23 shock) and Master Hand windows still above 16.7 ms.
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -41,7 +41,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 99 (hardware: RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 104 (hardware: RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

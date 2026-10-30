@@ -596,6 +596,11 @@ pub const LIST: &[DArray] = &[
         0x8012_E274,
     ),
     dl_link(
+        "EF_MANAGER_REFLECT_BREAK_EFFECT_DESC_DL_LINK",
+        "dEFManagerReflectBreakEffectDesc.dl_link",
+        0x8012_E1AC,
+    ),
+    dl_link(
         "EF_MANAGER_THUNDER_JOLT_EFFECT_DESC_DL_LINK",
         "dEFManagerThunderJoltEffectDesc.dl_link",
         0x8012_E24C,

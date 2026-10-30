@@ -10,7 +10,7 @@
 //! (the fades' alphas and the bar's width move once per drawn frame).
 //! [`Layer::visit`] yields what draws, back to front in the cameras'
 //! order: the wallpaper (camera priority 80), `WallpaperTint2` (70), the
-//! emblem (60, not ported), `WallpaperTint` (55), the fighters (50), the
+//! emblem (60), `WallpaperTint` (55), the fighters (50), the
 //! player tags (30), the results text (20), the tint (17) and the table
 //! (15). The sprites name the files `dMNVSResultsFileIDs` loads; the PSP
 //! layer looks each up in the pack.

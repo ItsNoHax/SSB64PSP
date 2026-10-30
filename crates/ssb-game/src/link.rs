@@ -791,8 +791,8 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
             f.land(floor_y);
             set(f, LinkStatus::SpecialLw, frame, SPECIAL_LW_LENGTH);
         }
-        // `ftLinkSpecialAirHiProcMap`. Its ledge catch waits on ledge
-        // detection.
+        // `ftLinkSpecialAirHiProcMap`; its ledge catch is
+        // `crate::map::allows_cliff`.
         LinkStatus::SpecialAirHi => {
             destroy_spin(f);
             f.land(floor_y);

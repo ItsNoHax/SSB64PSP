@@ -366,7 +366,7 @@ pub fn set_special_air_lw_start(f: &mut Fighter) {
 
 /// `ftYoshiSpecialAirLwLoopSetStatus`: the pose and the box hold, the
 /// horizontal speed is capped and the fall is at least 150 a frame.
-fn set_special_air_lw_loop(f: &mut Fighter) {
+pub(crate) fn set_special_air_lw_loop(f: &mut Fighter) {
     if f.physics.vel_air.x.abs() > YOSHIBOMB_VEL_X_CLAMP {
         f.physics.vel_air.x = f.physics.vel_air.x.signum() * YOSHIBOMB_VEL_X_CLAMP;
     }
@@ -633,8 +633,8 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32) -> bool {
                 SPECIAL_N_RELEASE_LENGTH,
             );
         }
-        // `ftYoshiSpecialAirHiSwitchStatusGround`. After the throw the
-        // source also catches ledges; ledge detection is not ported.
+        // `ftYoshiSpecialAirHiSwitchStatusGround`. After the throw it also
+        // catches ledges (`crate::map::allows_cliff`).
         YoshiStatus::SpecialAirHi => {
             f.land(floor_y);
             set(f, YoshiStatus::SpecialHi, frame, SPECIAL_HI_LENGTH);

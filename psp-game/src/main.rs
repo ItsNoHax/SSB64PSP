@@ -6715,9 +6715,9 @@ struct DrawAssets {
     rebirth_halo: Option<(ssb_rom::pack::ObjectDesc, ssb_rom::pack::AnimDesc)>,
     /// The display effects' objects and transform animations (RE-415), by
     /// [`display_asset`].
-    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 10],
+    displays: [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 11],
     /// [`Self::displays`]' primitive heads ([`meshdraw::object_heads`]).
-    display_heads: [(bool, bool); 10],
+    display_heads: [(bool, bool); 11],
     /// Pikachu's Thunder frames by `texture_id_curr` (RE-417).
     thunder_frames: [Option<ssb_rom::pack::MeshDesc>; 4],
     /// The Egg Lay egg and its Wait, Break and Throw animations (RE-417).
@@ -6988,8 +6988,8 @@ unsafe fn draw_thunder_segment(
 /// Kirby's rapid-jab puff (`llKirbySpecial2VulcanJabDObjDesc`, RE-513) and
 /// the ground Thunder Jolt's burst (`llPikachuSpecial3ThunderJoltDObjDesc`,
 /// RE-541) and the Fire Spark (`llEFCommonEffects2FireSparkDObjDesc`,
-/// RE-427).
-const DISPLAY_EFFECT_KEYS: [(u32, u32); 10] = [
+/// RE-427) and the Reflect Break (`llEFCommonEffects2ReflectBreakDObjDesc`).
+const DISPLAY_EFFECT_KEYS: [(u32, u32); 11] = [
     (83, 0x7750),
     (83, 0x7E80),
     (83, 0x7C28),
@@ -7000,13 +7000,14 @@ const DISPLAY_EFFECT_KEYS: [(u32, u32); 10] = [
     (348, 0x0B20),
     (342, 0x2258),
     (84, 0x2040),
+    (84, 0x3398),
 ];
 
 /// [`DISPLAY_EFFECT_KEYS`]' objects and transform animations.
 #[inline(never)]
 fn display_assets(
     p: &Pack<'_>,
-) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 10] {
+) -> [Option<(ssb_rom::pack::ObjectDesc, Option<ssb_rom::pack::AnimDesc>)>; 11] {
     DISPLAY_EFFECT_KEYS.map(|key| {
         let slot = ssb_rom::effect::MANAGER_EFFECT_KEYS
             .iter()
@@ -7033,6 +7034,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         K::VulcanJab => 7,
         K::ThunderJolt => 8,
         K::FireSpark => 9,
+        K::ReflectBreak => 10,
         K::SpawnOrbs
         | K::SpawnSparks
         | K::SpawnMDust
@@ -7634,6 +7636,17 @@ fn draw_one_display(
             (
                 bill.mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
                     .mul(&units),
+                n,
+            )
+        }
+        // `dEFManagerReflectBreakEffectDesc`'s flags `0x4 | 0x1`: a bare
+        // root of kinds 0x28 (the eye billboard at the translate) and
+        // `RotRpyR` (half a turn facing left), over the desc's tree, every
+        // node `TraRotRpyRSca` and played by the desc's animation.
+        K::ReflectBreak => {
+            let n = scratch.anim.compose(p, object, &mut posed);
+            (
+                bill.mul(&Mat4::from_tr_display([0.0; 3], rot)).mul(&units),
                 n,
             )
         }

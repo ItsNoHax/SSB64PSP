@@ -380,6 +380,7 @@ fn display_effects_draw_on_their_desc_links() {
     use DisplayKind as K;
     assert_eq!(K::Slash.dl_link(), 18);
     assert_eq!(K::ShockSmall.dl_link(), 18);
+    assert_eq!(K::ReflectBreak.dl_link(), 18);
     assert_eq!(K::ImpactWave.dl_link(), 10);
     assert_eq!(K::MBallRays.dl_link(), 10);
     for k in [
@@ -869,4 +870,68 @@ fn direc_x_billboard_collapses_near_the_view_axis_by_the_sum_quirk() {
 #[test]
 fn direc_x_billboard_has_no_matrix_for_a_zero_axis() {
     assert!(direc_x_billboard(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), Vec3::ZERO).is_none());
+}
+
+/// `efManagerReflectBreakMakeEffect`: no struct (`EFDesc` flags `0x4 |
+/// 0x1`), the root at `pos`, half a turn about `y` facing left, ended by
+/// its animation after [`life::REFLECT_BREAK`] plays, the make's included.
+#[test]
+fn reflect_break_has_no_struct_turns_with_lr_and_ends_with_its_animation() {
+    let bank = bank(200);
+    let (mut p, mut e) = runtime();
+    let pos = Vec3::new(10.0, 20.0, 0.0);
+    assert!(e.reflect_break(pos, 1));
+    assert!(e.reflect_break(pos, -1));
+    assert_eq!(e.used(), 0, "EFDesc lacks EFFECT_FLAG_USERDATA");
+    let d: std::vec::Vec<_> = e.displays().copied().collect();
+    assert_eq!(d[0].kind, DisplayKind::ReflectBreak);
+    assert_eq!((d[0].translate, d[0].rotate.y), (pos, 0.0));
+    assert_eq!(d[1].rotate.y, dtor(180.0));
+    let mut rt = EffectRuntime {
+        particles: &mut p,
+        effects: &mut e,
+        banks: &bank,
+    };
+    for _ in 1..life::REFLECT_BREAK.max(2) - 1 {
+        rt.frame();
+        assert_eq!(rt.effects.displays().count(), 2);
+    }
+    rt.frame();
+    assert!(rt.effects.displays().next().is_none());
+}
+
+/// `ftCommonShieldBreakFlyReflectorSetStatus`: a weapon that beat Fox's
+/// reflector leaves the shards at the reflector's offset on its joint,
+/// turned by `reflect_lr`, before the shield-break launch.
+#[test]
+fn a_broken_reflector_makes_the_reflect_break_at_its_special_coll() {
+    use crate::fteffect::FighterEffect;
+    use crate::status::{AnyStatus, FoxStatus};
+    let mut fox = standing(FighterKind::Fox, 1, 50.0);
+    crate::status::set_any_status(
+        &mut fox,
+        AnyStatus::Fox(FoxStatus::SpecialLwLoop),
+        0.0,
+        crate::status::StatusTiming::unknown(),
+    );
+    let coll = combat::reflector(&fox).unwrap();
+    let damage = coll.damage_resist + 1;
+    let outcome = combat::reflect_weapon(&mut fox, &coll, damage, Vec3::new(0.0, 100.0, 0.0));
+    assert_eq!(outcome, combat::ReflectOutcome::Broke);
+    fox.effects.clear();
+    combat::proc_params_with(&mut fox, None);
+    assert_eq!(
+        fox.status.status,
+        AnyStatus::Common(crate::status::Status::ShieldBreakFly)
+    );
+    let want = fox.joint_world(coll.joint, coll.offset);
+    let made: std::vec::Vec<_> = fox
+        .effects
+        .iter()
+        .filter_map(|e| match *e {
+            FighterEffect::ReflectBreak { pos, lr } => Some((pos, lr)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(made, [(want, -1)], "the weapon came from Fox's left");
 }

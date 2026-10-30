@@ -153,6 +153,9 @@ pub enum FighterEffect {
     /// `efManagerImpactWaveMakeEffect(pos, SYVECTOR_AXIS_Z, rotate)` at a
     /// struck surface ([`surface_impact`]).
     ImpactWave { pos: Vec3, rotate: f32 },
+    /// `efManagerReflectBreakMakeEffect(&pos, lr)`, called directly from
+    /// `ftCommonShieldBreakFlyReflectorSetStatus`.
+    ReflectBreak { pos: Vec3, lr: i8 },
     /// `efManagerQuakeMakeEffect(magnitude)`, called directly (no
     /// `ftParamMakeEffect` demo check).
     Quake(u8),
@@ -407,6 +410,9 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
             }
             FighterEffect::ImpactWave { pos, rotate } => {
                 rt.effects.impact_wave(pos, IMPACT_WAVE_AXIS_Z, rotate);
+            }
+            FighterEffect::ReflectBreak { pos, lr } => {
+                rt.effects.reflect_break(pos, lr);
             }
             FighterEffect::Quake(magnitude) => {
                 rt.effects.quake(magnitude);

@@ -17,6 +17,10 @@ use ssb_engine::math::{div_nonzero, Vec2, Vec3};
 #[path = "map_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "proc_map_tests.rs"]
+mod proc_map_tests;
+
 /// `MPYakumonoStatus`, independent of render-node visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GroupStatus {
@@ -2013,6 +2017,13 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
                 | Status::DownBackU
                 | Status::DownAttackD
                 | Status::DownAttackU
+                // `ftCommonCliffAttackEscape2ProcMap` on the ground
+                // (`ftcommoncliffclimb.c:216`); the climbs are
+                // `ftCommonCliffClimbCommon2ProcMap`, `OnGroundBreak`.
+                | Status::CliffAttackQuick2
+                | Status::CliffAttackSlow2
+                | Status::CliffEscapeQuick2
+                | Status::CliffEscapeSlow2
         ),
         // Luigi shares Mario's table. The grounded Super Jump and Screw
         // Attack: `ftMarioSpecialHiProcMap` (`ftmariospecialhi.c:130`) and
@@ -2110,9 +2121,37 @@ pub(crate) fn stops_at_edge(s: AnyStatus) -> bool {
     }
 }
 
-/// The statuses on `mpCommonProcFighterCliffFloorCeil`, whose ceiling test
-/// is `MAP_PROC_TYPE_CEILHEAVY`.
+/// The statuses whose air map pass is `MAP_PROC_TYPE_CEILHEAVY`: the
+/// common ones on `mpCommonProcFighterCliffFloorCeil` (a heavy bonk enters
+/// `StopCeil`, [`stops_at_ceil`]) and the specials that call
+/// `mpCommonCheckFighterCeilHeavyCliff` or `mpCommonCheckFighterCeilHeavy`
+/// themselves, where the bonk only ends the sweep (`is_coll_end`), except
+/// the Yoshi Bomb's rise (`ftYoshiSpecialLwStartProcMap`,
+/// `ftyoshispeciallw.c:67`).
 pub fn is_ceil_heavy_status(s: AnyStatus) -> bool {
+    stops_at_ceil(s)
+        || matches!(
+            s,
+            // `ftcaptainspecialhi.c:118`, `ftkirbyspecialhi.c:212,232`,
+            // `ftlinkspecialhi.c:297`, `ftyoshispeciallw.c:54,67,78`.
+            AnyStatus::Captain(CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi)
+                | AnyStatus::Kirby(
+                    KirbyStatus::SpecialHi
+                        | KirbyStatus::SpecialAirHi
+                        | KirbyStatus::SpecialAirHiFall
+                )
+                | AnyStatus::Link(status::LinkStatus::SpecialAirHi)
+                | AnyStatus::Yoshi(
+                    status::YoshiStatus::SpecialLwStart
+                        | status::YoshiStatus::SpecialAirLwStart
+                        | status::YoshiStatus::SpecialAirLwLoop
+                )
+        )
+}
+
+/// `mpCommonProcFighterCliffFloorCeil`: a heavy ceiling bonk with no ledge
+/// and no floor enters `StopCeil` (`mpcommon.c:703`).
+pub fn stops_at_ceil(s: AnyStatus) -> bool {
     matches!(
         s,
         AnyStatus::Common(
@@ -2140,10 +2179,14 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
                 | Status::Fall
                 | Status::FallAerial
                 | Status::Pass
+                | Status::GuardPass
+                | Status::StopCeil
                 | Status::FallSpecial
                 | Status::DamageFall
         ),
         AnyStatus::Fox(s) => matches!(s, FoxStatus::SpecialAirHiEnd | FoxStatus::SpecialAirHiBound),
+        // PK Thunder's air statuses, and PSI Magnet's: `ftNessSpecialAirLw*ProcMap`
+        // are `mpCommonProcFighterCliff` (`ftnessspeciallw.c:108,203,295,359`).
         AnyStatus::Ness(s) => matches!(
             s,
             NessStatus::SpecialAirHiStart
@@ -2151,7 +2194,17 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
                 | NessStatus::SpecialAirHiEnd
                 | NessStatus::SpecialAirHiJibaku
                 | NessStatus::SpecialAirHiBound
+                | NessStatus::SpecialAirLwStart
+                | NessStatus::SpecialAirLwHold
+                | NessStatus::SpecialAirLwHit
+                | NessStatus::SpecialAirLwEnd
         ),
+        // `ftSamusSpecialHiProcMap` (`ftsamusspecialhi.c:59`): a falling
+        // Screw Attack runs `mpCommonCheckFighterPassCliff`; rising, it only
+        // projects.
+        AnyStatus::Samus(status::SamusStatus::SpecialHi | status::SamusStatus::SpecialAirHi) => {
+            f.physics.vel_air.y < 0.0
+        }
         AnyStatus::Pikachu(s) => matches!(
             s,
             PikachuStatus::SpecialAirHiStart
@@ -2175,7 +2228,9 @@ pub(crate) fn allows_cliff(f: &Fighter) -> bool {
         ),
         AnyStatus::Donkey(s) => s == status::DonkeyStatus::SpecialAirHi,
         AnyStatus::Yoshi(s) => {
-            s == status::YoshiStatus::SpecialAirHi
+            // `ftYoshiSpecialAirHiProcMap` (`ftyoshispecialhi.c:157`): the
+            // ledge only once flag 1 is up (after the egg throw).
+            s == status::YoshiStatus::SpecialAirHi && f.yoshi.egg_thrown
                 || s == status::YoshiStatus::SpecialAirLwLoop
                 || matches!(
                     s,

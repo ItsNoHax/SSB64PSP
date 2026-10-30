@@ -2094,13 +2094,7 @@ impl Fighter {
             return if self.is_grounded() {
                 MapStep::CliffGround {
                     line: self.cliff.line,
-                    stop: !matches!(
-                        status,
-                        crate::status::AnyStatus::Common(
-                            crate::status::Status::CliffClimbQuick2
-                                | crate::status::Status::CliffClimbSlow2
-                        )
-                    ),
+                    stop: map::stops_at_edge(status),
                 }
             } else {
                 MapStep::CliffAir
@@ -2774,15 +2768,31 @@ impl Fighter {
         if moved.floor.is_none() {
             self.pos.y = moved.pos.y;
             if let Some((line, corner)) = result.cliff {
+                // `ftLinkSpecialAirHiProcMap` runs `proc_damage` before the
+                // catch (`ftlinkspecialhi.c:299`).
+                crate::link::on_damage(self);
                 self.landing_public();
                 crate::status::set_cliff_catch(self, line, corner);
                 return;
             }
-            // `mpCommonProcFighterCliffFloorCeil`: no ledge and no floor,
-            // but a heavy ceiling bonk.
+            // A heavy ceiling bonk with no ledge and no floor:
+            // `mpCommonProcFighterCliffFloorCeil` enters `StopCeil`; the
+            // Yoshi Bomb's rise falls (`ftyoshispeciallw.c:67`); Link's
+            // `mpCommonCheckFighterCeilHeavyCliff` runs `proc_damage`
+            // (`ftlinkspecialhi.c:299`); the others only end the sweep.
             if result.ceil_stop {
-                crate::reaction::set_stop_ceil(self);
-                self.floor = None;
+                use crate::status::{AnyStatus as A, LinkStatus, YoshiStatus};
+                match self.status.status {
+                    s if crate::map::stops_at_ceil(s) => {
+                        crate::reaction::set_stop_ceil(self);
+                        self.floor = None;
+                    }
+                    A::Yoshi(YoshiStatus::SpecialLwStart | YoshiStatus::SpecialAirLwStart) => {
+                        crate::yoshi::set_special_air_lw_loop(self);
+                    }
+                    A::Link(LinkStatus::SpecialAirHi) => crate::link::on_damage(self),
+                    _ => {}
+                }
                 return;
             }
             crate::map::air_callback_at(self, want);

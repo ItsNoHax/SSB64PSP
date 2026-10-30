@@ -21,8 +21,6 @@
 //!   inhales.
 //! * **Giant Punch intangibility.** The full punch's `SetHitStatusAll(3)`
 //!   window waits on hit-status intangibility, which is not ported.
-//! * **Ledges.** Falcon Punch's and Egg Lay's aerial statuses catch ledges
-//!   in the source; fighter map collision resolves floors only.
 
 use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec3};

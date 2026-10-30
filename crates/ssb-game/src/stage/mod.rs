@@ -15,7 +15,7 @@
 //! Piranha Plants and Pokémon) are made through the [`StageItems`] port,
 //! which the item pool implements; a kind it cannot make returns `None`,
 //! which is a real source outcome (`itManagerMakeItemSetupCommon` fails
-//! when the pool is full). The Pokémon are not ported yet. Sector Z's
+//! when the pool is full). Sector Z's
 //! Arwing has an object port of its own ([`sector::ArwingObject`]), and its
 //! lasers go to the weapon pool. Of the bonus stages, Race to the Finish has
 //! its controller ([`bonus3`]); the others have none. Rumble is not

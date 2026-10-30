@@ -1242,6 +1242,14 @@ pub enum DisplayKind {
     /// (`efManagerPikachuThunderJoltMakeEffect`). No `EFFECT_FLAG_USERDATA`,
     /// so no struct; it ends with its animation (RE-541).
     ThunderJolt,
+    /// `dEFManagerReflectBreakEffectDesc`: a reflector's shards where a
+    /// weapon broke it (`efManagerReflectBreakMakeEffect`,
+    /// `ftCommonShieldBreakFlyReflectorSetStatus`). Flags `0x4 | 0x1`, no
+    /// `EFFECT_FLAG_USERDATA`: no struct, `efManagerNoStructProcUpdate`, so
+    /// nothing pauses it. A bare root (matrix kind 0x28, the eye billboard
+    /// at [`Display::translate`], then `RotRpyR` of [`Display::rotate`])
+    /// over the desc's tree (`TraRotRpyRSca`); it ends with its animation.
+    ReflectBreak,
     /// `dEFManagerNessPKThunderTrailEffectDesc`: the PK Thunder's last
     /// trail segment, made by trail 3 (`efManagerNessPKThunderTrailMakeEffect`)
     /// on DL link 15. Its process follows the owner's trail ring ten
@@ -1320,6 +1328,9 @@ pub mod life {
     /// `llPikachuSpecial3ThunderJoltAnimJoint`: drawn on eight frames, its
     /// make's and seven more, as in the N64 cpufx-s trace (RE-541).
     pub const THUNDER_JOLT: u16 = 9;
+    /// `llEFCommonEffects2ReflectBreakAnimJoint`: its three shards' scripts
+    /// end on the ninth play, the make's included.
+    pub const REFLECT_BREAK: u16 = 9;
 }
 
 impl DisplayKind {
@@ -1352,6 +1363,7 @@ impl DisplayKind {
             }
             DisplayKind::VulcanJab => d::EF_MANAGER_VULCAN_JAB_EFFECT_DESC_DL_LINK[0],
             DisplayKind::ThunderJolt => d::EF_MANAGER_THUNDER_JOLT_EFFECT_DESC_DL_LINK[0],
+            DisplayKind::ReflectBreak => d::EF_MANAGER_REFLECT_BREAK_EFFECT_DESC_DL_LINK[0],
             DisplayKind::NessPKThunderTrail => {
                 d::EF_MANAGER_NESS_PK_THUNDER_TRAIL_EFFECT_DESC_DL_LINK[0]
             }
@@ -1381,6 +1393,7 @@ impl DisplayKind {
             DisplayKind::MBallRays => life::MBALL_RAYS,
             DisplayKind::ThunderShock { gfx } => life::THUNDER_SHOCK[usize::from(gfx.min(2))],
             DisplayKind::ThunderJolt => life::THUNDER_JOLT,
+            DisplayKind::ReflectBreak => life::REFLECT_BREAK,
             DisplayKind::SpawnOrbs
             | DisplayKind::FlyOrbs
             | DisplayKind::SpawnSparks
@@ -1649,7 +1662,10 @@ impl Effects {
         };
         let ep = if matches!(
             kind,
-            DisplayKind::Slash | DisplayKind::MBallRays | DisplayKind::ThunderJolt
+            DisplayKind::Slash
+                | DisplayKind::MBallRays
+                | DisplayKind::ThunderJolt
+                | DisplayKind::ReflectBreak
         ) {
             NIL
         } else if kind == DisplayKind::YoshiEggEscape {
@@ -1714,8 +1730,10 @@ impl Effects {
             | DisplayKind::FireSpark
             | DisplayKind::MBallRays
             | DisplayKind::ThunderShock { .. }
-            | DisplayKind::ThunderJolt => {
-                // `efManagerHaveStructProcUpdate`.
+            | DisplayKind::ThunderJolt
+            | DisplayKind::ReflectBreak => {
+                // `efManagerHaveStructProcUpdate` (`efManagerNoStructProcUpdate`
+                // for the struct-less ones, which nothing pauses).
                 if d.paused {
                     return;
                 }
@@ -2212,6 +2230,22 @@ impl Effects {
         let d = self.display_mut(i);
         d.translate = pos;
         d.rotate.z = rotate_z;
+        true
+    }
+
+    /// `efManagerReflectBreakMakeEffect(&pos, lr)`: not forced
+    /// (`efManagerMakeEffectNoForce`); `pos` (world) is the root's
+    /// `translate`, and facing left (`lr == -1`) turns it half a turn about
+    /// `y`. `false` as the source returns `NULL`.
+    pub fn reflect_break(&mut self, pos: Vec3, lr: i8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::ReflectBreak) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.translate = pos;
+        if lr == -1 {
+            d.rotate.y = dtor(180.0);
+        }
         true
     }
 

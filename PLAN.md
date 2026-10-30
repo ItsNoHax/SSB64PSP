@@ -14,12 +14,12 @@
 |---|---|---|
 | Architecture | Portable `ssb-rom`/`ssb-engine`/`ssb-game`, shared `psp-runtime`, thin `psp-game`, separate `psp-asset-viewer` ([D-044](docs/decisions/D-044.md)) | `ssb_engine::memory` arenas (`GameArena`, `FrameArena`, `ObjectPool`) |
 | Asset pipeline | ROM tables generated at build time by `ssb-tablegen` ([D-048](docs/decisions/D-048.md)); `romtool` packs all 2,132 archive files, every reachable asset and the audio section; scenes load their own files ([D-046](docs/decisions/D-046.md)) | Trimmed wallpaper padding |
-| Rendering | Build-time display-list conversion; GE lowering with measured deviations; original display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Remaining effect draws and N64 comparisons |
-| Gameplay | 12 fighters, Master Hand, Metal Mario, Giant DK, Polygon Team; How to Play matches an N64 trace every frame (RE-472, RE-473) | Fidelity items below |
-| CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447, RE-568) | N64 trait checks |
-| Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | Fidelity items below |
-| Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | opening differences |
-| Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | Anti-piracy validators |
+| Rendering | Build-time display-list conversion; GE lowering with measured deviations; original display-link passes; CRT overscan crop ([D-047](docs/decisions/D-047.md)) | Reflect Break N64 comparison |
+| Gameplay | 12 fighters, Master Hand, Metal Mario, Giant DK, Polygon Team; How to Play matches an N64 trace every frame (RE-472, RE-473) | None known (by-design rows below) |
+| CPU | VS, Training and 1P behaviours, traits, objectives (RE-390, RE-391, RE-437, RE-438, RE-447, RE-568) | Real menu boot (infeasible) |
+| Game modes | VS (four players, teams), Training, 1P to the ending, staff roll, challengers, bonus stages, Bonus Practice | None |
+| Menus/UI | N64 logo, opening, title, attract loop, every menu and select, HUD | None known |
+| Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | None (validators cannot fail on a PSP, RE-460) |
 | Audio | N64 audio system ported whole, sample-exact ([D-049](docs/decisions/D-049.md), RE-479) | Within the PSP-2000 CPU budget everywhere |
 | PSP performance | 60 FPS under PPSSPP; PSP-2000 figures in STATUS | 60 FPS on a PSP-2000 in every scene |
 | Platform | PSP-2000 and later (64 MiB); PSP-1000 unsupported (RE-288, RE-475) | PSP-1000 (32 MiB) and later |
@@ -125,6 +125,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
 | `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
+| Reflect Break | Made and drawn (link 18, 9 plays); acceptance: N64 trace of Fox's reflector broken by a weapon over 50 damage (status, effect `anim_frame`, pixels) and a golden | RE-351, RE-421, RE-422 |
 
 ### Front end and 1P (`MS6`)
 

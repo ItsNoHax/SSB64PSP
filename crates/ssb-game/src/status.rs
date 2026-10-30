@@ -2082,10 +2082,8 @@ pub struct GuardState {
     pub slide_tics: i32,
     pub shield_health: f32,
     /// The damage of the hit that last triggered `GuardSetOff` — drives its
-    /// pushback and stun length. `shield_damage_total`'s per-frame
-    /// multi-hit accumulation (`ftmain.c:2069`) is not ported: this codebase
-    /// resolves one hitbox at a time (`crate::attack`'s module docs), so the
-    /// single triggering hit's damage stands in for the accumulated total.
+    /// pushback and stun length. The frame's hits accumulate in
+    /// `crate::combat::FrameHits::shield_damage_total` (`ftmain.c:2069`).
     pub shield_damage: f32,
     pub release_lag: i32,
     pub decay_wait: i32,
@@ -3486,8 +3484,8 @@ pub fn set_mario_special_air_hi(f: &mut Fighter) {
     play_anim_events(f);
 }
 
-/// `ftCommonSpecialHiCheckInterruptCommon` @ 0x80151160, limited to Mario:
-/// B edge plus an upward stick. Every other fighter remains unported here.
+/// `ftCommonSpecialHiCheckInterruptCommon` @ 0x80151160: B edge plus an
+/// upward stick, into the character's up special.
 pub fn check_special_hi(f: &mut Fighter) -> bool {
     // `attr->is_have_special*`; the special statuses are the character's
     // (`dFTMainSpecialStatusDescs`).
@@ -5178,10 +5176,8 @@ pub fn set_pass_status(f: &mut Fighter, status: Status) {
 
 /// `ftCommonAttack11SetStatus` @ `ftcommonattack1.c:127`, reduced to the
 /// no-item case. Chains into `Attack12` on a well-timed repeated tap (see
-/// [`Attack1State`] and `update`'s `Attack11` arm); `Attack12`'s own
-/// further chain into `Attack13` is still not ported, since `Attack13` is a
-/// per-character status beyond the common 0..=219 table this codebase does
-/// not have an extension point for yet.
+/// [`Attack1State`] and `update`'s `Attack11` arm), and `Attack12` into the
+/// character's `Attack13` ([`attack13_status`]).
 pub fn set_attack11(f: &mut Fighter) {
     if crate::item_throw::check_get(f) {
         return;
@@ -8904,11 +8900,9 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_jab_is_not_interruptible_through_the_ground_chain() {
-        // Attack1's own interrupt handling (item-throw branches, the Attack100
-        // rapid-jab check) is not ported (`crate::attack`'s module docs); what
-        // matters here is that the ordinary per-frame dispatch — which is what
-        // actually gates `ground_interrupt` — cannot cut a jab short with a
-        // dash input, because `Attack11` is not `is_actionable_on_ground`.
+        // The ordinary per-frame dispatch, which gates `ground_interrupt`,
+        // cannot cut a jab short with a dash input: `Attack11` is not
+        // `is_actionable_on_ground`.
         let mut f = mario();
         tap_a(&mut f);
         update(&mut f); // Wait's dispatch runs the ground chain, entering the jab

@@ -1824,7 +1824,16 @@ pub fn proc_params_with(f: &mut Fighter, partner: Option<&mut Fighter>) -> bool 
             crate::rumble::on_attack(f, f.hits.attack_damage);
         }
     } else if f.hits.reflect_damage != 0 {
-        // `ftCommonShieldBreakFlyReflectorSetStatus`.
+        // `ftCommonShieldBreakFlyReflectorSetStatus`: the shards at the
+        // special collision's offset on its joint
+        // (`gmCollisionGetFighterPartsWorldPosition`), turned by
+        // `reflect_lr`; then the shield-break launch.
+        if let Some(coll) = reflector(f) {
+            let pos = f.joint_query(coll.joint, coll.offset);
+            let lr = if f.hits.reflect_lr < 0.0 { -1 } else { 1 };
+            f.effects
+                .push(crate::fteffect::FighterEffect::ReflectBreak { pos, lr });
+        }
         crate::reaction::set_shield_break_fly(f);
     } else if f.hits.reflect_lr != 0.0 {
         if base_kind(f.kind) == FighterKind::Fox {

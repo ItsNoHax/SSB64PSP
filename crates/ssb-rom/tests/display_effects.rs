@@ -243,6 +243,7 @@ fn display_effect_lives_match_the_rom() {
             DisplayKind::ThunderShock { gfx: 0 },
         ),
         ("thunder jolt", (342, 0x2258), DisplayKind::ThunderJolt),
+        ("reflect break", (84, 0x3398), DisplayKind::ReflectBreak),
     ] {
         let (data, scripts) = packed_scripts(&pack, key);
         let n = dobj_life(data, &scripts);

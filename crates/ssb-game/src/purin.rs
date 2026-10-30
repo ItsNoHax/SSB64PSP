@@ -12,11 +12,6 @@
 //! * **Rapid jab.** `ftCommonAttack100CheckFighterKind` lists Jigglypuff, but
 //!   her `Jab2` script never sets flag 1, so `Attack100Start` is unreachable
 //!   (`ftpurin.h` calls the three statuses unused). They are not ported.
-//! * **Ledges.** Pound's and Sing's grounded map callbacks
-//!   (`mpCommonProcFighterOnEdge`) stop at a ledge in the source, and the
-//!   aerial jumps can catch one. Fighter map collision resolves floors only,
-//!   so a grounded special that runs out of floor goes airborne as for
-//!   `mpCommonProcFighterOnFloor`.
 //! * **Hit status.** Rest's intangibility, down smash's per-part
 //!   intangibility and the throws' `SetHitStatusAll(2)` come from the motion
 //!   scripts ([`crate::motion`]).

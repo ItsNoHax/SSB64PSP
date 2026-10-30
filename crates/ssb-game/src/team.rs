@@ -36,8 +36,8 @@ pub const TEAM_DEFAULT: u8 = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TeamRules {
     pub is_team_battle: bool,
-    /// VS Options' Team Attack. `dSCManagerDefaultBattleState` has it off,
-    /// and VS Options, which would turn it on, is not ported.
+    /// VS Options' Team Attack. `dSCManagerDefaultBattleState` has it off;
+    /// VS Options turns it on.
     pub is_team_attack: bool,
 }
 

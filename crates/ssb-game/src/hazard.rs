@@ -4,8 +4,7 @@
 //!
 //! The stage half lives in [`crate::stage`]. It owns the registries
 //! (`sFTMainGroundObstacles`, `sFTMainGroundHazards`) and publishes the
-//! obstacle positions a captured fighter follows. Rumble and effect calls
-//! are not ported.
+//! obstacle positions a captured fighter follows.
 
 use crate::combat::DamageBy;
 use crate::combat::{self, Element, HitLogEntry, HitSource, HitStatus};

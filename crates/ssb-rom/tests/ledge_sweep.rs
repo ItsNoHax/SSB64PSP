@@ -506,3 +506,46 @@ fn sweep_vs_ledges(full: bool) {
     assert_eq!(vs, 9);
     assert!(caught > runs / 3, "{caught} of {runs}");
 }
+
+/// The ledge catches the proc_map audit added (`crate::map::allows_cliff`):
+/// Ness's aerial PSI Magnet (`ftNessSpecialAirLw*ProcMap` through
+/// `mpCommonProcFighterCliff`, ftnessspeciallw.c:108,203,295,359), each
+/// falling beside every VS-stage ledge with no input, catches it.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn ness_aerial_psi_magnet_catches_every_vs_ledge() {
+    use ssb_game::status::NessStatus;
+    let Some(bytes) = open_pack() else {
+        return;
+    };
+    let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
+    for entry in [
+        NessStatus::SpecialAirLwStart,
+        NessStatus::SpecialAirLwHold,
+        NessStatus::SpecialAirLwEnd,
+    ] {
+        let (mut ledges, mut caught) = (0u32, 0u32);
+        for index in 0..pack.stage_count() {
+            let stage = pack.stage(index).unwrap();
+            if ssb_rom::stage::vs_ground_kind(stage.source_file).is_none() {
+                continue;
+            }
+            let (stage, floors) = stage_floors(&pack, index);
+            let map = dream_land_map(&pack, &stage);
+            let run = Run {
+                pack: &pack,
+                stage: &stage,
+                floors: &floors,
+                map: &map,
+            };
+            for c in corners(&map) {
+                ledges += 1;
+                let entry = AnyStatus::Ness(entry);
+                let seen = run.sweep(FighterKind::Ness, entry, c, Mod::None, Input::Neutral);
+                caught += u32::from(seen.caught);
+            }
+        }
+        eprintln!("{entry:?}: caught {caught} of {ledges} ledges");
+        assert_eq!(caught, ledges, "{entry:?}");
+    }
+}
