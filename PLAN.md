@@ -80,7 +80,7 @@
 | VFPU block copies | `lv.q`/`sv.q` 16-byte copies for large aligned transfers (vertex expansion, frozen picture, photo) vs rust-psp word `memcpy` | RE-471 |
 | CPU/GE overlap | Double-buffered display lists: +1 frame display latency, never a game tick. `vs4` already overlaps ≥4.8 ms GE; no bus-contention relief. Measure GE time first | RE-469, RE-486, [D-047](docs/decisions/D-047.md) |
 | `meshdraw` audit | Indexed draws, transformed-vertex reuse. sf64-psp: non-indexed rebatching beat reuse. Lit primitives stay indexed | RE-514, RE-530 |
-| I-cache locality | 16 KB I + 16 KB D; per-mesh path of `draw_object_posed_nodes` dominates misses. Outline only cold blocks. Rejected: per-primitive outlining, `opt-level = "s"`, `#[optimize(size)]`, shadowed render-state table; LTO re-inlines single-call helpers | RE-481, RE-487, RE-488, RE-493, RE-495 |
+| I-cache locality | 16 KB I + 16 KB D; per-mesh path of `draw_object_posed_nodes` dominates misses. Outline only cold blocks. Rejected: shared mesh-path footprint cut (code shrink shifts the trained layout; model mispredicted vs4; RE-585 item 30), per-primitive outlining, `opt-level = "s"`, `#[optimize(size)]`, shadowed render-state table; LTO re-inlines single-call helpers | RE-481, RE-487, RE-488, RE-493, RE-495 |
 | Stack depth | Deepest 127 KB of 512 KiB (`set_damage_detect_size` 29 KB leaf) | RE-469 |
 | `run` branch range | Keep within 128 KiB MIPS reach | RE-431 |
 | Debug HUD | `sceGuDebugFlush` (PPSSPP software rasterizer only; faults on PSP) → GE geometry | RE-014, RE-202 |
