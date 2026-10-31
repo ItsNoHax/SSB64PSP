@@ -18,13 +18,13 @@
 
 ## Current work
 
+- Measured (batch 124): Master Hand batched effect path and ShockSmall material cache rejected: Comets/Fall -1.4/-1.6 ms but vs4 +0.3, intro +0.45, battle +0.3 ms under every re-searched order; cache alone +0.1-0.2 ms (RE-585).
 - Landed (batch 123): link order c13 (boss trace in training; timer-variant fmt functions in the tail): -0.05 to -0.36 ms in every window; battle-draw group spans name the electric +2.2 ms (display effects +1.34, effects +0.50, particles +0.11) (RE-585).
 - Landed (batch 122): electric windows re-mapped to `vs4@2170` (r18 no-hit, r12 shock); Master Hand cost is `BossEffects::draw` per-mesh fixed cost, not skinning; no code change (RE-585).
 - Landed (batch 121): link order re-searched (s8b) after batches 100-120 moved 24-443 of 462 ordered functions; HEAD order cost +0.9 to +5.0 ms busy; `.rodata` line 0x00 kept (RE-585).
 - Landed (batch 120): fighter particle bank IDs per battle scene (`ftManagerSetupFilesPlayablesAll`); a -1 bank makes nothing (1P Kirby Team Yoshi-copy egg explode); goldens unchanged (RE-475).
 - Landed (batch 119): Kirby copy residency audited, no gap (copy specials in the swallowed fighter's closure or KirbySpecial1); VS stage select N64-equal on all 10 slots; 11 new goldens (RE-475).
 - Landed (batch 99): frozen 1P-intro models compose once; order s4; Slim intro 17.35 to 14.81 ms; new golden `f1-onep-intro-zako` (ballast low_free 6,801,920 B, equal to base; RE-585).
-- Landed (batch 98): display effects skip the empty split head (shock 19.08 to 18.25 ms with order s3 re-searched after 5d1bf2ae shifted the layout; RE-584, RE-585).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
