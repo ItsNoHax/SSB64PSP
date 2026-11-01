@@ -5,7 +5,8 @@
 //! and miss sequences (`scene_load`'s, from the L2 simulator) and must
 //! agree after every step: held files and their keep states, queued reads,
 //! registered spans, how files share blocks and the block sizes, reads,
-//! reports, and blocks freed.
+//! reports, and blocks freed. One change since, in both (batch 128,
+//! RE-575): a prefetch's reads start at the next frame's safe point.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
@@ -202,6 +203,7 @@ struct Old<'a> {
     failed: Option<IoErr>,
     jobs: VecDeque<OldJob>,
     in_flight: bool,
+    defer: bool,
 }
 
 impl<'a> Old<'a> {
@@ -217,6 +219,7 @@ impl<'a> Old<'a> {
             failed: None,
             jobs: VecDeque::new(),
             in_flight: false,
+            defer: false,
         }
     }
 
@@ -299,12 +302,14 @@ impl<'a> Old<'a> {
             }
         }
         self.queue_missing(&want);
+        self.defer = true;
         self.pump();
     }
 
     /// `safe_point`, the GE idle.
     fn safe_point(&mut self) -> usize {
         self.pump();
+        self.defer = false;
         let mut starts: Vec<u32> = Vec::new();
         for i in 0..self.files.len() {
             if self.files[i].keep == Keep::Leaving {
@@ -579,7 +584,8 @@ impl<'a> Old<'a> {
 
     fn pump(&mut self) {
         loop {
-            if !self.in_flight && !self.start_next() {
+            // Since batch 128: a prefetch's reads start a frame later.
+            if !self.in_flight && (self.defer || !self.start_next()) {
                 return;
             }
             if !self.complete(false) {
@@ -1058,6 +1064,8 @@ fn a_stage_select_holds_the_cursors_preview_alone() {
         .filter(|&i| new.plan.files()[i].keep == Keep::Next)
         .collect();
     assert!(!next.is_empty());
+    // Its reads start at the next frame's safe point.
+    new.safe_point();
     new.safe_point();
     let castle = only(0, 6);
     assert!(held(&new, &files(&with(0))));
@@ -1098,4 +1106,70 @@ fn a_stage_select_holds_the_cursors_preview_alone() {
     new.safe_point();
     assert_eq!(new.plan.held().0, one);
     assert!(next.iter().all(|&i| new.plan.files()[i].keep == Keep::Next));
+}
+
+/// A prefetch's background reads start at the safe point of the frame
+/// after it (RE-575): the frame it is issued in and the next one, a
+/// scene's first, whose misses read on the game thread, have no
+/// background read in flight. A miss there reads its file alone and
+/// queues the rest of that read again.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn a_prefetch_reads_from_the_next_frame() {
+    let Some(bytes) = real_pack() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let cfg = Config {
+        budget: 64 << 20,
+        delay: 1_000_000,
+        fail_bg: 0,
+        fail_start: 0,
+    };
+    let mut new = Planned::new(Pack::open(&bytes).unwrap(), cfg);
+    new.plan
+        .prefetch(&mut new.io, &[crate::scene_roots::FIGHTER_MAIN[0]]);
+    let background = |new: &Planned<'_>| new.io.reads.iter().filter(|r| r.0).count();
+    assert!(!new.plan.in_flight() && !new.plan.jobs().is_empty());
+    // The prefetch's own frame ends: still nothing read in the background.
+    new.safe_point();
+    assert!(!new.plan.in_flight());
+    assert_eq!(background(&new), 0);
+
+    // The next frame: a miss in the first queued read reads its file alone.
+    let job = new.plan.jobs()[0];
+    let live: Vec<usize> = (job.from..=job.last)
+        .filter(|&i| pack.file_at(i as u32).is_some_and(|d| d.len > 0))
+        .collect();
+    assert!(live.len() >= 3, "a read of several files");
+    let i = live[live.len() / 2];
+    let d = pack.file_at(i as u32).unwrap();
+    let reads = new.io.reads.len();
+    let miss = new.plan.miss(&mut new.io, d.blob_start + d.len / 2);
+    assert_eq!(
+        miss,
+        Miss {
+            loaded: true,
+            waited: false
+        }
+    );
+    assert_eq!(new.io.reads.len(), reads + 1);
+    let (bg, start, len) = new.io.reads[reads];
+    assert!(!bg && start <= d.blob_start && start + len >= d.blob_start + d.len);
+    assert!(len < job.len);
+    assert!(!new.plan.in_flight());
+    assert!(live
+        .iter()
+        .filter(|&&f| f != i)
+        .all(|&f| new.plan.files()[f].queued));
+
+    // Its safe point starts the background reads.
+    new.safe_point();
+    assert!(new.plan.in_flight());
+    assert_eq!(background(&new), 1);
+    // A prefetch while one runs lets it run, and starts no other.
+    new.plan.prefetch(&mut new.io, &crate::scene_roots::MAPS);
+    assert!(new.plan.in_flight());
+    assert_eq!(background(&new), 1);
+    new.plan.drain(&mut new.io);
+    new.safe_point();
+    assert!(live.iter().all(|&f| new.plan.files()[f].block != NO_BLOCK));
 }

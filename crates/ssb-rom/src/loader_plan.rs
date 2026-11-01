@@ -152,6 +152,11 @@ pub struct Plan<'p, A: BlockAlloc, E> {
     /// [`enter_end`](Self::enter_end), the only place that marks one,
     /// cleared by the [`safe_point`](Self::safe_point) that drops them.
     leaving: bool,
+    /// A [`prefetch`](Self::prefetch) this frame: no background read
+    /// starts until the next frame's [`safe_point`](Self::safe_point), so
+    /// a scene's first frame, whose misses read on the game thread, never
+    /// waits behind one (RE-575).
+    defer: bool,
 }
 
 impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
@@ -177,6 +182,7 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
             jobs: VecDeque::new(),
             in_flight: false,
             leaving: false,
+            defer: false,
         })
     }
 
@@ -320,10 +326,10 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
         Ok(self.report)
     }
 
-    /// Starts reading `roots` and their extern closure in the background,
-    /// for the scene expected next. Files held or queued are not read
-    /// again; reads stop being queued once fewer than [`PREFETCH_MARGIN`]
-    /// bytes would be left free.
+    /// Queues reading `roots` and their extern closure in the background,
+    /// for the scene expected next, from the frame after this one. Files
+    /// held or queued are not read again; reads stop being queued once
+    /// fewer than [`PREFETCH_MARGIN`] bytes would be left free.
     pub fn prefetch<I: Io<A::Block, Error = E>>(&mut self, io: &mut I, roots: &[u32]) {
         self.closure(roots);
         for i in 0..self.files.len() {
@@ -333,15 +339,18 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
             }
         }
         self.queue_missing(io);
+        self.defer = true;
         self.pump(io);
     }
 
-    /// Completes background reads that have finished, starts the next, and
+    /// Completes background reads that have finished, starts the next
+    /// (unless a [`prefetch`](Self::prefetch) this frame defers it), and
     /// drops the files the last enter left (their blocks retire). The
     /// caller frees retired blocks ([`collect`](Self::collect)) once the GE
     /// has read everything.
     pub fn safe_point<I: Io<A::Block, Error = E>>(&mut self, io: &mut I) {
         self.pump(io);
+        self.defer = false;
         // Most frames leave nothing: skip the scan of every file.
         if !self.leaving {
             return;
@@ -585,10 +594,10 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
     }
 
     /// Completes the read in flight if it has finished, and starts the
-    /// next; never waits.
+    /// next unless a prefetch defers it; never waits.
     pub fn pump<I: Io<A::Block, Error = E>>(&mut self, io: &mut I) {
         loop {
-            if !self.in_flight && !self.start_next(io) {
+            if !self.in_flight && (self.defer || !self.start_next(io)) {
                 return;
             }
             if !self.complete(io, false) {
