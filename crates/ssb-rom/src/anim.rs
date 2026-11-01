@@ -193,6 +193,26 @@ pub const fn is_anim_joint_slot(slot: usize) -> bool {
             && BOSS_ANIM_JOINT[slot - SLOT_BOSS_DEFAULT])
 }
 
+/// The slot of the status named `name` in [`SLOT_NAMES`]; a name not
+/// there fails the build where it is a constant.
+pub const fn slot_named(name: &str) -> usize {
+    let mut i = 0;
+    while i < SLOT_COUNT {
+        let (a, b) = (SLOT_NAMES[i].as_bytes(), name.as_bytes());
+        if a.len() == b.len() {
+            let mut j = 0;
+            while j < a.len() && a[j] == b[j] {
+                j += 1;
+            }
+            if j == a.len() {
+                return i;
+            }
+        }
+        i += 1;
+    }
+    panic!("no such slot")
+}
+
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
 /// The first seven are the original movement statuses whose animation length

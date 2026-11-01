@@ -92,6 +92,7 @@ crates/ssb-rom/src/particle.rs	BANKS	cartridge ROM ranges of each particle bank 
 crates/ssb-rom/src/scene.rs	IDENTITY	port constant: the identity matrix
 crates/ssb-rom/src/scene.rs	INVS	test fixture: matrix inputs
 crates/ssb-rom/src/scene_roots.rs	FIGHTER_MAIN	generated: copies crate::fighter::FIGHTER_FILES (ssb-tablegen fighter_files.rs, read from dFTManagerDataFiles); its literals are the kind count
+crates/ssb-rom/src/scene_roots.rs	JUNGLE_CLIPS	port constants: FTKind values (Donkey 2, Samus 3) with slots resolved from SLOT_NAMES by name; the list is the statuses PSP read traces of the opening jungle battle stream (RE-575), not ROM data
 crates/ssb-rom/src/scene_roots.rs	STAGE_PREVIEW_MODELS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
 crates/ssb-rom/src/scene_roots.rs	STAGE_WALLPAPERS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
 crates/ssb-rom/src/sector.rs	DESC_FIELDS	layout: GRSectorDesc field offsets and the nodes func_ovl2_80107D50 starts them on

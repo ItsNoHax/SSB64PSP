@@ -181,6 +181,61 @@ pub const PINNED_CLIP_SLOTS: [usize; 20] = {
     slots
 };
 
+/// The opening jungle battle's clips beyond [`PINNED_CLIP_SLOTS`] (`FTKind`,
+/// slot): every status its scripted Donkey Kong and Samus enter, as PSP
+/// read traces of the scene list them (RE-575; `DonkeySpecialNLoop` and
+/// `SamusSpecialNEnd` in some runs only). Read with the scene, so no status
+/// waits on a read.
+pub const JUNGLE_CLIPS: [(u32, usize); 18] = {
+    use crate::anim::slot_named as s;
+    [
+        (2, s("AttackAirF")),
+        (2, s("DonkeySpecialNStart")),
+        (2, s("DonkeySpecialNLoop")),
+        (2, s("DonkeySpecialNEnd")),
+        (2, s("DonkeySpecialLwStart")),
+        (2, s("DonkeySpecialLwLoop")),
+        (2, s("DonkeySpecialLwEnd")),
+        (2, s("DamageE1")),
+        (2, s("DamageFlyRoll")),
+        (3, s("DamageFlyN")),
+        (3, s("DamageFlyTop")),
+        (3, s("DamageFall")),
+        (3, s("DownBounceD")),
+        (3, s("DownForwardD")),
+        (3, s("GuardOn")),
+        (3, s("EscapeF")),
+        (3, s("SamusSpecialNStart")),
+        (3, s("SamusSpecialNEnd")),
+    ]
+};
+
+/// Calls `f` with each of [`JUNGLE_CLIPS`], in order, as constants in the
+/// code: a loop over the table would add it to `.rodata`.
+pub fn jungle_clips(mut f: impl FnMut(u32, usize)) {
+    macro_rules! each {
+        ($($i:literal)*) => {
+            $(f(const { JUNGLE_CLIPS[$i].0 }, const { JUNGLE_CLIPS[$i].1 });)*
+        };
+    }
+    each!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17);
+}
+
+/// Adds [`JUNGLE_CLIPS`]' files to `v` (as [`clip_files`]). No table and
+/// nothing to drop, so `.rodata` and `.gcc_except_table` keep their size:
+/// growing either moves the PSP's data a cache line (RE-575).
+pub fn jungle_files(pack: &crate::pack::Pack<'_>, v: &mut alloc::vec::Vec<u32>) {
+    jungle_clips(|kind, slot| push_clip(pack, kind, slot, v));
+}
+
+fn push_clip(pack: &crate::pack::Pack<'_>, kind: u32, slot: usize, v: &mut alloc::vec::Vec<u32>) {
+    if let Some(a) = pack.fighter_anim(kind, slot as u32) {
+        if a.script_len != 0 && !v.contains(&a.source_file) {
+            v.push(a.source_file);
+        }
+    }
+}
+
 /// The archive files of `kinds`' clips in `slots` (the figatrees a scene's
 /// demo poses play), without the rest of each kind's set: the N64 reads
 /// each into the fighter's figatree heap as the status starts.
@@ -238,6 +293,18 @@ pub const OPENING_NEWCOMERS: [u32; 2] = crate::d_arrays::MV_OPENING_NEWCOMERS_FI
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jungle_clips_name_their_slots() {
+        use crate::anim::{slot_named, SLOT_DAMAGE_HI1, SLOT_NAMES};
+        assert_eq!(slot_named("DamageHi1"), SLOT_DAMAGE_HI1);
+        for (_, slot) in JUNGLE_CLIPS {
+            assert_eq!(slot_named(SLOT_NAMES[slot]), slot);
+        }
+        let mut seen = alloc::vec::Vec::new();
+        jungle_clips(|kind, slot| seen.push((kind, slot)));
+        assert_eq!(seen, JUNGLE_CLIPS);
+    }
 
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
