@@ -133,7 +133,7 @@ pub(crate) fn room_figures(o: &mut Opening) -> (FighterKind, FighterKind) {
     let figures = *o
         .room_figures
         .get_or_insert_with(|| room::Room::pick_figures(&mut room_time()));
-    crate::scene_load::set_room_figures([figures.0 as u32, figures.1 as u32]);
+    crate::scene_load::set_room_figures(figures);
     figures
 }
 

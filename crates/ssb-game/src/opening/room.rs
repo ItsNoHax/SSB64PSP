@@ -79,6 +79,18 @@ pub const ROW_DROPPED: u8 = 9;
 pub const ROW_STAND: u8 = 10;
 pub const ROW_BOSS: [u8; 3] = [15, 16, 17];
 
+/// Every status the room sets (fighter, submotion row), with `pulled` and
+/// `dropped` its figures. The N64 reads each figatree on the status
+/// change; the host reads them with the room's files, so no change waits
+/// on a read (RE-575).
+pub fn rows(pulled: FighterKind, dropped: FighterKind) -> vec::Vec<(FighterKind, u8)> {
+    let mut v = vec::Vec::new();
+    v.extend(ROW_BOSS.map(|row| (FighterKind::Boss, row)));
+    v.extend([ROW_PULLED, ROW_DROPPED, ROW_STAND].map(|row| (pulled, row)));
+    v.push((dropped, ROW_DROPPED));
+    v
+}
+
 /// The eight starters of an `FTKind` table.
 ///
 /// The stub tables are all zeros, which would leave `pick_figures` no
@@ -672,6 +684,26 @@ mod tests {
         assert!(r.world.get(boss).is_none());
         let pulled = r.world.fighter_mut(r.ids.pulled).unwrap();
         assert_eq!(pulled.row, ROW_DROPPED);
+    }
+
+    #[test]
+    fn the_room_sets_only_the_rows_it_reads_with_its_files() {
+        let mut r = Room::new(&mut counter());
+        let (pulled, dropped) = (r.pulled_kind, r.dropped_kind);
+        let mut seen = Vec::new();
+        for _ in 0..1320 {
+            r.tick(false);
+            for o in &r.world.objects {
+                if let ObjectKind::Fighter(f) = &o.kind {
+                    if !seen.contains(&(f.kind, f.row)) {
+                        seen.push((f.kind, f.row));
+                    }
+                }
+            }
+        }
+        let read = rows(pulled, dropped);
+        assert!(seen.iter().all(|r| read.contains(r)), "{seen:?}");
+        assert_eq!(seen.len(), read.len());
     }
 
     /// `mvOpeningRoomMakeLogoCamera` passes `argD` FALSE to

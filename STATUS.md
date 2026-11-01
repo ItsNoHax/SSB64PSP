@@ -18,13 +18,13 @@
 
 ## Current work
 
+- Landed (batch 133): room status clips read with the room: no room frame waits on a read (7 reads of 1.0-2.2 ms gone); timer windows -0.10 to +0.07 ms over 4 elec rounds (RE-575).
 - Measured (batch 132): ShockSmall material cache leaves the shock window unchanged (r12 20.59/20.60 in place) and costs intro +0.5 ms; rejected (RE-585).
 - Landed (batch 131): deferred prefetch with re-searched link order k1: Room tic 57 24.9 -> 16.3 ms busy; every timer window within +0.03 ms (RE-575).
 - Measured (batch 130): pack-side mesh merge for Master Hand saves 0 of 72 meshes: Comets meshes have 3 textures on 3 animated nodes, Fall meshes 8 matanims; no data-only lever left (RE-585).
 - Landed (batch 129): link order h5, trained on a real Fall trace (earlier "Fall" traces ended before Fall): Comets -0.46, Fall -0.22 ms, every window faster (-0.02 to -0.09) (RE-585).
 - Measured (batch 128): deferred prefetch alone fixes Room tic 57 (24.9 -> 16.3 ms busy, waits behind I/O 6.1 -> <=2.2 ms) but its 164-function layout shift costs +0.06-0.27 ms; rejected pending a link-order re-search (RE-575).
 - Measured (batch 127): loader miss-alone at 64 KiB alone rejected: intro +0.99 ms, vs4/battle within noise; Room tic 57 still waits 8.3 ms (the deferred prefetch fixed it in batch 126) (RE-575).
-- Measured (batch 126): 16 KiB background chunks, miss-alone, deferred prefetch rejected: opening waits behind I/O 6.8 -> 1.7 ms, but timer windows +0.13-0.27 ms, intro +1.14 ms (one round; USB link dropped) (RE-575).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 131 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 133 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

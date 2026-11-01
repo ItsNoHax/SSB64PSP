@@ -8,6 +8,7 @@
 
 use alloc::vec::Vec;
 
+use ssb_game::fighter::FighterKind;
 use ssb_game::menu::Scene;
 use ssb_game::opening::Kind;
 use ssb_psp_runtime::scene_files;
@@ -19,11 +20,11 @@ static mut BASE: Vec<u32> = Vec::new();
 
 /// The opening room's two random figures (`mvOpeningRoomInitVars`), by
 /// `FTKind`, once [`set_room_figures`] has named them.
-static mut ROOM_FIGURES: Option<[u32; 2]> = None;
+static mut ROOM_FIGURES: Option<(FighterKind, FighterKind)> = None;
 
 /// Names the opening room's pulled and dropped figures, whose files its
 /// list then holds (RE-476).
-pub fn set_room_figures(figures: [u32; 2]) {
+pub fn set_room_figures(figures: (FighterKind, FighterKind)) {
     // SAFETY: the game thread alone calls this module.
     unsafe { ROOM_FIGURES = Some(figures) };
 }
@@ -78,7 +79,7 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
     // SAFETY: as `base`.
     let room = unsafe { ROOM_FIGURES };
     let room_kinds: [u32; 3] = match room {
-        Some([pulled, dropped]) => [12, pulled, dropped],
+        Some((pulled, dropped)) => [12, pulled as u32, dropped as u32],
         None => [12; 3],
     };
     let opening_kinds: &[u32] = match s {
@@ -120,7 +121,7 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
     // frames do not wait on them (RE-574). Later statuses still stream on
     // their first use.
     if let (Scene::Opening(k), Some(p)) = (s, pack) {
-        for (kind, row) in ssb_game::opening::first_rows(k) {
+        for (kind, row) in ssb_game::opening::first_rows(k, room) {
             if let Some(slot) = ssb_psp_runtime::movie::demo_row_slot(row) {
                 for f in r::clip_files(p, [kind as u32], &[slot]) {
                     if !v.contains(&f) {
