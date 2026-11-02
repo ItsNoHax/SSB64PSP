@@ -9599,7 +9599,7 @@ unsafe fn draw_training(
     // boss wallpaper's far effects, between the wallpaper and the stage.
     if let Some((effects, controller)) = boss {
         draw_state.begin_frame();
-        effects.draw(gpu, p, draw_state, controller, 2, damage_hud.boss_fade);
+        effects.draw_batched(gpu, p, draw_state, controller, 2, damage_hud.boss_fade);
     }
     gpu.set_viewport_n64(viewport);
     // Tags, culling and magnifier scale use this camera's live projection.
@@ -9979,7 +9979,7 @@ unsafe fn draw_training(
     // The boss's first camera (priority 40, tag 1): the near comets and
     // the closing effect, whose fades cover the battle.
     if let Some((effects, controller)) = boss {
-        effects.draw(gpu, p, draw_state, controller, 1, damage_hud.boss_fade);
+        effects.draw_batched(gpu, p, draw_state, controller, 1, damage_hud.boss_fade);
     }
     // The movie camera's billboard bases end with its scene.
     draw_state.billboard_camera = None;

@@ -2638,7 +2638,8 @@ const GUARD_BAND: f32 = 2.0;
 const CLIP_CODES_MAX: usize = 2048;
 
 /// [`guard_clip`]'s per-vertex outcode table, one mesh at a time: only
-/// [`draw_mesh_vertices`] reads it, while it draws that mesh.
+/// [`draw_mesh_vertices`] reads it, while it draws that mesh. A batch
+/// ([`batch_expand`]) holds every mesh's at once, each at its own offset.
 static mut CLIP_CODES: [u8; CLIP_CODES_MAX] = [0; CLIP_CODES_MAX];
 
 /// A mesh's guard-band clip ([`ssb_engine::guard_clip`]): its clip
@@ -4468,6 +4469,9 @@ unsafe fn draw_node_mesh(
     }
     draw_mesh(pack, mesh, st, mat_anim, effect_mat_anim)
 }
+
+mod batch;
+pub(crate) use batch::{batch_expand, batch_pose, batch_ready, batch_submit, plan_object, Batch, BatchSize};
 
 /// Bounding box of a whole object, in the pack's normalised units.
 ///

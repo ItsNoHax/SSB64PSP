@@ -147,6 +147,7 @@ impl BossEffects {
     /// # Safety
     ///
     /// Same as [`crate::meshdraw::draw_mesh`].
+    #[inline(never)]
     pub unsafe fn draw(
         &self,
         gpu: &mut crate::gu::Gpu,
@@ -230,6 +231,164 @@ impl BossEffects {
             st.color_override = None;
         }
         (st.clip_view_proj, st.clip_at_viewport) = clip;
+    }
+
+    /// [`Self::draw`], each pass over every effect of the camera before the
+    /// next ([`crate::meshdraw::batch_pose`]): the same commands in the same
+    /// order. A frame with an effect the passes do not draw as
+    /// [`crate::meshdraw::draw_object_posed`] would (the Fall's two-tile
+    /// blends), or past their scratch, takes [`Self::draw`] whole.
+    ///
+    /// # Safety
+    ///
+    /// Same as [`crate::meshdraw::draw_mesh`].
+    #[inline(never)]
+    pub unsafe fn draw_batched(
+        &self,
+        gpu: &mut crate::gu::Gpu,
+        pack: &Pack<'_>,
+        st: &mut crate::meshdraw::DrawState,
+        wallpaper: &BossWallpaper,
+        tag: u8,
+        fade: Option<[u8; 4]>,
+    ) {
+        let mut size = crate::meshdraw::BatchSize::default();
+        let mut ready = crate::meshdraw::batch_ready(st);
+        for i in wallpaper.draw_order(tag) {
+            let Some(Some(e)) = wallpaper.effects.get(i) else {
+                continue;
+            };
+            if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                continue;
+            }
+            if let Some(Some(v)) = self.visuals.get(i) {
+                ready = ready && crate::meshdraw::plan_object(pack, &v.object, &mut size);
+            }
+        }
+        if !ready || !size.fits() {
+            self.draw(gpu, pack, st, wallpaper, tag, fade);
+            return;
+        }
+        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
+        st.clip_at_viewport = true;
+        let mut batch = None;
+        let mut counts = [0usize; MAX_EFFECTS];
+        let mut next = 0;
+        for i in wallpaper.draw_order(tag) {
+            let Some(Some(e)) = wallpaper.effects.get(i) else {
+                continue;
+            };
+            if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                if let Some(color) = fade {
+                    crate::meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], color, st);
+                }
+                continue;
+            }
+            let Some(Some(v)) = self.visuals.get(i) else {
+                continue;
+            };
+            if batch.is_none() {
+                gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+                let proj = ssb_engine::math::Mat4::sy_persp_fast(
+                    CAMERA_FOVY,
+                    ssb_game::camera::BATTLE_VIEWPORT_WIDTH
+                        / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
+                    CAMERA_NEAR,
+                    CAMERA_FAR,
+                );
+                gpu.set_projection(&proj);
+                let view = ssb_engine::math::Mat4::look_at(
+                    ssb_game::spgame::boss::CAMERA_EYE,
+                    ssb_engine::math::Vec3::ZERO,
+                    ssb_engine::math::Vec3::Y,
+                );
+                gpu.set_view(&view);
+                st.clip_view_proj = Some((proj * view).cols);
+            }
+            gpu.model_transform([0.0; 3], [0.0; 3], MODEL_SCALE);
+            let base = gpu.model_matrix();
+            // Every effect's base is the same: the first one's serves the
+            // passes that run before any is drawn.
+            let b = match &mut batch {
+                Some(b) => b,
+                None => {
+                    let mut b = crate::meshdraw::Batch::new(&size);
+                    self.pose_batch(pack, st, wallpaper, tag, &base, &mut b, &mut counts);
+                    crate::meshdraw::batch_expand(pack, st, &mut b);
+                    batch.insert(b)
+                }
+            };
+            st.color_override = Some(effect_colors(e));
+            let count = counts.get(i).copied().unwrap_or(0);
+            crate::meshdraw::batch_submit(pack, st, b, next, count, v.mats.as_deref());
+            next += count;
+            st.color_override = None;
+        }
+        if let Some(b) = batch {
+            b.finish();
+        }
+        (st.clip_view_proj, st.clip_at_viewport) = clip;
+    }
+
+    /// [`Self::draw_batched`]'s first pass: every drawn effect's node
+    /// matrices and skins, in draw order; `counts[i]` is effect `i`'s
+    /// meshes.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    unsafe fn pose_batch(
+        &self,
+        pack: &Pack<'_>,
+        st: &crate::meshdraw::DrawState,
+        wallpaper: &BossWallpaper,
+        tag: u8,
+        base: &psp::sys::ScePspFMatrix4,
+        batch: &mut crate::meshdraw::Batch,
+        counts: &mut [usize; MAX_EFFECTS],
+    ) {
+        let mut posed = [Mat4::IDENTITY; MAX_NODES];
+        for i in wallpaper.draw_order(tag) {
+            let Some(Some(e)) = wallpaper.effects.get(i) else {
+                continue;
+            };
+            if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                continue;
+            }
+            let Some(Some(v)) = self.visuals.get(i) else {
+                continue;
+            };
+            let n = compose_batched(v, e, &mut posed);
+            let nodes = posed.get(..n).unwrap_or(&[]);
+            let count = crate::meshdraw::batch_pose(
+                pack,
+                &v.object,
+                base,
+                nodes,
+                st,
+                effect_colors(e),
+                batch,
+            );
+            if let Some(c) = counts.get_mut(i) {
+                *c = count;
+            }
+        }
+    }
+}
+
+/// The display callback's PRIM (white at the effect's alpha) and, for a
+/// comet, its ENV: [`BossEffects::draw`]'s `color_override`.
+#[inline(always)]
+fn effect_colors(e: &Effect) -> ssb_rom::skeleton::EffectColors {
+    let alpha = e.alpha.clamp(0, 0xFF) as u8;
+    let env = (e.display == Display::Comet).then(|| {
+        let c = ssb_game::spgame::boss::COMET_ENV_COLORS[usize::from(e.color) % 7];
+        [c[0], c[1], c[2], alpha]
+    });
+    ssb_rom::skeleton::EffectColors {
+        prim: Some([0xFF, 0xFF, 0xFF, alpha]),
+        env,
+        blend: None,
+        light1: None,
+        light2: None,
     }
 }
 
@@ -356,6 +515,38 @@ fn compose(v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
         let local = Mat4::from_trs_display(t, pose.rotate, pose.scale);
         out[i] = match v.parents[i] {
             Some(p) => out[usize::from(p)].mul(&local),
+            None => local,
+        };
+    }
+    count
+}
+
+/// [`compose`] for [`BossEffects::draw_batched`]: its text, kept apart so
+/// [`BossEffects::draw`] still inlines its only caller's copy (RE-494).
+fn compose_batched(v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
+    let count = v.count.min(out.len());
+    for i in 0..count {
+        let mut pose = v.poses[i];
+        if i == 0 {
+            pose.translate = [e.translate.x, e.translate.y, e.translate.z];
+            if e.sets_rotate_z() {
+                pose.rotate[2] = e.rotate_z;
+            }
+            if e.sets_scale() {
+                pose.scale = [e.scale.x, e.scale.y, e.scale.z];
+            }
+        }
+        let t = [
+            pose.translate[0] / MODEL_SCALE,
+            pose.translate[1] / MODEL_SCALE,
+            pose.translate[2] / MODEL_SCALE,
+        ];
+        let local = Mat4::from_trs_display(t, pose.rotate, pose.scale);
+        // A parent lies before its child (`make_visual`), so it is always
+        // there; `get` only spares the bounds check's panic data.
+        let parent = v.parents[i].and_then(|p| out.get(usize::from(p)).copied());
+        out[i] = match parent {
+            Some(parent) => parent.mul(&local),
             None => local,
         };
     }
