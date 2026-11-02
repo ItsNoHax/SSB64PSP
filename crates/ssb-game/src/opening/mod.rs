@@ -136,15 +136,23 @@ impl Kind {
 /// submotion row), whose figatrees the N64 reads before the scene's first
 /// frame: the host reads them with the scene's files (RE-574). The room's
 /// are every status it sets, with `room` its figures once picked
-/// ([`room::rows`], RE-575). None in the eight fighter scenes (their posed
-/// fighter comes at the 15th tic), the jungle and the newcomers.
+/// ([`room::rows`], RE-575), the run's also Link's jump at tic 45
+/// ([`run::ROW_JUMP`], RE-575). None in the eight fighter scenes (their
+/// posed fighter comes at the 15th tic), the jungle and the newcomers.
 pub fn first_rows(
     kind: Kind,
     room: Option<(crate::fighter::FighterKind, crate::fighter::FighterKind)>,
 ) -> alloc::vec::Vec<(crate::fighter::FighterKind, u8)> {
     let world = match kind {
         Kind::Portraits => portraits::Portraits::new().world,
-        Kind::Run => run::Run::new().world,
+        // Its [`run::KINDS`] runners, and Link's jump at tic 45.
+        Kind::Run => {
+            return run::KINDS
+                .iter()
+                .map(|&k| (k, run::ROW_RUN))
+                .chain([(crate::fighter::FighterKind::Link, run::ROW_JUMP)])
+                .collect()
+        }
         Kind::Cliff => cliff::Cliff::new().world,
         Kind::Yamabuki => yamabuki::Yamabuki::new().world,
         Kind::Yoster => yoster::Yoster::new().world,
@@ -233,8 +241,9 @@ mod tests {
             [(F::Pikachu, yamabuki::ROW_OPENING1)]
         );
         let run = first_rows(Kind::Run, None);
-        assert_eq!(run.len(), 8);
-        assert!(run.iter().all(|&(_, row)| row == run::ROW_RUN));
+        assert_eq!(run.len(), 9);
+        assert!(run[..8].iter().all(|&(_, row)| row == run::ROW_RUN));
+        assert_eq!(run[8], (F::Link, run::ROW_JUMP));
         let clash = first_rows(Kind::Clash, None);
         assert_eq!(clash.len(), 8);
         assert!(clash.iter().all(|&(_, row)| row == clash::ROW_CLASH));

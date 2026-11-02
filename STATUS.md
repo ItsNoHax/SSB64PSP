@@ -18,12 +18,12 @@
 
 ## Current work
 
+- Landed (batch 136): Link's run jump read with the run: the opening streams no clip (last 1264 B read at tick 2351 gone); every timer window within +0.07 ms (RE-575).
 - Landed (batch 135): fighter-scene clips read with the scene: no fighter-scene frame waits on a read (21 reads of 0.8-8.8 ms gone); every timer window within +0.05 ms (RE-575).
 - Landed (batch 134): Jungle battle clips read with the scene: no Jungle frame waits on a read (16-17 reads of 0.8-6.1 ms gone); every timer window within +0.07 ms (RE-575).
 - Landed (batch 133): room status clips read with the room: no room frame waits on a read (7 reads of 1.0-2.2 ms gone); timer windows -0.10 to +0.07 ms over 4 elec rounds (RE-575).
 - Measured (batch 132): ShockSmall material cache leaves the shock window unchanged (r12 20.59/20.60 in place) and costs intro +0.5 ms; rejected (RE-585).
 - Landed (batch 131): deferred prefetch with re-searched link order k1: Room tic 57 24.9 -> 16.3 ms busy; every timer window within +0.03 ms (RE-575).
-- Measured (batch 130): pack-side mesh merge for Master Hand saves 0 of 72 meshes: Comets meshes have 3 textures on 3 animated nodes, Fall meshes 8 matanims; no data-only lever left (RE-585).
 - Landed (batch 129): link order h5, trained on a real Fall trace (earlier "Fall" traces ended before Fall): Comets -0.46, Fall -0.22 ms, every window faster (-0.02 to -0.09) (RE-585).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 135 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 136 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
