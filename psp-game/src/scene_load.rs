@@ -29,10 +29,20 @@ pub fn set_room_figures(figures: (FighterKind, FighterKind)) {
     unsafe { ROOM_FIGURES = Some(figures) };
 }
 
-/// Whether a battle keeps [`BASE`]: the scenes that are a battle (an
-/// opening fight, How to Play, the title demo, the 1P Game's stages). A VS
-/// or Training battle leaves its select's and stage select's files.
-static mut BASE_IN_BATTLE: bool = false;
+/// Whose files [`BASE`] holds, so whether a battle keeps them.
+#[derive(Clone, Copy, PartialEq)]
+enum Base {
+    /// A scene's own: a VS or Training battle leaves its select's and
+    /// stage select's files.
+    Own,
+    /// A scene that is a battle: How to Play, the title demo, the 1P
+    /// Game's stages.
+    Battle,
+    /// The opening, whose fights read their clips with the scene (RE-575).
+    Opening,
+}
+
+static mut BASE_IN_BATTLE: Base = Base::Own;
 
 fn base() -> &'static mut Vec<u32> {
     // SAFETY: the game thread alone calls this module.
@@ -118,11 +128,11 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
     };
     // The clips the scene's fighters start with, which the N64 reads as
     // `FuncStart` sets their statuses: read with the scene, so its first
-    // frames do not wait on them (RE-574). Later statuses still stream on
-    // their first use.
+    // frames do not wait on them (RE-574). Later statuses stream on their
+    // first use, but for the fights': their read traces list them (RE-575).
     if let (Scene::Opening(k), Some(p)) = (s, pack) {
-        if k == Kind::Jungle {
-            r::jungle_files(p, &mut v);
+        if let Some((_, kinds)) = opening_fight {
+            r::opening_fight_files(p, kinds, &mut v);
         }
         for (kind, row) in ssb_game::opening::first_rows(k, room) {
             if let Some(slot) = ssb_psp_runtime::movie::demo_row_slot(row) {
@@ -336,8 +346,8 @@ pub fn maps_preview_roots(training: bool, gkind: u8) -> Vec<u32> {
 pub fn maps(training: bool, gkind: u8) {
     *base() = Vec::from(r::MAPS);
     // SAFETY: as `base`.
-    unsafe { BASE_IN_BATTLE = false };
-    load("maps", &maps_preview_roots(training, gkind), false);
+    unsafe { BASE_IN_BATTLE = Base::Own };
+    load("maps", &maps_preview_roots(training, gkind), Base::Own);
 }
 
 /// `mnMapsMakePreview` after a cursor move: reads `gkind`'s preview now,
@@ -349,7 +359,7 @@ pub fn maps(training: bool, gkind: u8) {
 pub fn maps_preview(training: bool, gkind: u8) {
     let mut roots = base().clone();
     roots.extend(maps_preview_roots(training, gkind));
-    enter("maps-preview", &roots, true);
+    enter("maps-preview", &roots, true, false);
 }
 
 /// The VS results' files: `mnVSResultsFuncStart`'s, all twelve kinds, the
@@ -433,7 +443,7 @@ pub fn campaign(id: u8, fkind: u32) {
 pub fn set_base(roots: Vec<u32>) {
     *base() = roots;
     // SAFETY: as `base`.
-    unsafe { BASE_IN_BATTLE = true };
+    unsafe { BASE_IN_BATTLE = Base::Battle };
 }
 
 /// Kinds `kinds`' main files and pinned figatrees ([`pinned_figatrees`]).
@@ -450,27 +460,34 @@ pub fn fighter_roots(pack: &Pack<'_>, kinds: core::ops::RangeInclusive<u32>) -> 
 pub fn scene(name: &'static str, roots: Vec<u32>) {
     *base() = roots;
     // SAFETY: as `base`.
-    unsafe { BASE_IN_BATTLE = matches!(name, "opening" | "explain" | "auto-demo") };
-    load(name, &[], false);
+    unsafe {
+        BASE_IN_BATTLE = match name {
+            "opening" => Base::Opening,
+            "explain" | "auto-demo" => Base::Battle,
+            _ => Base::Own,
+        }
+    };
+    load(name, &[], Base::Own);
 }
 
 /// Starts battle `name` holding its files and the scene's.
 pub fn battle(name: &'static str, roots: &[u32]) {
     // SAFETY: as `base`.
-    let within = unsafe { BASE_IN_BATTLE };
-    if !within {
+    let held = unsafe { BASE_IN_BATTLE };
+    if held == Base::Own {
         base().clear();
     }
-    load(name, roots, within);
+    load(name, roots, held);
 }
 
-/// `within`: a battle the scene starts, which leaves the next scene's
-/// prefetch running (`scene_files::enter_within`).
-fn load(name: &'static str, extra: &[u32], within: bool) {
+/// `held`: whose files [`BASE`] holds; a battle a scene starts leaves the
+/// next scene's prefetch running (`scene_files::enter_within`).
+fn load(name: &'static str, extra: &[u32], held: Base) {
     ahead().clear();
     let mut roots = base().clone();
     roots.extend_from_slice(extra);
-    enter(name, &roots, within);
+    let slabs = name == "battle" && held != Base::Opening;
+    enter(name, &roots, held != Base::Own, slabs);
 }
 
 /// Marks the figatrees scene `name` streams: in a battle or an opening
@@ -480,9 +497,10 @@ fn load(name: &'static str, extra: &[u32], within: bool) {
 /// (`scene_files::stream_files`, RE-572 option C, RE-573). A battle makes
 /// its slabs when it starts, as the N64 allocates each fighter's figatree
 /// heap at scene setup (`scvsbattle.c:199`); the opening, whose fighters
-/// come and go, on their first miss. Other scenes stream none: their few
-/// clips load on demand, as the scene's files.
-fn stream_scene(name: &str, roots: &[u32]) {
+/// come and go, and its fights (`slabs` false: they read their clips with
+/// the scene, RE-575), on their first miss. Other scenes stream none:
+/// their few clips load on demand, as the scene's files.
+fn stream_scene(name: &str, roots: &[u32], slabs: bool) {
     let Some(pack) = scene_files::pack() else {
         return;
     };
@@ -506,11 +524,11 @@ fn stream_scene(name: &str, roots: &[u32]) {
             }
         }
     }
-    scene_files::stream_files(&table, name == "battle");
+    scene_files::stream_files(&table, slabs);
 }
 
 /// `scene_files::enter` (or `enter_within`) with `roots`, logged.
-fn enter(name: &'static str, roots: &[u32], within: bool) {
+fn enter(name: &'static str, roots: &[u32], within: bool, slabs: bool) {
     let last = scene_files::report();
     let last_demand = scene_files::demand_files();
     if last.demand_files > 0 {
@@ -519,7 +537,7 @@ fn enter(name: &'static str, roots: &[u32], within: bool) {
             last.scene, last.demand_files, last.demand_bytes, last_demand
         ));
     }
-    stream_scene(name, roots);
+    stream_scene(name, roots, slabs);
     let t = ssb_psp_runtime::profile::start();
     let entered = if within {
         scene_files::enter_within(name, roots)

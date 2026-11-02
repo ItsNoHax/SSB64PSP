@@ -181,6 +181,13 @@ pub const PINNED_CLIP_SLOTS: [usize; 20] = {
     slots
 };
 
+/// Calls `$f` with entries `$i` of the clip table `$t`, each a constant.
+macro_rules! each_clip {
+    ($f:ident, $t:ident; $($i:literal)*) => {
+        $($f(const { $t[$i].0 }, const { $t[$i].1 });)*
+    };
+}
+
 /// The opening jungle battle's clips beyond [`PINNED_CLIP_SLOTS`] (`FTKind`,
 /// slot): every status its scripted Donkey Kong and Samus enter, as PSP
 /// read traces of the scene list them (RE-575; `DonkeySpecialNLoop` and
@@ -213,12 +220,7 @@ pub const JUNGLE_CLIPS: [(u32, usize); 18] = {
 /// Calls `f` with each of [`JUNGLE_CLIPS`], in order, as constants in the
 /// code: a loop over the table would add it to `.rodata`.
 pub fn jungle_clips(mut f: impl FnMut(u32, usize)) {
-    macro_rules! each {
-        ($($i:literal)*) => {
-            $(f(const { JUNGLE_CLIPS[$i].0 }, const { JUNGLE_CLIPS[$i].1 });)*
-        };
-    }
-    each!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17);
+    each_clip!(f, JUNGLE_CLIPS; 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17);
 }
 
 /// Adds [`JUNGLE_CLIPS`]' files to `v` (as [`clip_files`]). No table and
@@ -226,6 +228,67 @@ pub fn jungle_clips(mut f: impl FnMut(u32, usize)) {
 /// growing either moves the PSP's data a cache line (RE-575).
 pub fn jungle_files(pack: &crate::pack::Pack<'_>, v: &mut alloc::vec::Vec<u32>) {
     jungle_clips(|kind, slot| push_clip(pack, kind, slot, v));
+}
+
+/// The opening fighter scenes' clips beyond [`PINNED_CLIP_SLOTS`]
+/// (`FTKind`, slot), each scene's fighter its own kind: the posed
+/// fighter's `Stance` (`nFTDemoStatusStance`) and every status the scene's
+/// input script makes its fighter enter, as PSP read traces of the scenes
+/// list them (RE-575). Read with the scene, so no status waits on a read.
+pub const FIGHTER_SCENE_CLIPS: [(u32, usize); 21] = {
+    use crate::anim::slot_named as s;
+    [
+        (0, s("Stance")),
+        (0, s("Attack11")),
+        (0, s("Attack12")),
+        (0, s("AttackLw4")),
+        (1, s("Stance")),
+        (1, s("FoxSpecialN")),
+        (2, s("Stance")),
+        (2, s("DonkeySpecialLwStart")),
+        (2, s("DonkeySpecialLwLoop")),
+        (3, s("Stance")),
+        (3, s("GuardOn")),
+        (3, s("Catch")),
+        (5, s("Stance")),
+        (5, s("Appeal")),
+        (6, s("Stance")),
+        (6, s("GuardOn")),
+        (6, s("Catch")),
+        (8, s("Stance")),
+        (8, s("KirbyJumpAerialF1")),
+        (8, s("KirbyAttackAirHi")),
+        (9, s("Stance")),
+    ]
+};
+
+/// Calls `f` with each of [`FIGHTER_SCENE_CLIPS`], in order, as constants
+/// in the code (as [`jungle_clips`]).
+pub fn fighter_scene_clips(mut f: impl FnMut(u32, usize)) {
+    each_clip!(f, FIGHTER_SCENE_CLIPS; 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20);
+}
+
+/// Adds the clips of the opening fight whose fighters are `kinds` to `v`:
+/// [`JUNGLE_CLIPS`]' files for the jungle (two kinds), those of the one
+/// kind's [`FIGHTER_SCENE_CLIPS`] for a fighter scene. As
+/// [`jungle_files`], no table and nothing to drop; each kind passes
+/// `black_box`, or the compares become a jump table in `.rodata`. Not
+/// inlined: in its caller, each call gains a landing pad in
+/// `.gcc_except_table` (RE-575).
+#[inline(never)]
+pub fn opening_fight_files(
+    pack: &crate::pack::Pack<'_>,
+    kinds: &[u32],
+    v: &mut alloc::vec::Vec<u32>,
+) {
+    match *kinds {
+        [kind] => fighter_scene_clips(|k, slot| {
+            if core::hint::black_box(k) == kind {
+                push_clip(pack, k, slot, v);
+            }
+        }),
+        _ => jungle_files(pack, v),
+    }
 }
 
 fn push_clip(pack: &crate::pack::Pack<'_>, kind: u32, slot: usize, v: &mut alloc::vec::Vec<u32>) {
@@ -295,7 +358,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn jungle_clips_name_their_slots() {
+    fn opening_clips_name_their_slots() {
         use crate::anim::{slot_named, SLOT_DAMAGE_HI1, SLOT_NAMES};
         assert_eq!(slot_named("DamageHi1"), SLOT_DAMAGE_HI1);
         for (_, slot) in JUNGLE_CLIPS {
@@ -304,6 +367,9 @@ mod tests {
         let mut seen = alloc::vec::Vec::new();
         jungle_clips(|kind, slot| seen.push((kind, slot)));
         assert_eq!(seen, JUNGLE_CLIPS);
+        let mut seen = alloc::vec::Vec::new();
+        fighter_scene_clips(|kind, slot| seen.push((kind, slot)));
+        assert_eq!(seen, FIGHTER_SCENE_CLIPS);
     }
 
     #[test]
