@@ -333,7 +333,7 @@ impl BossEffects {
     /// [`Self::draw_batched`] for a frame its passes do not take: with the
     /// Fall's two-tile blends or float UVs, the same passes with
     /// [`crate::meshdraw::batch_expand_lod_tag`] and
-    /// [`crate::meshdraw::batch_submit_lod_tag`] for theirs; anything else,
+    /// [`crate::meshdraw::batch_submit_lod_object`] for theirs; anything else,
     /// or past their scratch, [`Self::draw`] whole. Out of line and apart
     /// from [`Self::draw_batched`], so the comets' passes keep their code
     /// (RE-585).
@@ -439,7 +439,7 @@ impl BossEffects {
             };
             st.color_override = Some(effect_colors(e));
             let count = counts.get(i).copied().unwrap_or(0);
-            crate::meshdraw::batch_submit_lod_tag(
+            crate::meshdraw::batch_submit_lod_object(
                 pack,
                 st,
                 b,

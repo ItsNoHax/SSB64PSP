@@ -852,6 +852,43 @@ unsafe fn clip_float_uv(
     Some(draws.get_unchecked(..pieces))
 }
 
+/// [`batch_submit_lod_tag`] for one object's `count` meshes from `first`,
+/// or [`super::batch_submit`] when none of their primitives is a two-tile
+/// blend (`LOD_BLEND`): for those, [`batch_submit_lod_tag`] takes
+/// [`super::batch_submit`]'s steps (`material_inputs` and [`lod_material`]
+/// are `batch_material`, the clip and the draws the same; no second-pass
+/// record, so `spares` stays), and the comets sharing the Fall's tag then
+/// run the comets' code (RE-585).
+///
+/// # Safety
+///
+/// As [`batch_submit_lod_tag`].
+#[inline(never)]
+pub(crate) unsafe fn batch_submit_lod_object(
+    pack: &Pack<'_>,
+    st: &mut DrawState,
+    batch: &Batch,
+    first: usize,
+    count: usize,
+    effect_mat_anim: Option<&EffectMaterialAnimator>,
+    spares: &mut usize,
+) {
+    let mut lod = false;
+    for k in first..first + count {
+        let m = &*batch.meshes.add(k);
+        for i in 0..m.prim_count {
+            if let Some(p) = pack.prim(m.first_prim + i) {
+                lod |= p.flags & flags::LOD_BLEND != 0;
+            }
+        }
+    }
+    if lod {
+        batch_submit_lod_tag(pack, st, batch, first, count, effect_mat_anim, spares);
+    } else {
+        super::batch_submit(pack, st, batch, first, count, effect_mat_anim);
+    }
+}
+
 /// [`clip_float_uv`]'s `guard_clip::Vertex`: clip position, then
 /// attributes.
 #[derive(Clone, Copy)]

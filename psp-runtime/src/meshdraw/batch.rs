@@ -59,7 +59,7 @@ use super::{
     LIGHT_MARK_OFFSET, LIGHT_MARK_SET, LIGHT_PREPASS, VERTEX_FORMAT,
 };
 
-pub(crate) use lod::{batch_expand_lod_tag, batch_submit_lod_tag, plan_object_lod};
+pub(crate) use lod::{batch_expand_lod_tag, batch_submit_lod_object, plan_object_lod};
 
 /// Primitive flags whose paths the batch does not copy: lighting reads the
 /// node's light ([`DrawState::object_light`]), the two-tile blends draw
