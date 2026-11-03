@@ -7666,6 +7666,51 @@ fn draw_display_effects_batched(
             }
             continue;
         };
+        // With no joint animation and one material joint, the run's
+        // material states replay once, from the newest display (fewest
+        // ticks) up, each saved at its display's ticks: a replay's state
+        // depends only on its tick count, so each is the state its own
+        // restart and replay would reach. The submits then follow in make
+        // order, back to back.
+        let mut saved = [core::mem::MaybeUninit::<ssb_rom::skeleton::EffectMaterialSlot>::uninit(); RUN];
+        let replayed = anim.is_none() && {
+            scratch.anim.clear();
+            scratch.materials.start(p, object_mat_anims(p, object));
+            let mut at = 0u16;
+            let mut all = true;
+            for (e, s) in run.iter().zip(saved.iter_mut()).rev() {
+                if e.ticks < at {
+                    scratch.materials.start(p, object_mat_anims(p, object));
+                    at = 0;
+                }
+                while at < e.ticks {
+                    scratch.materials.tick(p);
+                    at += 1;
+                }
+                match scratch.materials.save_slot() {
+                    Some(slot) => {
+                        s.write(slot);
+                    }
+                    None => {
+                        all = false;
+                        break;
+                    }
+                }
+            }
+            all
+        };
+        if replayed {
+            for s in saved.iter().take(n) {
+                // SAFETY: every display of the run wrote its state above.
+                scratch.materials.restore_slot(unsafe { s.assume_init_ref() });
+                // SAFETY: as `DisplayBatch::new`'s, once per display in order.
+                unsafe { batch.submit(p, draw_state, Some(&scratch.materials)) };
+                draw_state.color_override = None;
+            }
+            // SAFETY: as `DisplayBatch::new`'s, after the run's last submit.
+            unsafe { batch.finish() };
+            continue;
+        }
         for e in run {
             // `draw_one_display`'s replays.
             match anim {

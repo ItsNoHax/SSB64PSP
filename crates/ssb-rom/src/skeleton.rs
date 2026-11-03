@@ -1992,6 +1992,10 @@ fn resolve_texture(
 /// 4.6 KB per instance for objects nothing here plays.
 pub const MAX_EFFECT_MAT_ANIMS: usize = 9;
 
+/// One joint of an [`EffectMaterialAnimator`] and its halt flag
+/// ([`EffectMaterialAnimator::save_slot`]).
+pub type EffectMaterialSlot = ((u32, crate::matanim::MaterialJoint), bool);
+
 /// Restarts and ticks only the `MatAnimDesc` entries one spawned effect's
 /// own primitives reference, instead of [`MaterialAnimator`]'s pack-lifetime
 /// clock.
@@ -2202,6 +2206,27 @@ impl EffectMaterialAnimator {
                 continue;
             };
             let _ = j.tick(data, speed);
+        }
+    }
+
+    /// The state of a player with one joint, which [`Self::restore_slot`]
+    /// puts back; `None` for any other count.
+    #[inline(always)]
+    pub fn save_slot(&self) -> Option<EffectMaterialSlot> {
+        match (self.count, self.slots.first(), self.halted.first()) {
+            (1, Some(&slot), Some(&halted)) => Some((slot, halted)),
+            _ => None,
+        }
+    }
+
+    /// Puts back a [`Self::save_slot`] state: the player is then the one
+    /// that saved it, to every reader and to [`Self::tick`].
+    #[inline(always)]
+    pub fn restore_slot(&mut self, saved: &EffectMaterialSlot) {
+        if let (Some(slot), Some(halted)) = (self.slots.first_mut(), self.halted.first_mut()) {
+            *slot = saved.0;
+            *halted = saved.1;
+            self.count = 1;
         }
     }
 
