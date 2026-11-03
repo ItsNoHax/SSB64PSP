@@ -7585,6 +7585,113 @@ fn draw_display_effects(
     }
 }
 
+/// [`draw_display_effects`] with each run of two or more small shocks
+/// (`efManagerShockSmallMakeEffect`) in a row on link 18, under head 1,
+/// drawn stage by stage ([`meshdraw::DisplayBatch`]): the same commands in
+/// the same order (D-051). Every other display, and a run the passes do
+/// not take, draws through [`draw_one_display`]. Apart from both, so their
+/// code stays as it is (RE-585). The shock's material script sets no PRIM
+/// or ENV colour, which the batch needs.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn draw_display_effects_batched(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    draw_state: &mut meshdraw::DrawState,
+    assets: &DrawAssets,
+    scratch: &mut DisplayScratch,
+    effects: &ssb_game::effect::Effects,
+    fighters: [Option<&ssb_game::fighter::Fighter>; 4],
+    camera: &ssb_game::camera::Camera,
+    link: u8,
+) {
+    use ssb_game::effect::DisplayKind as K;
+    use ssb_rom::scene::Mat4;
+    // Most displays one batch takes; a longer run takes more batches.
+    const RUN: usize = 16;
+    let shock = display_asset(K::ShockSmall).and_then(|a| {
+        let heads = assets.display_heads.get(a)?;
+        Some((assets.displays.get(a)?.as_ref()?, heads.1))
+    });
+    let Some(((object, anim), true)) = shock
+        .filter(|_| link == K::ShockSmall.dl_link() && draw_state.heads == meshdraw::Heads::Head1)
+    else {
+        draw_display_effects(gpu, p, draw_state, assets, scratch, effects, fighters, camera, link);
+        return;
+    };
+    let ms = meshdraw::MODEL_SCALE;
+    let units = Mat4::from_trs([0.0; 3], [0.0; 3], [ms; 3]);
+    // `draw_one_display`'s one posed node.
+    let posed = [Mat4::IDENTITY];
+    let mut displays = effects
+        .displays_in_make_order()
+        // The shock's link as a constant, not `link`: the filter then tests
+        // bits, with no jump table in `.rodata`.
+        .filter(|d| d.kind.dl_link() == K::ShockSmall.dl_link())
+        .peekable();
+    while let Some(d) = displays.next() {
+        if d.kind != K::ShockSmall {
+            draw_one_display(gpu, p, draw_state, assets, scratch, d, fighters, camera);
+            continue;
+        }
+        let mut run = [d; RUN];
+        let mut bases = [psp_matrix(&Mat4::IDENTITY); RUN];
+        let mut n = 0;
+        let mut next = Some(d);
+        while let Some(e) = next {
+            // `draw_one_display`'s root for the shock.
+            let rot = [e.rotate.x, e.rotate.y, e.rotate.z];
+            let scale = [e.scale.x, e.scale.y, e.scale.z];
+            let root = eye_billboard(e.translate, camera.eye)
+                .mul(&Mat4::from_trs_display([0.0; 3], rot, scale))
+                .mul(&units);
+            if let (Some(r), Some(b)) = (run.get_mut(n), bases.get_mut(n)) {
+                *r = e;
+                *b = psp_matrix(&root);
+            }
+            n += 1;
+            next = if n < RUN {
+                displays.next_if(|e| e.kind == K::ShockSmall)
+            } else {
+                None
+            };
+        }
+        let run = run.get(..n).unwrap_or(&[]);
+        let bases = bases.get(..n).unwrap_or(&[]);
+        // SAFETY: under the frame's display list, like every display.
+        let Some(mut batch) = (unsafe { meshdraw::DisplayBatch::new(p, draw_state, object, bases, &posed) })
+        else {
+            for e in run {
+                draw_one_display(gpu, p, draw_state, assets, scratch, e, fighters, camera);
+            }
+            continue;
+        };
+        for e in run {
+            // `draw_one_display`'s replays.
+            match anim {
+                Some(anim) => {
+                    scratch.anim.start_changed(p, anim);
+                    if let Some(script) = p.anim_script(anim) {
+                        for _ in 0..e.ticks {
+                            let _ = scratch.anim.tick(script);
+                        }
+                    }
+                }
+                None => scratch.anim.clear(),
+            }
+            scratch.materials.start(p, object_mat_anims(p, object));
+            for _ in 0..e.ticks {
+                scratch.materials.tick(p);
+            }
+            // SAFETY: as `DisplayBatch::new`'s, once per display in order.
+            unsafe { batch.submit(p, draw_state, Some(&scratch.materials)) };
+            draw_state.color_override = None;
+        }
+        // SAFETY: as `DisplayBatch::new`'s, after the run's last submit.
+        unsafe { batch.finish() };
+    }
+}
+
 /// One display effect of [`draw_display_effects`].
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
@@ -9876,7 +9983,7 @@ unsafe fn draw_training(
                     DEAD_EXPLODE_LINK
                 },
             ),
-            G::DisplayEffects => draw_display_effects(
+            G::DisplayEffects => draw_display_effects_batched(
                 gpu,
                 p,
                 draw_state,

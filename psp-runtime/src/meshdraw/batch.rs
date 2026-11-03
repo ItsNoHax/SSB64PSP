@@ -42,6 +42,7 @@
 //! `clip_submission`, `bind_texture_uncached`, `apply_texture_affine`) are
 //! shared.
 
+pub(super) mod display;
 mod lod;
 
 use core::ffi::c_void;

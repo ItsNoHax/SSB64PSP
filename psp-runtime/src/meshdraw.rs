@@ -4475,6 +4475,7 @@ pub(crate) use batch::{
     batch_expand, batch_expand_lod_tag, batch_pose, batch_ready, batch_submit,
     batch_submit_lod_tag, plan_object, plan_object_lod, Batch, BatchSize,
 };
+pub use batch::display::DisplayBatch;
 
 /// Bounding box of a whole object, in the pack's normalised units.
 ///

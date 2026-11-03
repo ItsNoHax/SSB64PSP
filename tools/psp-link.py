@@ -15,7 +15,8 @@ checkout-independent layout) and passes the result to `rust-lld` as a
 `--symbol-ordering-file`. It changes where code goes, never the code.
 It then links again with zero bytes after the code (`OUT.pad.o`) so that
 `.bss` keeps one data-cache placement and `.rodata` one offset in its
-cache line however large the code is (RE-580, RE-584).
+cache line however large the code is (RE-580, RE-584); a second pad pins the import stubs
+to one instruction-cache set (`STUB_SET`, RE-585).
 Names after a `# after unlisted` line go after the unlisted functions,
 followed by a pad that puts the code behind them on the cache sets it has
 without them: code one scene runs then leaves every other scene's layout
@@ -56,6 +57,15 @@ RODATA_LINE = int(os.environ.get('PSP_LINK_RODATA_LINE', '0x00'), 0)
 LINE = 64
 PAD_SYMBOL = 'psp_link_pad'
 TAIL_PAD_SYMBOL = 'psp_link_tail_pad'
+# The import stubs' offset in an 8 KB instruction-cache way: the timed
+# build's at 563dacf8. `.eh_frame` otherwise moves them with each new
+# function (Pikachu shock r18 +0.11 ms busy on a PSP-2000 for -0xf0, RE-585).
+# The stub pad sorts last in the linker script's `.sceStub.text.*`, after
+# the stubs and before `.eh_frame`. PSP_LINK_STUB_SET overrides it, for a
+# screen.
+STUB_SET = int(os.environ.get('PSP_LINK_STUB_SET', '0x19c8'), 0)
+STUB_PAD_SYMBOL = 'psp_link_stub_pad'
+STUB_PAD_SECTION = '.sceStub.text.~psp_link_stub_pad'
 
 
 def stable(name, impls=True):
@@ -409,30 +419,38 @@ def main():
         addr = symbol_addrs(out, [last[0], TAIL_PAD_SYMBOL])
         write_pad_object(tail_path, (addr[last[0]] - addr[TAIL_PAD_SYMBOL]) % DCACHE_WAY, elf_flags(objects[0]), TAIL_PAD_SYMBOL)
         run(lld)
-    # Pad the end of the code so `.bss` starts at BSS_SET in the data cache
-    # whatever the code's size (RE-580): the statics and the kernel blocks
-    # after them then map onto the same cache sets in every build, timed or
-    # released, before and after a code change.
+    # Pad the end of the code so the import stubs start at STUB_SET in the
+    # instruction cache, and the end of the stubs so `.bss` starts at BSS_SET
+    # in the data cache, whatever the code's size (RE-580, RE-585): the
+    # stubs, the statics and the kernel blocks after them then map onto the
+    # same cache sets in every build, timed or released, before and after a
+    # code change. `.eh_frame`, between the two pads, grows with the code.
     # `.rodata` goes first to its line offset (a step under one line), then
     # whole lines move `.bss` to its set without moving `.rodata` in its line.
-    pad = 0
-    for _ in range(6):
+    pads = [[out + '.pad.o', PAD_SYMBOL, None, 0], [out + '.stubpad.o', STUB_PAD_SYMBOL, STUB_PAD_SECTION, 0]]
+    for _ in range(8):
         start = section_addr(out, '.bss')
         rodata = section_addr(out, '.rodata')
+        stub = section_addr(out, '.sceStub.text')
         if start is None or not objects:
             break
-        if rodata is not None and (rodata - RODATA_LINE) % LINE:
-            pad = (pad + (RODATA_LINE - rodata) % LINE) % DCACHE_WAY
+        if stub is not None and (stub - STUB_SET) % DCACHE_WAY:
+            pads[0][3] = (pads[0][3] + STUB_SET - stub) % DCACHE_WAY
+        elif rodata is not None and (rodata - RODATA_LINE) % LINE:
+            pads[1][3] = (pads[1][3] + (RODATA_LINE - rodata) % LINE) % DCACHE_WAY
         elif (start - BSS_SET) % DCACHE_WAY:
-            pad = (pad + BSS_SET - start) % DCACHE_WAY
+            pads[1][3] = (pads[1][3] + BSS_SET - start) % DCACHE_WAY
         else:
             break
-        pad_path = out + '.pad.o'
-        write_pad_object(pad_path, pad, elf_flags(objects[0]))
-        run(lld[:lld.index('-o')] + [pad_path, '--undefined=' + PAD_SYMBOL] + lld[lld.index('-o'):])
+        extra = []
+        for path, symbol, section, size in pads:
+            write_pad_object(path, size, elf_flags(objects[0]), symbol, section)
+            extra += [path, '--undefined=' + symbol]
+        run(lld[:lld.index('-o')] + extra + lld[lld.index('-o'):])
     else:
-        sys.exit('psp-link: .bss at %#x, .rodata at %#x: not at %#x and line offset %#x in the data cache'
-                 % (section_addr(out, '.bss'), section_addr(out, '.rodata'), BSS_SET, RODATA_LINE))
+        sys.exit('psp-link: stubs at %#x, .bss at %#x, .rodata at %#x: not at %#x, %#x and line offset %#x in the caches'
+                 % (section_addr(out, '.sceStub.text'), section_addr(out, '.bss'), section_addr(out, '.rodata'),
+                    STUB_SET, BSS_SET, RODATA_LINE))
 
 
 def run(cmd):
@@ -477,10 +495,11 @@ def elf_flags(path):
         return struct.unpack_from('<I', f.read(0x28), 0x24)[0]
 
 
-def write_pad_object(path, size, flags, symbol=PAD_SYMBOL):
-    """A relocatable MIPS object holding `size` zero bytes of code, defined by
-    `symbol` (kept through `--gc-sections` by `--undefined`)."""
-    shstr = b'\0.text.' + symbol.encode() + b'\0.symtab\0.strtab\0.shstrtab\0'
+def write_pad_object(path, size, flags, symbol=PAD_SYMBOL, section=None):
+    """A relocatable MIPS object holding `size` zero bytes of code in
+    `section` (`.text.<symbol>` by default), defined by `symbol` (kept
+    through `--gc-sections` by `--undefined`)."""
+    shstr = b'\0' + (section or '.text.' + symbol).encode() + b'\0.symtab\0.strtab\0.shstrtab\0'
     strtab = b'\0' + symbol.encode() + b'\0'
     symtab = bytes(16) + struct.pack('<IIIBBH', 1, 0, 0, 0x10, 0, 1)  # STB_GLOBAL, STT_NOTYPE
     body = bytes(size) + symtab + strtab + shstr
