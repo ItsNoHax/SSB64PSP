@@ -32,7 +32,8 @@
 //!
 //! Anything else takes the per-object path for the whole frame, decided
 //! before anything is drawn or allocated ([`batch_ready`], [`plan_object`],
-//! [`BatchSize::fits`]).
+//! [`BatchSize::fits`]); a tag with the Fall's two-tile blends or float UVs
+//! takes [`lod`]'s copies of the passes instead.
 //!
 //! The helpers the per-object path inlines from a single call site are
 //! copied here, not called: a second caller would change how LLVM inlines
@@ -40,6 +41,8 @@
 //! (RE-494). Only out-of-line helpers (`expand_corners`,
 //! `clip_submission`, `bind_texture_uncached`, `apply_texture_affine`) are
 //! shared.
+
+mod lod;
 
 use core::ffi::c_void;
 
@@ -54,6 +57,8 @@ use super::{
     GuardClip, TapeMode, TextureFuncState, CLIP_CODES, CLIP_CODES_MAX, GUARD_BAND,
     LIGHT_MARK_OFFSET, LIGHT_MARK_SET, LIGHT_PREPASS, VERTEX_FORMAT,
 };
+
+pub(crate) use lod::{batch_expand_lod_tag, batch_submit_lod_tag, plan_object_lod};
 
 /// Primitive flags whose paths the batch does not copy: lighting reads the
 /// node's light ([`DrawState::object_light`]), the two-tile blends draw

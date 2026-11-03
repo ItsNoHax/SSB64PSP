@@ -12,24 +12,24 @@
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy, ms0) | opening 1-39 8.89 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
 | PSP-2000 `vs4@2400` | 16.97 ms busy (Zebes 11.27) | RE-585 |
-| PSP-2000 1P intro | 14.85 ms (timer build); 1P battle 15.63 ms; Comets 15.80; Fall 18.42; `vs4@2170` electric no-hit r18 18.30, shock r12 20.60 | RE-585 |
+| PSP-2000 1P intro | 14.85 ms (timer build); 1P battle 15.63 ms; Comets 15.80; Fall 17.52; `vs4@2170` electric no-hit r18 18.30, shock r12 20.60 | RE-585 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 138): Fall's LOD prims batched through `draw_unbatched` (comet functions unchanged): Fall 18.41 -> 17.52 ms; Comets 15.79 -> 15.80; other windows within +0.06 ms (RE-585).
 - Landed (batch 137): boss-only stage-major `BossEffects::draw_batched` after the unlisted code, padded: Comets 17.45 -> 15.80, Fall 19.06 -> 18.42 ms; other windows within +0.04 ms (6-round shock means); free memory -32 KiB on every golden (RE-585).
 - Landed (batch 136): Link's run jump read with the run: the opening streams no clip (last 1264 B read at tick 2351 gone); every timer window within +0.07 ms (RE-575).
 - Landed (batch 135): fighter-scene clips read with the scene: no fighter-scene frame waits on a read (21 reads of 0.8-8.8 ms gone); every timer window within +0.05 ms (RE-575).
 - Landed (batch 134): Jungle battle clips read with the scene: no Jungle frame waits on a read (16-17 reads of 0.8-6.1 ms gone); every timer window within +0.07 ms (RE-575).
-- Landed (batch 133): room status clips read with the room: no room frame waits on a read (7 reads of 1.0-2.2 ms gone); timer windows -0.10 to +0.07 ms over 4 elec rounds (RE-575).
 - Measured (batch 132): ShockSmall material cache leaves the shock window unchanged (r12 20.59/20.60 in place) and costs intro +0.5 ms; rejected (RE-585).
 - Landed (batch 131): deferred prefetch with re-searched link order k1: Room tic 57 24.9 -> 16.3 ms busy; every timer window within +0.03 ms (RE-575).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
-1. Playtest performance above 16.7 ms: Master Hand Fall (18.42 ms; LOD_BLEND prims take the shared `draw`) and electric shock display effects (`vs4@2170` r12 20.60 vs no-hit r18 18.30 ms).
+1. Playtest performance above 16.7 ms: Master Hand Fall (17.52 ms) and electric shock display effects (`vs4@2170` r12 20.60 vs no-hit r18 18.30 ms).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 137 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 138 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
