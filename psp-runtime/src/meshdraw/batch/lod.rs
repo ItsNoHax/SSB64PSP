@@ -13,30 +13,89 @@
 //! ([`super::super::draw_lod_texel_alpha`]), which [`plan_object_lod`]
 //! counts. What else these passes read, against the per-object path:
 //! - `expand_float_uv_corners` reads no `DrawState`;
-//! - a texel-alpha blend's pass alphas ([`texel_alpha_plan`]) read the
-//!   effect's material player, its `color_override` and
-//!   `lod_blend_isolate`, none of which a draw changes.
+//! - a texel-alpha blend's plan ([`texel_alpha_plan`]: pass alphas, both
+//!   passes' textures and mappings) reads the effect's material player, its
+//!   `color_override`, `lod_blend_isolate` and the pack, none of which a
+//!   draw changes; [`batch_expand_lod_tag`] works it out once and
+//!   [`batch_submit_lod_tag`] binds from it.
 //!
-//! `bind_lod_next`, `draw_lod_blend_pass`,
-//! `apply_lod_blend_translucent_pass1` and `expand_float_uv_corners` are
-//! out of line in the per-object path and shared;
-//! `texel_alpha_pass_alphas` is inlined there and copied here (RE-494).
+//! `bind_lod_next`'s binds, `batch_material`'s and the texel-alpha blend's
+//! lookups are split: the lookups ([`material_inputs`], the plan) run in a
+//! loop of their own, so the per-mesh draw does not run their code
+//! (RE-585). `draw_lod_blend_pass`, `apply_lod_blend_translucent_pass1` and
+//! `expand_float_uv_corners` are out of line in the per-object path and
+//! shared; `texel_alpha_pass_alphas` is inlined there and copied here
+//! (RE-494).
 
 use core::ffi::c_void;
 
 use psp::sys::{self, GuState};
-use ssb_rom::pack::{flags, NodeDesc, ObjectDesc, Pack, PackedVertex, PrimDesc};
-use ssb_rom::skeleton::{EffectColors, EffectMaterialAnimator, LodBlendState};
+use ssb_rom::pack::{flags, NodeDesc, ObjectDesc, Pack, PackedVertex, PrimDesc, TextureDesc};
+use ssb_rom::skeleton::{EffectColors, EffectMaterialAnimator, MaterialUv, UvAffine};
 
 use super::super::{
-    apply_lod_blend_translucent_pass1, bind_lod_next, clip_submission, draw_lod_blend_pass,
-    expand_corners, expand_float_uv_corners, position_outcode, Draw, DrawState, GuardClip,
-    LodBlendIsolate, CLIP_CODES, GUARD_BAND, LIGHT_PREPASS, LOD_BLEND_TRANSLUCENT, VERTEX_FORMAT,
+    animated_uv_affine, apply_fade_blend, apply_flags_state, apply_lod_blend_translucent_pass1,
+    apply_texture_affine, bind_texture, bind_texture_cached, bind_texture_uncached,
+    clip_submission, draw_lod_blend_pass, expand_corners, expand_float_uv_corners,
+    position_outcode, ClipVertex, Draw, DrawState, GuardClip, LodBlendIsolate, TextureFuncState,
+    CLIP_CODES, CLIP_CODES_MAX, CLIP_DRAWS, CLIP_DRAWS_MAX, CLIP_VERTEX_FORMAT, GUARD_BAND,
+    LIGHT_PREPASS, LOD_BLEND_TRANSLUCENT, VERTEX_FORMAT,
 };
-use super::{batch_material, clip_transform, Batch, BatchSize};
+use super::{clip_transform, Batch, BatchSize};
 
 /// [`super::UNBATCHED_FLAGS`] less the paths these passes add.
 const LOD_UNBATCHED_FLAGS: u32 = flags::LIT | flags::TEXTURE_GEN | flags::TEXTURE_GEN_LINEAR;
+
+/// [`texel_alpha_plan`]'s answer for one primitive that takes a second-pass
+/// record: [`super::super::draw_lod_texel_alpha`]'s two passes, or the
+/// single pass (`two_pass` false).
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct TexelPlan {
+    two_pass: bool,
+    /// The passes' alphas, `TEXEL0`'s then `TEXEL1`'s.
+    v0: u8,
+    v1: u8,
+    /// The first pass's material: `batch_material`'s texture, palette and
+    /// mapping.
+    texture: u32,
+    palette: u32,
+    affine: UvAffine,
+    /// `TEXEL1` and `bind_lod_next`'s mapping of it (the identity when the
+    /// pack lacks it: the pass is not drawn).
+    next: u32,
+    next_affine: UvAffine,
+}
+
+impl TexelPlan {
+    /// The single pass: only `two_pass` is read. All zero, so it is
+    /// stored without a constant.
+    const SINGLE: Self = Self {
+        two_pass: false,
+        v0: 0,
+        v1: 0,
+        texture: 0,
+        palette: 0,
+        affine: Self::UNUSED,
+        next: 0,
+        next_affine: Self::UNUSED,
+    };
+    const UNUSED: UvAffine = UvAffine {
+        scale_s: 0.0,
+        scale_t: 0.0,
+        offset_s: 0.0,
+        offset_t: 0.0,
+    };
+}
+
+/// Plan `j` of the tag (its `j`th second-pass record's primitive): at the
+/// top of [`CLIP_CODES`], below plan `j - 1`, which [`plan_object_lod`]
+/// keeps clear of the outcodes. Byte-aligned: read and written unaligned.
+#[inline(always)]
+unsafe fn plan_slot(j: usize) -> *mut TexelPlan {
+    let table = core::ptr::addr_of_mut!(CLIP_CODES) as *mut u8;
+    table.add(CLIP_CODES_MAX - (j + 1) * core::mem::size_of::<TexelPlan>()) as *mut TexelPlan
+}
 
 /// Whether primitive flags `flags` take a second-pass record: a
 /// translucent two-tile blend may draw as a texel-alpha blend's two passes.
@@ -46,8 +105,9 @@ fn takes_spare(flags: u32) -> bool {
 }
 
 /// [`super::plan_object`] for these passes: [`LOD_UNBATCHED_FLAGS`] in
-/// place of [`super::UNBATCHED_FLAGS`], and a second-pass record for each
-/// primitive that may take one.
+/// place of [`super::UNBATCHED_FLAGS`], and a second-pass record and a
+/// [`TexelPlan`] (in `verts`: [`plan_slot`]) for each primitive that may
+/// take one.
 #[inline(never)]
 pub(crate) fn plan_object_lod(pack: &Pack<'_>, object: &ObjectDesc, size: &mut BatchSize) -> bool {
     for i in 0..object.node_count {
@@ -74,7 +134,9 @@ pub(crate) fn plan_object_lod(pack: &Pack<'_>, object: &ObjectDesc, size: &mut B
             if p.flags & LOD_UNBATCHED_FLAGS != 0 {
                 return false;
             }
-            size.prims += usize::from(takes_spare(p.flags));
+            let spare = usize::from(takes_spare(p.flags));
+            size.prims += spare;
+            size.verts += spare * core::mem::size_of::<TexelPlan>();
         }
         size.meshes += 1;
         size.prims += mesh.prim_count as usize;
@@ -88,7 +150,8 @@ pub(crate) fn plan_object_lod(pack: &Pack<'_>, object: &ObjectDesc, size: &mut B
 /// [`super::super::draw_mesh_vertices`] chooses them, or a texel-alpha
 /// blend's two ([`texel_alpha_plan`]), the second in the next spare record.
 /// `objects` are the posed objects in order: each one's meshes and
-/// material player.
+/// material player. First, in a loop of their own, every second-pass
+/// record's [`TexelPlan`], which [`batch_submit_lod_tag`] binds from.
 ///
 /// # Safety
 ///
@@ -102,9 +165,7 @@ pub(crate) unsafe fn batch_expand_lod_tag(
 ) {
     let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
     let size = core::mem::size_of::<PackedVertex>();
-    let table = &mut *core::ptr::addr_of_mut!(CLIP_CODES);
-    let mut at = 0usize;
-    let mut spare = batch.prims;
+    let mut j = 0usize;
     let mut object = 0usize;
     let mut left = 0usize;
     let mut mats = None;
@@ -118,6 +179,32 @@ pub(crate) unsafe fn batch_expand_lod_tag(
             mats = m;
         }
         left = left.saturating_sub(1);
+        let m = &*batch.meshes.add(k);
+        let verts = core::slice::from_raw_parts(m.verts, m.verts_len);
+        // `material_colors` with `color_override` set.
+        let effect_colors = Some(m.colors).filter(|c| c.prim.is_some() || c.env.is_some());
+        for i in 0..m.prim_count {
+            let Some(p) = pack.prim(m.first_prim + i) else {
+                continue;
+            };
+            if !takes_spare(p.flags) {
+                continue;
+            }
+            let plan = match pack.indices(&p) {
+                Some(indices) if st.heads.admits(p.flags) && p.index_count != 0 => {
+                    texel_alpha_plan(pack, &p, st, indices, verts, effect_colors, mats)
+                }
+                _ => TexelPlan::SINGLE,
+            };
+            // `BatchSize::fits`: [`plan_object_lod`] counted it.
+            plan_slot(j).write_unaligned(plan);
+            j += 1;
+        }
+    }
+    let table = &mut *core::ptr::addr_of_mut!(CLIP_CODES);
+    let mut at = 0usize;
+    let mut spare = batch.prims;
+    for k in 0..batch.len {
         let m = &mut *batch.meshes.add(k);
         let verts = core::slice::from_raw_parts(m.verts, m.verts_len);
         let count = verts.len() / size;
@@ -156,8 +243,10 @@ pub(crate) unsafe fn batch_expand_lod_tag(
                 continue;
             };
             let mut next = record;
+            let mut plan = TexelPlan::SINGLE;
             if takes_spare(p.flags) {
                 // `BatchSize::fits`: [`plan_object_lod`] counted it.
+                plan = plan_slot(spare - batch.prims).read_unaligned();
                 next = batch.records.add(spare);
                 next.write(Draw::EMPTY);
                 spare += 1;
@@ -174,35 +263,31 @@ pub(crate) unsafe fn batch_expand_lod_tag(
             let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
             // RE-321: `draw_lod_texel_alpha`'s expansion of each pass, at
             // the pass's alpha; [`batch_submit_lod_tag`] draws them.
-            if takes_spare(p.flags) {
-                if let Some((_, v0, v1)) =
-                    texel_alpha_plan(pack, &p, st, indices, verts, effect_colors, mats)
-                {
-                    let base = effect_colors.unwrap_or_default();
-                    for (pass, alpha) in [(0usize, v0), (1, v1)] {
-                        if alpha == 0 {
-                            continue;
-                        }
-                        let rgb = base.prim.map_or([0xFF; 3], |c| [c[0], c[1], c[2]]);
-                        let colors = EffectColors {
-                            prim: Some([rgb[0], rgb[1], rgb[2], alpha]),
-                            ..base
-                        };
-                        let (vtype, index, vertex) = if signed_clamp_uv {
-                            expand_float_uv_corners(&p, indices, verts, Some(colors), None)
-                        } else {
-                            expand_corners(pack, &p, st, indices, verts, Some(colors), false, None)
-                        };
-                        let to = if pass == 0 { record } else { next };
-                        to.write(Draw {
-                            vtype: vtype.bits(),
-                            index,
-                            vertex,
-                            count: p.index_count,
-                        });
+            if plan.two_pass {
+                let base = effect_colors.unwrap_or_default();
+                for (pass, alpha) in [(0usize, plan.v0), (1, plan.v1)] {
+                    if alpha == 0 {
+                        continue;
                     }
-                    continue;
+                    let rgb = base.prim.map_or([0xFF; 3], |c| [c[0], c[1], c[2]]);
+                    let colors = EffectColors {
+                        prim: Some([rgb[0], rgb[1], rgb[2], alpha]),
+                        ..base
+                    };
+                    let (vtype, index, vertex) = if signed_clamp_uv {
+                        expand_float_uv_corners(&p, indices, verts, Some(colors), None)
+                    } else {
+                        expand_corners(pack, &p, st, indices, verts, Some(colors), false, None)
+                    };
+                    let to = if pass == 0 { record } else { next };
+                    to.write(Draw {
+                        vtype: vtype.bits(),
+                        index,
+                        vertex,
+                        count: p.index_count,
+                    });
                 }
+                continue;
             }
             let (vtype, index, vertex) = if signed_clamp_uv {
                 expand_float_uv_corners(&p, indices, verts, effect_colors, None)
@@ -278,7 +363,9 @@ pub(crate) unsafe fn batch_submit_lod_tag(
             };
             let record = batch.records.add(m.record as usize + i as usize);
             let mut next = record;
+            let mut plan = TexelPlan::SINGLE;
             if takes_spare(p.flags) {
+                plan = plan_slot(*spares).read_unaligned();
                 next = batch.records.add(batch.prims + *spares);
                 *spares += 1;
             }
@@ -295,47 +382,76 @@ pub(crate) unsafe fn batch_submit_lod_tag(
             st.texture_override = None;
             // `material_colors`: the override wins.
             let effect_colors = st.color_override;
-            batch_material(pack, &p, st, effect_mat_anim, effect_colors);
+            let (texture, palette, affine) = if plan.two_pass {
+                (plan.texture, plan.palette, plan.affine)
+            } else {
+                material_inputs(pack, &p, effect_mat_anim)
+            };
+            lod_material(pack, &p, st, texture, palette, affine, effect_colors);
             st.texture_override = None;
-            let effect_colors = effect_colors.filter(|c| c.prim.is_some() || c.env.is_some());
             crate::profile::stop_fine(crate::profile::Span::Material, material_t);
 
             // RE-321: `draw_lod_texel_alpha` with [`batch_expand_lod_tag`]'s
-            // expansions.
-            if takes_spare(p.flags) {
-                if let Some((lod, v0, v1)) =
-                    texel_alpha_plan(pack, &p, st, indices, verts, effect_colors, effect_mat_anim)
-                {
-                    sys::sceGuDisable(GuState::AlphaTest);
-                    st.last_flags = None;
-                    st.state_changes += 1;
-                    let mut n = 0;
-                    for (pass, alpha) in [(0usize, v0), (1, v1)] {
-                        if alpha == 0 {
-                            continue;
-                        }
-                        if pass == 1 {
-                            if !bind_lod_next(pack, &p, st, &lod) {
-                                break;
-                            }
-                            sys::sceGuDepthMask(1);
-                        }
-                        let whole = [if pass == 0 { *record } else { *next }];
-                        let list: &[Draw] = match &clip {
-                            Some(clip) => {
-                                clip_submission(clip, indices, &whole[0]).unwrap_or(&whole)
-                            }
-                            None => &whole,
-                        };
-                        for d in list {
-                            d.draw();
-                        }
-                        n += 1;
+            // expansions and plan.
+            if plan.two_pass {
+                sys::sceGuDisable(GuState::AlphaTest);
+                st.last_flags = None;
+                st.state_changes += 1;
+                let mut n = 0;
+                // The first pass's clip, once it took one: only the second
+                // pass sees it.
+                let mut first = None;
+                for (pass, alpha) in [(0usize, plan.v0), (1, plan.v1)] {
+                    if alpha == 0 {
+                        continue;
                     }
-                    st.draws += n;
-                    tris += p.index_count / 3;
-                    continue;
+                    if pass == 1 {
+                        // `bind_lod_next` with the plan's mapping.
+                        let Some(t) = pack.texture(plan.next) else {
+                            break;
+                        };
+                        if st.last_texture != Some((plan.next, TextureDesc::NO_ANIM)) {
+                            st.last_texture = Some((plan.next, TextureDesc::NO_ANIM));
+                            st.state_changes += 1;
+                            bind_texture(pack, plan.next, &t, TextureDesc::NO_ANIM);
+                        }
+                        apply_texture_affine(pack, &p, st, plan.next, plan.next_affine);
+                        if st.last_texture_func != Some(TextureFuncState::Modulate) {
+                            st.last_texture_func = Some(TextureFuncState::Modulate);
+                            sys::sceGuTexFunc(
+                                sys::TextureEffect::Modulate,
+                                sys::TextureColorComponent::Rgba,
+                            );
+                        }
+                        sys::sceGuDepthMask(1);
+                    }
+                    let whole = [if pass == 0 { *record } else { *next }];
+                    let list: &[Draw] = match &clip {
+                        Some(clip) => {
+                            let pieces = match first {
+                                Some(pieces) => reclip_second_pass(
+                                    clip,
+                                    indices,
+                                    &*record,
+                                    &whole[0],
+                                    pieces,
+                                    (p.flags & flags::ALPHA_NO_PRIM == 0).then_some(alpha),
+                                ),
+                                _ => clip_submission(clip, indices, &whole[0]),
+                            };
+                            first = Some(pieces);
+                            pieces.unwrap_or(&whole)
+                        }
+                        None => &whole,
+                    };
+                    for d in list {
+                        d.draw();
+                    }
+                    n += 1;
                 }
+                st.draws += n;
+                tris += p.index_count / 3;
+                continue;
             }
 
             let whole = [*record];
@@ -365,14 +481,96 @@ pub(crate) unsafe fn batch_submit_lod_tag(
     }
 }
 
+/// [`clip_submission`] of a texel-alpha blend's second pass, `whole`, from
+/// its first pass's, `first_whole`, which drew `first` (RE-321): the two
+/// expansions differ only in their alpha, the prim alpha `alpha` (`None`:
+/// `ALPHA_NO_PRIM`, the same colours), the same in every corner. The same
+/// positions and outcodes cross the same triangles into the same pieces, and
+/// a clip point's channels are its corners' interpolated, so a constant
+/// alpha stays that alpha. The first pass's pieces are re-based onto the
+/// second's submission and its clipped corners copied with the second's
+/// alpha into a block as `rebuild_runs` allocates it: the same vertices,
+/// without decoding and clipping them again.
+#[inline(never)]
+unsafe fn reclip_second_pass(
+    clip: &GuardClip<'_>,
+    indices: &[u8],
+    first_whole: &Draw,
+    whole: &Draw,
+    first: Option<&'static [Draw]>,
+    alpha: Option<u8>,
+) -> Option<&'static [Draw]> {
+    // No triangle crossed, or a format `rebuild_runs` does not read.
+    let count = first?.len();
+    let tris = whole.count as usize / 3;
+    // At most a run and a fan for each triangle, then one more run:
+    // `rebuild_runs` never overflows into `rebuild_clipped`. The outcodes
+    // in their table, as the first pass read them.
+    let (Some(table), true) = (clip.codes, 2 * tris < CLIP_DRAWS_MAX) else {
+        return clip_submission(clip, indices, whole);
+    };
+    // `crossing_triangles` over the corners in one loop.
+    let (mut crossing, mut corner, mut any, mut all) = (0, 0, 0u8, !0u8);
+    for c in 0..3 * tris {
+        let i = usize::from(u16::from_le_bytes([
+            *indices.get_unchecked(2 * c),
+            *indices.get_unchecked(2 * c + 1),
+        ]));
+        let code = match table.get(i) {
+            Some(&code) => code,
+            None => clip.vertex_code(i),
+        };
+        any |= code;
+        all &= code;
+        corner += 1;
+        if corner == 3 {
+            crossing += usize::from(any != 0 && all == 0);
+            (corner, any, all) = (0, 0, !0);
+        }
+    }
+    let size = core::mem::size_of::<ClipVertex>();
+    let capacity = crossing * 3 * (ssb_engine::guard_clip::MAX_CLIPPED - 2);
+    let out = crate::gu::cached_vertices(capacity * size) as *mut ClipVertex;
+    // The second pass's alpha over the first's, or the same colours.
+    let (keep, set) = match alpha {
+        Some(a) => (0x00FF_FFFF, u32::from(a) << 24),
+        None => (u32::MAX, 0),
+    };
+    let rebase = |at: *const c_void, from: *const c_void, to: *const c_void| {
+        (to as usize).wrapping_add((at as usize).wrapping_sub(from as usize)) as *const c_void
+    };
+    // SAFETY: only this primitive's draws read the pieces, on the one
+    // thread that draws; the first pass has sent its draws.
+    let draws = &mut *core::ptr::addr_of_mut!(CLIP_DRAWS);
+    // The fans fill the block from its start, in order.
+    let mut n = 0usize;
+    let draws = draws.get_unchecked_mut(..count);
+    for d in draws.iter_mut() {
+        if d.vtype == CLIP_VERTEX_FORMAT.bits() {
+            let fan = out.add(n);
+            let count = d.count as usize;
+            core::ptr::copy_nonoverlapping(d.vertex as *const ClipVertex, fan, count);
+            d.vertex = fan as *const c_void;
+            n += count;
+            for v in core::slice::from_raw_parts_mut(fan, count) {
+                v.color = v.color & keep | set;
+            }
+        } else {
+            d.index = rebase(d.index, first_whole.index, whole.index);
+            d.vertex = rebase(d.vertex, first_whole.vertex, whole.vertex);
+        }
+    }
+    crate::gu::writeback_vertices(out as *const u8, n * size, false);
+    Some(draws)
+}
+
 /// [`super::super::draw_lod_texel_alpha`]'s choice for a primitive of an
 /// effect whose material player is `effect_mat_anim` (no stage player):
-/// `TEXEL1`'s tile and the two passes' alphas, or `None` to leave the
+/// the two passes' alphas, `batch_material`'s inputs for the first and
+/// `bind_lod_next`'s for `TEXEL1`, or [`TexelPlan::SINGLE`] to leave the
 /// primitive to the single pass. Its text, with
 /// [`ssb_rom::lod_blend::texel_alpha_pass_alphas`] copied in (its only
 /// other caller inlines it, RE-494) and checked indexing.
-/// [`batch_expand_lod_tag`] and [`batch_submit_lod_tag`] ask it on the same
-/// inputs.
 #[inline(never)]
 unsafe fn texel_alpha_plan(
     pack: &Pack<'_>,
@@ -382,42 +580,196 @@ unsafe fn texel_alpha_plan(
     verts: &[u8],
     effect_colors: Option<EffectColors>,
     effect_mat_anim: Option<&EffectMaterialAnimator>,
-) -> Option<(LodBlendState, u8, u8)> {
-    let lod = effect_mat_anim?.resolved_lod_blend(pack, p.mat_anim)?;
-    let mean = lod.texel_alpha?;
-    let base = effect_colors.unwrap_or_default();
-    if base.prim.is_none() && p.flags & flags::FLAT_COLOR != 0 {
-        return None;
-    }
-    let prim_alpha = match base.prim {
-        Some(prim) => prim[3],
-        None => {
-            let size = core::mem::size_of::<PackedVertex>();
-            let first = usize::from(u16::from_le_bytes([*indices.first()?, *indices.get(1)?]));
-            let v = verts.get(first * size..(first + 1) * size)?;
-            (*(v.as_ptr() as *const PackedVertex)).color.to_le_bytes()[3]
+) -> TexelPlan {
+    let alphas = || {
+        let lod = effect_mat_anim?.resolved_lod_blend(pack, p.mat_anim)?;
+        let mean = lod.texel_alpha?;
+        let base = effect_colors.unwrap_or_default();
+        if base.prim.is_none() && p.flags & flags::FLAT_COLOR != 0 {
+            return None;
         }
+        let prim_alpha = match base.prim {
+            Some(prim) => prim[3],
+            None => {
+                let size = core::mem::size_of::<PackedVertex>();
+                let first = usize::from(u16::from_le_bytes([*indices.first()?, *indices.get(1)?]));
+                let v = verts.get(first * size..(first + 1) * size)?;
+                (*(v.as_ptr() as *const PackedVertex)).color.to_le_bytes()[3]
+            }
+        };
+        let (v0, v1) = match st.lod_blend_isolate {
+            Some(LodBlendIsolate::Current) => (prim_alpha, 0),
+            Some(LodBlendIsolate::Next) => (0, prim_alpha),
+            None => {
+                // `texel_alpha_pass_alphas(prim_alpha, lod.frac, mean)`.
+                let fa = ((u32::from(lod.frac) * 255 + 128) / 256) as u8;
+                let fb = 255 - fa;
+                let a = u32::from(prim_alpha);
+                let v0 = (a * u32::from(fb) + 127) / 255;
+                if fa == 0 {
+                    (v0 as u8, 0)
+                } else {
+                    // Never 0: `fa > 0` keeps `v0` under 255.
+                    let den = 65025 - v0 * u32::from(mean);
+                    let v1 = (a * u32::from(fa) * 255 + den / 2)
+                        .checked_div(den)
+                        .unwrap_or(0);
+                    (v0 as u8, v1.min(255) as u8)
+                }
+            }
+        };
+        Some((lod, v0, v1))
     };
-    let (v0, v1) = match st.lod_blend_isolate {
-        Some(LodBlendIsolate::Current) => (prim_alpha, 0),
-        Some(LodBlendIsolate::Next) => (0, prim_alpha),
-        None => {
-            // `texel_alpha_pass_alphas(prim_alpha, lod.frac, mean)`.
-            let fa = ((u32::from(lod.frac) * 255 + 128) / 256) as u8;
-            let fb = 255 - fa;
-            let a = u32::from(prim_alpha);
-            let v0 = (a * u32::from(fb) + 127) / 255;
-            if fa == 0 {
-                (v0 as u8, 0)
+    let Some((lod, v0, v1)) = alphas() else {
+        return TexelPlan::SINGLE;
+    };
+    let (texture, palette, uv) = material_lookups(pack, p, effect_mat_anim);
+    // Both tiles' rows from one lookup site, which keeps `Pack::texture`
+    // inlined.
+    let mut rows = [None; 2];
+    for (row, i) in rows.iter_mut().zip([texture, lod.texture]) {
+        *row = pack.texture(i);
+    }
+    // `apply_texture_mapping`.
+    let affine = match (uv, rows[0]) {
+        (Some(uv), Some(t)) => animated_uv_affine(uv, &t),
+        _ => UvAffine::IDENTITY,
+    };
+    // RE-321: tile 1's live window, re-based from tile 0's static origin.
+    let next_affine = match rows[1] {
+        Some(t) => lod.ge_affine(
+            ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32),
+            (
+                t.wrap & TextureDesc::CLAMP_S != 0,
+                t.wrap & TextureDesc::CLAMP_T != 0,
+            ),
+        ),
+        None => UvAffine::IDENTITY,
+    };
+    TexelPlan {
+        two_pass: true,
+        v0,
+        v1,
+        texture,
+        palette,
+        affine,
+        next: lod.texture,
+        next_affine,
+    }
+}
+
+/// `batch_material`'s lookups for primitive `p` with no texture override:
+/// the texture, the palette and the animated window's mapping it binds.
+#[inline(always)]
+fn material_inputs(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    effect_mat_anim: Option<&EffectMaterialAnimator>,
+) -> (u32, u32, UvAffine) {
+    let (texture, palette, uv) = material_lookups(pack, p, effect_mat_anim);
+    // `apply_texture_mapping`.
+    let affine = match uv.and_then(|uv| Some((uv, pack.texture(texture)?))) {
+        Some((uv, t)) => animated_uv_affine(uv, &t),
+        None => UvAffine::IDENTITY,
+    };
+    (texture, palette, affine)
+}
+
+/// [`material_inputs`] up to the texture row: the texture, the palette and
+/// the animated window that owns tile 0, if any.
+#[inline(always)]
+fn material_lookups(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    effect_mat_anim: Option<&EffectMaterialAnimator>,
+) -> (u32, u32, Option<MaterialUv>) {
+    let texture = match p.image_anim() {
+        Some(anim) => effect_mat_anim
+            .and_then(|m| m.resolved_texture(pack, anim))
+            .unwrap_or(p.texture),
+        None => p.texture,
+    };
+    let palette = p
+        .palette_anim()
+        .and_then(|anim| effect_mat_anim.and_then(|m| m.resolved_palette(pack, anim)))
+        .unwrap_or(TextureDesc::NO_ANIM);
+    let uv = (p.mat_anim != TextureDesc::NO_ANIM)
+        .then(|| effect_mat_anim.and_then(|m| m.resolved_uv(pack, p.mat_anim)))
+        .flatten()
+        .and_then(|uv| uv.owned_by(p.flags));
+    (texture, palette, uv)
+}
+
+/// `batch_material` for [`material_inputs`]' answer: its state and binds,
+/// in its order.
+#[inline(always)]
+unsafe fn lod_material(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    texture: u32,
+    palette: u32,
+    affine: UvAffine,
+    effect_colors: Option<EffectColors>,
+) {
+    if let Some(on) = st.env_lerp_fog {
+        let want = p.flags & flags::ENV_LERP != 0;
+        if want != on {
+            if want {
+                sys::sceGuEnable(GuState::Fog);
             } else {
-                // Never 0: `fa > 0` keeps `v0` under 255.
-                let den = 65025 - v0 * u32::from(mean);
-                let v1 = (a * u32::from(fa) * 255 + den / 2)
-                    .checked_div(den)
-                    .unwrap_or(0);
-                (v0 as u8, v1.min(255) as u8)
+                sys::sceGuDisable(GuState::Fog);
+            }
+            st.env_lerp_fog = Some(want);
+        }
+    }
+
+    if st.fade_alpha.is_some() {
+        st.last_flags = None;
+    }
+    if st.last_flags != Some(p.flags) {
+        apply_flags_state(p, st);
+    }
+    if let Some(a) = st.fade_alpha {
+        apply_fade_blend(a);
+    }
+
+    if st.last_texture != Some((texture, palette)) {
+        st.last_texture = Some((texture, palette));
+        st.state_changes += 1;
+        if !bind_texture_cached(pack, texture, palette) {
+            match pack.texture(texture) {
+                Some(t) => bind_texture_uncached(pack, texture, &t, palette),
+                None => sys::sceGuDisable(GuState::Texture2D),
             }
         }
+    }
+
+    apply_texture_affine(pack, p, st, texture, affine);
+
+    let blend_target = (p.flags & flags::TEXTURE_BLEND != 0).then_some(
+        effect_colors
+            .and_then(|c| c.packed_prim())
+            .unwrap_or(p.texture_blend_target),
+    );
+    let desired_texture_func = match blend_target {
+        Some(target) => TextureFuncState::Blend(target),
+        None => TextureFuncState::Modulate,
     };
-    Some((lod, v0, v1))
+    if st.last_texture_func != Some(desired_texture_func) {
+        st.last_texture_func = Some(desired_texture_func);
+        st.state_changes += 1;
+        match desired_texture_func {
+            TextureFuncState::Blend(target) => {
+                sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+                sys::sceGuTexEnvColor(target);
+            }
+            TextureFuncState::Modulate => {
+                sys::sceGuTexFunc(
+                    sys::TextureEffect::Modulate,
+                    sys::TextureColorComponent::Rgba,
+                );
+            }
+        }
+    }
 }
