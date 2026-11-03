@@ -5406,6 +5406,41 @@ impl<'a> Pack<'a> {
         })
     }
 
+    /// [`Self::texture`], always inlined: a copy for a caller that must leave
+    /// the original's own inlining unchanged (RE-585).
+    #[inline(always)]
+    pub fn texture_inlined(&self, i: u32) -> Option<TextureDesc> {
+        if i >= self.texture_count {
+            return None;
+        }
+        // One bounds check for the row; the field reads below need none (RE-470).
+        let row: &[u8; TextureDesc::SIZE] = self.data
+            [self.texture_table() + i as usize * TextureDesc::SIZE..][..TextureDesc::SIZE]
+            .try_into()
+            .unwrap();
+        Some(TextureDesc {
+            width: u16_at(row, 0),
+            height: u16_at(row, 2),
+            stride: u16_at(row, 4),
+            psm: row[6],
+            swizzled: row[7],
+            data_offset: u32_at(row, 8),
+            data_len: u32_at(row, 12),
+            palette_offset: u32_at(row, 16),
+            palette_len: u32_at(row, 20),
+            levels: u32_at(row, 24).max(1),
+            mat_anim: u32_at(row, 28),
+            role: u32_at(row, 32),
+            wrap: row[36],
+            tile: row[37],
+            tile_mirror: row[38],
+            tile_period: [u16_at(row, 40), u16_at(row, 42)],
+            tile_source_width: u16_at(row, 44),
+            texels: row[39],
+            source_digest: u32_at(row, 48),
+        })
+    }
+
     pub fn stage(&self, i: u32) -> Option<StageDesc> {
         if i >= self.stage_count {
             return None;
@@ -5783,6 +5818,31 @@ impl<'a> Pack<'a> {
     /// linear scan: the ROM has two, and only [`flags::LOD_BLEND`] primitives
     /// ask.
     pub fn lod_blend(&self, mat_anim: u32) -> Option<LodBlendDesc> {
+        (0..self.lod_blend_count).find_map(|i| {
+            let at = self.lod_blend_table() + i as usize * LodBlendDesc::SIZE;
+            (u32_at(self.data, at) == mat_anim).then(|| {
+                let word = |k: usize| u32_at(self.data, at + 4 * k);
+                LodBlendDesc {
+                    mat_anim,
+                    next_count: word(1),
+                    next_textures: core::array::from_fn(|j| word(2 + j)),
+                    tile1_params: core::array::from_fn(|j| word(2 + MatAnimDesc::MAX_TEXTURES + j)),
+                    origin_delta: {
+                        let w = word(5 + MatAnimDesc::MAX_TEXTURES);
+                        [w as u16 as i16, (w >> 16) as u16 as i16]
+                    },
+                    texel_alpha: LodBlendDesc::texel_alpha_from_word(word(
+                        6 + MatAnimDesc::MAX_TEXTURES,
+                    )),
+                }
+            })
+        })
+    }
+
+    /// [`Self::lod_blend`], always inlined: a copy for a caller that must leave
+    /// the original's own inlining unchanged (RE-585).
+    #[inline(always)]
+    pub fn lod_blend_inlined(&self, mat_anim: u32) -> Option<LodBlendDesc> {
         (0..self.lod_blend_count).find_map(|i| {
             let at = self.lod_blend_table() + i as usize * LodBlendDesc::SIZE;
             (u32_at(self.data, at) == mat_anim).then(|| {

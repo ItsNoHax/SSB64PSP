@@ -31,7 +31,9 @@ use core::ffi::c_void;
 
 use psp::sys::{self, GuState};
 use ssb_rom::pack::{flags, NodeDesc, ObjectDesc, Pack, PackedVertex, PrimDesc, TextureDesc};
-use ssb_rom::skeleton::{EffectColors, EffectMaterialAnimator, MaterialUv, UvAffine};
+use ssb_rom::skeleton::{
+    EffectColors, EffectMaterialAnimator, LodBlendState, MaterialUv, UvAffine,
+};
 
 use super::super::{
     animated_uv_affine, apply_fade_blend, apply_flags_state, apply_lod_blend_translucent_pass1,
@@ -193,7 +195,7 @@ pub(crate) unsafe fn batch_expand_lod_tag(
             }
             let plan = match pack.indices(&p) {
                 Some(indices) if st.heads.admits(p.flags) && p.index_count != 0 => {
-                    texel_alpha_plan(pack, &p, st, indices, verts, effect_colors, mats)
+                    merged_texel_alpha_plan(pack, &p, st, indices, verts, effect_colors, mats)
                 }
                 _ => TexelPlan::SINGLE,
             };
@@ -1147,5 +1149,249 @@ unsafe fn lod_material(
                 );
             }
         }
+    }
+}
+
+/// [`texel_alpha_plan`] for [`batch_expand_lod_tag`], with the material
+/// player's lookups of the primitive's one `mat_anim` merged: one joint
+/// search, one `MatAnimDesc` read and each track evaluated once, where
+/// `resolved_lod_blend`, `resolved_texture`, `resolved_palette` and
+/// `resolved_uv` each search, read and evaluate their own. The same values,
+/// so the same plan. Its callees are out of line already or always-inlined
+/// copies, so no other function's inlining changes (RE-585). A primitive
+/// whose `mat_anim` this player does not tick takes [`texel_alpha_plan`].
+#[inline(never)]
+unsafe fn merged_texel_alpha_plan(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &DrawState,
+    indices: &[u8],
+    verts: &[u8],
+    effect_colors: Option<EffectColors>,
+    effect_mat_anim: Option<&EffectMaterialAnimator>,
+) -> TexelPlan {
+    use ssb_rom::matanim::{
+        TRACK_PALETTE_ID, TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V, TRACK_SET_LFRAC,
+        TRACK_TEXTURE_ID_CURRENT, TRACK_TEXTURE_ID_NEXT, TRACK_TRA_U, TRACK_TRA_V,
+    };
+    let Some(m) = effect_mat_anim else {
+        return TexelPlan::SINGLE;
+    };
+    let mat = p.mat_anim;
+    let Some(j) = m.ticked_joint(mat) else {
+        // An opaque player: that this call site has one must not reach
+        // [`texel_alpha_plan`]'s code, which stays as it was.
+        use core::hint::black_box as opaque;
+        return texel_alpha_plan(
+            pack,
+            p,
+            st,
+            indices,
+            verts,
+            effect_colors,
+            opaque(effect_mat_anim),
+        );
+    };
+    // `resolve_lod_blend`.
+    let Some(desc) = pack.lod_blend_inlined(mat) else {
+        return TexelPlan::SINGLE;
+    };
+    let Some(a) = pack.mat_anim(mat) else {
+        return TexelPlan::SINGLE;
+    };
+    if desc.next_count == 0 {
+        return TexelPlan::SINGLE;
+    }
+    let mut live = [None; TRACK_SET_LFRAC + 1];
+    for (t, v) in live.iter_mut().enumerate() {
+        *v = j.track_value_inlined(t);
+    }
+    let base = |i: usize| f32::from_bits(a.base_tracks[i]);
+    let lfrac = match live[TRACK_SET_LFRAC] {
+        Some(v) => v,
+        None => base(TRACK_SET_LFRAC),
+    };
+    let next = match live[TRACK_TEXTURE_ID_NEXT] {
+        Some(v) => v.max(0.0) as u32,
+        None => 0,
+    };
+    let next_texture = desc.next_textures[next.min(desc.next_count - 1) as usize];
+    if next_texture == TextureDesc::NO_ANIM {
+        return TexelPlan::SINGLE;
+    }
+    let pick = |t: usize| match live[t] {
+        Some(v) => v,
+        None => base(t),
+    };
+    let moves = live[TRACK_SCA_U].is_some()
+        || live[TRACK_SCA_V].is_some()
+        || live[TRACK_SCR_U].is_some()
+        || live[TRACK_SCR_V].is_some();
+    let lod_uv = if a.uv_mode != 0 && moves {
+        Some(MaterialUv {
+            trau: pick(TRACK_SCR_U),
+            trav: pick(TRACK_SCR_V),
+            scau: pick(TRACK_SCA_U),
+            scav: pick(TRACK_SCA_V),
+            base_trau: base(TRACK_SCR_U),
+            base_trav: base(TRACK_SCR_V),
+            base_scau: base(TRACK_SCA_U),
+            base_scav: base(TRACK_SCA_V),
+            mode: 1 | (a.uv_mode & (4 | u32::from(ssb_rom::mobj::UV_MODE_HALF))),
+            tile_bias: desc.tile1_params[0] as f32,
+            tile_width: desc.tile1_params[1] as f32,
+            tile_height: desc.tile1_params[2] as f32,
+            half: [f32::from_bits(a.uv_half[2]), f32::from_bits(a.uv_half[1])],
+        })
+    } else {
+        None
+    };
+    let lod = LodBlendState {
+        texture: next_texture,
+        // `prim_lod_frac`.
+        frac: ((lfrac * 255.0) as u32 & 0xFF) as u8,
+        uv: lod_uv,
+        origin_delta: desc.origin_delta,
+        texel_alpha: desc.texel_alpha,
+    };
+    // [`texel_alpha_plan`]'s `alphas`.
+    let Some(mean) = lod.texel_alpha else {
+        return TexelPlan::SINGLE;
+    };
+    let prim = match effect_colors {
+        Some(c) => c.prim,
+        None => None,
+    };
+    let prim_alpha = match prim {
+        Some(prim) => prim[3],
+        None => {
+            if p.flags & flags::FLAT_COLOR != 0 {
+                return TexelPlan::SINGLE;
+            }
+            let size = core::mem::size_of::<PackedVertex>();
+            let (Some(&i0), Some(&i1)) = (indices.first(), indices.get(1)) else {
+                return TexelPlan::SINGLE;
+            };
+            let first = usize::from(u16::from_le_bytes([i0, i1]));
+            let Some(v) = verts.get(first * size..(first + 1) * size) else {
+                return TexelPlan::SINGLE;
+            };
+            (*(v.as_ptr() as *const PackedVertex)).color.to_le_bytes()[3]
+        }
+    };
+    let (v0, v1) = match st.lod_blend_isolate {
+        Some(LodBlendIsolate::Current) => (prim_alpha, 0),
+        Some(LodBlendIsolate::Next) => (0, prim_alpha),
+        None => {
+            let fa = ((u32::from(lod.frac) * 255 + 128) / 256) as u8;
+            let fb = 255 - fa;
+            let a = u32::from(prim_alpha);
+            let v0 = (a * u32::from(fb) + 127) / 255;
+            if fa == 0 {
+                (v0 as u8, 0)
+            } else {
+                let den = 65025 - v0 * u32::from(mean);
+                let v1 = (a * u32::from(fa) * 255 + den / 2)
+                    .checked_div(den)
+                    .unwrap_or(0);
+                (v0 as u8, v1.min(255) as u8)
+            }
+        }
+    };
+    // `material_lookups`: `PrimDesc::image_anim` and `resolve_texture`.
+    let mut texture = p.texture;
+    if p.flags & flags::IMAGE_ANIM != 0 && a.texture_count != 0 {
+        if let Some(value) = live[TRACK_TEXTURE_ID_CURRENT] {
+            let index = (value.max(0.0) as u32).min(a.texture_count - 1);
+            let t = a.textures[index as usize];
+            if t != TextureDesc::NO_ANIM {
+                texture = t;
+            }
+        }
+    }
+    // `PrimDesc::palette_anim` and `resolve_palette`.
+    let mut palette = TextureDesc::NO_ANIM;
+    if p.flags & flags::PALETTE_ANIM != 0 && a.palette_count != 0 {
+        if let Some(v) = j.track_value_inlined(TRACK_PALETTE_ID) {
+            // `i32::clamp`, written out: its bounds are ordered here.
+            let (x, top) = (v as i32, a.palette_count as i32 - 1);
+            let index = if x < 0 {
+                0
+            } else if x > top {
+                top as u32
+            } else {
+                x as u32
+            };
+            palette = a.first_palette + index;
+        }
+    }
+    // `resolve_uv`, then `MaterialUv::owned_by`.
+    let mut uv = None;
+    if a.uv_mode != 0
+        && (live[TRACK_TRA_U].is_some()
+            || live[TRACK_TRA_V].is_some()
+            || live[TRACK_SCA_U].is_some()
+            || live[TRACK_SCA_V].is_some())
+    {
+        let mut mode = a.uv_mode;
+        if p.flags & flags::TILE0_ANIM == 0 {
+            mode &= !3;
+        }
+        if p.flags & flags::SCALE_ANIM == 0 {
+            mode &= !4;
+        }
+        if mode & 7 != 0 {
+            uv = Some(MaterialUv {
+                trau: pick(TRACK_TRA_U),
+                trav: pick(TRACK_TRA_V),
+                scau: pick(TRACK_SCA_U),
+                scav: pick(TRACK_SCA_V),
+                base_trau: base(TRACK_TRA_U),
+                base_trav: base(TRACK_TRA_V),
+                base_scau: base(TRACK_SCA_U),
+                base_scav: base(TRACK_SCA_V),
+                mode,
+                tile_bias: a.uv_tile_params[0] as f32,
+                tile_width: a.uv_tile_params[1] as f32,
+                tile_height: a.uv_tile_params[2] as f32,
+                half: [f32::from_bits(a.uv_half[0]), f32::from_bits(a.uv_half[1])],
+            });
+        }
+    }
+    // [`texel_alpha_plan`] from here.
+    let row0 = pack.texture_inlined(texture);
+    let row1 = pack.texture_inlined(lod.texture);
+    let affine = match (uv, row0) {
+        (Some(uv), Some(t)) => animated_uv_affine(uv, &t),
+        _ => UvAffine::IDENTITY,
+    };
+    let next_affine = match row1 {
+        Some(t) => {
+            // `ge_texture_dims`.
+            let dim = |v: u16| {
+                u32::from(v)
+                    .max(1)
+                    .next_power_of_two()
+                    .min(ssb_rom::psp_texture::GE_MAX_TEXTURE_DIM)
+            };
+            lod.ge_affine_inlined(
+                (dim(t.width), dim(t.height)),
+                (
+                    t.wrap & TextureDesc::CLAMP_S != 0,
+                    t.wrap & TextureDesc::CLAMP_T != 0,
+                ),
+            )
+        }
+        None => UvAffine::IDENTITY,
+    };
+    TexelPlan {
+        two_pass: true,
+        v0,
+        v1,
+        texture,
+        palette,
+        affine,
+        next: lod.texture,
+        next_affine,
     }
 }

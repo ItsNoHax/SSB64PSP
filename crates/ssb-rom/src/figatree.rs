@@ -284,6 +284,39 @@ impl Aobj {
             }
         }
     }
+
+    /// [`Self::value`], always inlined: a copy for a caller that must leave
+    /// the original's own inlining unchanged (RE-585).
+    #[inline(always)]
+    pub(crate) fn value_inlined(&self) -> f32 {
+        match self.kind {
+            Kind::None => 0.0,
+            Kind::Linear => self.value_base + self.length * self.rate_base,
+            Kind::Step => {
+                if self.length_invert <= self.length {
+                    self.value_target
+                } else {
+                    self.value_base
+                }
+            }
+            // The cubic Hermite `gcPlayDObjAnimJoint` inlines, with `length`
+            // measured in frames and `length_invert` normalising it.
+            Kind::Cubic => {
+                let inv2 = self.length_invert * self.length_invert;
+                let len2 = self.length * self.length;
+                let a = self.length_invert * len2;
+                let b = self.length * len2 * inv2;
+                let c = 2.0 * b * self.length_invert;
+                let d = 3.0 * len2 * inv2;
+                let e = b - a;
+
+                self.value_base * (c - d + 1.0)
+                    + self.value_target * (d - c)
+                    + self.rate_base * (e - a + self.length)
+                    + self.rate_target * e
+            }
+        }
+    }
 }
 
 /// Scale factors `ftAnimGetTargetValue` applies to a raw `s16`, by track group.

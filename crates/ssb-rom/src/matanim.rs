@@ -633,6 +633,14 @@ impl MaterialJoint {
         (t.kind != Kind::None).then(|| t.value())
     }
 
+    /// [`Self::track_value`], always inlined: a copy for a caller that must
+    /// leave the original's own inlining unchanged (RE-585).
+    #[inline(always)]
+    pub fn track_value_inlined(&self, track: usize) -> Option<f32> {
+        let t = self.tracks.get(track)?;
+        (t.kind != Kind::None).then(|| t.value_inlined())
+    }
+
     /// Whether a track was last set by a step (`_AFTER`/`EXT_..._AFTER`)
     /// command, the only kind safe to reinterpret as raw colour bytes or a
     /// discrete index (`PaletteID`, `TextureIDCurrent`) rather than a

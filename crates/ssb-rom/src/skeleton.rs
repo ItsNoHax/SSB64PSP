@@ -1722,6 +1722,19 @@ impl LodBlendState {
         affine.offset_t += f32::from(self.origin_delta[1]) / 4.0 * affine.scale_t / dim[1];
         affine
     }
+
+    /// [`Self::ge_affine`], always inlined: a copy for a caller that must
+    /// leave the original's own inlining unchanged (RE-585).
+    #[inline(always)]
+    pub fn ge_affine_inlined(&self, dims: (u32, u32), clamp: (bool, bool)) -> UvAffine {
+        let mut affine = self
+            .uv
+            .map_or(UvAffine::IDENTITY, |uv| uv.ge_affine(dims, clamp));
+        let dim = [dims.0.max(1) as f32, dims.1.max(1) as f32];
+        affine.offset_s += f32::from(self.origin_delta[0]) / 4.0 * affine.scale_s / dim[0];
+        affine.offset_t += f32::from(self.origin_delta[1]) / 4.0 * affine.scale_t / dim[1];
+        affine
+    }
 }
 
 impl Default for MaterialAnimator {
@@ -2231,6 +2244,17 @@ impl EffectMaterialAnimator {
     }
 
     fn joint(&self, mat_anim: u32) -> Option<&crate::matanim::MaterialJoint> {
+        self.slots[..self.count]
+            .iter()
+            .find(|&&(i, _)| i == mat_anim)
+            .map(|(_, j)| j)
+    }
+
+    /// The joint every `resolved_*` lookup of `mat_anim` reads, or `None`
+    /// when this player does not tick it: for a caller that resolves several
+    /// of them from one search.
+    #[inline(always)]
+    pub fn ticked_joint(&self, mat_anim: u32) -> Option<&crate::matanim::MaterialJoint> {
         self.slots[..self.count]
             .iter()
             .find(|&&(i, _)| i == mat_anim)
@@ -4345,6 +4369,25 @@ mod compose_equivalence_tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/generated/ssb64.pak");
         std::fs::read(path).ok()
+    }
+
+    /// The always-inlined copies batch 147 keeps beside the originals
+    /// (RE-585) answer like them for every entry of the shipped pack.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn inlined_pack_copies_match_the_originals() {
+        let Some(bytes) = real_pack() else { return };
+        let pack = Pack::open(&bytes).unwrap();
+        for i in 0..pack.texture_count() + 2 {
+            assert_eq!(pack.texture_inlined(i), pack.texture(i), "texture {i}");
+        }
+        let mut blends = 0;
+        for i in 0..pack.mat_anim_count() + 2 {
+            let want = pack.lod_blend(i);
+            blends += usize::from(want.is_some());
+            assert_eq!(pack.lod_blend_inlined(i), want, "mat_anim {i}");
+        }
+        assert!(blends > 0, "the pack has LOD_BLEND entries");
     }
 
     /// Every fighter's model, through a spread of its own clips, each a few
