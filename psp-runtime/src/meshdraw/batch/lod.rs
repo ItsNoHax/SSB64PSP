@@ -37,9 +37,10 @@ use super::super::{
     animated_uv_affine, apply_fade_blend, apply_flags_state, apply_lod_blend_translucent_pass1,
     apply_texture_affine, bind_texture, bind_texture_cached, bind_texture_uncached,
     clip_submission, draw_lod_blend_pass, expand_corners, expand_float_uv_corners,
-    position_outcode, ClipVertex, Draw, DrawState, GuardClip, LodBlendIsolate, TextureFuncState,
-    CLIP_CODES, CLIP_CODES_MAX, CLIP_DRAWS, CLIP_DRAWS_MAX, CLIP_VERTEX_FORMAT, GUARD_BAND,
-    LIGHT_PREPASS, LOD_BLEND_TRANSLUCENT, VERTEX_FORMAT,
+    position_outcode, ClipVertex, Draw, DrawState, FloatUvVertex, GuardClip, LodBlendIsolate,
+    TextureFuncState, CLIP_CODES, CLIP_CODES_MAX, CLIP_DRAWS, CLIP_DRAWS_MAX, CLIP_VERTEX_FORMAT,
+    FLOAT_UV_VERTEX_FORMAT, GUARD_BAND, INDEXED_FLOAT_UV_VERTEX_FORMAT, LIGHT_PREPASS,
+    LOD_BLEND_TRANSLUCENT, VERTEX_16BIT_DIVISOR, VERTEX_FORMAT,
 };
 use super::{clip_transform, Batch, BatchSize};
 
@@ -437,7 +438,7 @@ pub(crate) unsafe fn batch_submit_lod_tag(
                                     pieces,
                                     (p.flags & flags::ALPHA_NO_PRIM == 0).then_some(alpha),
                                 ),
-                                _ => clip_submission(clip, indices, &whole[0]),
+                                _ => clip_float_uv(clip, indices, &whole[0]),
                             };
                             first = Some(pieces);
                             pieces.unwrap_or(&whole)
@@ -562,6 +563,344 @@ unsafe fn reclip_second_pass(
     }
     crate::gu::writeback_vertices(out as *const u8, n * size, false);
     Some(draws)
+}
+
+/// [`clip_submission`] of a float-UV submission, a texel-alpha blend's
+/// first pass (the Fall's sheets, RE-321): `rebuild_runs` with
+/// [`ssb_engine::guard_clip::clip_triangle_runs`], its polygon clip and
+/// `decode_corner`/`encode_corner` copied in for the two float-UV formats
+/// and the mesh's outcode table, so one block of code here does what runs
+/// through the shared clip code (RE-585). The same float operations in the
+/// same order, the same pieces in [`CLIP_DRAWS`] and the same
+/// [`crate::gu::cached_vertices`] block: the same draws. Any other
+/// submission, or a corner past the table, goes to [`clip_submission`]; so
+/// does a polygon past `MAX_CLIPPED` corners, where `clip_polygon`'s bounds
+/// check panics: the same triangle then panics there, and this function
+/// holds no panic of its own (no `.rodata`: RE-584's `.rodata` offsets).
+#[inline(never)]
+unsafe fn clip_float_uv(
+    clip: &GuardClip<'_>,
+    indices: &[u8],
+    whole: &Draw,
+) -> Option<&'static [Draw]> {
+    use ssb_engine::guard_clip::{ATTRS, MAX_CLIPPED};
+    const PLANES: usize = MAX_CLIPPED - 3;
+    const POOL: usize = 3 + PLANES * MAX_CLIPPED;
+    const MAX_TRIS: usize = (CLIP_DRAWS_MAX - 1) / 2;
+    let vtype = whole.vtype;
+    let indexed = vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits();
+    let tris = whole.count as usize / 3;
+    let (Some(table), true, Some(corners)) = (
+        clip.codes,
+        (indexed || vtype == FLOAT_UV_VERTEX_FORMAT.bits()) && tris <= MAX_TRIS,
+        indices.get(..tris * 6),
+    ) else {
+        return clip_submission(clip, indices, whole);
+    };
+    // Every corner's outcode from the table, and `crossing_triangles`.
+    let (mut crossing, mut any, mut all) = (0usize, 0u8, !0u8);
+    for c in 0..3 * tris {
+        let i = usize::from(u16::from_le_bytes([
+            *corners.get_unchecked(2 * c),
+            *corners.get_unchecked(2 * c + 1),
+        ]));
+        let Some(&code) = table.get(i) else {
+            return clip_submission(clip, indices, whole);
+        };
+        any |= code;
+        all &= code;
+        if c % 3 == 2 {
+            crossing += usize::from(any != 0 && all == 0);
+            (any, all) = (0, !0);
+        }
+    }
+    if crossing == 0 {
+        return None;
+    }
+    let band = clip.band;
+    let mvp = &clip.mvp;
+    let capacity = crossing * 3 * (MAX_CLIPPED - 2);
+    let out = crate::gu::cached_vertices(capacity * core::mem::size_of::<ClipVertex>())
+        as *mut ClipVertex;
+    // SAFETY: only this primitive's draws read the pieces, on the one
+    // thread that draws. At most a run and a fan per triangle, then one
+    // more run: `MAX_TRIS` keeps them inside.
+    let draws = &mut *core::ptr::addr_of_mut!(CLIP_DRAWS);
+    let mut pieces = 0usize;
+    let mut n = 0usize;
+    let mut block = 0usize;
+    let size = core::mem::size_of::<FloatUvVertex>();
+    let stride = if indexed {
+        3 * core::mem::size_of::<u16>()
+    } else {
+        3 * size
+    };
+    // Triangle `t`'s corners' outcodes, ORed and ANDed: every index is
+    // inside the table (checked above).
+    let tri_codes = |t: usize| {
+        let mut or_and = (0u8, !0u8);
+        for c in 3 * t..3 * t + 3 {
+            let i = usize::from(u16::from_le_bytes([
+                *corners.get_unchecked(2 * c),
+                *corners.get_unchecked(2 * c + 1),
+            ]));
+            let code = *table.get_unchecked(i);
+            or_and = (or_and.0 | code, or_and.1 & code);
+        }
+        or_and
+    };
+    let mut run: Option<usize> = None;
+    for t in 0..=tris {
+        // `Piece::Run`: the triangles before a crossing or dropped one,
+        // and those at the end.
+        let (or, and) = if t < tris { tri_codes(t) } else { (1, 0) };
+        let inside = or == 0;
+        if inside {
+            run.get_or_insert(t);
+            continue;
+        }
+        if let Some(first) = run.take() {
+            if n > block {
+                *draws.get_unchecked_mut(pieces) = Draw {
+                    vtype: CLIP_VERTEX_FORMAT.bits(),
+                    index: core::ptr::null(),
+                    vertex: out.add(block) as *const c_void,
+                    count: (n - block) as u32,
+                };
+                pieces += 1;
+                block = n;
+            }
+            let skip = first * stride;
+            *draws.get_unchecked_mut(pieces) = Draw {
+                vtype,
+                index: if indexed {
+                    (whole.index as *const u8).add(skip) as *const c_void
+                } else {
+                    whole.index
+                },
+                vertex: if indexed {
+                    whole.vertex
+                } else {
+                    (whole.vertex as *const u8).add(skip) as *const c_void
+                },
+                count: (3 * (t - first)) as u32,
+            };
+            pieces += 1;
+        }
+        if t == tris {
+            break;
+        }
+        if and != 0 {
+            continue;
+        }
+        let k = 3 * t;
+        // `decode_corner` for the float-UV formats, then `clip_position`.
+        let tri = [
+            float_uv_corner(whole, indexed, mvp, k),
+            float_uv_corner(whole, indexed, mvp, k + 1),
+            float_uv_corner(whole, indexed, mvp, k + 2),
+        ];
+        // `clip_polygon`.
+        let outcode = |c: [f32; 4]| {
+            let gw = band * c[3];
+            u8::from(gw - c[0] < 0.0)
+                | u8::from(gw + c[0] < 0.0) << 1
+                | u8::from(gw - c[1] < 0.0) << 2
+                | u8::from(gw + c[1] < 0.0) << 3
+                | u8::from(c[2] + c[3] < 0.0) << 4
+        };
+        let tc = tri.map(|v| outcode(v.clip));
+        if tc[0] & tc[1] & tc[2] != 0 {
+            continue;
+        }
+        let union = tc[0] | tc[1] | tc[2];
+        let mut pool = core::mem::MaybeUninit::<[ClipCorner; POOL]>::uninit();
+        let base = pool.as_mut_ptr().cast::<ClipCorner>();
+        base.write(tri[0]);
+        base.add(1).write(tri[1]);
+        base.add(2).write(tri[2]);
+        let mut used = 3usize;
+        let mut polys = [[0u8; MAX_CLIPPED]; 2];
+        polys[0][..3].copy_from_slice(&[0, 1, 2]);
+        let mut m = 3;
+        let mut src = 0;
+        let mut dropped = false;
+        // The planes `union` has, in order: a loop the compiler does not
+        // unroll into one copy per plane.
+        let mut planes = union;
+        while planes != 0 {
+            // SAFETY: `m` counts the writes to `b` below, each at most
+            // `MAX_CLIPPED`.
+            if m > MAX_CLIPPED {
+                core::hint::unreachable_unchecked();
+            }
+            let plane = planes.trailing_zeros();
+            planes &= planes - 1;
+            let (first, second) = polys.split_at_mut(1);
+            let (a, b) = if src == 0 {
+                (&first[0], &mut second[0])
+            } else {
+                (&second[0], &mut first[0])
+            };
+            // `distance`.
+            let mut d = [0.0f32; MAX_CLIPPED];
+            for (d, &i) in d.iter_mut().zip(&a[..m]) {
+                let c = (*base.add(usize::from(i))).clip;
+                let gw = band * c[3];
+                // Planes 0-3 as `x` or `y` (`plane / 2`), minus or plus
+                // (`plane % 2`): no jump table.
+                *d = if plane < 4 {
+                    let x = c[(plane >> 1) as usize];
+                    if plane & 1 == 0 {
+                        gw - x
+                    } else {
+                        gw + x
+                    }
+                } else {
+                    c[2] + c[3]
+                };
+            }
+            let mut o = 0;
+            for i in 0..m {
+                let j = if i + 1 == m { 0 } else { i + 1 };
+                // SAFETY: `i` and `j` are below `m`.
+                let (dc, dn) = (*d.get_unchecked(i), *d.get_unchecked(j));
+                let (ai, aj) = (*a.get_unchecked(i), *a.get_unchecked(j));
+                if dc >= 0.0 {
+                    if o == MAX_CLIPPED {
+                        return clip_submission(clip, indices, whole);
+                    }
+                    *b.get_unchecked_mut(o) = ai;
+                    o += 1;
+                }
+                if (dc >= 0.0) != (dn >= 0.0) {
+                    if o == MAX_CLIPPED {
+                        return clip_submission(clip, indices, whole);
+                    }
+                    *b.get_unchecked_mut(o) = used as u8;
+                    // `lerp`.
+                    let (va, vb) = (&*base.add(usize::from(ai)), &*base.add(usize::from(aj)));
+                    let t = dc / (dc - dn);
+                    let mut v = *va;
+                    for q in 0..4 {
+                        v.clip[q] = va.clip[q] + (vb.clip[q] - va.clip[q]) * t;
+                    }
+                    for q in 0..ATTRS {
+                        v.attrs[q] = va.attrs[q] + (vb.attrs[q] - va.attrs[q]) * t;
+                    }
+                    base.add(used).write(v);
+                    used += 1;
+                    o += 1;
+                }
+            }
+            src ^= 1;
+            m = o;
+            if m < 3 {
+                dropped = true;
+                break;
+            }
+        }
+        if dropped {
+            continue;
+        }
+        // SAFETY: as above.
+        if m > MAX_CLIPPED {
+            core::hint::unreachable_unchecked();
+        }
+        // `Piece::Fan`: each polygon vertex encoded once (`encode_corner`),
+        // then copied into every fan triangle that uses it.
+        let byte = |x: f32| (x + 0.5).clamp(0.0, 255.0) as u8;
+        let normal = |x: f32| (x + if x < 0.0 { -0.5 } else { 0.5 }).clamp(-128.0, 127.0) as i8;
+        let mut encoded = core::mem::MaybeUninit::<[ClipVertex; MAX_CLIPPED]>::uninit();
+        let encoded = encoded.as_mut_ptr().cast::<ClipVertex>();
+        for (e, &i) in polys[src][..m].iter().enumerate() {
+            let a = &(*base.add(usize::from(i))).attrs;
+            encoded.add(e).write(ClipVertex {
+                u: a[0],
+                v: a[1],
+                color: u32::from_le_bytes([byte(a[2]), byte(a[3]), byte(a[4]), byte(a[5])]),
+                nx: normal(a[6]),
+                ny: normal(a[7]),
+                nz: normal(a[8]),
+                _normal_pad: 0,
+                x: a[9],
+                y: a[10],
+                z: a[11],
+            });
+        }
+        for i in 1..m - 1 {
+            for k in [0, i, i + 1] {
+                out.add(n).write(*encoded.add(k));
+                n += 1;
+            }
+        }
+    }
+    if n > block {
+        *draws.get_unchecked_mut(pieces) = Draw {
+            vtype: CLIP_VERTEX_FORMAT.bits(),
+            index: core::ptr::null(),
+            vertex: out.add(block) as *const c_void,
+            count: (n - block) as u32,
+        };
+        pieces += 1;
+    }
+    crate::gu::writeback_vertices(
+        out as *const u8,
+        n * core::mem::size_of::<ClipVertex>(),
+        false,
+    );
+    Some(draws.get_unchecked(..pieces))
+}
+
+/// [`clip_float_uv`]'s `guard_clip::Vertex`: clip position, then
+/// attributes.
+#[derive(Clone, Copy)]
+struct ClipCorner {
+    clip: [f32; 4],
+    attrs: [f32; ssb_engine::guard_clip::ATTRS],
+}
+
+/// [`clip_float_uv`]'s corner `c` of `whole`: `decode_corner` for the
+/// float-UV formats, then `clip_position`. Out of line: one copy for the
+/// three corners.
+#[inline(never)]
+unsafe fn float_uv_corner(
+    whole: &Draw,
+    indexed: bool,
+    mvp: &[[f32; 4]; 4],
+    c: usize,
+) -> ClipCorner {
+    let v = if indexed {
+        let index = (whole.index as *const u16).add(c).read_unaligned();
+        (whole.vertex as *const FloatUvVertex)
+            .wrapping_add(usize::from(index))
+            .read_unaligned()
+    } else {
+        (whole.vertex as *const FloatUvVertex)
+            .add(c)
+            .read_unaligned()
+    };
+    let col = v.color.to_le_bytes();
+    let attrs = [
+        v.u,
+        v.v,
+        f32::from(col[0]),
+        f32::from(col[1]),
+        f32::from(col[2]),
+        f32::from(col[3]),
+        f32::from(v.nx),
+        f32::from(v.ny),
+        f32::from(v.nz),
+        f32::from(v.x) / VERTEX_16BIT_DIVISOR,
+        f32::from(v.y) / VERTEX_16BIT_DIVISOR,
+        f32::from(v.z) / VERTEX_16BIT_DIVISOR,
+    ];
+    let p = [attrs[9], attrs[10], attrs[11]];
+    let row = |r: usize| mvp[0][r] * p[0] + mvp[1][r] * p[1] + mvp[2][r] * p[2] + mvp[3][r];
+    ClipCorner {
+        clip: [row(0), row(1), row(2), row(3)],
+        attrs,
+    }
 }
 
 /// [`super::super::draw_lod_texel_alpha`]'s choice for a primitive of an
