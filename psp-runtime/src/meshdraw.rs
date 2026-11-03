@@ -4131,9 +4131,22 @@ unsafe fn draw_object_posed_nodes(
 /// fog (`FTPARTS_FLAG_NOFOG`, RE-453).
 fn part_skips_fog(pack: &Pack<'_>, global_node: u32, part: i8) -> bool {
     part >= 0
-        && pack.modelpart_flags_in(pack.costume_rows(global_node), global_node, part as u32)
+        && pack.modelpart_flags_in(ssb_all_costume_rows(pack, global_node), global_node, part as u32)
             & ssb_rom::pack::PART_FLAG_NOFOG
             != 0
+}
+
+/// The whole costume-override table as one row range, for
+/// [`part_skips_fog`]: one search of it costs less than the two of
+/// `costume_rows` first. Out of line, with `costume_rows`' arguments,
+/// so the caller keeps its code and layout (RE-500).
+#[inline(never)]
+#[unsafe(no_mangle)]
+fn ssb_all_costume_rows(pack: &Pack<'_>, node: u32) -> core::ops::Range<u32> {
+    let count = pack.costume_override_count();
+    // 0 (the table is far below 2^31 rows), kept opaque so the caller
+    // passes `node` and reads the start as it did for `costume_rows`.
+    (count >> 31 & node)..count
 }
 
 /// `base * local` for the GE's column-major model matrix, with the VFPU's

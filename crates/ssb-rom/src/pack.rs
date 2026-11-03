@@ -5123,6 +5123,8 @@ impl<'a> Pack<'a> {
     /// The rows of the costume-override table that belong to `node`: the
     /// range [`Pack::costume_mesh_in`] needs search no further than. A
     /// drawn fighter node asks for up to four costumes (RE-470).
+    // Kept out of line: psp-game's link order places it (RE-500).
+    #[inline(never)]
     pub fn costume_rows(&self, node: u32) -> core::ops::Range<u32> {
         let table = self.costume_override_table();
         let node_at = |i: u32| u32_at(self.data, table + i as usize * CostumeOverride::SIZE);
