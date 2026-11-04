@@ -82,10 +82,26 @@ struct Delay {
     rs: Option<ChorusResampler>,
 }
 
+/// A platform kernel for one plain section, bit-identical to [`section`]
+/// (`coef` = `[ff, fb, gain]`; a zero coefficient's mix is not issued). [`Fx::pull_fused`] calls it only for
+/// windows that start 16-byte aligned and run a multiple of 8 samples.
+///
+/// # Safety
+///
+/// `x`, `y` and `out` each point at `n` valid, 16-byte-aligned, mutually
+/// disjoint samples; `n` is a multiple of 8.
+pub type SectionKernel =
+    unsafe fn(x: *mut i16, y: *mut i16, out: *mut i16, n: usize, coef: [i32; 3]);
+
 /// `ALFx`.
 #[derive(Debug, Clone)]
 pub struct Fx {
+    /// The delay line, `length` samples from `org`: allocated with slack so
+    /// the line starts 16-byte aligned for [`SectionKernel`].
     base: Vec<i16>,
+    org: usize,
+    /// [`Fx::set_kernel`].
+    kernel: Option<SectionKernel>,
     /// `r->input - r->base`.
     input: usize,
     length: usize,
@@ -184,13 +200,34 @@ impl Fx {
                     && gap(i, o) >= FIXED_SAMPLE
                     && gap(o, i) >= FIXED_SAMPLE
             });
+        // 16-byte alignment: at most 7 samples of slack.
+        let base = vec![0; length + 7];
+        let org = (base.as_ptr() as usize).wrapping_neg() % 16 / 2;
         Self {
-            base: vec![0; length],
+            base,
+            org,
+            kernel: None,
             input: 0,
             length,
             delay,
             fused,
         }
+    }
+
+    /// Installs (or removes) the platform kernel [`Fx::pull_fused`] runs
+    /// its sections with.
+    pub fn set_kernel(&mut self, kernel: Option<SectionKernel>) {
+        self.kernel = kernel;
+    }
+
+    /// The delay line.
+    fn line(&self) -> &[i16] {
+        &self.base[self.org..self.org + self.length]
+    }
+
+    fn line_mut(&mut self) -> &mut [i16] {
+        let org = self.org;
+        &mut self.base[org..org + self.length]
     }
 
     /// Delay-line index `input + off`, as the pointer arithmetic gives it
@@ -212,14 +249,14 @@ impl Fx {
             let before = self.length - curr;
             let after = curr + count - self.length;
             let b = words(before).min(self.length - curr);
-            dmem.load(buff, &self.base[curr..curr + b]);
+            dmem.load(buff, &self.line()[curr..curr + b]);
             dmem.load(
                 buff + (before << 1),
-                &self.base[..words(after).min(self.length)],
+                &self.line()[..words(after).min(self.length)],
             );
         } else {
             let n = words(count).min(self.length - curr);
-            dmem.load(buff, &self.base[curr..curr + n]);
+            dmem.load(buff, &self.line()[curr..curr + n]);
         }
     }
 
@@ -233,10 +270,10 @@ impl Fx {
         if curr + FIXED_SAMPLE > self.length {
             let before = self.length - curr;
             let after = curr + FIXED_SAMPLE - self.length;
-            dmem.save(buff, &mut self.base[curr..curr + before]);
-            dmem.save(buff + (before << 1), &mut self.base[..after]);
+            dmem.save(buff, &mut self.line_mut()[curr..curr + before]);
+            dmem.save(buff + (before << 1), &mut self.line_mut()[..after]);
         } else {
-            dmem.save(buff, &mut self.base[curr..curr + FIXED_SAMPLE]);
+            dmem.save(buff, &mut self.line_mut()[curr..curr + FIXED_SAMPLE]);
         }
     }
 
@@ -312,7 +349,8 @@ impl Fx {
     /// doing it in place, sample by sample, gives the same line and bus.
     fn pull_fused(&mut self, dmem: &mut Dmem) {
         let len = self.length;
-        let base = &mut self.base[..len];
+        let base = &mut self.base[self.org..self.org + len];
+        let kernel = self.kernel;
         // The wet buses to mono, written to the line at `input`:
         // n_aMix(0xDA83, AUX_L -> AUX_L), n_aMix(0x5A82, AUX_R -> AUX_L).
         {
@@ -349,7 +387,24 @@ impl Fx {
                     let (lo, hi) = base.split_at_mut(xi);
                     (&mut hi[..n], &mut lo[yi..yi + n])
                 };
-                section(x, y, &mut out[k..k + n], ff, fb, gain);
+                let o = &mut out[k..k + n];
+                match kernel {
+                    Some(f) if fits(x, y, o) => {
+                        // SAFETY: `fits` checked the alignment and length;
+                        // the windows are disjoint (`Fx::new`) and `out` is
+                        // DMEM.
+                        unsafe {
+                            f(
+                                x.as_mut_ptr(),
+                                y.as_mut_ptr(),
+                                o.as_mut_ptr(),
+                                n,
+                                [ff, fb, gain],
+                            )
+                        }
+                    }
+                    _ => section(x, y, o, ff, fb, gain),
+                }
                 k += n;
                 xi = (xi + n) % len;
                 yi = (yi + n) % len;
@@ -427,6 +482,14 @@ impl Fx {
     }
 }
 
+/// Whether [`SectionKernel`] may run on these windows: each starts
+/// 16-byte aligned and all run the same multiple of 8 samples.
+fn fits(x: &[i16], y: &[i16], out: &[i16]) -> bool {
+    let a = |s: &[i16]| (s.as_ptr() as usize).is_multiple_of(16);
+    let n = out.len();
+    n.is_multiple_of(8) && x.len() == n && y.len() == n && a(x) && a(y) && a(out)
+}
+
 /// One plain section over disjoint windows, sample by sample: `y = mixq(y,
 /// x, ff)`, then `x = mixq(x, y, fb)`, then `out = mixq(out, y, gain)` (each
 /// an `n_aMix`, issued only for a nonzero coefficient).
@@ -452,6 +515,204 @@ fn section(x: &mut [i16], y: &mut [i16], out: &mut [i16], ff: i32, fb: i32, gain
             }
             if gain != 0 {
                 out[k] = dsp::mixq(out[k] as i32, yv, gain);
+            }
+        }
+    }
+}
+
+/// The PSP's VFPU section kernel (`psp-runtime`'s `reverb_vfpu`) step for
+/// step in `f32`: every intermediate is exact, so these tests prove its
+/// arithmetic equals [`dsp::mixq`] for every input.
+///
+/// One mix, `mixq(o, i, g) = clamp16(o + floor(T / 2^15))` with
+/// `T = i * g - o + 2^14`. With `g = 256 * gh + gl` (`gh = g >> 8`, `gl = g & 255`):
+/// `T / 2^15 = a + b + c`, `a = i * gh / 128` (|i * gh| <= 2^22: exact),
+/// `b = i * gl / 2^15` (|i * gl| < 2^23: exact), `c = 1/2 - o / 2^15`
+/// (17 significant bits). `q = floor(a)`, `fa = a - q` (in [0, 1), 7
+/// fraction bits), `w = fa + (b + c)` (|w| < 258, 15 fraction bits: 24
+/// bits), so `floor(T / 2^15) = q + floor(w)` and every step is exact in
+/// single precision whatever the rounding mode.
+#[cfg(test)]
+pub(crate) mod vfpu_model {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Calls to [`kernel`], so a test can show it ran.
+    pub(crate) static CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    /// `g` split as the kernel's constants: `gh / 128`, `gl / 2^15`.
+    pub(crate) fn split(g: i32) -> (f32, f32) {
+        ((g >> 8) as f32 / 128.0, (g & 255) as f32 / 32768.0)
+    }
+
+    /// One mix: `of` = `o`, `c` = `1/2 - o / 2^15`, `i` the input.
+    pub(crate) fn mix(of: f32, c: f32, i: f32, (gh, gl): (f32, f32)) -> f32 {
+        let a = i * gh; // vscl
+        let q = a.floor(); // vf2id + vi2f
+        let fa = a - q; // vsub
+        let bc = i * gl + c; // vscl, vadd
+        let w = (fa + bc).floor(); // vadd, vf2id + vi2f
+        let r = of + q + w; // vadd, vadd
+        r.clamp(-32768.0, 32767.0) // vmin, vmax
+    }
+
+    /// `o` as the kernel converts it: `(o as f32, 1/2 - o / 2^15)`.
+    pub(crate) fn load(o: i16) -> (f32, f32) {
+        let v = (o as i32) << 16; // vs2i
+        (v as f32 / 65536.0, 0.5 - v as f32 / 2_147_483_648.0) // vi2f 16, 31
+    }
+
+    /// [`super::SectionKernel`] in `f32`.
+    ///
+    /// # Safety
+    ///
+    /// As [`super::SectionKernel`].
+    pub(crate) unsafe fn kernel(x: *mut i16, y: *mut i16, out: *mut i16, n: usize, coef: [i32; 3]) {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        assert!(
+            n.is_multiple_of(8) && [x, y, out].iter().all(|p| (*p as usize).is_multiple_of(16))
+        );
+        let [ff, fb, gain] = coef.map(split);
+        for k in 0..n {
+            // SAFETY: the caller's contract.
+            let (x, y, out) = unsafe { (&mut *x.add(k), &mut *y.add(k), &mut *out.add(k)) };
+            let ((xf, cx), (yf, cy), (of, co)) = (load(*x), load(*y), load(*out));
+            // A zero coefficient's mix is skipped, as in `section`.
+            let yn = if coef[0] != 0 {
+                mix(yf, cy, xf, ff)
+            } else {
+                yf
+            };
+            let xn = if coef[1] != 0 {
+                mix(xf, cx, yn, fb)
+            } else {
+                xf
+            };
+            let on = if coef[2] != 0 {
+                mix(of, co, yn, gain)
+            } else {
+                of
+            };
+            // vf2iz 16, vi2s
+            (*y, *x, *out) = (yn as i16, xn as i16, on as i16);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::audio::dsp::mixq;
+
+        /// The custom effect's coefficients, the RSP gains' extremes and
+        /// both sides of every split boundary.
+        const GAINS: [i32; 26] = [
+            -32768,
+            -32767,
+            -9830,
+            -5000,
+            -3276,
+            -257,
+            -256,
+            -255,
+            -129,
+            -128,
+            -1,
+            1,
+            127,
+            128,
+            255,
+            256,
+            257,
+            255 + 256,
+            1535,
+            2559,
+            3276,
+            4095,
+            5000,
+            8191,
+            9830,
+            32767,
+        ];
+        const OUTS: [i16; 12] = [
+            -32768, -32767, -16385, -16384, -1, 0, 1, 255, 16383, 16384, 32766, 32767,
+        ];
+
+        #[test]
+        fn mix_matches_mixq_for_every_input() {
+            for &g in &GAINS {
+                let s = split(g);
+                for &o in &OUTS {
+                    let (of, c) = load(o);
+                    for i in i16::MIN..=i16::MAX {
+                        let want = mixq(o as i32, i as i32, g);
+                        let got = mix(of, c, i as f32, s);
+                        assert_eq!(got, want as f32, "o={o} i={i} g={g}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn mix_matches_mixq_random() {
+            let mut r = 0x1234_5678u32;
+            let mut next = || {
+                r ^= r << 13;
+                r ^= r >> 17;
+                r ^= r << 5;
+                r
+            };
+            for _ in 0..4_000_000 {
+                let v = next();
+                let (o, i) = (v as i16, (v >> 16) as i16);
+                let g = next() as i16 as i32;
+                let (of, c) = load(o);
+                let want = mixq(o as i32, i as i32, g);
+                assert_eq!(
+                    mix(of, c, i as f32, split(g)),
+                    want as f32,
+                    "o={o} i={i} g={g}"
+                );
+            }
+        }
+
+        /// The kernel equals [`super::super::section`] on random windows.
+        #[test]
+        fn kernel_matches_section() {
+            #[repr(C, align(16))]
+            struct W([i16; 64]);
+            let mut r = 0x9E37_79B9u32;
+            let mut next = || {
+                r ^= r << 13;
+                r ^= r >> 17;
+                r ^= r << 5;
+                r as i16
+            };
+            for coef in [
+                [-3276, 3276, 8191],
+                [-9830, 9830, 0],
+                [0, 5000, 0],
+                [-32768, 32767, -32768],
+            ] {
+                for _ in 0..2000 {
+                    let mut v = [W([0; 64]), W([0; 64]), W([0; 64])];
+                    for w in &mut v {
+                        w.0 = core::array::from_fn(|_| next());
+                    }
+                    let mut want = [v[0].0, v[1].0, v[2].0];
+                    let [a, b, c] = &mut want;
+                    super::super::section(a, b, c, coef[0], coef[1], coef[2]);
+                    let [x, y, o] = &mut v;
+                    // SAFETY: three aligned, disjoint 64-sample windows.
+                    unsafe {
+                        kernel(
+                            x.0.as_mut_ptr(),
+                            y.0.as_mut_ptr(),
+                            o.0.as_mut_ptr(),
+                            64,
+                            coef,
+                        )
+                    };
+                    assert_eq!([v[0].0, v[1].0, v[2].0], want, "coef={coef:?}");
+                }
             }
         }
     }

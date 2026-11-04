@@ -29,6 +29,7 @@ pub mod meshdraw;
 pub mod movie;
 pub mod particles;
 pub mod profile;
+pub mod reverb_vfpu;
 pub mod savedata;
 pub mod scene;
 pub mod sample_stream;

@@ -498,11 +498,12 @@ pub fn load_section(path: &'static str, head: &[u8]) -> Result<Option<Section>, 
 pub fn start(section: Section) -> Result<&'static GameAudio, StartError> {
     #[cfg(feature = "audio_selftest")]
     selftest(section);
-    let sys_ = match section {
+    let mut sys_ = match section {
         Section::Resident(s) => AudioSystem::new(s),
         Section::Streamed { prefix, cache } => AudioSystem::new_streamed(prefix, cache),
     }
     .map_err(StartError::System)?;
+    sys_.set_reverb_kernel(Some(crate::reverb_vfpu::section));
     #[cfg(feature = "profile")]
     ssb_engine::audio::prof::set_clock(now);
     let lock = SemaLock::new().map_err(StartError::Sema)?;
@@ -581,7 +582,13 @@ fn selftest(section: Section) {
             }
         }
     };
-    match sys_.map(|s| golden::run_with(s, now, settle)) {
+    // The reverb's VFPU kernel as the audio thread runs it; this thread's
+    // VFPU registers (gum's) kept around it.
+    let run = |mut s: AudioSystem| {
+        s.set_reverb_kernel(Some(crate::reverb_vfpu::section));
+        crate::reverb_vfpu::with_saved(|| golden::run_with(s, now, settle))
+    };
+    match sys_.map(run) {
         Ok(r) => {
             let _ = write!(b, "selftest ok={} voices={}", r.ok(), r.max_voices);
             for k in 0..golden::SEGMENTS {

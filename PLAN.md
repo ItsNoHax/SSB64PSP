@@ -58,7 +58,7 @@
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| Electric hit drop | `vs4@2170` 4xL9 Pikachu, PSP-2000: no-hit r18 17.02, shock r12 18.90 ms. Fighters drawn staged per fighter; lean joints sample; map surface table; `.text` pinned; plain compose (RE-585 items 36, 39-40, 44-49). Left: stage across all four fighters, Link TEXTURE_GEN prims, update-side cuts (anim, AI, hit, items); edits must not recompile `draw_object_posed_nodes`. Magnifier (r9) separate | RE-584, RE-585 |
+| Electric hit drop | `vs4@2170` 4xL9 Pikachu, PSP-2000: no-hit r18 16.93, shock r12 18.78 ms. Fighters drawn staged per fighter; lean joints sample; map surface table; `.text` pinned; plain compose; cross-fighter staging rejected (RE-585 items 36, 39-40, 44-50; VFPU reverb RE-479). Left: Link TEXTURE_GEN prims, update-side cuts (anim, AI, hit, items); edits must not recompile `draw_object_posed_nodes`. Magnifier (r9) separate | RE-584, RE-585 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v140; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping; re-map VS windows after any VS RNG or golden-rebaseline commit; build measurement PRXs from the main checkout path | RE-574, RE-585 |
 | Link-order upkeep | Re-search (RE-494) when cmpaddr shows >25% of ordered functions moved; timer-only functions (`capture_*`, `scripted_*`, `frame_timer`) after the searched block, `cmpaddr --elf` release vs timer differs only in the tail; training includes Comets and Fall traces (Fall from emulated 30 s); `core::fmt` impls whose size differs with `frame_timer` go to the tail; keep the `# after unlisted` block (scene-only code, padded to keep the archive code's cache sets) at the end; `psp-link.py` pins the stubs (`STUB_SET`); accept on a PSP-2000 five-scene interleaved round; rewrite `psp-game/link-pins.txt` with `psp-link.py --pins` after a re-search (RE-585 item 48) | RE-494, RE-585 |
@@ -88,11 +88,11 @@
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 
-Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479), in order:
+Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479). Audio
+thread 75-211 ms/s; game thread +0.45 to +3.53 ms/frame vs `no_audio`
+before the VFPU reverb (which cut 0.02-0.23 ms). Remaining:
 
-1. A/B audio vs `no_audio` on PSP-2000, current build.
-2. VFPU reverb path (exact: constant coefficients, split products).
-3. Media Engine probe:
+1. Media Engine probe:
    - throwaway crate; mcidclan `kcall.prx` (me-core-mapper) from user EBOOT,
      ARK 6.61;
    - `Dmem::envmix`, `adpcm_16` (`crates/ssb-engine/src/audio/dsp.rs`) on ME

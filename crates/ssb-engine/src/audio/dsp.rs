@@ -104,7 +104,9 @@ pub struct EnvMixInit {
     pub wet: i16,
 }
 
-/// The emulated workspace.
+/// The emulated workspace: 16-byte aligned, so its buffers (all at
+/// 16-byte offsets) suit `reverb::SectionKernel`.
+#[repr(C, align(16))]
 pub struct Dmem {
     pub w: [i16; WORDS],
     /// [`Dmem::envmix`]'s per-sample volumes, left and right: scratch kept

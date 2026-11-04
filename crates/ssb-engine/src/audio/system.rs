@@ -86,6 +86,8 @@ pub struct AudioSystem {
     short_frames: u8,
     /// `dSYAudioCurrentFxType`.
     fx_type: i32,
+    /// [`AudioSystem::set_reverb_kernel`].
+    fx_kernel: Option<reverb::SectionKernel>,
     /// `sSYAudioCSPlayerStatuses[0]`: 0 idle, 1 stop then load, 2 start,
     /// 3 playing.
     bgm_status: i32,
@@ -143,6 +145,7 @@ impl AudioSystem {
             mono: false,
             short_frames: 0,
             fx_type,
+            fx_kernel: None,
             bgm_status: 0,
             bgm_id: -1,
             bgm_volume_timer: 0,
@@ -403,11 +406,22 @@ impl AudioSystem {
         }
         self.fx_type = fx_type;
         self.synth.fx = (fx_type != reverb::AL_FX_NONE).then(|| {
-            Fx::new(
+            let mut fx = Fx::new(
                 reverb::params_for(fx_type, &self.data.custom_fx, &self.data.presets),
                 N64_OUTPUT_RATE,
-            )
+            );
+            fx.set_kernel(self.fx_kernel);
+            fx
         });
+    }
+
+    /// Installs a platform kernel for the reverb's plain sections
+    /// (`reverb::SectionKernel`), kept across [`AudioSystem::set_fx_type`].
+    pub fn set_reverb_kernel(&mut self, kernel: Option<reverb::SectionKernel>) {
+        self.fx_kernel = kernel;
+        if let Some(fx) = &mut self.synth.fx {
+            fx.set_kernel(kernel);
+        }
     }
 
     // --- Diagnostics ------------------------------------------------------------
@@ -662,6 +676,24 @@ mod tests {
         let r = super::super::golden::run(section, || 0).unwrap();
         std::println!("pcm hashes: {:#018x?}", r.hashes);
         assert_eq!(r.max_voices, 16);
+        assert_eq!(r.hashes, super::super::golden::HASHES);
+    }
+
+    /// The golden hashes with the reverb's plain sections run by the VFPU
+    /// kernel's `f32` model (`reverb::vfpu_model`), which must run.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn pcm_hash_golden_vfpu_model() {
+        use core::sync::atomic::Ordering;
+        let Some(section) = testdata::section() else {
+            return;
+        };
+        let calls = &reverb::vfpu_model::CALLS;
+        let before = calls.load(Ordering::Relaxed);
+        let mut sys = AudioSystem::new(section).unwrap();
+        sys.set_reverb_kernel(Some(reverb::vfpu_model::kernel));
+        let r = super::super::golden::run_with(sys, || 0, || {});
+        assert!(calls.load(Ordering::Relaxed) > before + 1000);
         assert_eq!(r.hashes, super::super::golden::HASHES);
     }
 

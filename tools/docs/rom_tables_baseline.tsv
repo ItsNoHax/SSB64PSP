@@ -10,6 +10,7 @@ crates/ssb-engine/src/audio/fgm.rs	ZERO	port constant: the empty FGM player
 crates/ssb-engine/src/audio/golden.rs	FGMS	test fixture: the golden audio scenario's FGM calls
 crates/ssb-engine/src/audio/n64ref.rs	B_MENU	test fixture: N64 audio captures' call timelines (RE-479)
 crates/ssb-engine/src/audio/n64ref.rs	C_ATTRACT	test fixture: N64 audio captures' call timelines (RE-479)
+crates/ssb-engine/src/audio/reverb.rs	GAINS	test fixture: VFPU mix exactness gains (split boundaries, RSP gain extremes, effect coefficients of sys/audio.c)
 crates/ssb-engine/src/audio/synth.rs	GET_RATE	test fixture: _getRate/_getVol compiled as C
 crates/ssb-engine/src/math.rs	IDENTITY	port constant: the identity matrix
 crates/ssb-engine/src/math/sqrt_golden.rs	SPECIALS	test fixture: sqrt test vectors
