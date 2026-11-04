@@ -10,26 +10,26 @@
 | Goldens | 286 of 286 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy, ms0) | opening 1-39 8.85 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
-| PSP-2000 `vs4@2400` | 16.13 ms busy (Zebes 10.81) | RE-585 |
-| PSP-2000 1P intro | 14.84 ms (timer build); 1P battle 14.84 ms; Comets 15.47; Fall 16.28; `vs4@2170` electric no-hit r18 17.31, shock r12 19.22 | RE-585 |
+| PSP-2000 opening (busy, ms0) | opening 1-39 8.77 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
+| PSP-2000 `vs4@2400` | 15.90 ms busy (Zebes 10.76) | RE-585 |
+| PSP-2000 1P intro | 14.79 ms (timer build); 1P battle 14.63 ms; Comets 15.37; Fall 16.15; `vs4@2170` electric no-hit r18 17.02, shock r12 18.90 | RE-585 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 154): plain compose for unflagged skeletons: r12 -0.36, r18 -0.31, vs4 -0.24 ms; every window faster; free memory -7.75 KiB (RE-585 item 49).
 - Landed (batch 153): `.text` pinned per function (`link-pins.txt`), map surfaces walked once per fighter tick: r18 -0.22, vs4 -0.26, Zebes -0.22 ms; Comets +0.03; free memory -176 KiB (RE-585 item 48).
 - Landed (batch 152): lean gameplay joints sample in the tail: r12 -0.05, battle -0.11 ms; intro +0.02; free memory -7.75 KiB (RE-585 item 47).
 - Measured (batch 151): `vs4@2170` update-side profile; layout shift rejected a joints cut (RE-585 item 46).
 - Landed (batch 150): staged fighter draw (pose, expand, submit per fighter): r12 -0.87, r18 -0.74, vs4 -0.56, Fall -0.38 ms; intro +0.01; `f1-vs-ground` rebaselined under D-051; free memory -24 KiB (RE-585 item 45).
 - Measured (batch 149): `vs4@2170` attribution; light-direction copy rejected (RE-585 item 44).
 - Landed (batch 148): branch-free Fall clip encode, boss effects model matrix built once: Fall 16.79 -> 16.69 ms; others within +0.06; free memory -16 KiB (RE-585 item 43).
-- Landed (batch 147): one merged texel-alpha plan per Fall wallpaper prim: Fall 16.97 -> 16.83 ms; others within +0.06; free memory -8.25 KiB (RE-585 item 42).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
-1. Playtest performance above 16.7 ms: electric shock display effects (`vs4@2170` r12 19.22, no-hit r18 17.31 ms).
+1. Playtest performance above 16.7 ms: electric shock display effects (`vs4@2170` r12 18.90, no-hit r18 17.02 ms).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 153 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 154 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

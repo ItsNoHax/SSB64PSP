@@ -588,12 +588,18 @@ def link_pinned(lld, out, order_path, order, pins, flags):
     gaps = {}  # plan index -> gap bytes before that function
     cur = 0
     for k, (name, at) in enumerate(plan):
+        # The code past the pins starts at `@end`: a last pinned function
+        # that shrank leaves its hole too, as every other one does.
+        lead = 0
+        if (at is None or at < 0) and cur < pins['end']:
+            lead, cur = pins['end'] - cur, pins['end']
         if at is not None and at >= 0:
             gap = at - cur
         elif at is not None:
             gap = (-1 - at - cur) % ICACHE_WAY
         else:
             gap = 0
+        gap += lead
         if gap < 0:
             sys.exit('psp-link: pins overlap at %s' % name)
         if gap:

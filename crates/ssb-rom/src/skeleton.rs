@@ -208,6 +208,15 @@ enum Space {
     Collision,
 }
 
+/// `out` as a buffer the plain composes write into.
+#[inline(always)]
+fn uninit(out: &mut [Mat4]) -> &mut [MaybeUninit<Mat4>] {
+    let len = out.len();
+    // SAFETY: `MaybeUninit<Mat4>` has `Mat4`'s layout, and the plain
+    // composes only ever write initialised matrices into it.
+    unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<MaybeUninit<Mat4>>(), len) }
+}
+
 impl Default for Skeleton {
     fn default() -> Self {
         Skeleton {
@@ -777,6 +786,141 @@ impl Skeleton {
         unsafe { core::slice::from_raw_parts(out.as_ptr().cast::<Mat4>(), count) }
     }
 
+    /// [`Skeleton::compose_collision`] into an unfilled buffer, or `None`
+    /// while the animation locks' flag is set (that chain carries scales).
+    /// Unflagged, every node's local is `gmCollisionTransformMatrixAll`'s
+    /// matrix of its pose (its rest pose when the mask freezes it or no
+    /// joint drives it), so the scales, the queried parts and the kept
+    /// locals of [`Self::compose_with`] drop out: the same products in the
+    /// same order, so the same bits (RE-585). Returns the matrices written,
+    /// `out`'s first ones.
+    #[inline(never)]
+    pub fn compose_collision_plain<'a>(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &'a mut [MaybeUninit<Mat4>],
+    ) -> Option<&'a [Mat4]> {
+        self.compose_plain::<false>(pack, object, out, 0, false)
+    }
+
+    /// [`Skeleton::compose_collision`] into an unfilled buffer: the plain
+    /// compose, or while the locks' flag is set the full one through
+    /// `MAX_NODES` identities, its first matrices copied out. Returns the
+    /// matrices written, `out`'s first ones.
+    #[inline(never)]
+    pub fn compose_collision_uninit<'a>(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &'a mut [MaybeUninit<Mat4>],
+    ) -> &'a [Mat4] {
+        if self.locks.flagged {
+            let mut full = [Mat4::IDENTITY; MAX_NODES];
+            let count = self
+                .compose_collision(pack, object, &mut full)
+                .min(out.len());
+            for (out, m) in out.iter_mut().zip(&full[..count]) {
+                out.write(*m);
+            }
+            // SAFETY: the loop wrote every entry below `count`, and
+            // `MaybeUninit<Mat4>` has `Mat4`'s layout.
+            return unsafe { core::slice::from_raw_parts(out.as_ptr().cast::<Mat4>(), count) };
+        }
+        // Unflagged, the plain compose always writes.
+        self.compose_plain::<false>(pack, object, out, 0, false)
+            .unwrap_or_default()
+    }
+
+    /// [`Skeleton::compose_queried`] as [`Self::compose_collision_plain`]
+    /// has the collision compose: `None` while the locks' flag is set.
+    #[inline(never)]
+    pub fn compose_display_plain<'a>(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &'a mut [MaybeUninit<Mat4>],
+        queried: u64,
+        queried_lead: bool,
+    ) -> Option<&'a [Mat4]> {
+        self.compose_plain::<true>(pack, object, out, queried, queried_lead)
+    }
+
+    /// [`Self::local`]'s unflagged arms: `gmCollisionTransformMatrixAll`'s
+    /// matrix, through `syMatrixF2LFixedW` for a display part drawn from
+    /// it (`collision`), or the display's own.
+    #[inline(always)]
+    fn plain_local<const DISPLAY: bool>(pose: &JointPose, collision: bool) -> Mat4 {
+        let t = [
+            pose.translate[0] / MODEL_SCALE,
+            pose.translate[1] / MODEL_SCALE,
+            pose.translate[2] / MODEL_SCALE,
+        ];
+        let (r, s) = (pose.rotate, pose.scale);
+        match (DISPLAY, collision) {
+            (false, _) => Mat4::from_trs_collision(t, r, s),
+            (true, true) => Mat4::from_trs_collision(t, r, s).f2l_fixed_w(),
+            (true, false) => Mat4::from_trs_display(t, r, s),
+        }
+    }
+
+    /// [`Self::compose_with`] with `WORLD`, unflagged, no locals kept:
+    /// display space with `DISPLAY`, collision space without (whose
+    /// `queried` and `queried_lead` are unread).
+    #[inline(always)]
+    fn compose_plain<'a, const DISPLAY: bool>(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &'a mut [MaybeUninit<Mat4>],
+        queried: u64,
+        queried_lead: bool,
+    ) -> Option<&'a [Mat4]> {
+        if self.locks.flagged {
+            return None;
+        }
+        let local = Self::plain_local::<DISPLAY>;
+        let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        let out = &mut out[..count];
+        let joint_of = self.joint_table(object.first_node);
+        let mask = self.locks.mask;
+        let lead = self.lead_xrotn_pose().map(|p| local(p, queried_lead));
+        for i in 0..count {
+            let global = object.first_node + i as u32;
+            let Some(parent) = pack.node_parent(global) else {
+                out[i].write(Mat4::IDENTITY);
+                continue;
+            };
+            let frozen = i < 64 && mask >> i & 1 != 0;
+            let rest;
+            let pose = match self.pose_at(&joint_of, i) {
+                Some(pose) if !frozen => pose,
+                _ => {
+                    rest = pack.node_rest(global).unwrap_or_default();
+                    &rest
+                }
+            };
+            let local = local(pose, frozen || i < 64 && queried >> i & 1 != 0);
+            let m = if parent != NodeDesc::NO_PARENT
+                && parent >= object.first_node
+                && (parent - object.first_node) < i as u32
+            {
+                // SAFETY: entry `parent - first_node`, below `i`, was
+                // written on an earlier pass of this loop.
+                let parent = &out[(parent - object.first_node) as usize];
+                unsafe { parent.assume_init_ref() }.mul(&local)
+            } else if parent == NodeDesc::NO_PARENT {
+                lead.map_or(local, |lead| lead.mul(&local))
+            } else {
+                local
+            };
+            out[i].write(m);
+        }
+        // SAFETY: the loop wrote every entry below `count`, and
+        // `MaybeUninit<Mat4>` has `Mat4`'s layout.
+        Some(unsafe { core::slice::from_raw_parts(out.as_ptr().cast::<Mat4>(), count) })
+    }
+
     /// The pose driving `node`, for code that adjusts it in place while the
     /// animation keeps playing: the next tick (or a `motion_id` -2 hold,
     /// [`Self::hold_scaled`]) writes the tracks it animates and leaves the
@@ -853,6 +997,21 @@ impl Skeleton {
         queried: Option<(u64, bool)>,
         mut locals_out: Option<&mut CollisionLocals>,
     ) -> usize {
+        // Unflagged and keeping no locals, the plain composes build the
+        // same matrices without the scales chain (RE-585).
+        if WORLD && locals_out.is_none() {
+            let plain = match space {
+                Space::Collision => self.compose_collision_plain(pack, object, uninit(out)),
+                Space::Display => {
+                    let (nodes, lead) =
+                        queried.unwrap_or((self.locks.queried, self.locks.queried_lead));
+                    self.compose_display_plain(pack, object, uninit(out), nodes, lead)
+                }
+            };
+            if let Some(written) = plain {
+                return written.len();
+            }
+        }
         let count = if WORLD {
             (object.node_count as usize).min(out.len()).min(MAX_NODES)
         } else {

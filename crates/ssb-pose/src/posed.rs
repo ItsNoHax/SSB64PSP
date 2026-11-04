@@ -830,9 +830,8 @@ impl PosedFighter {
     ///   matrices, not into `MAX_NODES` identities. The compose writes
     ///   every matrix below the object's node count, each from parents
     ///   below it: the matrices a `MAX_NODES` buffer gets.
-    /// - Without: into `MAX_NODES` identities, as the full path. Every
-    ///   caller of [`ssb_rom::skeleton::Skeleton::compose_collision`]
-    ///   passes that many, and its code is built for it.
+    /// - Without: the same unfilled buffer, through
+    ///   [`ssb_rom::skeleton::Skeleton::compose_collision_uninit`] (RE-585).
     #[inline(always)]
     fn set_posed_joints_lean(
         &mut self,
@@ -843,7 +842,7 @@ impl PosedFighter {
     ) {
         use core::mem::MaybeUninit;
         use ssb_rom::scene::Mat4;
-        use ssb_rom::skeleton::{Skeleton, MAX_NODES};
+        use ssb_rom::skeleton::Skeleton;
         match kept {
             Some(kept) => {
                 let mut posed = [const { MaybeUninit::<Mat4>::uninit() }; LEAN_NODES];
@@ -851,9 +850,11 @@ impl PosedFighter {
                 set_posed_joints(posed, axes, &mut self.fighter);
             }
             None => {
-                let mut posed = [Mat4::IDENTITY; MAX_NODES];
-                let count = self.compose_collision(pack, object, &mut posed);
-                set_posed_joints(&posed[..count], axes, &mut self.fighter);
+                let mut posed = [const { MaybeUninit::<Mat4>::uninit() }; LEAN_NODES];
+                let posed = self
+                    .skeleton
+                    .compose_collision_uninit(pack, object, &mut posed);
+                set_posed_joints(posed, axes, &mut self.fighter);
             }
         }
     }
