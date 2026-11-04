@@ -562,6 +562,14 @@ impl Skeleton {
         (0..self.joint_count).any(|i| self.joint_flags(i) != 0)
     }
 
+    /// [`Self::any_flags`], always inlined: for a second caller that must
+    /// leave the first caller's inlining of `any_flags` as it is (the PSP
+    /// build's staged fighter draw, RE-585).
+    #[inline(always)]
+    pub fn any_flags_inlined(&self) -> bool {
+        (0..self.joint_count).any(|i| self.joint_flags(i) != 0)
+    }
+
     /// Whether `ftDisplayMainDrawDefault` skips `node`'s display list:
     /// its own `DOBJ_FLAG_NOTEXTURE` (bit 0), or `DOBJ_FLAG_HIDDEN` (bit 1)
     /// on it or an ancestor, which skips the whole subtree. The leading

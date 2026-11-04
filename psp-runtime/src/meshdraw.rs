@@ -4489,6 +4489,7 @@ pub(crate) use batch::{
     batch_submit_lod_object, plan_object, plan_object_lod, Batch, BatchSize,
 };
 pub use batch::display::DisplayBatch;
+pub use batch::fighter::draw_fighter_posed_staged;
 
 /// Bounding box of a whole object, in the pack's normalised units.
 ///

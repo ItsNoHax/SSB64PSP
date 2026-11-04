@@ -43,6 +43,7 @@
 //! shared.
 
 pub(super) mod display;
+pub(super) mod fighter;
 mod lod;
 
 use core::ffi::c_void;

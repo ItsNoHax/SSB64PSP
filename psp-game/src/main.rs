@@ -9993,7 +9993,7 @@ unsafe fn draw_training(
                     .filter(|f| !f.fighter.entry.is_link_1)
                 {
                     if !views[usize::from(f.fighter.port)].offscreen {
-                        draw_fighter_model(gpu, p, &stage, draw_state, f, &pl.camera, false);
+                        draw_fighter_model_staged(gpu, p, &stage, draw_state, f, &pl.camera, false);
                     }
                 }
                 profile::stop(profile::Span::DrawFighters, t);
@@ -10456,6 +10456,112 @@ unsafe fn draw_fighter_model(
         meshdraw::draw_fighter_posed_hiding(p, &obj, &m, &posed[..n], draw_state, look, &hidden);
     } else {
         meshdraw::draw_fighter_posed(p, &obj, &m, &posed[..n], draw_state, look);
+    }
+    if fog.is_some() {
+        gpu.clear_fog();
+    }
+    draw_state.fog_env = None;
+    draw_state.finish_fighter_light();
+}
+
+/// [`draw_fighter_model`] for the battle's fighter pass: the same body,
+/// its model drawn stage-major ([`meshdraw::draw_fighter_posed_staged`],
+/// RE-585). A copy, so `draw_fighter_model` and the per-object fighter
+/// draws keep their code. The never-taken call with an opaque
+/// `miniature` keeps that parameter, so the fighter pass's call keeps its
+/// code.
+#[inline(never)]
+unsafe fn draw_fighter_model_staged(
+    gpu: &mut Gpu,
+    p: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    draw_state: &mut meshdraw::DrawState,
+    f: &play::FighterScene,
+    camera: &ssb_game::camera::Camera,
+    miniature: bool,
+) {
+    if core::hint::black_box(false) {
+        let miniature = core::hint::black_box(miniature);
+        draw_fighter_model_staged(gpu, p, stage, draw_state, f, camera, miniature);
+        return;
+    }
+    // Yoshi's egg shield hides every part (`ftParamHideModelPartAll`, RE-418).
+    let hidden = f.fighter.is_invisible || ssb_game::combat::is_yoshi_egg_shield(&f.fighter);
+    let Some(obj) = p.object(f.object).filter(|_| !hidden) else {
+        return;
+    };
+    let compose_t = profile::start();
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    let n = f.compose_model(p, &obj, &mut posed);
+    profile::stop(profile::Span::Compose, compose_t);
+    // RE-426: the low-detail model, posed by the high-detail one's nodes.
+    let drawn = ssb_psp_runtime::scene::fighter_draw_object(
+        f.object,
+        f.object_low,
+        f.fighter.model_parts.detail_curr,
+    );
+    let model_first = obj.first_node;
+    let obj = p.object(drawn).unwrap_or(obj);
+    // TopN, kind 0x4B (`lbCommonFighterPartsFuncMatrix`): its scale is
+    // `attr->size` (`ftManagerMakeFighter`: Giant Donkey Kong twice the size
+    // of his model, Mario 1.12, Kirby 0.91, RE-458), its rotate the catcher's
+    // hand while held (RE-511).
+    let mut topn = f.topn_display_inlined();
+    if miniature {
+        // `ifCommonPlayerMagnifyUpdateViewport` draws the same DObj tree
+        // under a camera centred on the fighter; the miniature camera here
+        // is centred on the origin.
+        topn.0[12..15].fill(0.0);
+    }
+    // ftdisplaymain.c:1205: the hit shake, a world translation pushed under
+    // the whole tree whichever camera draws it.
+    if let Some(o) = f.fighter.shuffle.offset() {
+        topn.0[12] += o.x;
+        topn.0[13] += o.y;
+    }
+    let m = psp_matrix(&topn);
+    // `ftDisplayLightsDrawReflect`: a colour animation's light turns with
+    // the fighter (`lr * light_angle_x`).
+    let light = f.fighter.colanim.light.map_or(stage.light_angle_xy, |(x, y)| [f.fighter.facing.sign() * x, y]);
+    draw_state.configure_fighter_light(light);
+    // `ftDisplayMainCalcFogColor` or `ftDisplayMainDecideFogColor`:
+    // `G_RM_FOG_PRIM_A` blends the fighter towards `color1` mixed with its
+    // shade, or the shade alone, by the fog alpha.
+    let fog = fighter_fog(p, &f.fighter);
+    // `ENV` (`ftDisplayMainDrawDefault`): `colanim.color2` first, else
+    // Master Hand's `fog_color` while `is_use_fogcolor` is set, else the
+    // white light colour. Only the boss model's combiners read it
+    // (RE-457); `color2`'s one script is opaque, so OPA stays.
+    let colanim = &f.fighter.colanim;
+    draw_state.fog_env = (f.fighter.kind == ssb_game::fighter::FighterKind::Boss)
+        .then(|| {
+            let color2 = colanim.is_use_color2.then_some(colanim.color2.rgba);
+            ssb_game::shade::env_color(color2, f.fighter.boss.fog)
+        })
+        .flatten();
+    if let Some(rgba) = fog {
+        let (eye, at) = (camera.eye, camera.at);
+        let view = (at - eye).normalized();
+        gpu.set_fog_prim_a((f.fighter.pos - eye).dot(view), rgba);
+    }
+    draw_state.fighter_fog = fog.is_some();
+    // Its model parts and headgear accessory (RE-425).
+    let parts = f.fighter.model_parts.draw_parts();
+    let look = meshdraw::Look {
+        costume: fighter_draw_costume(p, &obj, &f.fighter),
+        textures: f.fighter.model_parts.draw_textures(),
+        parts: parts.as_ref().map(|p| &p[..]),
+        accessory_before: f.fighter.kind == ssb_game::fighter::FighterKind::Purin,
+    };
+    // The joints the clip's `SetFlags` hid (`ftDisplayMainDrawDefault`):
+    // Yoshi inside his entry egg. The low-detail model is indexed as the
+    // high-detail one the skeleton drives.
+    if f.skeleton.any_flags_inlined() {
+        let first = obj.first_node;
+        let hidden = |node: u32| f.skeleton.hidden(p, model_first + (node - first));
+        meshdraw::draw_fighter_posed_staged(p, &obj, &m, &posed[..n], draw_state, look, Some(&hidden));
+    } else {
+        meshdraw::draw_fighter_posed_staged(p, &obj, &m, &posed[..n], draw_state, look, None);
     }
     if fog.is_some() {
         gpu.clear_fog();

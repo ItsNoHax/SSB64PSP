@@ -1159,6 +1159,27 @@ impl FighterScene {
         .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [k; 3]))
     }
 
+    /// [`Self::topn_display`], always inlined: for a second caller that
+    /// must leave the first caller's inlining of `topn_display` as it is
+    /// (the PSP build's staged fighter draw, RE-585).
+    #[inline(always)]
+    pub fn topn_display_inlined(&self) -> ssb_rom::scene::Mat4 {
+        use ssb_rom::scene::Mat4;
+        let f = &self.fighter;
+        let queried = (f.queried_joints.get() & 1 != 0)
+            .then(|| f.topn_query_local.get())
+            .flatten();
+        let k = ssb_rom::pack::MODEL_SCALE;
+        Mat4::fighter_topn_display(
+            [f.pos.x, f.pos.y, f.pos.z],
+            ssb_game::slope_contour::topn_rotate(f),
+            [f.attributes.size; 3],
+            self.skeleton.locks.flagged,
+            queried,
+        )
+        .mul(&Mat4::from_trs([0.0; 3], [0.0; 3], [k; 3]))
+    }
+
     /// Puts a fighter of `kind` at a stage's `spawn_index`'th spawn point.
     ///
     /// A spawn sits a few units up (RE-030); as `ftManagerInitFighter` does,

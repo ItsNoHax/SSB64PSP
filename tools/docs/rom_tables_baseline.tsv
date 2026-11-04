@@ -146,6 +146,7 @@ psp-runtime/src/audio.rs	ZERO	tooling: PSP profiling and probe state, no ROM dat
 psp-runtime/src/frame_timer.rs	STATE	tooling: PSP profiling and probe state, no ROM data
 psp-runtime/src/hwcount.rs	READ	tooling: PSP profiling and probe state, no ROM data
 psp-runtime/src/meshdraw.rs	IDENTITY_ROWS	port constant: the identity matrix
+psp-runtime/src/meshdraw/batch/fighter.rs	EMPTY	port constant: the empty staged mesh record
 psp-runtime/src/profile.rs	HW	tooling: PSP profiling and probe state, no ROM data
 psp-runtime/src/profile.rs	STATE	tooling: PSP profiling and probe state, no ROM data
 psp-runtime/src/scene.rs	CAPTAIN_FALCON_KICK_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
