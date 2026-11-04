@@ -10,6 +10,10 @@ use ssb_rom::pack::{ObjectDesc, Pack};
 use crate::joints::{part_locals_into, set_joint_parents, set_posed_joints};
 use crate::skeleton_tick::{fighter_locks, tick_skeleton_animation};
 
+/// Model nodes [`PosedFighter::sample_gameplay_joints_lean`] composes: every
+/// fighter's model (the largest has 33).
+const LEAN_NODES: usize = 40;
+
 /// One fighter as a match runs it: its gameplay state, the skeleton its
 /// clip poses and the joints gameplay reads are sampled from, and the
 /// clip's bookkeeping.
@@ -495,7 +499,7 @@ impl PosedFighter {
         let moved = self.slope_contour(pack, surfaces, false, &mut kept);
         self.fighter.finish_physics_map();
         hooks.span(PhysicsSpan::Joints, || {
-            self.sample_gameplay_joints_from(pack, kept.as_ref().filter(|_| !moved))
+            self.sample_gameplay_joints_lean(pack, kept.as_ref().filter(|_| !moved))
         });
         // `proc_accessory` reads the updated hand, after the map and parts
         // transform pass (`ftMainProcPhysicsMap`).
@@ -821,6 +825,39 @@ impl PosedFighter {
             .map(|p| p.rotate[0]);
     }
 
+    /// [`Self::sample_gameplay_joints_lean`]'s joints 4..
+    /// - From `kept`: composed into an unfilled buffer of [`LEAN_NODES`]
+    ///   matrices, not into `MAX_NODES` identities. The compose writes
+    ///   every matrix below the object's node count, each from parents
+    ///   below it: the matrices a `MAX_NODES` buffer gets.
+    /// - Without: into `MAX_NODES` identities, as the full path. Every
+    ///   caller of [`ssb_rom::skeleton::Skeleton::compose_collision`]
+    ///   passes that many, and its code is built for it.
+    #[inline(always)]
+    fn set_posed_joints_lean(
+        &mut self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        kept: Option<&ssb_rom::skeleton::CollisionLocals>,
+        axes: [ssb_engine::math::Vec3; 3],
+    ) {
+        use core::mem::MaybeUninit;
+        use ssb_rom::scene::Mat4;
+        use ssb_rom::skeleton::{Skeleton, MAX_NODES};
+        match kept {
+            Some(kept) => {
+                let mut posed = [const { MaybeUninit::<Mat4>::uninit() }; LEAN_NODES];
+                let posed = Skeleton::compose_collision_from_uninit(kept, &mut posed);
+                set_posed_joints(posed, axes, &mut self.fighter);
+            }
+            None => {
+                let mut posed = [Mat4::IDENTITY; MAX_NODES];
+                let count = self.compose_collision(pack, object, &mut posed);
+                set_posed_joints(&posed[..count], axes, &mut self.fighter);
+            }
+        }
+    }
+
     /// [`Self::sample_gameplay_joints`], its matrices built from `kept`
     /// when given: the locals a [`Self::slope_contour`] composed on the
     /// skeleton as it still stands.
@@ -855,6 +892,127 @@ impl PosedFighter {
             None => self.compose_collision(pack, &object, &mut posed),
         };
         set_posed_joints(&posed[..count], axes, &mut self.fighter);
+        // `ftCommonThrownReleaseFighterLoseGrip` drops a thrown fighter to
+        // `joints[4]` (RE-511).
+        self.fighter.grab.thrown_part4 = if ssb_game::grab::is_thrown(self.fighter.status.status) {
+            let parts = self.part_locals(pack, &object);
+            parts.has(4).then(|| {
+                ssb_game::slope_contour::point_below_topn(
+                    &parts,
+                    &self.fighter.joint_parents,
+                    4,
+                    Vec3::ZERO,
+                )
+            })
+        } else {
+            None
+        };
+        // `YRotN` hangs off `XRotN`, which nothing rotates, so its local
+        // pose is its model-space pose. Only a raised shield reads it.
+        if ssb_game::status::shield_pose(&self.fighter).is_some() {
+            let pose = &self.shield_yrotn;
+            let scale = ssb_rom::pack::MODEL_SCALE;
+            let local = |p: &ssb_rom::figatree::JointPose, s: [f32; 3]| {
+                let t = [
+                    p.translate[0] / scale,
+                    p.translate[1] / scale,
+                    p.translate[2] / scale,
+                ];
+                ssb_rom::scene::Mat4::from_trs_collision(t, p.rotate, s)
+            };
+            let mut m = local(pose, [1.0; 3]);
+            // Under `XRotN` when the guard clip interposes it.
+            if let Some(lead) = self.skeleton.lead_xrotn_pose() {
+                m = local(lead, lead.scale).mul(&m);
+            }
+            let axis =
+                |col: usize| world(Vec3::new(m.0[col * 4], m.0[col * 4 + 1], m.0[col * 4 + 2]));
+            let t = m.translation();
+            self.fighter.joint_transforms[3] = Some(JointTransform {
+                axes: [axis(0), axis(1), axis(2)],
+                origin: self.fighter.pos
+                    + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
+            });
+        } else if let Some(pose) =
+            ssb_game::motion::uses_yrotn(self.fighter.kind, self.fighter.status.status)
+                .then(|| self.skeleton.trailing_runtime_pose())
+                .flatten()
+        {
+            // A motion with `is_use_yrotn_joint` (Yoshi's Egg Throw) drives
+            // `YRotN` from its figatree's last stream. The held egg reads
+            // its world position and copies its scale
+            // (`ftYoshiSpecialHiUpdateEggVectors`).
+            let scale = ssb_rom::pack::MODEL_SCALE;
+            let local = |p: &ssb_rom::figatree::JointPose| {
+                let t = [
+                    p.translate[0] / scale,
+                    p.translate[1] / scale,
+                    p.translate[2] / scale,
+                ];
+                ssb_rom::scene::Mat4::from_trs_collision(t, p.rotate, p.scale)
+            };
+            let mut m = local(pose);
+            if let Some(lead) = self.skeleton.lead_xrotn_pose() {
+                m = local(lead).mul(&m);
+            }
+            let axis =
+                |col: usize| world(Vec3::new(m.0[col * 4], m.0[col * 4 + 1], m.0[col * 4 + 2]));
+            let t = m.translation();
+            self.fighter.joint_transforms[3] = Some(JointTransform {
+                axes: [axis(0), axis(1), axis(2)],
+                origin: self.fighter.pos
+                    + world(Vec3::new(t[0] * scale, t[1] * scale, t[2] * scale)),
+            });
+            self.fighter.yoshi.egg_joint_scale =
+                Some(Vec3::new(pose.scale[0], pose.scale[1], pose.scale[2]));
+        }
+    }
+
+    /// [`Self::sample_gameplay_joints_from`] right after the tick's
+    /// [`Self::slope_contour`]: the same joints, bit for bit, for less work
+    /// (RE-585).
+    /// - The part tree is not refreshed again: the slope has just refreshed
+    ///   it, and nothing since changes what it is built from (the object,
+    ///   the skeleton's nodes, whether the clip interposes `XRotN`).
+    /// - [`Self::set_posed_joints_lean`] composes the kept locals into an
+    ///   unfilled buffer (most of a 4 KiB fill per call).
+    ///
+    /// A copy of [`Self::sample_gameplay_joints_from`], so that function's
+    /// code stays as it is; keep the two alike. A model past [`LEAN_NODES`]
+    /// nodes takes that function.
+    #[inline(never)]
+    fn sample_gameplay_joints_lean(
+        &mut self,
+        pack: &Pack<'_>,
+        kept: Option<&ssb_rom::skeleton::CollisionLocals>,
+    ) {
+        if pack
+            .object(self.object)
+            .is_some_and(|o| o.node_count as usize > LEAN_NODES)
+        {
+            return self.sample_gameplay_joints_from(pack, kept);
+        }
+        use ssb_engine::math::Vec3;
+        use ssb_game::fighter::{JointTransform, FIGHTER_JOINTS};
+        self.fighter.joint_transforms = [None; FIGHTER_JOINTS];
+        // TopN carries `attr->size` (`ftManagerMakeFighter`), which every
+        // joint below it inherits (RE-458).
+        let size = self.fighter.attributes.size;
+        let axes = ssb_game::item_throw::collision_axes(&self.fighter).map(|a| a * size);
+        let world = |v: Vec3| axes[0] * v.x + axes[1] * v.y + axes[2] * v.z;
+        let root = JointTransform {
+            axes,
+            origin: self.fighter.pos,
+        };
+        self.fighter.joint_transforms[0] = Some(root);
+        // `fp->is_use_animlocks` picks which parts a query marks (RE-509).
+        self.fighter.is_use_animlocks = self.skeleton.locks.flagged;
+        self.refresh_joint4_rotate_x(pack);
+        let Some(object) = pack.object(self.object) else {
+            return;
+        };
+        // The slope has just refreshed the part tree.
+        self.set_posed_joints_lean(pack, &object, kept, axes);
         // `ftCommonThrownReleaseFighterLoseGrip` drops a thrown fighter to
         // `joints[4]` (RE-511).
         self.fighter.grab.thrown_part4 = if ssb_game::grab::is_thrown(self.fighter.status.status) {

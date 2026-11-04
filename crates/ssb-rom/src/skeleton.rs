@@ -30,6 +30,7 @@ use crate::figatree::{Desynchronised, JointAnim, JointPose};
 use crate::objanim::StageJoint;
 use crate::pack::{AnimDesc, AnimJoint, NodeDesc, ObjectDesc, Pack, MODEL_SCALE};
 use crate::scene::Mat4;
+use core::mem::MaybeUninit;
 
 /// Joints one skeleton can hold.
 ///
@@ -745,6 +746,35 @@ impl Skeleton {
             };
         }
         count
+    }
+
+    /// [`Skeleton::compose_collision_from`] into an unfilled buffer: the
+    /// same products in the same order, each matrix written before a child
+    /// reads it. Returns the matrices written, `out`'s first ones.
+    pub fn compose_collision_from_uninit<'a>(
+        composed: &CollisionLocals,
+        out: &'a mut [MaybeUninit<Mat4>],
+    ) -> &'a [Mat4] {
+        let count = composed.count.min(out.len());
+        for i in 0..count {
+            let local = *composed.local(i);
+            let m = match composed.link[i] {
+                CollisionLocals::LINK_NONE => Mat4::IDENTITY,
+                CollisionLocals::LINK_ROOT => composed.lead.map_or(local, |lead| lead.mul(&local)),
+                CollisionLocals::LINK_OWN => local,
+                p => {
+                    let parent = &out[usize::from(p)];
+                    assert!(usize::from(p) < i, "a collision parent precedes its child");
+                    // SAFETY: entry `p`, below `i`, was written on an
+                    // earlier pass of this loop.
+                    unsafe { parent.assume_init_ref() }.mul(&local)
+                }
+            };
+            out[i].write(m);
+        }
+        // SAFETY: the loop wrote every entry below `count`, and
+        // `MaybeUninit<Mat4>` has `Mat4`'s layout.
+        unsafe { core::slice::from_raw_parts(out.as_ptr().cast::<Mat4>(), count) }
     }
 
     /// The pose driving `node`, for code that adjusts it in place while the

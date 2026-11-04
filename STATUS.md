@@ -11,25 +11,25 @@
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy, ms0) | opening 1-39 8.85 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
-| PSP-2000 `vs4@2400` | 16.44 ms busy (Zebes 11.08) | RE-585 |
-| PSP-2000 1P intro | 14.84 ms (timer build); 1P battle 15.13 ms; Comets 15.50; Fall 16.33; `vs4@2170` electric no-hit r18 17.64, shock r12 19.34 | RE-585 |
+| PSP-2000 `vs4@2400` | 16.38 ms busy (Zebes 11.03) | RE-585 |
+| PSP-2000 1P intro | 14.84 ms (timer build); 1P battle 15.02 ms; Comets 15.44; Fall 16.27; `vs4@2170` electric no-hit r18 17.58, shock r12 19.30 | RE-585 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 152): lean gameplay joints sample in the tail: r12 -0.05, battle -0.11 ms; intro +0.02; free memory -7.75 KiB (RE-585 item 47).
+- Measured (batch 151): `vs4@2170` update-side profile; layout shift rejected a joints cut (RE-585 item 46).
 - Landed (batch 150): staged fighter draw (pose, expand, submit per fighter): r12 -0.87, r18 -0.74, vs4 -0.56, Fall -0.38 ms; intro +0.01; `f1-vs-ground` rebaselined under D-051; free memory -24 KiB (RE-585 item 45).
 - Measured (batch 149): `vs4@2170` attribution; light-direction copy rejected (RE-585 item 44).
 - Landed (batch 148): branch-free Fall clip encode, boss effects model matrix built once: Fall 16.79 -> 16.69 ms; others within +0.06; free memory -16 KiB (RE-585 item 43).
 - Landed (batch 147): one merged texel-alpha plan per Fall wallpaper prim: Fall 16.97 -> 16.83 ms; others within +0.06; free memory -8.25 KiB (RE-585 item 42).
 - Landed (batch 146): Fall comets on the comet code, Fall-only tail reordered for the I-cache: Fall 17.18 -> 16.94 ms; others within +0.04; memory 0 (RE-585 item 41).
-- Landed (batch 145): ShockSmall material replayed once per run: r12 -0.21, r14 -0.17 ms; others within +0.03; memory 0 (RE-585 item 40).
-- Landed (batch 144): one fog-override search per fogged node (`ssb_all_costume_rows`): r12 -0.10, r14 -0.09 ms; others within +0.04; memory 0 (RE-585 item 39).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
-1. Playtest performance above 16.7 ms: electric shock display effects (`vs4@2170` r12 19.34, no-hit r18 17.64 ms).
+1. Playtest performance above 16.7 ms: electric shock display effects (`vs4@2170` r12 19.30, no-hit r18 17.58 ms).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 150 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 152 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
