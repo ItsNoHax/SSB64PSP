@@ -266,7 +266,7 @@ impl BossEffects {
             }
         }
         if !ready || !size.fits() {
-            self.draw_unbatched(gpu, pack, st, wallpaper, tag, fade);
+            self.draw_unbatched_v2(gpu, pack, st, wallpaper, tag, fade);
             return;
         }
         let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
@@ -678,4 +678,142 @@ fn compose_batched(v: &Visual, e: &Effect, out: &mut [Mat4]) -> usize {
         };
     }
     count
+}
+
+impl BossEffects {
+    /// [`Self::draw_unbatched`] with the effects' shared model matrix built
+    /// once and loaded for the rest (RE-585). When the effects cannot be
+    /// batched it hands the draw to [`Self::draw_unbatched`].
+    ///
+    /// # Safety
+    ///
+    /// Same as [`crate::meshdraw::draw_mesh`].
+    #[inline(never)]
+    unsafe fn draw_unbatched_v2(
+        &self,
+        gpu: &mut crate::gu::Gpu,
+        pack: &Pack<'_>,
+        st: &mut crate::meshdraw::DrawState,
+        wallpaper: &BossWallpaper,
+        tag: u8,
+        fade: Option<[u8; 4]>,
+    ) {
+        let mut size = crate::meshdraw::BatchSize::default();
+        let mut ready = crate::meshdraw::batch_ready(st);
+        for i in wallpaper.draw_order(tag) {
+            let Some(Some(e)) = wallpaper.effects.get(i) else {
+                continue;
+            };
+            if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                continue;
+            }
+            if let Some(Some(v)) = self.visuals.get(i) {
+                ready = ready && crate::meshdraw::plan_object_lod(pack, &v.object, &mut size);
+            }
+        }
+        if !ready || !size.fits() {
+            self.draw_unbatched(gpu, pack, st, wallpaper, tag, fade);
+            return;
+        }
+        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
+        st.clip_at_viewport = true;
+        let mut batch = None;
+        let mut counts = [0usize; MAX_EFFECTS];
+        let mut next = 0;
+        let mut spares = 0;
+        let mut model = None;
+        for i in wallpaper.draw_order(tag) {
+            let Some(Some(e)) = wallpaper.effects.get(i) else {
+                continue;
+            };
+            if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                if let Some(color) = fade {
+                    crate::meshdraw::fill_rect_n64([10.0, 10.0, 310.0, 230.0], color, st);
+                }
+                continue;
+            }
+            let Some(Some(v)) = self.visuals.get(i) else {
+                continue;
+            };
+            if batch.is_none() {
+                gpu.set_viewport_n64([10.0, 10.0, 310.0, 230.0]);
+                let proj = ssb_engine::math::Mat4::sy_persp_fast(
+                    CAMERA_FOVY,
+                    ssb_game::camera::BATTLE_VIEWPORT_WIDTH
+                        / ssb_game::camera::BATTLE_VIEWPORT_HEIGHT,
+                    CAMERA_NEAR,
+                    CAMERA_FAR,
+                );
+                gpu.set_projection(&proj);
+                let view = ssb_engine::math::Mat4::look_at(
+                    ssb_game::spgame::boss::CAMERA_EYE,
+                    ssb_engine::math::Vec3::ZERO,
+                    ssb_engine::math::Vec3::Y,
+                );
+                gpu.set_view(&view);
+                st.clip_view_proj = Some((proj * view).cols);
+            }
+            // Every effect's model matrix is the same: built once, then
+            // loaded (the same matrix and update flag).
+            let base = match model {
+                Some(m) => {
+                    gpu.load_model(&m);
+                    m
+                }
+                None => {
+                    gpu.model_transform([0.0; 3], [0.0; 3], MODEL_SCALE);
+                    let m = gpu.model_matrix();
+                    model = Some(m);
+                    m
+                }
+            };
+            // Every effect's base is the same: the first one's serves the
+            // passes that run before any is drawn.
+            let b = match &mut batch {
+                Some(b) => b,
+                None => {
+                    let mut b = crate::meshdraw::Batch::new(&size);
+                    self.pose_batch(pack, st, wallpaper, tag, &base, &mut b, &mut counts);
+                    // `pose_batch`'s objects, in its order.
+                    let mut objects = [(0usize, None); MAX_EFFECTS];
+                    let mut n = 0;
+                    for j in wallpaper.draw_order(tag) {
+                        let Some(Some(e)) = wallpaper.effects.get(j) else {
+                            continue;
+                        };
+                        if matches!(e.display, Display::FadeAlpha | Display::FadeColor) {
+                            continue;
+                        }
+                        let Some(Some(v)) = self.visuals.get(j) else {
+                            continue;
+                        };
+                        if let Some(o) = objects.get_mut(n) {
+                            *o = (counts.get(j).copied().unwrap_or(0), v.mats.as_deref());
+                            n += 1;
+                        }
+                    }
+                    let objects = objects.get(..n).unwrap_or(&[]);
+                    crate::meshdraw::batch_expand_lod_tag(pack, st, &mut b, objects);
+                    batch.insert(b)
+                }
+            };
+            st.color_override = Some(effect_colors(e));
+            let count = counts.get(i).copied().unwrap_or(0);
+            crate::meshdraw::batch_submit_lod_object(
+                pack,
+                st,
+                b,
+                next,
+                count,
+                v.mats.as_deref(),
+                &mut spares,
+            );
+            next += count;
+            st.color_override = None;
+        }
+        if let Some(b) = batch {
+            b.finish();
+        }
+        (st.clip_view_proj, st.clip_at_viewport) = clip;
+    }
 }
