@@ -438,7 +438,7 @@ impl<'g, 'p> ssb_game::matchtick::Seat<ssb_psp_runtime::arena::PackGround<'g, 'p
 
     fn physics(&mut self, ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>) {
         let groups = ground.groups();
-        self.scene_mut().tick_fighter_physics(ground.pack, ground.stage, groups);
+        self.scene_mut().tick_fighter_physics_table(ground.pack, ground.stage, groups);
     }
 
     fn settle_catch(&mut self, ground: &ssb_psp_runtime::arena::PackGround<'g, 'p>) {

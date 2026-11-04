@@ -695,6 +695,13 @@ pub struct HostSeat<'a, 'p> {
     pub cpu: Option<&'a mut HostCpu>,
 }
 
+thread_local! {
+    /// The seats' physics read a table of the surfaces, walked once per
+    /// call, as a `psp-game` match's do
+    /// (`FighterScene::tick_fighter_physics_table`).
+    pub static TABLE_PHYSICS: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
 impl ssb_game::matchtick::HasFighter for HostSeat<'_, '_> {
     fn fighter(&self) -> &ssb_game::fighter::Fighter {
         &self.posed.fighter
@@ -740,7 +747,13 @@ impl ssb_game::matchtick::Seat<HostGround<'_, '_>> for HostSeat<'_, '_> {
     }
     fn physics(&mut self, ground: &HostGround<'_, '_>) {
         use ssb_game::matchtick::Ground;
-        self.posed.tick_physics(self.pack, &|| ground.surfaces());
+        if TABLE_PHYSICS.get() {
+            let table: Vec<_> = ground.surfaces().collect();
+            self.posed
+                .tick_physics(self.pack, &|| table.iter().copied());
+        } else {
+            self.posed.tick_physics(self.pack, &|| ground.surfaces());
+        }
     }
     fn settle_catch(&mut self, ground: &HostGround<'_, '_>) {
         use ssb_game::matchtick::Ground;

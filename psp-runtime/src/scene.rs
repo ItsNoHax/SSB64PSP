@@ -1436,6 +1436,40 @@ impl FighterScene {
         self.pose.tick_physics_with(pack, &segments, &mut hooks);
     }
 
+    /// [`Self::tick_fighter_physics`] for a match's fighters, the same state
+    /// bit for bit, the map's surfaces walked once (RE-585): into a table
+    /// each map query then reads. `groups` cannot change during the call,
+    /// so every walk gives the same surfaces in the same order. A map of
+    /// more surfaces than the table holds takes [`Self::tick_fighter_physics`].
+    pub fn tick_fighter_physics_table(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
+        use core::mem::MaybeUninit;
+        crate::stack_poison::poison();
+        /// Surfaces of the largest stage map: 117.
+        const MAX_SURFACES: usize = 128;
+        let mut table = [const { MaybeUninit::<MapSurface>::uninit() }; MAX_SURFACES];
+        let mut count = 0;
+        for surface in MapSegments::with_groups(pack, stage, groups) {
+            let Some(slot) = table.get_mut(count) else {
+                return self.tick_fighter_physics(pack, stage, groups);
+            };
+            slot.write(surface);
+            count += 1;
+        }
+        // SAFETY: the loop wrote `table[..count]`.
+        let surfaces: &[MapSurface] =
+            unsafe { core::slice::from_raw_parts(table.as_ptr().cast::<MapSurface>(), count) };
+        let segments = || surfaces.iter().copied();
+        let mut hooks = SceneHooks {
+            airborne_ticks: &mut self.airborne_ticks,
+        };
+        self.pose.tick_physics_with(pack, &segments, &mut hooks);
+    }
+
     /// What the battle camera reads of this fighter besides the fighter.
     pub fn framing(&self) -> ssb_game::camera::Framing {
         ssb_game::camera::Framing {

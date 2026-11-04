@@ -2,10 +2,13 @@
 //! matches: fighter 0 on a scripted pseudo-random pad, the others level-9
 //! CPUs, on Dream Land through [`ssb_game::matchtick::step`].
 //!
-//! The test checks that two runs hash alike tick for tick. With
-//! `STATE_HASH_OUT=FILE` it also writes every tick's hashes to `FILE`, so a
-//! change meant to keep gameplay bit-identical (a performance change) can
-//! be compared against the build before it.
+//! The test checks that two runs hash alike tick for tick, and that a run
+//! whose physics read a table of the surfaces (`psp-game`'s match,
+//! `FighterScene::tick_fighter_physics_table`) hashes as one that walks the
+//! map. With `STATE_HASH_OUT=FILE` it also writes every tick's hashes of
+//! the table run to `FILE`, so a change meant to keep gameplay
+//! bit-identical (a performance change) can be compared against the build
+//! before it.
 
 use ssb_game::fighter::FighterKind;
 
@@ -16,7 +19,7 @@ mod posed;
 mod dream_land;
 
 use dream_land::{dream_land, dream_land_map, stage_bounds, training_fighter};
-use posed::{tick_cpus, HostCpu, Pair, Posed};
+use posed::{tick_cpus, HostCpu, Pair, Posed, TABLE_PHYSICS};
 
 fn open_pack() -> Option<Vec<u8>> {
     ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
@@ -49,7 +52,13 @@ fn script_pad(tick: u64) -> (u16, i8, i8) {
 
 /// Every tick's hash of each fighter (its state and skeleton), the item
 /// and weapon pools and the RNG.
-fn run(pack: &ssb_rom::pack::Pack<'_>, kinds: [FighterKind; 4], ticks: u64) -> Vec<[u64; 6]> {
+fn run(
+    pack: &ssb_rom::pack::Pack<'_>,
+    kinds: [FighterKind; 4],
+    ticks: u64,
+    table: bool,
+) -> Vec<[u64; 6]> {
+    TABLE_PHYSICS.set(table);
     // `ftManagerAllocFighter`: the battle's motion and stat counts start
     // again at 1.
     ssb_game::manager_counts::ManagerCounts::new();
@@ -128,14 +137,21 @@ fn gameplay_state_hashes_repeat_tick_for_tick() {
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
     let mut log = String::new();
     for kinds in CASTS {
-        let first = run(&pack, kinds, TICKS);
-        let second = run(&pack, kinds, TICKS);
-        let differ = first.iter().zip(&second).position(|(a, b)| a != b);
+        let first = run(&pack, kinds, TICKS, false);
+        let second = run(&pack, kinds, TICKS, false);
+        let table = run(&pack, kinds, TICKS, true);
+        let differ = |other: &[[u64; 6]]| first.iter().zip(other).position(|(a, b)| a != b);
         assert_eq!(
-            differ, None,
+            differ(&second),
+            None,
             "{kinds:?}: the second run differs at that tick"
         );
-        for (tick, row) in first.iter().enumerate() {
+        assert_eq!(
+            differ(&table),
+            None,
+            "{kinds:?}: the run on a surface table differs at that tick"
+        );
+        for (tick, row) in table.iter().enumerate() {
             let row: Vec<String> = row.iter().map(|h| format!("{h:016x}")).collect();
             log += &format!("{kinds:?} {tick} {}\n", row.join(" "));
         }

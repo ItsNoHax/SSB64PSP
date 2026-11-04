@@ -22,6 +22,21 @@ followed by a pad that puts the code behind them on the cache sets it has
 without them: code one scene runs then leaves every other scene's layout
 alone (RE-585). A regenerated `link-order.txt` must keep that block.
 
+`psp-game/link-pins.txt` then pins every function of the timed build at
+its address there (`pinned_layout`): a function that changes size does
+not move the functions after it, whose instruction-cache sets otherwise
+all shift (+-0.15 ms busy on a PSP-2000 for a -0x284 shift, RE-585). A
+function that shrinks leaves a hole; one that no longer fits its slot
+moves past the pinned code, to an address on its pinned cache set; a
+function without a pin (new, or only in another feature set) goes
+between the two; a function removed leaves a hole. Pinned code in its
+pinned place is byte for byte the code a link without pins gives.
+`psp-link.py --pins ELF > psp-game/link-pins.txt` writes the pins of a
+timed (`frame_timer`) build: rewrite them after a new `link-order.txt`,
+or to reclaim holes and overflow. `PSP_LINK_PINS` names another pin
+file, `none` for none; a link with `PSP_LINK_ORDER` set (a screen of
+another order) uses no pins unless `PSP_LINK_PINS` names a file.
+
 Set as `psp-game`'s linker in `psp-game/.cargo/config.toml`; rustc calls it
 with `rust-lld`'s arguments and has `rust-lld` on `PATH`.
 
@@ -66,6 +81,12 @@ TAIL_PAD_SYMBOL = 'psp_link_tail_pad'
 STUB_SET = int(os.environ.get('PSP_LINK_STUB_SET', '0x19c8'), 0)
 STUB_PAD_SYMBOL = 'psp_link_stub_pad'
 STUB_PAD_SECTION = '.sceStub.text.~psp_link_stub_pad'
+# Pinned function addresses (see the top). The instruction cache is 16 KB
+# two-way, like the data cache: an address's set is its offset in 8 KB.
+PINS = os.environ.get('PSP_LINK_PINS') or ('' if os.environ.get('PSP_LINK_ORDER') else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', 'psp-game', 'link-pins.txt'))
+ICACHE_WAY = 0x2000
+GAP_SYMBOL = 'psp_link_gap_%d'
 
 
 def stable(name, impls=True):
@@ -336,6 +357,9 @@ def main():
                 f[3] = stable(f[3])
             print(' '.join(f))
         return
+    if args[:1] == ['--pins'] and len(args) == 2:
+        sys.stdout.write(pins_of(args[1]))
+        return
     out = args[args.index('-o') + 1] if '-o' in args else 'a.out'
     by_key = {}
     for arg in args:
@@ -377,7 +401,8 @@ def main():
     listed = set(order + last)
     order.extend(sorted((n for names in by_key.values() for n in names if n not in listed), key=lambda n: (stable(n), n)))
     order.extend(last)
-    if last:
+    pins = read_pins(PINS)
+    if last or pins:
         order.append(TAIL_PAD_SYMBOL)
     save = os.environ.get('PSP_LINK_SAVE')
     if save:
@@ -411,7 +436,9 @@ def main():
     # Pad after the `# after unlisted` functions so the code behind them (the
     # archives' functions) keeps the data- and instruction-cache sets it has
     # without them (RE-585).
-    if last and objects:
+    if pins and objects:
+        lld, plan = link_pinned(lld, out, order_path, order, pins, elf_flags(objects[0]))
+    elif last and objects:
         tail_path = out + '.tail.o'
         write_pad_object(tail_path, 0, elf_flags(objects[0]), TAIL_PAD_SYMBOL)
         lld = lld[:lld.index('-o')] + [tail_path, '--undefined=' + TAIL_PAD_SYMBOL] + lld[lld.index('-o'):]
@@ -451,6 +478,234 @@ def main():
         sys.exit('psp-link: stubs at %#x, .bss at %#x, .rodata at %#x: not at %#x, %#x and line offset %#x in the caches'
                  % (section_addr(out, '.sceStub.text'), section_addr(out, '.bss'), section_addr(out, '.rodata'),
                     STUB_SET, BSS_SET, RODATA_LINE))
+    if pins and objects:
+        misplaced = check_plan(out, plan)
+        if misplaced:
+            sys.exit('psp-link: %d pinned functions off their pins after the cache pads, first %s' % (len(misplaced), misplaced[0]))
+
+
+def pin_key(stable_name):
+    """A pin's looser name: `key`'s, without an LLVM `.NNNN` suffix (a
+    local function's number moves with unrelated code)."""
+    return re.sub(r'\.\d+$', '', stable(stable_name, impls=False))
+
+
+def read_pins(path):
+    """`link-pins.txt`: `(offset, size, stable name)` by offset from the
+    start of `.text`, the end of the pinned code (`@end`) and where the
+    archives' code after it starts (`@archive`); None without pins."""
+    if not path or path == 'none' or not os.path.exists(path):
+        return None
+    pins, marks = [], {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            f = line.split(' ', 2)
+            if f[0].startswith('@'):
+                marks[f[0][1:]] = int(f[1], 16)
+            else:
+                pins.append((int(f[0], 16), int(f[1], 16), f[2]))
+    pins.sort()
+    return {'pins': pins, 'end': marks['end'], 'archive': marks['archive']}
+
+
+def pins_of(elf):
+    """The pin file of a linked ELF: every function before the tail pad
+    (the object's functions, in `link-order.txt`'s order) at its offset in
+    `.text`."""
+    funcs = elf_functions(elf)
+    text = section_addr(elf, '.text')
+    # The archives' code starts after the tail pad, whose symbol's size is
+    # the pad's.
+    tail, archive = next((a, a + size) for name, a, size, _ in elf_symbols(elf) if name == TAIL_PAD_SYMBOL)
+    lines = ['# Function addresses for tools/psp-link.py (RE-585): offset in .text, size,\n',
+             '# name (`stable`). Written by `tools/psp-link.py --pins ELF` from a\n',
+             '# `frame_timer` build; rewrite after a new link-order.txt.\n',
+             '@end %x\n' % (tail - text), '@archive %x\n' % (archive - text)]
+    for name, (addr, size) in sorted(funcs.items(), key=lambda kv: kv[1]):
+        if addr < tail and size:
+            lines.append('%x %x %s\n' % (addr - text, size, stable(name)))
+    return ''.join(lines)
+
+
+def pinned_layout(names, funcs, pins):
+    """Where each of `names` (the object's functions this link keeps, in
+    link order) goes: entries `(name, offset)` for a function on its pin,
+    `(name, -1 - set)` for one that moves past the pinned code to an
+    address on cache set `set` (its pinned one), `(name, None)` for one
+    without a pin. A function keeps its pin if it fits before the next pin
+    kept (later pins first); a pin no function matches is a hole."""
+    pin_list = pins['pins']
+    by_stable = {}
+    for n in names:
+        by_stable.setdefault(stable(n), n)
+    match, used = {}, set()
+    for i, (_, _, sid) in enumerate(pin_list):
+        n = by_stable.get(sid)
+        if n is not None and n not in used:
+            match[i] = n
+            used.add(n)
+    # A name that changed only in an impl disambiguator or an LLVM suffix
+    # matches when its looser name is unique on both sides.
+    loose_pins, loose_names = {}, {}
+    for i, p in enumerate(pin_list):
+        if i not in match:
+            loose_pins.setdefault(pin_key(p[2]), []).append(i)
+    for n in names:
+        if n not in used:
+            loose_names.setdefault(pin_key(stable(n)), []).append(n)
+    for k, idx in loose_pins.items():
+        if len(idx) == 1 and len(loose_names.get(k, [])) == 1:
+            match[idx[0]] = loose_names[k][0]
+            used.add(loose_names[k][0])
+    kept, nxt = {}, pins['end']
+    for i in reversed(range(len(pin_list))):
+        off = pin_list[i][0]
+        n = match.get(i)
+        if n is not None and funcs[n][1] <= nxt - off:
+            kept[i] = n
+            nxt = off
+    plan = [(kept[i], pin_list[i][0]) for i in sorted(kept)]
+    plan += [(n, None) for n in names if n not in used]
+    moved = sorted((pin_list[i][0] % ICACHE_WAY, n) for i, n in match.items() if i not in kept)
+    plan += [(n, -1 - s) for s, n in moved]
+    holes = [pin_list[i] for i in range(len(pin_list)) if i not in match]
+    return plan, holes
+
+
+def link_pinned(lld, out, order_path, order, pins, flags):
+    """Links again with gaps before the pinned functions, so each lands on
+    its pin (`pinned_layout`), and the tail pad after them puts the
+    archives' code on the cache sets it has in the pinned build. Returns
+    the link command (with the gaps) and the plan; writes OUT.pinned, the
+    functions that are not on their pins."""
+    funcs = elf_functions(out)
+    text = section_addr(out, '.text')
+    names = [n for n in order if n in funcs]
+    plan, holes = pinned_layout(names, funcs, pins)
+    gaps = {}  # plan index -> gap bytes before that function
+    cur = 0
+    for k, (name, at) in enumerate(plan):
+        if at is not None and at >= 0:
+            gap = at - cur
+        elif at is not None:
+            gap = (-1 - at - cur) % ICACHE_WAY
+        else:
+            gap = 0
+        if gap < 0:
+            sys.exit('psp-link: pins overlap at %s' % name)
+        if gap:
+            gaps[k] = gap
+        cur += gap + funcs[name][1]
+    gap_path = out + '.gaps.o'
+    count = len(plan)
+    symbols = [GAP_SYMBOL % k for k in range(count)]
+    lld = lld[:lld.index('-o')] + [gap_path, '--undefined=' + TAIL_PAD_SYMBOL] + ['--undefined=' + s for s in symbols] + lld[lld.index('-o'):]
+    tail = 0
+    for attempt in range(8):
+        seq = []
+        for k, (name, _) in enumerate(plan):
+            seq += [symbols[k], name]
+        seq.append(TAIL_PAD_SYMBOL)
+        with open(order_path, 'w') as f:
+            f.write(''.join(n + '\n' for n in seq))
+        write_pads(gap_path, flags, [(symbols[k], gaps.get(k, 0)) for k in range(count)] + [(TAIL_PAD_SYMBOL, tail)])
+        run(lld)
+        addr = symbol_addrs(out, set(n for n, _ in plan) | {TAIL_PAD_SYMBOL})
+        wrong = None
+        for k, (name, at) in enumerate(plan):
+            got = addr[name] - text
+            if at is not None and at >= 0 and got != at:
+                wrong = (k, at - got)
+            elif at is not None and at < 0 and (got - (-1 - at)) % ICACHE_WAY:
+                wrong = (k, (-1 - at - got) % ICACHE_WAY)
+            if wrong:
+                break
+        if wrong:
+            gaps[wrong[0]] = gaps.get(wrong[0], 0) + wrong[1]
+            if gaps[wrong[0]] < 0:
+                sys.exit('psp-link: %s cannot reach its pin' % plan[wrong[0]][0])
+            continue
+        want = (pins['archive'] - (addr[TAIL_PAD_SYMBOL] - text)) % ICACHE_WAY
+        if want == tail:
+            break
+        tail = want
+    else:
+        sys.exit('psp-link: the pinned layout does not converge')
+    with open(out + '.pinned', 'w') as f:
+        for name, at in plan:
+            if at is None:
+                f.write('new %x %s\n' % (funcs[name][1], stable(name)))
+            elif at < 0:
+                f.write('moved %x %s\n' % (funcs[name][1], stable(name)))
+        for off, size, sid in holes:
+            f.write('hole %x %x %s\n' % (off, size, sid))
+        f.write('gaps %x tail %x\n' % (sum(gaps.values()), tail))
+    return lld, (plan, text)
+
+
+def check_plan(out, plan):
+    """The pinned functions not at their pins in the linked `out`."""
+    plan, text = plan
+    addr = symbol_addrs(out, set(n for n, at in plan if at is not None and at >= 0))
+    return [n for n, at in plan if at is not None and at >= 0 and addr[n] - text != at]
+
+
+def elf_symbols(path):
+    """`(name, address, size, st_info)` of the named symbols of a linked ELF."""
+    with open(path, 'rb') as f:
+        data = f.read()
+    sections = elf_sections(data)
+    symtab, strtab = sections['.symtab'], sections['.strtab']
+    found = []
+    for off in range(symtab[4], symtab[4] + symtab[5], 16):
+        st_name, st_value, st_size, st_info = struct.unpack_from('<IIIB', data, off)
+        if st_name:
+            start = strtab[4] + st_name
+            found.append((data[start:data.index(b'\0', start)].decode(errors='replace'), st_value, st_size, st_info))
+    return found
+
+
+def elf_functions(path):
+    """`{name: (address, size)}` of the function symbols of a linked ELF."""
+    return {name: (a, size) for name, a, size, info in elf_symbols(path) if info & 0xF == 2}
+
+
+def write_pads(path, flags, pads):
+    """A relocatable MIPS object holding, for each `(symbol, size)` of
+    `pads`, `size` zero bytes of code in `.text.<symbol>`, defined by
+    `symbol` of that size."""
+    shstr = bytearray(b'\0.symtab\0.strtab\0.shstrtab\0')
+    strtab = bytearray(b'\0')
+    symtab = bytearray(16)
+    body = bytearray()
+    sh = [(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)]
+    for symbol, size in pads:
+        name = len(shstr)
+        shstr += b'.text.' + symbol.encode() + b'\0'
+        sh.append((name, 1, 6, 0, 0x34 + len(body), size, 0, 0, 4, 0))
+        symtab += struct.pack('<IIIBBH', len(strtab), 0, size, 0x10, 0, len(sh) - 1)
+        strtab += symbol.encode() + b'\0'
+        body += bytes(size)
+    sym_off = 0x34 + len(body)
+    str_off = sym_off + len(symtab)
+    shs_off = str_off + len(strtab)
+    shoff = (shs_off + len(shstr) + 3) & ~3
+    count = len(sh)
+    sh += [
+        (1, 2, 0, 0, sym_off, len(symtab), count + 1, 1, 4, 16),  # SHT_SYMTAB
+        (9, 3, 0, 0, str_off, len(strtab), 0, 0, 1, 0),
+        (17, 3, 0, 0, shs_off, len(shstr), 0, 0, 1, 0),
+    ]
+    header = b'\x7fELF\x01\x01\x01' + bytes(9) + struct.pack(
+        '<HHIIIIIHHHHHH', 1, 8, 1, 0, 0, shoff, flags, 0x34, 0, 0, 40, len(sh), count + 2)
+    blob = header + body + symtab + strtab + shstr
+    with open(path, 'wb') as f:
+        f.write(blob + bytes(shoff - len(blob)))
+        for s in sh:
+            f.write(struct.pack('<IIIIIIIIII', *s))
 
 
 def run(cmd):
@@ -497,11 +752,11 @@ def elf_flags(path):
 
 def write_pad_object(path, size, flags, symbol=PAD_SYMBOL, section=None):
     """A relocatable MIPS object holding `size` zero bytes of code in
-    `section` (`.text.<symbol>` by default), defined by `symbol` (kept
-    through `--gc-sections` by `--undefined`)."""
+    `section` (`.text.<symbol>` by default), defined by `symbol` of that
+    size (kept through `--gc-sections` by `--undefined`)."""
     shstr = b'\0' + (section or '.text.' + symbol).encode() + b'\0.symtab\0.strtab\0.shstrtab\0'
     strtab = b'\0' + symbol.encode() + b'\0'
-    symtab = bytes(16) + struct.pack('<IIIBBH', 1, 0, 0, 0x10, 0, 1)  # STB_GLOBAL, STT_NOTYPE
+    symtab = bytes(16) + struct.pack('<IIIBBH', 1, 0, size, 0x10, 0, 1)  # STB_GLOBAL, STT_NOTYPE
     body = bytes(size) + symtab + strtab + shstr
     text_off = 0x34
     sym_off = text_off + size
