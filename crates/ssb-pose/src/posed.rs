@@ -381,7 +381,7 @@ impl PosedFighter {
     /// [`Self::tick_physics_with`] for a host that adds nothing.
     pub fn tick_physics<I, F>(&mut self, pack: &Pack<'_>, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: ssb_game::map::SurfaceSet<I>,
         I: IntoIterator<Item = MapSurface>,
     {
         self.tick_physics_with(pack, surfaces, &mut ());
@@ -391,7 +391,7 @@ impl PosedFighter {
     /// the joint samples gameplay reads.
     pub fn tick_physics_with<I, F, H>(&mut self, pack: &Pack<'_>, surfaces: &F, hooks: &mut H)
     where
-        F: Fn() -> I,
+        F: ssb_game::map::SurfaceSet<I>,
         I: IntoIterator<Item = MapSurface>,
         H: PhysicsHooks,
     {
@@ -701,7 +701,7 @@ impl PosedFighter {
         kept: &mut Option<ssb_rom::skeleton::CollisionLocals>,
     ) -> bool
     where
-        F: Fn() -> I,
+        F: ssb_game::map::SurfaceSet<I>,
         I: IntoIterator<Item = MapSurface>,
     {
         if pending && !self.fighter.slope_pending {

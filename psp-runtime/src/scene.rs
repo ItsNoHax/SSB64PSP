@@ -1463,11 +1463,15 @@ impl FighterScene {
         // SAFETY: the loop wrote `table[..count]`.
         let surfaces: &[MapSurface] =
             unsafe { core::slice::from_raw_parts(table.as_ptr().cast::<MapSurface>(), count) };
-        let segments = || surfaces.iter().copied();
+        // Each kind's surfaces indexed once: a query visits the surfaces
+        // of its kind only, in map order, with their map indices.
+        let Some(table) = ssb_game::map::SurfaceTable::new(surfaces) else {
+            return self.tick_fighter_physics(pack, stage, groups);
+        };
         let mut hooks = SceneHooks {
             airborne_ticks: &mut self.airborne_ticks,
         };
-        self.pose.tick_physics_with(pack, &segments, &mut hooks);
+        self.pose.tick_physics_with(pack, &table, &mut hooks);
     }
 
     /// What the battle camera reads of this fighter besides the fighter.

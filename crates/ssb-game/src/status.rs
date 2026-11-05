@@ -4557,7 +4557,7 @@ fn ottotto_interrupt(f: &mut Fighter) {
 /// carried more than 60 units from the end it faces stands again.
 pub(crate) fn ottotto_proc_map<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = crate::weapon::MapSurface>,
 {
     if !is_ottotto(f.status.status) {

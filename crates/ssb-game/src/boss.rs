@@ -397,7 +397,7 @@ fn invert_lr(f: &mut Fighter) {
 /// `ftBossCommonCheckEdgeInvertLR`.
 fn check_edge_invert_lr<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let Some(line) = f.boss.current_line else {
@@ -513,7 +513,7 @@ fn pos_add_vel_auto(f: &Fighter, vel_x: f32, vel_y: f32) -> Vec3 {
 /// `ftBossCommonGetPositionCenter`: the middle of a floor line, on it.
 fn position_center<I, F>(surfaces: &F, line: Option<u16>) -> Vec3
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let Some(line) = line else {
@@ -522,7 +522,7 @@ where
     let l = crate::map::floor_edge(surfaces, line, false).unwrap_or(Vec2::ZERO);
     let r = crate::map::floor_edge(surfaces, line, true).unwrap_or(Vec2::ZERO);
     let x = (l.x + r.x) * 0.5;
-    let y = crate::map::floor_point(surfaces, line, x).map_or(0.0, |(y, _)| y);
+    let y = crate::map::floor_point(surfaces.borrowed(), line, x).map_or(0.0, |(y, _)| y);
     Vec3::new(x, y, 0.0)
 }
 
@@ -668,7 +668,7 @@ fn set_move(f: &mut Fighter, next: Next, dest: Vec3) {
 
 fn set_next<I, F>(f: &mut Fighter, next: Next, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     match next {
@@ -695,7 +695,7 @@ where
 /// `ftBossHippatakuSetStatus`.
 fn set_hippataku<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::Hippataku);
@@ -705,7 +705,7 @@ where
 /// `ftBossHarauSetStatus`.
 fn set_harau<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::Harau);
@@ -747,7 +747,7 @@ fn set_okuhikouki3(f: &mut Fighter) {
 /// `ftBossWalkSetStatus`.
 fn set_walk<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::Walk);
@@ -772,7 +772,7 @@ fn set_walk_wait(f: &mut Fighter) {
 /// `ftBossGootsubusuWaitSetStatus`.
 fn set_gootsubusu_wait<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::GootsubusuWait);
@@ -784,7 +784,7 @@ where
 /// `edgeleft_pos_x`/`edgeright_pos_x`.
 fn store_floor_edges<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let line = f.boss.floor_line;
@@ -818,7 +818,7 @@ fn set_tsutsuku2(f: &mut Fighter) {
 /// `ftBossDrillSetStatus`.
 fn set_drill<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::Drill);
@@ -894,7 +894,7 @@ fn make_bullet(f: &mut Fighter, pos: Vec3, pose: Option<SpawnPose>) {
 /// `ftBossOkupunch1SetStatus`.
 fn set_okupunch1<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::Okupunch1);
@@ -926,7 +926,7 @@ fn set_okupunch3(f: &mut Fighter) {
 /// `ftBossOkutsubushiStartSetStatus`.
 fn set_okutsubushi_start<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     set(f, B::OkutsubushiStart);
@@ -1528,7 +1528,7 @@ fn yubideppou2_update_position(f: &mut Fighter) {
 /// the floor under the body's bottom, if any.
 fn project_floor<I, F>(f: &mut Fighter, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let probe = Vec3::new(f.pos.x, f.pos.y + f.coll.bottom, f.pos.z);
@@ -1547,14 +1547,14 @@ where
 /// end's height and the test fails.
 fn on_floor<I, F>(f: &mut Fighter, surfaces: &F) -> bool
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let Some(line) = f.boss.floor_line else {
         project_floor(f, surfaces);
         return false;
     };
-    if let Some((y, _)) = crate::map::floor_point(surfaces, line, f.pos.x) {
+    if let Some((y, _)) = crate::map::floor_point(surfaces.borrowed(), line, f.pos.x) {
         f.pos.y = y - f.coll.bottom;
         f.boss.floor_dist = 0.0;
         return true;
@@ -1575,12 +1575,12 @@ where
 /// test from last tick's position.
 fn landing<I, F>(f: &mut Fighter, from: Vec3, surfaces: &F) -> bool
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let b = f.coll.bottom;
     let hit = crate::collision::check_floor(
-        crate::map::floors(surfaces()),
+        crate::map::floors(surfaces.all()),
         Vec2::new(from.x, from.y + b),
         Vec2::new(f.pos.x, f.pos.y + b),
     );
@@ -1598,7 +1598,7 @@ where
 
 fn map<I, F>(f: &mut Fighter, from: Vec3, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let AnyStatus::Boss(s) = f.status.status else {
@@ -1682,7 +1682,7 @@ pub fn has_proc_map(f: &Fighter) -> bool {
 /// Master Hand's `proc_map`, from `pos_prev` (`from`) to TopN.
 pub fn proc_map<I, F>(f: &mut Fighter, from: Vec3, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     map(f, from, surfaces);

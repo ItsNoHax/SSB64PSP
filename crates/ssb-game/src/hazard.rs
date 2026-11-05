@@ -575,7 +575,7 @@ pub fn physics(f: &mut Fighter) -> Option<Vec3> {
 /// the [`physics`] target.
 pub fn project_map<I, F>(f: &mut Fighter, target: Vec3, surfaces: &F)
 where
-    F: Fn() -> I,
+    F: crate::map::SurfaceSet<I>,
     I: IntoIterator<Item = crate::weapon::MapSurface>,
 {
     // `MAP_PROC_TYPE_PROJECT`: floors stop the body but it stays airborne.
@@ -587,7 +587,7 @@ where
         target,
         push,
         crate::map::AirOptions::default(),
-        surfaces,
+        surfaces.borrowed(),
     );
     f.pos = moved.moved.pos;
     f.floor = None;

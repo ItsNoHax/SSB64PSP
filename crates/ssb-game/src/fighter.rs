@@ -1548,7 +1548,7 @@ impl Fighter {
     /// collision and the status it may set.
     pub fn tick_physics_map_before_slope<I, F>(&mut self, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.tick_physics_map_procs(surfaces);
@@ -1571,7 +1571,7 @@ impl Fighter {
         parts: Option<&crate::slope_contour::PartLocals>,
     ) -> [Option<crate::slope_contour::LegFit>; 2]
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         if core::mem::take(&mut self.slope_pending) {
@@ -1616,7 +1616,7 @@ impl Fighter {
         parts: Option<&crate::slope_contour::PartLocals>,
     ) -> [Option<crate::slope_contour::LegFit>; 2]
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         use crate::slope_contour::{self as sc, LegFit, PartWalk};
@@ -1718,7 +1718,7 @@ impl Fighter {
     /// line's nearer end past it) less TopN's height, `None` within 0.0001.
     fn slope_floor_offset<I, F>(&self, surfaces: &F, line: u16, at: Vec3) -> Option<f32>
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         let dy = match crate::map::floor_distance(surfaces, line, at.x, at.y) {
@@ -1743,7 +1743,7 @@ impl Fighter {
 
     fn tick_physics_map_procs<I, F>(&mut self, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.physics_pass = true;
@@ -1755,7 +1755,7 @@ impl Fighter {
         if let Some((from, previous)) = self.grab.release_sweep.take() {
             self.pos =
                 crate::map::run_default_collision(&self.coll, &previous, from, self.pos, || {
-                    surfaces()
+                    surfaces.all()
                 });
         }
         let in_hitlag = self.is_in_hitlag();
@@ -1869,7 +1869,7 @@ impl Fighter {
     /// `proc_physics` moves `pos_prev` (the Yoshi egg's lay).
     fn physics_step<I, F>(&mut self, surfaces: &F, pos_prev: &mut Vec3) -> (MapStep, Vec3)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         // `ftCommonYoshiEggProcPhysics`'s own half, ahead of the common
@@ -1893,7 +1893,11 @@ impl Fighter {
                 // `proc_map` (airborne: `mpCommonCheckFighterLanding`)
                 // tests from Yoshi to there.
                 self.pos = crate::map::run_default_collision(
-                    &self.coll, &previous, from, self.pos, surfaces,
+                    &self.coll,
+                    &previous,
+                    from,
+                    self.pos,
+                    surfaces.borrowed(),
                 );
                 *pos_prev = from;
                 let want = crate::physics::integrated_position(self.pos, &self.physics, false);
@@ -1928,7 +1932,7 @@ impl Fighter {
     /// the collision masks' roll, `proc_map` and Kirby's map stars.
     fn map_window<I, F>(&mut self, step: MapStep, want: Vec3, pos_prev: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         // `ftmain.c:1806-1812`: a grounded fighter rides its line's
@@ -1937,11 +1941,11 @@ impl Fighter {
         // fighter is grounded on its catcher's line once
         // `ftCommonCapturePulledProcMap` has put it there.
         let speed = match step {
-            MapStep::Ground(standing) => crate::map::line_speed(surfaces, standing.line),
-            MapStep::CliffGround { line, .. } => crate::map::line_speed(surfaces, line),
+            MapStep::Ground(standing) => crate::map::line_speed(surfaces.borrowed(), standing.line),
+            MapStep::CliffGround { line, .. } => crate::map::line_speed(surfaces.borrowed(), line),
             MapStep::Held(_) => match (self.situation, self.floor) {
                 (Situation::Ground, Some(standing)) => {
-                    crate::map::line_speed(surfaces, standing.line)
+                    crate::map::line_speed(surfaces.borrowed(), standing.line)
                 }
                 _ => Vec3::ZERO,
             },
@@ -1995,7 +1999,7 @@ impl Fighter {
             match step {
                 MapStep::None | MapStep::ProjectFloor => {}
                 MapStep::Held(held) => {
-                    crate::grab::held_map(self, held, || crate::map::floors(surfaces()));
+                    crate::grab::held_map(self, held, || crate::map::floors(surfaces.all()));
                 }
                 MapStep::Dokan => {
                     crate::dokan::tick_status(self);
@@ -2050,19 +2054,22 @@ impl Fighter {
     /// on the floor 5 units in from the corner.
     fn place_cliff_phase2<I, F>(&mut self, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         use crate::map;
         if !self.cliff.place_phase2 || !map::is_cliff_phase2(self.status.status) {
             return;
         }
-        let Some(corner) = map::cliff_corner(surfaces, self.cliff.line, self.facing.sign()) else {
+        let Some(corner) =
+            map::cliff_corner(surfaces.borrowed(), self.cliff.line, self.facing.sign())
+        else {
             return;
         };
         self.cliff.corner = corner;
         self.pos.x = corner.x + 5.0 * self.facing.sign();
-        if let Some((y, floor)) = map::floor_point(surfaces, self.cliff.line, self.pos.x) {
+        if let Some((y, floor)) = map::floor_point(surfaces.borrowed(), self.cliff.line, self.pos.x)
+        {
             self.pos.y = y;
             self.floor = Some(floor);
         }
@@ -2075,14 +2082,16 @@ impl Fighter {
     /// them, or when the cliff's line is gone (the fighter falls).
     fn cliff_physics<I, F>(&mut self, surfaces: &F) -> Option<(MapStep, Vec3)>
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         use crate::map;
         if !map::is_cliff_hold(self.status.status) && !map::is_cliff_phase2(self.status.status) {
             return None;
         }
-        let Some(corner) = map::cliff_corner(surfaces, self.cliff.line, self.facing.sign()) else {
+        let Some(corner) =
+            map::cliff_corner(surfaces.borrowed(), self.cliff.line, self.facing.sign())
+        else {
             self.floor = None;
             self.cliffcatch_wait = crate::status::CLIFF_CATCH_WAIT;
             crate::status::set_fall(self);
@@ -2126,8 +2135,10 @@ impl Fighter {
                 1.0,
             );
             let mut want = self.pos + self.physics.vel_air;
-            let speed = map::line_speed(surfaces, self.cliff.line);
-            if let Some((y, _)) = map::floor_point(surfaces, self.cliff.line, want.x + speed.x) {
+            let speed = map::line_speed(surfaces.borrowed(), self.cliff.line);
+            if let Some((y, _)) =
+                map::floor_point(surfaces.borrowed(), self.cliff.line, want.x + speed.x)
+            {
                 want.x += speed.x;
                 want.y = y + self.transn.y;
                 self.physics.vel_air = want - self.pos;
@@ -2140,11 +2151,11 @@ impl Fighter {
     /// (`mpCommonSetFighterFallOnGroundBreak` / `...OnEdgeBreak`).
     fn cliff_ground_map<I, F>(&mut self, line: u16, stop: bool, want: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         let (moved, contacts) =
-            crate::map::move_ground(&self.coll, self.pos, want, line, stop, surfaces);
+            crate::map::move_ground(&self.coll, self.pos, want, line, stop, surfaces.borrowed());
         self.pos = moved.pos;
         self.floor = moved.floor;
         self.map_contacts = contacts;
@@ -2157,7 +2168,7 @@ impl Fighter {
     /// (`mpCommonCheckFighterLanding`).
     fn cliff_air_map<I, F>(&mut self, want: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         let result = crate::map::move_air(
@@ -2165,7 +2176,7 @@ impl Fighter {
             self.pos,
             want,
             crate::map::AirOptions::default(),
-            surfaces,
+            surfaces.borrowed(),
         );
         self.pos = result.moved.pos;
         self.map_contacts = result.contacts;
@@ -2239,7 +2250,7 @@ impl Fighter {
     /// ([`crate::map::move_damage`]), then the surface reaction.
     fn tick_damage_map<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         // `mpCommonCheckFighterDamageCollision` rolls the masks first.
@@ -2252,7 +2263,7 @@ impl Fighter {
             self.reaction.coll_mask_prev,
             self.hitlag > 0,
             self.ignore_line,
-            surfaces,
+            surfaces.borrowed(),
         );
         self.reaction.coll_mask_curr = result.mask_curr;
         self.map_contacts = result.contacts;
@@ -2555,7 +2566,7 @@ impl Fighter {
     /// (`mpCommonProcFighterOnFloor` and the statuses' own).
     fn ground_map<I, F>(&mut self, standing: crate::ground::Standing, want: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         let stop_edge = crate::map::stops_at_edge(self.status.status)
@@ -2576,7 +2587,7 @@ impl Fighter {
             standing.line,
             stop_edge,
             cliff_edge,
-            surfaces,
+            surfaces.borrowed(),
         );
         self.map_contacts = contacts;
         self.pos = moved.pos;
@@ -2814,7 +2825,7 @@ impl Fighter {
     /// `want`, TopN after the position step.
     fn air_map_step<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         // `ftCaptainSpecialHiProcMap` (`ftcaptainspecialhi.c:107-116`): a
@@ -2829,7 +2840,7 @@ impl Fighter {
 
     fn air_map_pass<I, F>(&mut self, from: Vec3, want: Vec3, surfaces: &F)
     where
-        F: Fn() -> I,
+        F: crate::map::SurfaceSet<I>,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         // `ftPikachuSpecialAirHiProcMap` (`ftpikachuspecialhi.c:216`).
@@ -2877,7 +2888,7 @@ impl Fighter {
                 ceil_heavy: crate::map::is_ceil_heavy_status(self.status.status)
                     && self.physics.vel_air.y >= crate::map::CEILHEAVY_VEL_Y_MIN,
             },
-            surfaces,
+            surfaces.borrowed(),
         );
         let moved = result.moved;
         self.map_contacts = result.contacts;

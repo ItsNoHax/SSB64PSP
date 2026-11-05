@@ -10,6 +10,7 @@ use crate::status::{
     self, AnyStatus, CaptainStatus, FoxStatus, KirbyStatus, NessStatus, PikachuStatus, PurinStatus,
     Status,
 };
+pub use crate::surface_set::{SurfaceSet, SurfaceTable};
 use crate::weapon::{MapSurface, MapSurfaceKind as Kind, SurfaceTopology};
 use ssb_engine::math::{div_nonzero, Vec2, Vec3};
 
@@ -20,6 +21,10 @@ mod tests;
 #[cfg(test)]
 #[path = "proc_map_tests.rs"]
 mod proc_map_tests;
+
+#[cfg(test)]
+#[path = "surface_set_tests.rs"]
+mod surface_set_tests;
 
 /// `MPYakumonoStatus`, independent of render-node visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -227,7 +232,7 @@ fn transformed(kind: Kind, s: MapSurface) -> [f32; 4] {
 /// its own motion), and where. Nothing moves.
 pub fn floor_crossing<I, F>(surfaces: &F, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     sweep(surfaces, Kind::Floor, from, to)
@@ -238,7 +243,7 @@ where
 /// of that side crosses the segment `from` to `to`, groups where they are now.
 pub fn wall_crossing<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<Vec2>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     debug_assert!(matches!(kind, Kind::LeftWall | Kind::RightWall));
@@ -255,7 +260,7 @@ pub fn line_crossing_same<I, F>(
     to: Vec2,
 ) -> Option<(Contact, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     query(surfaces, kind, from, to)
@@ -263,7 +268,7 @@ where
 
 fn query<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     query_at(surfaces, kind, from, to, false)
@@ -271,7 +276,7 @@ where
 
 fn sweep<I, F>(surfaces: &F, kind: Kind, from: Vec2, to: Vec2) -> Option<(Contact, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     query_at(surfaces, kind, from, to, true)
@@ -285,13 +290,13 @@ fn query_at<I, F>(
     moving: bool,
 ) -> Option<(Contact, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let b = transform(kind, to);
     let mut best = None;
     let mut distance = f32::MAX;
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.of_kind(kind) {
         if s.kind != kind {
             continue;
         }
@@ -322,18 +327,17 @@ where
 
 fn height<I, F>(surfaces: &F, kind: Kind, line: u16, x: f32) -> Option<(f32, Contact)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
-    let offset = surfaces()
-        .into_iter()
-        .enumerate()
+    let offset = surfaces
+        .of_kind(kind)
         .find(|(i, s)| s.kind == kind && line_id(*i, *s) == line)?
         .1
         .motion
         .map_or(Vec2::ZERO, |m| m.offset);
     let f = collision::floor_height(
-        surfaces().into_iter().enumerate().filter_map(|(i, s)| {
+        surfaces.of_kind(kind).filter_map(|(i, s)| {
             (s.kind == kind && line_id(i, s) == line).then_some((line, s.segment))
         }),
         x - offset.x,
@@ -356,7 +360,7 @@ where
 /// Endpoint selection is over the entire polyline, never its first segment.
 fn edge<I, F>(surfaces: &F, kind: Kind, line: u16, high: bool) -> Option<(Vec2, u16)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     // A flag beside written values, not an `Option<(Vec2, u16)>`: LLVM
@@ -364,7 +368,7 @@ where
     // NaN in an unwritten payload traps a PSP (D-050).
     let mut found = false;
     let mut best = (Vec2::ZERO, u16::MAX);
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.of_kind(kind) {
         if s.kind != kind || line_id(i, s) != line {
             continue;
         }
@@ -396,7 +400,7 @@ where
 /// Original neighbor builder: shared vertex IDs, last matching line wins.
 fn neighbor<I, F>(surfaces: &F, kind: Kind, line: u16, high: bool) -> Option<(Kind, u16)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let (_, vertex) = edge(surfaces, kind, line, high)?;
@@ -404,7 +408,7 @@ where
         return None;
     }
     let mut result = None;
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.all().into_iter().enumerate() {
         let Some(t) = s.topology else { continue };
         if t.line != line
             && (t.vertex1 == vertex || t.vertex2 == vertex)
@@ -427,7 +431,7 @@ fn walls<I, F>(
     ground_line: Option<u16>,
 ) -> [Option<u16>; 5]
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let side = if kind == Kind::LeftWall { 1.0 } else { -1.0 };
@@ -501,7 +505,7 @@ fn correct_wall<I, F>(
     lines: [Option<u16>; 5],
 ) -> Option<Contact>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let side = if kind == Kind::LeftWall { 1.0 } else { -1.0 };
@@ -555,7 +559,7 @@ where
             }
         };
         let mut first = true;
-        for (i, s) in surfaces().into_iter().enumerate() {
+        for (i, s) in surfaces.of_kind(kind) {
             if s.kind != kind || line_id(i, s) != line {
                 continue;
             }
@@ -601,7 +605,7 @@ fn ceiling_step<I, F>(
     current: &Contacts,
 ) -> CeilStep
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let mut out = CeilStep {
@@ -658,7 +662,7 @@ pub fn move_air<I, F>(
     surfaces: F,
 ) -> AirMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     move_air_from_shape(coll, coll, from, to, options, surfaces)
@@ -676,7 +680,7 @@ pub fn move_air_pushed<I, F>(
     surfaces: F,
 ) -> AirMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     move_air_inner(coll, coll, from, to, push, options, surfaces)
@@ -693,7 +697,7 @@ pub fn move_air_from_shape<I, F>(
     surfaces: F,
 ) -> AirMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     move_air_inner(coll, previous, from, to, Vec3::ZERO, options, surfaces)
@@ -711,7 +715,7 @@ pub fn run_default_collision<I, F>(
     surfaces: F,
 ) -> Vec3
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     move_air_steps(
@@ -756,7 +760,7 @@ pub fn run_default_collision_project<I, F>(
     surfaces: F,
 ) -> DefaultColl
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let prev = from;
@@ -814,7 +818,7 @@ fn move_air_inner<I, F>(
     surfaces: F,
 ) -> AirMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let steps = ground::substep_count(from, to);
@@ -833,7 +837,7 @@ fn move_air_steps<I, F>(
     steps: u32,
 ) -> AirMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let step = Vec3::new(
@@ -916,7 +920,7 @@ where
         let check = options.cliff;
         if check.enabled {
             if let Some((line, corner)) = cliff(
-                &surfaces,
+                surfaces.borrowed(),
                 check.facing.sign(),
                 check.wait,
                 check.reach,
@@ -957,7 +961,7 @@ pub fn move_air_collide_floor<I, F>(
     surfaces: F,
 ) -> (Vec3, Contacts, Option<Contact>)
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let steps = ground::substep_count(from, to);
@@ -1031,7 +1035,7 @@ pub struct CollEnd {
 /// never apply; `ignore_line_id` is -1, so a pass-through floor counts.
 pub fn move_air_check_coll_end<I, F>(coll: &BodyColl, from: Vec3, to: Vec3, surfaces: F) -> CollEnd
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let steps = ground::substep_count(from, to);
@@ -1147,7 +1151,7 @@ where
 /// or `None` when `pos` lies past the line's ends (±0.001).
 pub fn line_common<I, F>(surfaces: &F, kind: Kind, line: u16, pos: Vec3) -> Option<(f32, Contact)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     if matches!(kind, Kind::Floor | Kind::Ceiling) {
@@ -1155,9 +1159,8 @@ where
     }
     // The original works in the line's yakumono frame (a static line's
     // offset is zero, and `x - 0.0` is exact) on the integer vertices.
-    let o = surfaces()
-        .into_iter()
-        .enumerate()
+    let o = surfaces
+        .of_kind(kind)
         .find(|&(i, s)| s.kind == kind && line_id(i, s) == line)?
         .1
         .motion
@@ -1177,7 +1180,7 @@ where
         local.y
     };
     // The first segment spanning `y`, as the original's `break` picks.
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.of_kind(kind) {
         if s.kind != kind || line_id(i, s) != line {
             continue;
         }
@@ -1193,12 +1196,11 @@ where
 /// own frame.
 fn line_ends_y<I, F>(surfaces: &F, kind: Kind, line: u16) -> Option<(f32, f32)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
-    let mut segments = surfaces()
-        .into_iter()
-        .enumerate()
+    let mut segments = surfaces
+        .of_kind(kind)
         .filter(|&(i, s)| s.kind == kind && line_id(i, s) == line);
     let (_, first) = segments.next()?;
     let last = segments.last().map_or(first, |(_, s)| s);
@@ -1225,7 +1227,7 @@ fn line_distance_lr(s: &Segment, y: f32) -> f32 {
 /// end), then `mpCollisionGetLineTypeID`: the line joined at that end.
 pub fn line_neighbor<I, F>(surfaces: &F, kind: Kind, line: u16, high: bool) -> Option<(Kind, u16)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     neighbor(surfaces, kind, line, high)
@@ -1241,7 +1243,7 @@ pub fn line_crossing<I, F>(
     to: Vec2,
 ) -> Option<(Contact, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     sweep(surfaces, kind, from, to)
@@ -1255,7 +1257,7 @@ fn adjacent_horizontal<I, F>(
     offset: f32,
 ) -> Option<Contact>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let (wall_kind, wall) = if let Some(wall) = contacts.left_wall {
@@ -1275,7 +1277,7 @@ where
 /// Source floor/ceiling contour adjustment after placing the vertical tip.
 fn adjust_edges<I, F>(surfaces: &F, coll: BodyColl, pos: &mut Vec3, kind: Kind, hit: Contact)
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     for wall_kind in [Kind::LeftWall, Kind::RightWall] {
@@ -1363,10 +1365,11 @@ where
 
 pub fn line_speed<I, F>(surfaces: F, line: u16) -> Vec3
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
-    surfaces()
+    surfaces
+        .all()
         .into_iter()
         .enumerate()
         .find(|(i, s)| line_id(*i, *s) == line)
@@ -1376,7 +1379,7 @@ where
 
 fn follow_floor<I, F>(surfaces: &F, coll: &BodyColl, pos: Vec3, line: u16) -> Moved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     match height(surfaces, Kind::Floor, line, pos.x) {
@@ -1394,7 +1397,7 @@ where
 
 fn land<I, F>(surfaces: &F, coll: &BodyColl, pos: Vec3, hit: Contact) -> Moved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let moved = follow_floor(surfaces, coll, pos, hit.line);
@@ -1416,7 +1419,7 @@ where
 
 pub fn cliff_corner<I, F>(surfaces: F, line: u16, facing: f32) -> Option<Vec2>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     edge(&surfaces, Kind::Floor, line, facing < 0.0).map(|e| e.0)
@@ -1431,7 +1434,7 @@ pub fn move_ground<I, F>(
     surfaces: F,
 ) -> (Moved, Contacts)
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     move_ground_pushed(coll, from, to, Vec3::ZERO, line, stop_edge, None, surfaces)
@@ -1449,7 +1452,7 @@ fn cliff_edge<I, F>(
     c: CliffEdge,
 ) -> Option<Moved>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let (left, _) = edge(surfaces, Kind::Floor, line, false)?;
@@ -1494,10 +1497,10 @@ pub fn move_ground_pushed<I, F>(
     surfaces: F,
 ) -> (Moved, Contacts)
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
-    let speed = line_speed(&surfaces, line) + push;
+    let speed = line_speed(surfaces.borrowed(), line) + push;
     let counted = speed - push;
     let steps = ground::substep_count(from, to + counted);
     let step = Vec3::new(
@@ -1642,7 +1645,7 @@ pub fn cliff<I, F>(
     to: Vec3,
 ) -> Option<(u16, Vec2)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     if wait != 0 {
@@ -1722,7 +1725,7 @@ pub(crate) fn faces(diff: Vec3, normal: Vec2) -> bool {
 /// it only where a wall hangs below that end.
 fn collide_floor<I, F>(surfaces: &F, coll: BodyColl, pos: &mut Vec3, hit: Contact) -> bool
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     if let Some((y, h)) = height(surfaces, Kind::Floor, hit.line, pos.x) {
@@ -1773,7 +1776,7 @@ pub fn move_damage<I, F>(
     surfaces: F,
 ) -> DamageMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     move_damage_pushed(
@@ -1802,7 +1805,7 @@ pub fn move_damage_pushed<I, F>(
     surfaces: F,
 ) -> DamageMoved
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     let diff = to - from;
@@ -2293,19 +2296,18 @@ pub fn is_cliff_phase2(s: AnyStatus) -> bool {
 /// line's offset as the original does (`object_pos - yakumono translate`).
 pub fn floor_distance<I, F>(surfaces: &F, line: u16, x: f32, y: f32) -> Option<f32>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
-    let offset = surfaces()
-        .into_iter()
-        .enumerate()
+    let offset = surfaces
+        .of_kind(Kind::Floor)
         .find(|(i, s)| s.kind == Kind::Floor && line_id(*i, *s) == line)?
         .1
         .motion
         .map(|m| m.offset);
     let (ox, oy) = offset.map_or((x, y), |o| (x - o.x, y - o.y));
     let f = collision::floor_height(
-        surfaces().into_iter().enumerate().filter_map(|(i, s)| {
+        surfaces.of_kind(Kind::Floor).filter_map(|(i, s)| {
             (s.kind == Kind::Floor && line_id(i, s) == line).then_some((line, s.segment))
         }),
         ox,
@@ -2315,7 +2317,7 @@ where
 
 pub fn floor_point<I, F>(surfaces: F, line: u16, x: f32) -> Option<(f32, Standing)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     height(&surfaces, Kind::Floor, line, x).map(|(y, h)| {
@@ -2442,7 +2444,7 @@ pub(crate) fn air_callback_at(f: &mut Fighter, translate: Vec3) {
 /// and the signed distance down to it.
 pub fn project_floor_line<I, F>(surfaces: &F, pos: Vec3) -> Option<(u16, f32)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     // Its own body, not [`project_floor_below`]'s: the PSP link order
@@ -2450,7 +2452,7 @@ where
     // A flag beside written values, as in [`edge`].
     let mut found = false;
     let mut best = (0u16, 0.0f32);
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.of_kind(Kind::Floor) {
         if s.kind != Kind::Floor {
             continue;
         }
@@ -2471,7 +2473,7 @@ where
 /// floor at or below `pos` (see [`project_floor_line`]).
 pub fn project_floor<I, F>(surfaces: &F, pos: Vec3) -> Option<Standing>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     project_floor_below(surfaces, pos).map(|(s, _)| s)
@@ -2482,13 +2484,13 @@ where
 /// down to it. A moving group's lines are tested in its own local frame.
 pub fn project_floor_below<I, F>(surfaces: &F, pos: Vec3) -> Option<(Standing, f32)>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     // A flag beside written values, as in [`edge`].
     let mut found = false;
     let mut best = (Standing::NONE, 0.0f32);
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.of_kind(Kind::Floor) {
         if s.kind != Kind::Floor {
             continue;
         }
@@ -2517,14 +2519,14 @@ where
 /// `pos.y` (a moving group's line where it stands now).
 pub fn project_rwall_dist<I, F>(surfaces: &F, pos: Vec3) -> Option<f32>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     // A flag beside a written value, as in [`edge`].
     let mut found = false;
     let mut best = 0.0f32;
     let mut done = None;
-    for (i, s) in surfaces().into_iter().enumerate() {
+    for (i, s) in surfaces.of_kind(Kind::RightWall) {
         let line = line_id(i, s);
         if s.kind != Kind::RightWall || done == Some(line) {
             continue;
@@ -2561,7 +2563,7 @@ where
 /// y for walls).
 pub fn line_edge<I, F>(surfaces: &F, kind: Kind, line: u16, high: bool) -> Option<Vec2>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     edge(surfaces, kind, line, high).map(|(p, _)| p)
@@ -2584,10 +2586,11 @@ where
 /// group that is off or hidden, so a line exists when a surface names it.
 pub fn line_exists<I, F>(surfaces: &F, line: u16) -> bool
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
-    surfaces()
+    surfaces
+        .all()
         .into_iter()
         .enumerate()
         .any(|(i, s)| line_id(i, s) == line)
@@ -2596,7 +2599,7 @@ where
 /// `mpCollisionGetFloorEdgeL` / `...R`.
 pub fn floor_edge<I, F>(surfaces: &F, line: u16, right: bool) -> Option<Vec2>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     edge(surfaces, Kind::Floor, line, right).map(|(p, _)| p)
@@ -2606,7 +2609,7 @@ where
 /// `mpCollisionGetLineTypeID`: the kind of line below a floor's end.
 pub fn floor_edge_under<I, F>(surfaces: &F, line: u16, right: bool) -> Option<Kind>
 where
-    F: Fn() -> I,
+    F: SurfaceSet<I>,
     I: IntoIterator<Item = MapSurface>,
 {
     neighbor(surfaces, Kind::Floor, line, right).map(|(k, _)| k)

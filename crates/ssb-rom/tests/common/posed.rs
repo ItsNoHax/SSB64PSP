@@ -695,11 +695,26 @@ pub struct HostSeat<'a, 'p> {
     pub cpu: Option<&'a mut HostCpu>,
 }
 
+/// What the seats' physics scan for the map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapScan {
+    /// The ground's surfaces, walked per query.
+    Walk,
+    /// A copy of the surfaces, walked per query.
+    Copied,
+    /// A [`ssb_game::map::SurfaceTable`] built once per call, as a
+    /// `psp-game` match's do (`FighterScene::tick_fighter_physics_table`).
+    Kinds,
+    /// Negative control: the table with its first floor entry pointing at a
+    /// surface of another kind, so the queries miss that floor.
+    KindsDropFloor,
+    /// Negative control: the table with each kind's entries reversed.
+    KindsReversed,
+}
+
 thread_local! {
-    /// The seats' physics read a table of the surfaces, walked once per
-    /// call, as a `psp-game` match's do
-    /// (`FighterScene::tick_fighter_physics_table`).
-    pub static TABLE_PHYSICS: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    /// The seats' physics' [`MapScan`].
+    pub static TABLE_PHYSICS: core::cell::Cell<MapScan> = const { core::cell::Cell::new(MapScan::Walk) };
 }
 
 impl ssb_game::matchtick::HasFighter for HostSeat<'_, '_> {
@@ -746,14 +761,36 @@ impl ssb_game::matchtick::Seat<HostGround<'_, '_>> for HostSeat<'_, '_> {
         );
     }
     fn physics(&mut self, ground: &HostGround<'_, '_>) {
+        use ssb_game::map::SurfaceTable;
         use ssb_game::matchtick::Ground;
-        if TABLE_PHYSICS.get() {
-            let table: Vec<_> = ground.surfaces().collect();
-            self.posed
-                .tick_physics(self.pack, &|| table.iter().copied());
-        } else {
+        use ssb_game::weapon::MapSurfaceKind as Kind;
+        let scan = TABLE_PHYSICS.get();
+        if scan == MapScan::Walk {
             self.posed.tick_physics(self.pack, &|| ground.surfaces());
+            return;
         }
+        let copy: Vec<_> = ground.surfaces().collect();
+        if scan == MapScan::Copied {
+            self.posed.tick_physics(self.pack, &|| copy.iter().copied());
+            return;
+        }
+        let mut table = SurfaceTable::new(&copy).expect("a stage map fits the table");
+        match scan {
+            MapScan::KindsDropFloor => {
+                let other = copy
+                    .iter()
+                    .position(|s| s.kind != Kind::Floor)
+                    .expect("a stage map has walls") as u8;
+                table.kind_indices_mut(Kind::Floor)[0] = other;
+            }
+            MapScan::KindsReversed => {
+                for kind in [Kind::Floor, Kind::Ceiling, Kind::RightWall, Kind::LeftWall] {
+                    table.kind_indices_mut(kind).reverse();
+                }
+            }
+            _ => {}
+        }
+        self.posed.tick_physics(self.pack, &table);
     }
     fn settle_catch(&mut self, ground: &HostGround<'_, '_>) {
         use ssb_game::matchtick::Ground;

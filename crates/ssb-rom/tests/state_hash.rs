@@ -2,13 +2,14 @@
 //! matches: fighter 0 on a scripted pseudo-random pad, the others level-9
 //! CPUs, on Dream Land through [`ssb_game::matchtick::step`].
 //!
-//! The test checks that two runs hash alike tick for tick, and that a run
-//! whose physics read a table of the surfaces (`psp-game`'s match,
-//! `FighterScene::tick_fighter_physics_table`) hashes as one that walks the
-//! map. With `STATE_HASH_OUT=FILE` it also writes every tick's hashes of
-//! the table run to `FILE`, so a change meant to keep gameplay
-//! bit-identical (a performance change) can be compared against the build
-//! before it.
+//! The test checks that two runs hash alike tick for tick, and that runs
+//! whose physics read a copy of the surfaces or a kind table of them
+//! (`psp-game`'s match, `FighterScene::tick_fighter_physics_table`) hash
+//! as one that walks the map. Two broken kind tables (a floor missing, each
+//! kind reversed) are its negative controls: they must differ. With
+//! `STATE_HASH_OUT=FILE` it also writes every tick's hashes of the kind
+//! table run to `FILE`, so a change meant to keep gameplay bit-identical (a
+//! performance change) can be compared against the build before it.
 
 use ssb_game::fighter::FighterKind;
 
@@ -19,7 +20,7 @@ mod posed;
 mod dream_land;
 
 use dream_land::{dream_land, dream_land_map, stage_bounds, training_fighter};
-use posed::{tick_cpus, HostCpu, Pair, Posed, TABLE_PHYSICS};
+use posed::{tick_cpus, HostCpu, MapScan, Pair, Posed, TABLE_PHYSICS};
 
 fn open_pack() -> Option<Vec<u8>> {
     ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR"))?;
@@ -56,9 +57,9 @@ fn run(
     pack: &ssb_rom::pack::Pack<'_>,
     kinds: [FighterKind; 4],
     ticks: u64,
-    table: bool,
+    scan: MapScan,
 ) -> Vec<[u64; 6]> {
-    TABLE_PHYSICS.set(table);
+    TABLE_PHYSICS.set(scan);
     // `ftManagerAllocFighter`: the battle's motion and stat counts start
     // again at 1.
     ssb_game::manager_counts::ManagerCounts::new();
@@ -137,9 +138,12 @@ fn gameplay_state_hashes_repeat_tick_for_tick() {
     let pack = ssb_rom::pack::Pack::open(&bytes).unwrap();
     let mut log = String::new();
     for kinds in CASTS {
-        let first = run(&pack, kinds, TICKS, false);
-        let second = run(&pack, kinds, TICKS, false);
-        let table = run(&pack, kinds, TICKS, true);
+        let first = run(&pack, kinds, TICKS, MapScan::Walk);
+        let second = run(&pack, kinds, TICKS, MapScan::Walk);
+        let copied = run(&pack, kinds, TICKS, MapScan::Copied);
+        let table = run(&pack, kinds, TICKS, MapScan::Kinds);
+        let dropped = run(&pack, kinds, TICKS, MapScan::KindsDropFloor);
+        let reversed = run(&pack, kinds, TICKS, MapScan::KindsReversed);
         let differ = |other: &[[u64; 6]]| first.iter().zip(other).position(|(a, b)| a != b);
         assert_eq!(
             differ(&second),
@@ -147,9 +151,25 @@ fn gameplay_state_hashes_repeat_tick_for_tick() {
             "{kinds:?}: the second run differs at that tick"
         );
         assert_eq!(
+            differ(&copied),
+            None,
+            "{kinds:?}: the run on a copy of the surfaces differs at that tick"
+        );
+        assert_eq!(
             differ(&table),
             None,
-            "{kinds:?}: the run on a surface table differs at that tick"
+            "{kinds:?}: the run on a kind table differs at that tick"
+        );
+        let dropped = differ(&dropped);
+        let reversed = differ(&reversed);
+        eprintln!("{kinds:?}: controls differ at ticks {dropped:?} (floor dropped), {reversed:?} (kinds reversed)");
+        assert!(
+            dropped.is_some(),
+            "{kinds:?}: a kind table missing a floor hashes as the map walk"
+        );
+        assert!(
+            reversed.is_some(),
+            "{kinds:?}: a kind table in reverse order hashes as the map walk"
         );
         for (tick, row) in table.iter().enumerate() {
             let row: Vec<String> = row.iter().map(|h| format!("{h:016x}")).collect();
