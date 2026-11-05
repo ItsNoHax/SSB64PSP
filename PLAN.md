@@ -94,7 +94,6 @@ the Media Engine (batch 159), started by the game's own kernel module
 
 1. Sleep/wake with a person at the PSP: watchdog re-bring-up, no lost audio.
 2. PSP-1000: ME path, memory.
-3. SC-path split cost (+0.01 to +0.21 ms; PPSSPP and fallback only): executor ops 3-6% slower, audio thread +4 to +9 ms/s; out-of-line kernels rejected (RE-479). Owner: accept or keep.
 
 ### Gameplay math, tables and goldens
 
