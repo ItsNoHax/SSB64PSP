@@ -104,6 +104,7 @@ tools/run-ppsspp-headless.sh --crate psp-game --feature F   # deterministic capt
 | `crates/` | Portable code: gameplay, engine, ROM and pack formats, capture specs, build-time table generation |
 | `tools/romtool` | Pack builder |
 | `psp-runtime/`, `psp-game/`, `psp-asset-viewer/` | PSP code; outside the Cargo workspace ([D-026](docs/decisions/D-026.md)) |
+| `psp-kcall/` | Kernel module that starts the Media Engine; built and embedded by `psp-runtime/build.rs` |
 
 Crate roles and boundaries: [architecture](docs/architecture.md), [AGENTS.md](AGENTS.md).
 

@@ -1,0 +1,20 @@
+[package]
+name = "ssb64-psp-kcall"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Layer C: the game's kernel-mode PRX: runs one function of the game in kernel mode (the Media Engine bring-up, `psp-runtime/src/me.rs`)."
+
+# Outside the root workspace like the other PSP crates: it targets
+# mipsel-sony-psp and is no_std. Nothing builds it by hand:
+# `psp-runtime/build.rs` builds it with the invoking build's pinned
+# toolchain (`-Z build-std`, as `cargo psp`), runs `prxgen` on it and
+# embeds the PRX in the game. No
+# dependencies: the module imports no library and exports only its
+# `module_start`.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+debug = false

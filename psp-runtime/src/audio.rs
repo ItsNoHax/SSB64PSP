@@ -619,11 +619,12 @@ fn selftest(section: Section) {
             let me = crate::me::stats();
             let _ = write!(
                 b,
-                "selftest ok={} voices={} exec={} me_state={} me_lists={} me_fallbacks={}",
+                "selftest ok={} voices={} exec={} me_state={} me_kmod={:#x} me_lists={} me_fallbacks={}",
                 r.ok(),
                 r.max_voices,
                 exec,
                 me.state,
+                me.kmod,
                 me.frames,
                 me.fallbacks,
             );

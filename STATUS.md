@@ -10,25 +10,25 @@
 | Goldens | 286 of 286 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
-| PSP-2000 opening (busy, ms0) | opening 1-39 7.70 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
-| PSP-2000 `vs4@2400` | 14.78 ms busy (Zebes 10.37) | RE-585 |
-| PSP-2000 1P intro | 13.97 ms (timer build); 1P battle 13.19 ms; Comets 12.76; Fall 13.87; `vs4@2170` electric no-hit r18 15.95, shock r12 16.95 | RE-479, RE-585 |
+| PSP-2000 opening (busy, ms0) | opening 1-39 7.69 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
+| PSP-2000 `vs4@2400` | 14.72 ms busy (Zebes 10.37) | RE-585 |
+| PSP-2000 1P intro | 13.77 ms (timer build); 1P battle 13.14 ms; Comets 12.73; Fall 13.85; `vs4@2170` electric no-hit r18 15.86, shock r12 16.87 | RE-479, RE-585 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 160): own kernel module `psp-kcall` starts the ME (written to `ssb64_kcall.prx`, file-loaded; buffer load refused 0x80020149); `kcall.prx` dropped; XMB-equivalent launch passes; r12 -0.07, intro -0.21 ms; PRX layout guards (RE-479).
 - Landed (batch 159): audio DSP on the Media Engine (`kcall.prx` bring-up, SC fallback): every window faster, Comets -2.46, Fall -2.22, r12 -1.85, vs4 -1.04 ms; audio-thread SC busy -83%; free memory -88.5 KiB (RE-479).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Landed (batch 156): exact VFPU reverb: audio thread -16 to -19 ms/s; every window faster (intro -0.23, Fall -0.15, Comets -0.14, r18 -0.11 ms); free memory -40 KiB PSP, -64 KiB goldens (RE-479).
 - Rejected (batch 155): cross-fighter staged draw, r18 -0.16 ms only (RE-585 item 50).
 - Landed (batch 154): plain compose for unflagged skeletons: r12 -0.36, r18 -0.31, vs4 -0.24 ms; every window faster; free memory -7.75 KiB (RE-585 item 49).
-- Landed (batch 153): `.text` pinned per function (`link-pins.txt`), map surfaces walked once per fighter tick: r18 -0.22, vs4 -0.26, Zebes -0.22 ms; Comets +0.03; free memory -176 KiB (RE-585 item 48).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
-1. Media Engine follow-ups (PLAN "Audio cost"): own kernel module for `kcall.prx`, sleep/wake with a person. Then electric `vs4@2170` (r12 16.95, r18 15.95 ms).
+1. Electric `vs4@2170` (r12 16.87, r18 15.86 ms). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -39,7 +39,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 159 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 160 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

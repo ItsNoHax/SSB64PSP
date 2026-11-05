@@ -482,6 +482,29 @@ def main():
         misplaced = check_plan(out, plan)
         if misplaced:
             sys.exit('psp-link: %d pinned functions off their pins after the cache pads, first %s' % (len(misplaced), misplaced[0]))
+    check_layout(out)
+
+
+def check_layout(path):
+    """Exit unless every loaded segment with file bytes sits at one
+    file-offset-to-address distance: `prxgen` makes the PRX from that
+    distance, and the loader reads `module_info` by it, so a section
+    aligned past it makes the system read the wrong bytes and hang
+    (RE-479)."""
+    with open(path, 'rb') as f:
+        elf = f.read()
+    phoff, = struct.unpack_from('<I', elf, 0x1c)
+    phentsize, phnum = struct.unpack_from('<HH', elf, 0x2a)
+    distance = None
+    for i in range(phnum):
+        kind, offset, vaddr, _, filesz = struct.unpack_from('<5I', elf, phoff + i * phentsize)
+        if kind != 1 or filesz == 0:  # PT_LOAD with bytes; .bss has none
+            continue
+        d = (offset - vaddr) & 0xffffffff
+        if distance is None:
+            distance = d
+        elif d != distance:
+            sys.exit('psp-link: segment %d at file distance %#x, not %#x' % (i, d, distance))
 
 
 def pin_key(stable_name):

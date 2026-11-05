@@ -498,7 +498,7 @@ mod imp {
         let mut line = Line { buf: [0; 1024], len: 0 };
         let _ = writeln!(
             line,
-            "ame n={} state={} lists/s={} polls/s={} wait_us/s={} sc_busy_us/s={} fallbacks={} resets={}",
+            "ame n={} state={} lists/s={} polls/s={} wait_us/s={} sc_busy_us/s={} fallbacks={} resets={} kmod={:#x}",
             s.reports,
             m.state,
             per_s(m.frames.wrapping_sub(ml.frames)) / 10,
@@ -507,6 +507,7 @@ mod imp {
             (u64::from(busy.wrapping_sub(wait)) * 1_000_000 / u64::from(wall)) as u32,
             m.fallbacks,
             m.resets,
+            m.kmod,
         );
         emit(&line.buf[..line.len]);
         s.me_last = m;

@@ -4,11 +4,11 @@
 //!   and records the frame's op lists into a [`FrameList`]; the ME runs the
 //!   whole list on the system's [`Dsp`] (integer reverb: the ME has no
 //!   VFPU) into [`MeExec`]'s PCM; one mailbox round trip per frame.
-//! - Bring-up: [`bring_up`], the one function to replace when the project
-//!   ships its own kernel module. For now it loads the owner's local
-//!   `kcall.prx` (never in the repo) and runs [`k_me_reset`] in kernel
-//!   mode: the reset handler copied to the ME reset vector, then a reset
-//!   pulse (mcidclan me-core-mapper's `meLibInit` + `meLibReset`).
+//! - Bring-up: [`bring_up`] loads the game's own kernel module
+//!   (`psp-kcall/`, built and embedded by `build.rs`) from a file it writes
+//!   next to the game, and its `module_start` runs [`k_me_reset`] in
+//!   kernel mode: the reset handler copied to the ME reset vector, then a
+//!   reset pulse.
 //! - Coherence: the ME starts each command with an empty D-cache and ends
 //!   it with an index writeback-invalidate of the whole cache; everything it
 //!   writes ([`Dsp`], the reverb's buffers, [`Pcm`]) is 64-byte aligned and
@@ -19,7 +19,7 @@
 //! - Mailbox: one heap line, uncached on both sides, `sync` between the
 //!   arguments and `SEQ`. The ME polls with a 256-nop delay between reads
 //!   (a tight poll slows the SC's memory, RE-479).
-//! - Fallback: an emulator, no `kcall.prx`, the ME not up within 5 ms, or
+//! - Fallback: an emulator, the module refused, the ME not up within 5 ms, or
 //!   no ACK within 20 ms: the SC runs the same list (same PCM). A missed
 //!   ACK resets the ME (the watchdog: a sleep/wake loses the ME's program;
 //!   untested); three failed bring-ups in a row end ME use.
@@ -37,14 +37,11 @@ use ssb_engine::audio::data::AudioData;
 use ssb_engine::audio::exec::{Dsp, Exec, FrameList, OpList};
 use ssb_engine::audio::FRAME_SAMPLES_MAX;
 
-psp::psp_extern! {
-    #![name = "kcall"]
-    #![flags = 0x4009]
-    #![version = (0x00, 0x00)]
-
-    #[psp(0x75F43FF0)]
-    pub fn kcall_2(func: u32, seg: u32) -> i32;
-}
+/// The kernel module (`psp-kcall/`), written to [`KCALL_PATH`] for the
+/// loader. Byte-aligned: a 64-byte aligned object in `.rodata` shifts that
+/// segment's file offset against the first one's, and the game's PRX then
+/// loads with its module info misread.
+static KCALL_PRX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kcall.prx"));
 
 const UNCACHED: usize = 0x4000_0000;
 
@@ -77,14 +74,15 @@ pub const STATE_NONE: u32 = 0;
 pub const STATE_UP: u32 = 1;
 pub const STATE_DOWN: u32 = 2;
 pub const STATE_EMULATOR: u32 = 3;
-pub const STATE_NO_KCALL: u32 = 4;
+/// The kernel module did not load or start ([`Stats::kmod`] says why).
+pub const STATE_NO_KMOD: u32 = 4;
 pub const STATE_GAVE_UP: u32 = 5;
 
 /// The mailbox line's cached address (0: none yet).
 static MBOX: AtomicUsize = AtomicUsize::new(0);
 static STATE: AtomicU32 = AtomicU32::new(STATE_NONE);
 static SEQ_N: AtomicU32 = AtomicU32::new(0);
-static KCALL: AtomicU32 = AtomicU32::new(0);
+static KMOD: AtomicU32 = AtomicU32::new(0);
 static FRAMES: AtomicU32 = AtomicU32::new(0);
 static POLLS: AtomicU32 = AtomicU32::new(0);
 static WAIT_US: AtomicU32 = AtomicU32::new(0);
@@ -106,6 +104,9 @@ pub struct Stats {
     pub fallbacks: u32,
     /// ME resets after the first.
     pub resets: u32,
+    /// The last bring-up's kernel-module error: 0, or the failed load's
+    /// or start's result.
+    pub kmod: u32,
 }
 
 impl Stats {
@@ -116,6 +117,7 @@ impl Stats {
         wait_us: 0,
         fallbacks: 0,
         resets: 0,
+        kmod: 0,
     };
 }
 
@@ -127,6 +129,7 @@ pub fn stats() -> Stats {
         wait_us: WAIT_US.load(Ordering::Acquire),
         fallbacks: FALLBACKS.load(Ordering::Acquire),
         resets: RESETS.load(Ordering::Acquire),
+        kmod: KMOD.load(Ordering::Acquire),
     }
 }
 
@@ -177,47 +180,92 @@ fn emulator() -> bool {
     r >= 0
 }
 
-/// Starts the ME's program ([`k_me_reset`]) in kernel mode: `Err` when
-/// that is not possible here. The one piece to replace with the project's
-/// own kernel module.
-fn bring_up() -> Result<(), u32> {
-    if KCALL.load(Ordering::Acquire) == 0 {
-        let mut ok = false;
-        for path in [&b"kcall.prx\0"[..], &b"host0:/kcall.prx\0"[..]] {
-            // SAFETY: NUL-terminated paths; no options.
-            let id = unsafe { sys::sceKernelLoadModule(path.as_ptr(), 0, core::ptr::null_mut()) };
-            if id.0 < 0 {
-                continue;
-            }
-            let mut status = 0;
-            // SAFETY: a module just loaded; no arguments.
-            let r = unsafe {
-                sys::sceKernelStartModule(
-                    id,
-                    0,
-                    core::ptr::null_mut(),
-                    &mut status,
-                    core::ptr::null_mut(),
-                )
-            };
-            if r >= 0 {
-                ok = true;
-                break;
-            }
-            unsafe { sys::sceKernelUnloadModule(id) };
+/// The kernel module's file, next to the game: the system refuses a
+/// kernel module from a user-mode memory buffer (0x80020149, RE-479) but
+/// loads one from a file.
+const KCALL_PATH: &[u8] = b"ssb64_kcall.prx\0";
+
+/// Writes [`KCALL_PRX`] to [`KCALL_PATH`] unless the file already holds
+/// it: `false` when it cannot be written.
+fn kcall_file() -> bool {
+    let mut same = false;
+    // SAFETY: a NUL-terminated path; reads into a buffer of its length.
+    unsafe {
+        let fd = sys::sceIoOpen(KCALL_PATH.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777);
+        if fd.0 >= 0 {
+            let mut old = alloc::vec![0u8; KCALL_PRX.len() + 1];
+            let n = sys::sceIoRead(fd, old.as_mut_ptr() as *mut c_void, old.len() as u32);
+            same = n == KCALL_PRX.len() as i32 && old[..KCALL_PRX.len()] == *KCALL_PRX;
+            sys::sceIoClose(fd);
         }
-        if !ok {
-            return Err(STATE_NO_KCALL);
-        }
-        KCALL.store(1, Ordering::Release);
     }
-    // SAFETY: `kcall.prx` runs `k_me_reset` in kernel mode (seg 0x80000000).
-    unsafe { kcall_2(k_me_reset as *const () as usize as u32, 0x8000_0000) };
+    if same {
+        return true;
+    }
+    // SAFETY: as above; writes the module's bytes.
+    unsafe {
+        let fd = sys::sceIoOpen(
+            KCALL_PATH.as_ptr(),
+            sys::IoOpenFlags::WR_ONLY | sys::IoOpenFlags::CREAT | sys::IoOpenFlags::TRUNC,
+            0o777,
+        );
+        if fd.0 < 0 {
+            return false;
+        }
+        let n = sys::sceIoWrite(fd, KCALL_PRX.as_ptr() as *const c_void, KCALL_PRX.len());
+        sys::sceIoClose(fd);
+        n == KCALL_PRX.len() as i32
+    }
+}
+
+/// Starts the ME's program ([`k_me_reset`]) in kernel mode: `Err` when
+/// that is not possible here. Loads the kernel module from its file
+/// ([`kcall_file`]) and starts it with [`k_me_reset`]'s address; it
+/// unloads itself.
+fn bring_up() -> Result<(), u32> {
+    if !kcall_file() {
+        KMOD.store(u32::MAX, Ordering::Release);
+        return Err(STATE_NO_KMOD);
+    }
+    // SAFETY: a NUL-terminated path; no options.
+    let id = unsafe { sys::sceKernelLoadModule(KCALL_PATH.as_ptr(), 0, core::ptr::null_mut()) };
+    if id.0 < 0 {
+        KMOD.store(id.0 as u32, Ordering::Release);
+        return Err(STATE_NO_KMOD);
+    }
+    // The SC's caches as the user-mode system calls leave them; the
+    // kernel-mode part writes the D-cache back again after its copy.
+    // SAFETY: plain cache maintenance.
+    unsafe {
+        sys::sceKernelDcacheWritebackInvalidateAll();
+        sys::sceKernelIcacheInvalidateAll();
+    }
+    let func = k_me_reset as *const () as usize as u32;
+    let mut status = 0;
+    // SAFETY: a module just loaded; its `module_start` reads the 4 bytes
+    // of `func` (copied by the system) and calls it in kernel mode.
+    let r = unsafe {
+        sys::sceKernelStartModule(
+            id,
+            4,
+            &func as *const u32 as *mut c_void,
+            &mut status,
+            core::ptr::null_mut(),
+        )
+    };
+    if r < 0 {
+        KMOD.store(r as u32, Ordering::Release);
+        // SAFETY: the module loaded above, not started.
+        unsafe { sys::sceKernelUnloadModule(id) };
+        return Err(STATE_NO_KMOD);
+    }
+    KMOD.store(0, Ordering::Release);
     Ok(())
 }
 
 /// Kernel mode: copies the reset handler to the ME reset vector, writes
-/// back and invalidates the SC's caches, and pulses the ME's reset.
+/// back and invalidates the SC's D-cache, and pulses the ME's reset.
+/// Makes no system call: it runs on the kernel module's start thread.
 extern "C" fn k_me_reset() -> i32 {
     // SAFETY: kernel mode; the handler is position-independent words.
     unsafe {
@@ -227,8 +275,7 @@ extern "C" fn k_me_reset() -> i32 {
         for i in 0..(e - s as usize) / 4 {
             write_volatile(dst.add(i), read_volatile(s.add(i)));
         }
-        sys::sceKernelDcacheWritebackInvalidateAll();
-        sys::sceKernelIcacheInvalidateAll();
+        dc_wbinv_all();
         write_volatile(0xbc10_004c as *mut u32, 0x14);
         write_volatile(0xbc10_004c as *mut u32, 0);
         sync();
@@ -240,7 +287,7 @@ extern "C" fn k_me_reset() -> i32 {
 fn start_me() -> bool {
     match STATE.load(Ordering::Acquire) {
         STATE_UP => return true,
-        STATE_EMULATOR | STATE_NO_KCALL | STATE_GAVE_UP => return false,
+        STATE_EMULATOR | STATE_NO_KMOD | STATE_GAVE_UP => return false,
         STATE_NONE if emulator() => {
             STATE.store(STATE_EMULATOR, Ordering::Release);
             return false;

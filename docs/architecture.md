@@ -112,7 +112,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 - Game calls the API synchronously
 - `SharedAudio`: serialises those calls with audio-thread frames under a kernel semaphore
   - why: N64 masks interrupts around the same list operations
-- Each frame: sequencer and FGM handlers and the synth's control pass under the lock (records a `FrameList`), then the DSP executor mixes the 184-sample sub-frames (Media Engine: one mailbox round trip per frame; RE-479)
+- Each frame: sequencer and FGM handlers and the synth's control pass under the lock (records a `FrameList`), then the DSP executor mixes the 184-sample sub-frames (Media Engine: one mailbox round trip per frame; started by the `psp-kcall` kernel module, written to `ssb64_kcall.prx` next to the game; RE-479)
 - Rates: synth at N64 32006 Hz; PSP plays 32000 Hz
 
 ### Frontend

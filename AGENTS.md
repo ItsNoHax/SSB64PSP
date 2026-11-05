@@ -29,6 +29,7 @@
 | `crates/ssb-tablegen` | Build-time generation of the tables read from the ROM: their ROM layout and decoders | Data values from the ROM |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
 | `psp-game` | Thin game application: orchestration only | Gameplay or PSP backend code |
+| `psp-kcall` | Kernel module: runs one function of the game in kernel mode at load ([RE-479](docs/evidence/re/RE-479.md)) | Anything else; it unloads itself |
 | `psp-asset-viewer` | Debug and render-validation tool | Game logic, match state, player features |
 
 - `ssb-game`, `ssb-engine`, `ssb-rom`, `ssb-pose` → never depend on `psp-runtime`.

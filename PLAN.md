@@ -58,7 +58,7 @@
 |---|---|---|
 | Stage clip cost | Guard-band clip: test 0.63 ms + sub-triangle 0.31 ms vs4, 0.59 + 0.78 ms Zebes; per-mesh box pre-test and sign-OR fast path rejected (more work at ~7 vertices per mesh, RE-577, RE-578) | RE-519, RE-577, RE-578 |
 | Scene clip ratio | Game clips at `FRUSTRATIO_1`; stages and movies clip at 2w. Measure GE shade interpolation on hardware; if screen-linear, clip all scene draws at the viewport and cost it | RE-519, D-051 |
-| Electric hit drop | `vs4@2170` 4xL9 Pikachu, PSP-2000: no-hit r18 15.95, shock r12 16.95 ms (ME audio). Fighters drawn staged per fighter; lean joints sample; map surface table; `.text` pinned; plain compose; cross-fighter staging rejected (RE-585 items 36, 39-40, 44-50; VFPU reverb RE-479). Left: Link TEXTURE_GEN prims, update-side cuts (anim, AI, hit, items); edits must not recompile `draw_object_posed_nodes`. Magnifier (r9) separate | RE-584, RE-585 |
+| Electric hit drop | `vs4@2170` 4xL9 Pikachu, PSP-2000: no-hit r18 15.86, shock r12 16.87 ms (ME audio, own kernel module). Fighters drawn staged per fighter; lean joints sample; map surface table; `.text` pinned; plain compose; cross-fighter staging rejected (RE-585 items 36, 39-40, 44-50; VFPU reverb RE-479). Left: Link TEXTURE_GEN prims, update-side cuts (anim, AI, hit, items); edits must not recompile `draw_object_posed_nodes`. Magnifier (r9) separate | RE-584, RE-585 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v140; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping; re-map VS windows after any VS RNG or golden-rebaseline commit; build measurement PRXs from the main checkout path | RE-574, RE-585 |
 | Link-order upkeep | Re-search (RE-494) when cmpaddr shows >25% of ordered functions moved; timer-only functions (`capture_*`, `scripted_*`, `frame_timer`) after the searched block, `cmpaddr --elf` release vs timer differs only in the tail; training includes Comets and Fall traces (Fall from emulated 30 s); `core::fmt` impls whose size differs with `frame_timer` go to the tail; keep the `# after unlisted` block (scene-only code, padded to keep the archive code's cache sets) at the end; `psp-link.py` pins the stubs (`STUB_SET`); accept on a PSP-2000 five-scene interleaved round; rewrite `psp-game/link-pins.txt` with `psp-link.py --pins` after a re-search (RE-585 item 48) | RE-494, RE-585 |
@@ -89,14 +89,12 @@
 | `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 
 Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479): DSP runs on
-the Media Engine (batch 159). Remaining:
+the Media Engine (batch 159), started by the game's own kernel module
+(batch 160). Remaining:
 
-1. Own kernel module for `bring_up()` (`psp-runtime/src/me.rs`) in place of
-   `kcall.prx` (third-party, licence unknown, not in the repo); until then the
-   release needs `kcall.prx` in the game dir or runs audio on the SC.
-2. Sleep/wake with a person at the PSP: watchdog re-bring-up, no lost audio.
-3. PSP-1000: ME path, memory.
-4. SC-path split cost (+0.01 to +0.21 ms; PPSSPP and fallback only).
+1. Sleep/wake with a person at the PSP: watchdog re-bring-up, no lost audio.
+2. PSP-1000: ME path, memory.
+3. SC-path split cost (+0.01 to +0.21 ms; PPSSPP and fallback only).
 
 ### Gameplay math, tables and goldens
 
