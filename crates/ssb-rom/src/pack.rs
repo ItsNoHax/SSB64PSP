@@ -4237,6 +4237,43 @@ struct SpriteIndex {
     /// The rows with a role ([`SpriteDesc::ROLE_NONE`] excluded), in table
     /// order.
     roles: alloc::vec::Vec<u16>,
+    /// Recent answers of [`Pack::sprite`] and [`Pack::fighter_sprite`]:
+    /// the battle HUD asks the same two dozen every frame, and each search
+    /// cost a PSP about 4.5 us (RE-585 item 52).
+    /// Each slot `[key0, key1, row]` ([`sprite_memo`]).
+    /// Boxed: [`Pack`] stays the same size.
+    memo: alloc::boxed::Box<[core::cell::Cell<[u32; 3]>]>,
+}
+
+/// Slots in [`SpriteIndex`]'s memo; a power of two.
+const SPRITE_MEMO_SLOTS: usize = 128;
+/// A memo key's first word for [`Pack::fighter_sprite`]; a [`Pack::sprite`]
+/// key's is its file, below this.
+const SPRITE_MEMO_FIGHTER: u32 = 0x8000_0000;
+/// A memo slot's row when the lookup found none.
+const SPRITE_MEMO_NONE: u32 = u32::MAX;
+/// An empty memo slot: a key no lookup makes ([`Pack::fighter_sprite`] keys
+/// have a second word of 0).
+const SPRITE_MEMO_EMPTY: [u32; 3] = [SPRITE_MEMO_FIGHTER, u32::MAX, SPRITE_MEMO_NONE];
+
+/// The row `find` gives for `key`, remembered in `index`: the same answer,
+/// found once while the slot keeps it. Plain arrays and a free function:
+/// a new `impl` block (a derive too) renumbers the symbols of every later
+/// one, and the link pins go by symbol (RE-585 item 48).
+fn sprite_memo(
+    index: &SpriteIndex,
+    key: [u32; 2],
+    find: impl FnOnce() -> Option<u32>,
+) -> Option<u32> {
+    let hash = key[0].wrapping_mul(0x9E37_79B9) ^ key[1].wrapping_mul(0x85EB_CA6B);
+    let slot = &index.memo[(hash >> 16) as usize & (SPRITE_MEMO_SLOTS - 1)];
+    let [k0, k1, m] = slot.get();
+    if [k0, k1] == key {
+        return (m != SPRITE_MEMO_NONE).then_some(m);
+    }
+    let row = find();
+    slot.set([key[0], key[1], row.unwrap_or(SPRITE_MEMO_NONE)]);
+    row
 }
 
 /// Sorts `rows` by `key`, a total order. A shell sort rather than
@@ -5721,7 +5758,13 @@ impl<'a> Pack<'a> {
             let roles = (0..self.sprite_count as u16)
                 .filter(|&i| self.sprite_role(u32::from(i)) != SpriteDesc::ROLE_NONE)
                 .collect();
-            SpriteIndex { by_source, roles }
+            SpriteIndex {
+                by_source,
+                roles,
+                memo: (0..SPRITE_MEMO_SLOTS)
+                    .map(|_| core::cell::Cell::new(SPRITE_MEMO_EMPTY))
+                    .collect(),
+            }
         }))
     }
 
@@ -5739,14 +5782,25 @@ impl<'a> Pack<'a> {
                 .filter_map(|i| self.sprite_at(i))
                 .find(|s| want(s));
         };
+        self.sprite_row_by_source(index, file, offset, want)
+            .and_then(|i| self.sprite_at(i))
+    }
+
+    /// [`Self::sprite_by_source`]'s row, through `index`.
+    fn sprite_row_by_source(
+        &self,
+        index: &SpriteIndex,
+        file: u32,
+        offset: u32,
+        want: impl Fn(&SpriteDesc) -> bool,
+    ) -> Option<u32> {
         let rows = &index.by_source;
         let start = rows.partition_point(|&i| self.sprite_key(u32::from(i)) < (file, offset));
         rows[start..]
             .iter()
             .map(|&i| u32::from(i))
             .take_while(|&i| self.sprite_key(i) == (file, offset))
-            .filter_map(|i| self.sprite_at(i))
-            .find(|s| want(s))
+            .find(|&i| self.sprite_at(i).is_some_and(|s| want(&s)))
     }
 
     /// The first row in table order with a role whose `(fighter, role,
@@ -5776,12 +5830,33 @@ impl<'a> Pack<'a> {
                 .find(|&i| want(self.sprite_owner(i)))
                 .and_then(|i| self.sprite_at(i));
         }
-        self.sprite_with_role(want)
+        let Some(index) = self.sprite_index() else {
+            return self.sprite_with_role(want);
+        };
+        let key = SPRITE_MEMO_FIGHTER
+            | u32::from(fighter) << 16
+            | u32::from(role) << 8
+            | u32::from(costume);
+        sprite_memo(index, [key, 0], || {
+            index
+                .roles
+                .iter()
+                .map(|&i| u32::from(i))
+                .find(|&i| want(self.sprite_owner(i)))
+        })
+        .and_then(|i| self.sprite_at(i))
     }
 
     /// The sprite at `offset` of `file`: `lbRelocGetFileData(Sprite*, ...)`.
     pub fn sprite(&self, file: u32, offset: u32) -> Option<SpriteDesc> {
-        self.sprite_by_source(file, offset, |s| s.role != SpriteDesc::ROLE_LUT)
+        let want = |s: &SpriteDesc| s.role != SpriteDesc::ROLE_LUT;
+        match self.sprite_index() {
+            Some(index) if file < SPRITE_MEMO_FIGHTER => sprite_memo(index, [file, offset], || {
+                self.sprite_row_by_source(index, file, offset, want)
+            })
+            .and_then(|i| self.sprite_at(i)),
+            _ => self.sprite_by_source(file, offset, want),
+        }
     }
 
     /// The `wallpaper` of the VS stage `gkind`

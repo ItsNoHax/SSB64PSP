@@ -147,7 +147,9 @@ fn sprite_lookups_match_a_table_scan() {
                 r.source_file == file && r.source_offset == offset && r.role != SpriteDesc::ROLE_LUT
             })
             .copied();
+        // Twice: the search, then the memo (RE-585 item 52).
         assert_eq!(pack.sprite(file, offset), scan, "sprite {file} {offset:#x}");
+        assert_eq!(pack.sprite(file, offset), scan, "memo {file} {offset:#x}");
         for lut in 0..8 {
             let scan = rows
                 .iter()
@@ -177,11 +179,13 @@ fn sprite_lookups_match_a_table_scan() {
                             && (role != SpriteDesc::ROLE_STOCK || s.costume == costume)
                     })
                     .copied();
-                assert_eq!(
-                    pack.fighter_sprite(fighter, role, costume),
-                    scan,
-                    "{fighter} {role} {costume}"
-                );
+                for _ in 0..2 {
+                    assert_eq!(
+                        pack.fighter_sprite(fighter, role, costume),
+                        scan,
+                        "{fighter} {role} {costume}"
+                    );
+                }
             }
         }
         let scan = rows
