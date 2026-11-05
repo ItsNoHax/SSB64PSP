@@ -92,15 +92,16 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479). Audio
 thread 75-211 ms/s; game thread +0.45 to +3.53 ms/frame vs `no_audio`
 before the VFPU reverb (which cut 0.02-0.23 ms). Remaining:
 
-1. Media Engine probe:
-   - throwaway crate; mcidclan `kcall.prx` (me-core-mapper) from user EBOOT,
-     ARK 6.61;
-   - `Dmem::envmix`, `adpcm_16` (`crates/ssb-engine/src/audio/dsp.rs`) on ME
-     via 64-byte-aligned uncached mailbox;
-   - accept: outputs equal SC over 10,000 repeats; ME ≤ 1.3× SC's 72 µs per
-     voice pull; SC slowdown < 5%; survives sleep/wake;
-   - SC fallback mandatory (PPSSPP has no ME);
-   - no VME (24-bit; breaks D-049 sample-exactness).
+1. Media Engine audio (probe passed, RE-479 batch 157: exact, ME at SC speed,
+   SC slowdown < 2% with a delayed idle poll):
+   - `ssb-engine`: split `Synth::audio_frame` into a control pass (op list per
+     184-sample chunk) and one DSP executor run on SC, ME and host;
+   - own kernel PRX for `k_me_reset` (kcall.prx is third-party: licence
+     unknown); ME integer reverb; one mailbox round trip per audio frame;
+   - SC fallback (PPSSPP, bring-up failure, 20 ms watchdog);
+   - accept: `audio_selftest` hashes equal; game-thread busy per window
+     (estimate -1.4 to -3.2 ms in vs4, Comets, r12); sleep/wake with a person
+     at the PSP; no VME (24-bit; breaks D-049 sample-exactness).
 
 ### Gameplay math, tables and goldens
 
