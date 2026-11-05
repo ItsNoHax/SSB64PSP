@@ -100,7 +100,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 | Original | Port |
 |---|---|
 | `S1_music.sbk`, `B1_sounds1/2.ctl/.tbl`, `fgm.unk/.tbl/.ucd`, the microcode's tables | The pack's audio section, read once at boot and never freed (`ssb_rom::audio`, `ssb_engine::audio::data`) |
-| RSP `n_aspMain` commands (ADPCM, resample, envelope mixer, mixer, interleave, pole filter) | `ssb_engine::audio::dsp`, integer fixed point |
+| RSP `n_aspMain` commands (ADPCM, resample, envelope mixer, mixer, interleave, pole filter) | `ssb_engine::audio::dsp`, integer fixed point; run by `exec::Dsp` from a `FrameList` on the Media Engine (`psp_runtime::me`) or, on PPSSPP and fallback, the audio thread |
 | `n_alSyn*`, `n_alAudioFrame`, the pull chain, the custom reverb | `synth`, `reverb` |
 | `n_alCSP*`, `__n_CSP*`, `n_alCSeq*`, the event queue, `n_seqplayer.c` helpers | `csplayer`, `cseq`, `evtq` |
 | `syAudioInitOsc`/`UpdateOsc`, `alCents2Ratio` | `osc` |
@@ -112,7 +112,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 - Game calls the API synchronously
 - `SharedAudio`: serialises those calls with audio-thread frames under a kernel semaphore
   - why: N64 masks interrupts around the same list operations
-- Each frame: sequencer and FGM handlers, then 184-sample sub-frame mixing
+- Each frame: sequencer and FGM handlers and the synth's control pass under the lock (records a `FrameList`), then the DSP executor mixes the 184-sample sub-frames (Media Engine: one mailbox round trip per frame; RE-479)
 - Rates: synth at N64 32006 Hz; PSP plays 32000 Hz
 
 ### Frontend

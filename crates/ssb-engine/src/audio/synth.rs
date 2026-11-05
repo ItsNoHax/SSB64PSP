@@ -8,11 +8,13 @@
 //! and the FGM engine own, which live here so that stealing can clear the
 //! loser's `pvoice` as `n_alSynAllocVoice` does.
 
+use alloc::boxed::Box;
+
 use super::data::{AudioData, WaveRef, AL_ADPCM_WAVE};
-use super::dsp::{self, Dmem, EnvMixInit, EnvMixState, State16};
+use super::dsp::{self, EnvMixInit};
+use super::exec::{addr, BankRef, Exec, Input, Op, OpList};
 use super::prof;
-use super::reverb::Fx;
-use super::stream;
+use super::stream::Samples;
 
 pub const MAX_PVOICES: usize = 16;
 pub const MAX_UPDATES: usize = 128;
@@ -111,9 +113,10 @@ struct RawLoop {
 #[derive(Debug, Clone, Copy)]
 pub struct PVoice {
     pub vvoice: Option<u8>,
-    // ALLoadFilter
-    dc_state: State16,
-    dc_lstate: State16,
+    // ALLoadFilter (`dc_state` is the executor's, `exec::VoiceDsp`)
+    /// `dc_lstate`: the loop state `A_LOOP` decodes start from, as its
+    /// bank's loop index (`None`: zeros).
+    dc_lstate: Option<BankRef>,
     dc_loop: RawLoop,
     dc_table: Option<WaveRef>,
     dc_sample: i32,
@@ -121,14 +124,12 @@ pub struct PVoice {
     dc_first: i32,
     /// Byte offset into the bank's tbl.
     dc_memin: i32,
-    // ALResampler
-    rs_state: State16,
+    // ALResampler (`rs_state`: `exec::VoiceDsp`)
     rs_ratio: f32,
     rs_upitch: i32,
     rs_delta: f32,
     rs_first: i32,
-    // ALEnvMixer
-    em_state: EnvMixState,
+    // ALEnvMixer (`em_state`: `exec::VoiceDsp`)
     em_pan: i16,
     em_volume: i16,
     em_cvol_l: i16,
@@ -155,20 +156,17 @@ impl PVoice {
     fn new() -> Self {
         Self {
             vvoice: None,
-            dc_state: [0; 16],
-            dc_lstate: [0; 16],
+            dc_lstate: None,
             dc_loop: RawLoop::default(),
             dc_table: None,
             dc_sample: 0,
             dc_lastsam: 0,
             dc_first: 1,
             dc_memin: 0,
-            rs_state: [0; 16],
             rs_ratio: 1.0,
             rs_upitch: 0,
             rs_delta: 0.0,
             rs_first: 1,
-            em_state: EnvMixState::default(),
             em_pan: 0,
             em_volume: 1,
             em_cvol_l: 1,
@@ -219,7 +217,17 @@ pub trait Clients {
     fn handle(&mut self, client: Client, syn: &mut Synth, data: &AudioData) -> i32;
 }
 
-/// `N_ALSynth`.
+/// The frame being recorded: where a full [`OpList`] runs, and the
+/// frame's output its [`Op::Save`]s write.
+struct Sink<'a> {
+    exec: &'a mut dyn Exec,
+    out: &'a mut [i16],
+    /// [`prof::Stage::Ctl`]'s timer, paused while the list runs.
+    t0: u32,
+}
+
+/// `N_ALSynth`'s control half: everything but the DSP state, which the
+/// [`Exec`] a frame is rendered with owns ([`super::exec`]).
 pub struct Synth {
     pub pvoices: [PVoice; MAX_PVOICES],
     links: [Link; 19],
@@ -231,12 +239,12 @@ pub struct Synth {
     pub output_rate: i32,
     /// `samplesLeft` of each registered client.
     samples_left: [Option<i32>; 3],
-    /// `n_syn->auxBus->fx`; `None` is `AL_FX_NONE`.
-    pub fx: Option<Fx>,
-    dmem: Dmem,
-    /// The chunk buffer a streamed read copies into (`syAudioDma`'s
-    /// buffer, [`stream::FETCH_MAX`]).
-    fetch: [u8; stream::FETCH_MAX],
+    /// The frame's recorded DSP commands; a streamed read copies its chunk
+    /// (`syAudioDma`'s buffer) into the list's arena.
+    pub ops: Box<OpList>,
+    /// Lists run before their sub-frame ended because one was full
+    /// (diagnostic).
+    pub flushes: u32,
     /// `ALParam` allocations that found the pool empty.
     pub params_dropped: u32,
     /// Physical voices stolen by `_allocatePVoice` (diagnostic).
@@ -246,7 +254,7 @@ pub struct Synth {
 impl Synth {
     /// `n_alSynNew`: 16 pvoices on the free list, a LIFO pool of 128
     /// updates.
-    pub fn new(output_rate: i32, fx: Option<Fx>) -> Self {
+    pub fn new(output_rate: i32) -> Self {
         let mut s = Self {
             pvoices: [PVoice::new(); MAX_PVOICES],
             links: [Link {
@@ -264,9 +272,8 @@ impl Synth {
             param_samples: 0,
             output_rate,
             samples_left: [None; 3],
-            fx,
-            dmem: Dmem::default(),
-            fetch: [0; stream::FETCH_MAX],
+            ops: OpList::boxed(),
+            flushes: 0,
             params_dropped: 0,
             steals: 0,
         };
@@ -356,11 +363,15 @@ impl Synth {
 
     /// `n_alAudioFrame`: runs every client whose next event falls in this
     /// frame, then renders `out_len` stereo samples into `out` in
-    /// 184-sample sub-frames.
+    /// 184-sample sub-frames. The control pass records each sub-frame's
+    /// DSP commands; `exec` runs them at the sub-frame's end (earlier when
+    /// the list fills), so the list and its arena stay a few KiB of the
+    /// D-cache.
     pub fn audio_frame(
         &mut self,
         data: &AudioData,
         clients: &mut impl Clients,
+        exec: &mut dyn Exec,
         out: &mut [i16],
         out_len: usize,
     ) {
@@ -392,63 +403,108 @@ impl Synth {
         }
         self.param_samples &= !0xF;
 
-        for chunk in out[..out_len * 2].chunks_mut(FIXED_SAMPLE as usize * 2) {
-            let n_out = chunk.len() as i32 / 2;
-            self.save_pull(data, chunk);
+        let mut x = Sink {
+            exec,
+            out: &mut out[..out_len * 2],
+            t0: prof::start(),
+        };
+        let chunk = FIXED_SAMPLE as usize * 2;
+        let mut at = 0;
+        while at < out_len * 2 {
+            let n = chunk.min(out_len * 2 - at);
+            self.save_pull(&mut x, data, at, n);
+            self.run(&mut x, data);
             if self.cur_samples < 0x7FFF_FF47 {
-                self.cur_samples += n_out;
+                self.cur_samples += n as i32 / 2;
             } else {
                 self.cur_samples = 0x8000_0090u32 as i32;
             }
+            at += n;
         }
         self.collect_pvoices();
+        prof::stop(prof::Stage::Ctl, x.t0);
     }
 
-    /// `n_alSavePull`: main bus, interleave, save.
-    fn save_pull(&mut self, data: &AudioData, out: &mut [i16]) {
+    /// Runs the recorded list on the frame's executor and empties it.
+    fn run(&mut self, x: &mut Sink<'_>, data: &AudioData) {
+        prof::stop(prof::Stage::Ctl, x.t0);
+        x.exec.run(&self.ops, data, x.out);
+        self.ops.clear();
+        x.t0 = prof::start();
+    }
+
+    /// Makes room for `ops` ops and `bytes` arena bytes, running the list
+    /// before its sub-frame ends when it is full.
+    #[inline]
+    fn reserve(&mut self, x: &mut Sink<'_>, data: &AudioData, ops: usize, bytes: usize) {
+        if !self.ops.room(ops, bytes) {
+            self.run(x, data);
+            self.flushes += 1;
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, x: &mut Sink<'_>, data: &AudioData, op: Op) {
+        self.reserve(x, data, 1, 0);
+        self.ops.push(op);
+    }
+
+    /// `n_alSavePull`: main bus, interleave, save to the frame's output at
+    /// `at` (`n` samples).
+    fn save_pull(&mut self, x: &mut Sink<'_>, data: &AudioData, at: usize, n: usize) {
         let offset = self.cur_samples;
-        self.main_bus_pull(data, offset);
-        let t = prof::start();
-        self.dmem.interleave();
-        let n = out.len();
-        self.dmem.save(dsp::TEMP_0, out);
-        prof::stop(prof::Stage::Bus, t);
+        self.main_bus_pull(x, data, offset);
+        self.push(x, data, Op::Interleave);
         debug_assert_eq!(n, dsp::COUNT);
+        self.push(
+            x,
+            data,
+            Op::Save {
+                at: at as u16,
+                len: n as u16,
+            },
+        );
     }
 
     /// `n_alMainBusPull`.
-    fn main_bus_pull(&mut self, data: &AudioData, offset: i32) {
-        let t = prof::start();
-        self.dmem.clear(dsp::MAIN_L, dsp::DIVIDED << 1);
-        prof::stop(prof::Stage::Bus, t);
-        if self.fx.is_some() {
-            self.fx_pull(data, offset);
-        } else {
-            self.aux_bus_pull(data, offset);
-        }
-        let t = prof::start();
-        self.dmem.mix(0x7FFF, dsp::AUX_L, dsp::MAIN_L);
-        self.dmem.mix(0x7FFF, dsp::AUX_R, dsp::MAIN_R);
-        prof::stop(prof::Stage::Bus, t);
-    }
-
-    /// `n_alFxPull`.
-    fn fx_pull(&mut self, data: &AudioData, offset: i32) {
-        self.aux_bus_pull(data, offset);
-        if let Some(fx) = &mut self.fx {
-            let t = prof::start();
-            fx.pull(&mut self.dmem, &data.resample);
-            prof::stop(prof::Stage::Reverb, t);
+    fn main_bus_pull(&mut self, x: &mut Sink<'_>, data: &AudioData, offset: i32) {
+        self.push(
+            x,
+            data,
+            Op::Clear {
+                addr: addr(dsp::MAIN_L),
+                nbytes: addr(dsp::DIVIDED << 1),
+            },
+        );
+        // `n_alFxPull` when there is an effect: the aux bus, then the
+        // effect (the executor skips [`Op::Reverb`] without one).
+        self.aux_bus_pull(x, data, offset);
+        self.push(x, data, Op::Reverb);
+        for (input, out) in [(dsp::AUX_L, dsp::MAIN_L), (dsp::AUX_R, dsp::MAIN_R)] {
+            self.push(
+                x,
+                data,
+                Op::Mix {
+                    gain: 0x7FFF,
+                    input: addr(input),
+                    out: addr(out),
+                },
+            );
         }
     }
 
     /// `n_alAuxBusPull`: every pvoice, in creation order.
-    fn aux_bus_pull(&mut self, data: &AudioData, offset: i32) {
-        let t = prof::start();
-        self.dmem.clear(dsp::AUX_L, dsp::DIVIDED << 1);
-        prof::stop(prof::Stage::Bus, t);
+    fn aux_bus_pull(&mut self, x: &mut Sink<'_>, data: &AudioData, offset: i32) {
+        self.push(
+            x,
+            data,
+            Op::Clear {
+                addr: addr(dsp::AUX_L),
+                nbytes: addr(dsp::DIVIDED << 1),
+            },
+        );
         for i in 0..MAX_PVOICES {
-            self.envmixer_pull(data, i, offset);
+            self.envmixer_pull(x, data, i, offset);
         }
     }
 
@@ -687,7 +743,7 @@ impl Synth {
 
     /// `n_alEnvmixerPull`: applies the updates due in this sub-frame, each
     /// at its 184-rounded offset, then pulls the rest of the sub-frame.
-    fn envmixer_pull(&mut self, data: &AudioData, i: usize, sample_offset: i32) {
+    fn envmixer_pull(&mut self, x: &mut Sink<'_>, data: &AudioData, i: usize, sample_offset: i32) {
         let mut this_offset = sample_offset;
         let mut out_count = FIXED_SAMPLE;
         let mut inp = dsp::TEMP_0;
@@ -750,7 +806,7 @@ impl Synth {
                 | ParamKind::SetPan(_)
                 | ParamKind::SetVolume { .. }
                 | ParamKind::SetFxAmtAlt { .. } => {
-                    self.pull_sub_frame(data, i, &mut inp, samples);
+                    self.pull_sub_frame(x, data, i, &mut inp, samples);
                     let eq = &data.eqpower;
                     let e = &mut self.pvoices[i];
                     if e.em_delta >= e.em_seg_end {
@@ -791,7 +847,7 @@ impl Synth {
                     e.em_first = 1;
                 }
                 ParamKind::StopVoice => {
-                    self.pull_sub_frame(data, i, &mut inp, samples);
+                    self.pull_sub_frame(x, data, i, &mut inp, samples);
                     envmixer_reset(&mut self.pvoices[i], data);
                 }
                 ParamKind::FreeVoice(pv) => {
@@ -799,7 +855,7 @@ impl Synth {
                     self.free_pvoice(pv);
                 }
                 ParamKind::SetPitch(f) => {
-                    self.pull_sub_frame(data, i, &mut inp, samples);
+                    self.pull_sub_frame(x, data, i, &mut inp, samples);
                     self.pvoices[i].rs_ratio = f;
                 }
             }
@@ -814,7 +870,7 @@ impl Synth {
             }
             self.free_param(p);
         }
-        self.pull_sub_frame(data, i, &mut inp, out_count);
+        self.pull_sub_frame(x, data, i, &mut inp, out_count);
         let e = &mut self.pvoices[i];
         if e.em_delta > e.em_seg_end {
             e.em_delta = e.em_seg_end;
@@ -822,11 +878,18 @@ impl Synth {
     }
 
     /// `_pullSubFrame`.
-    fn pull_sub_frame(&mut self, data: &AudioData, i: usize, inp: &mut usize, out_count: i32) {
+    fn pull_sub_frame(
+        &mut self,
+        x: &mut Sink<'_>,
+        data: &AudioData,
+        i: usize,
+        inp: &mut usize,
+        out_count: i32,
+    ) {
         if self.pvoices[i].em_motion != AL_PLAYING || out_count == 0 {
             return;
         }
-        self.resample_pull(data, i, *inp);
+        self.resample_pull(x, data, i, *inp);
         let eq = &data.eqpower;
         let e = &mut self.pvoices[i];
         let init = if e.em_first != 0 {
@@ -856,23 +919,33 @@ impl Synth {
         } else {
             None
         };
-        let t = prof::start();
-        self.dmem.envmix(init.as_ref(), &mut e.em_state);
-        prof::stop(prof::Stage::Envmix, t);
-        prof::count(prof::Stage::Pulls, 1);
         *inp += (FIXED_SAMPLE as usize) << 1;
         e.em_delta += FIXED_SAMPLE;
+        self.push(
+            x,
+            data,
+            Op::EnvMix {
+                voice: i as u8,
+                init,
+            },
+        );
     }
 
     /// `n_alResamplePull`: 184 samples to `N_AL_RESAMPLER_OUT`.
-    fn resample_pull(&mut self, data: &AudioData, i: usize, outp: usize) {
+    fn resample_pull(&mut self, x: &mut Sink<'_>, data: &AudioData, i: usize, outp: usize) {
         let mut inp = dsp::TEMP_1;
         let e = &mut self.pvoices[i];
         if e.rs_upitch != 0 {
-            self.adpcm_pull(data, i, &mut inp, FIXED_SAMPLE);
-            let t = prof::start();
-            self.dmem.dmem_move(inp, outp, (FIXED_SAMPLE as usize) << 1);
-            prof::stop(prof::Stage::Resample, t);
+            self.adpcm_pull(x, data, i, &mut inp, FIXED_SAMPLE);
+            self.push(
+                x,
+                data,
+                Op::Move {
+                    src: addr(inp),
+                    dst: addr(outp),
+                    nbytes: addr((FIXED_SAMPLE as usize) << 1),
+                },
+            );
         } else {
             if e.rs_ratio > MAX_RATIO {
                 e.rs_ratio = MAX_RATIO;
@@ -882,27 +955,32 @@ impl Synth {
             let fin_count = e.rs_delta + e.rs_ratio * FIXED_SAMPLE as f32;
             let in_count = fin_count as i32;
             e.rs_delta = fin_count - in_count as f32;
-            self.adpcm_pull(data, i, &mut inp, in_count);
+            self.adpcm_pull(x, data, i, &mut inp, in_count);
             let e = &mut self.pvoices[i];
             let incr = (e.rs_ratio * UNITY_PITCH) as i32;
-            let t = prof::start();
             // n_aResample's output selector is 0: the main workspace.
-            self.dmem.resample(
-                e.rs_first as u32,
-                incr as u16,
-                &mut e.rs_state,
-                inp,
-                dsp::TEMP_0,
-                &data.resample,
-            );
+            let op = Op::Resample {
+                voice: i as u8,
+                flags: e.rs_first as u8,
+                pitch: incr as u16,
+                input: addr(inp),
+                out: addr(dsp::TEMP_0),
+            };
             e.rs_first = 0;
-            prof::stop(prof::Stage::Resample, t);
+            self.push(x, data, op);
         }
     }
 
     /// `n_alAdpcmPull`: decodes `out_count` samples to `*outp`, advancing it
     /// past the 16 history samples (or `dc_lastsam`).
-    fn adpcm_pull(&mut self, data: &AudioData, i: usize, outp: &mut usize, mut out_count: i32) {
+    fn adpcm_pull(
+        &mut self,
+        x: &mut Sink<'_>,
+        data: &AudioData,
+        i: usize,
+        outp: &mut usize,
+        mut out_count: i32,
+    ) {
         if out_count == 0 {
             return;
         }
@@ -910,10 +988,11 @@ impl Synth {
         let Some(table) = f.dc_table else {
             return;
         };
-        let (wt, bank) = data.wave(table);
-        let book = wt
-            .book
-            .map_or(&[0i16; 64][..], |b| &bank.books[b as usize].book[..]);
+        let (wt, _) = data.wave(table);
+        let book = wt.book.map(|b| BankRef {
+            bank: table.bank,
+            index: b,
+        });
         let base = wt.base as i32;
         let len = ADPCMFBYTES * (wt.len / ADPCMFBYTES);
 
@@ -941,17 +1020,7 @@ impl Synth {
 
         if looped {
             let first = f.dc_first as u32;
-            decode_chunk(
-                &mut self.dmem,
-                &mut self.fetch,
-                f,
-                data,
-                book,
-                tsam,
-                nbytes,
-                *outp,
-                first,
-            );
+            self.decode_chunk(x, data, i, book, tsam, nbytes, *outp, first);
             let f = &mut self.pvoices[i];
             if f.dc_lastsam != 0 {
                 *outp += (f.dc_lastsam << 1) as usize;
@@ -975,22 +1044,16 @@ impl Synth {
                 nframes = (tsam + ADPCMFSIZE - 1) >> LFSAMPLES;
                 nbytes = nframes * ADPCMFBYTES;
                 let flags = f.dc_first as u32 | dsp::A_LOOP;
-                decode_chunk(
-                    &mut self.dmem,
-                    &mut self.fetch,
-                    f,
-                    data,
-                    book,
-                    tsam,
-                    nbytes,
-                    op as usize,
-                    flags,
-                );
+                self.decode_chunk(x, data, i, book, tsam, nbytes, op as usize, flags);
                 let lastsam = self.pvoices[i].dc_lastsam;
-                self.dmem.dmem_move(
-                    (op + (lastsam << 1)) as usize,
-                    b_end as usize,
-                    (n_sam << 1) as usize,
+                self.push(
+                    x,
+                    data,
+                    Op::Move {
+                        src: addr((op + (lastsam << 1)) as usize),
+                        dst: addr(b_end as usize),
+                        nbytes: addr((n_sam << 1) as usize),
+                    },
                 );
             }
             let f = &mut self.pvoices[i];
@@ -1011,17 +1074,7 @@ impl Synth {
         if (n_over - (n_over & 0xF)) < out_count {
             decoded = true;
             let first = f.dc_first as u32;
-            decode_chunk(
-                &mut self.dmem,
-                &mut self.fetch,
-                f,
-                data,
-                book,
-                n_sam - n_over,
-                nbytes,
-                *outp,
-                first,
-            );
+            self.decode_chunk(x, data, i, book, n_sam - n_over, nbytes, *outp, first);
             let f = &mut self.pvoices[i];
             if f.dc_lastsam != 0 {
                 *outp += (f.dc_lastsam << 1) as usize;
@@ -1042,46 +1095,71 @@ impl Synth {
             } else {
                 0
             };
-            self.dmem
-                .clear((start_zero + *outp as i32) as usize, (n_over << 1) as usize);
+            self.push(
+                x,
+                data,
+                Op::Clear {
+                    addr: addr((start_zero + *outp as i32) as usize),
+                    nbytes: addr((n_over << 1) as usize),
+                },
+            );
         }
     }
-}
 
-/// `_decodeChunk`: decode `tsam` samples from `dc_memin` to `outp`. The
-/// chunk comes through [`stream::Samples::read`] (`syAudioDma`).
-#[allow(clippy::too_many_arguments)]
-fn decode_chunk(
-    dmem: &mut Dmem,
-    fetch: &mut [u8; stream::FETCH_MAX],
-    f: &mut PVoice,
-    data: &AudioData,
-    book: &[i16],
-    tsam: i32,
-    nbytes: i32,
-    outp: usize,
-    flags: u32,
-) {
-    let input = match f.dc_table {
-        Some(w) if nbytes > 0 => {
-            let (wt, _) = data.wave(w);
-            data.samples.read(w, wt, f.dc_memin, nbytes, fetch)
-        }
-        _ => &[][..],
-    };
-    let lstate = f.dc_lstate;
-    let t = prof::start();
-    dmem.adpcm(
-        flags,
-        &mut f.dc_state,
-        &lstate,
-        book,
-        input,
-        outp,
-        (tsam << 1) as usize,
-    );
-    prof::stop(prof::Stage::Adpcm, t);
-    f.dc_first = 0;
+    /// `_decodeChunk`: decode `tsam` samples from `dc_memin` to `outp`. The
+    /// chunk comes through [`Samples::read`] (`syAudioDma`): a
+    /// streamed one is copied into the list's arena.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_chunk(
+        &mut self,
+        x: &mut Sink<'_>,
+        data: &AudioData,
+        i: usize,
+        book: Option<BankRef>,
+        tsam: i32,
+        nbytes: i32,
+        outp: usize,
+        flags: u32,
+    ) {
+        let f = &self.pvoices[i];
+        let input = match f.dc_table {
+            Some(w) if nbytes > 0 => {
+                let (wt, _) = data.wave(w);
+                let start = f.dc_memin;
+                match &data.samples {
+                    Samples::Resident(_) => {
+                        self.reserve(x, data, 1, 0);
+                        Input::Resident(data.samples.resident(w, start, nbytes))
+                    }
+                    Samples::Streamed(_) => {
+                        let n = data.samples.read_len(w, start, nbytes);
+                        self.reserve(x, data, 1, n);
+                        let (at, buf) = self.ops.alloc(n);
+                        let got = data.samples.read(w, wt, start, nbytes, buf).len();
+                        Input::Arena {
+                            at,
+                            len: got as u16,
+                        }
+                    }
+                }
+            }
+            _ => {
+                self.reserve(x, data, 1, 0);
+                Input::Resident(&[])
+            }
+        };
+        let f = &mut self.pvoices[i];
+        self.ops.push(Op::Adpcm {
+            voice: i as u8,
+            flags: flags as u8,
+            out: addr(outp),
+            nbytes: tsam << 1,
+            input,
+            book,
+            loop_state: f.dc_lstate,
+        });
+        f.dc_first = 0;
+    }
 }
 
 /// `n_alLoadParam(AL_FILTER_SET_WAVETABLE)`. The original also truncates
@@ -1094,14 +1172,17 @@ fn load_wavetable(a: &mut PVoice, data: &AudioData, w: WaveRef) {
     a.dc_sample = 0;
     if wt.kind == AL_ADPCM_WAVE || wt.kind == super::data::AL_RAW16_WAVE {
         if let Some(l) = wt.loop_ {
-            let l = &bank.loops[l as usize];
+            let lp = &bank.loops[l as usize];
             a.dc_loop = RawLoop {
-                start: l.start,
-                end: l.end,
-                count: l.count,
+                start: lp.start,
+                end: lp.end,
+                count: lp.count,
             };
             if wt.kind == AL_ADPCM_WAVE {
-                a.dc_lstate = l.state;
+                a.dc_lstate = Some(BankRef {
+                    bank: w.bank,
+                    index: l,
+                });
             }
         } else {
             a.dc_loop = RawLoop::default();
@@ -1190,7 +1271,7 @@ mod tests {
         let Some(data) = testdata::data() else {
             return;
         };
-        let mut syn = Synth::new(32006, None);
+        let mut syn = Synth::new(32006);
         syn.add_client(Client::Snd);
         let vc = VoiceConfig {
             priority: 10,
@@ -1210,9 +1291,10 @@ mod tests {
             0x5F,
         );
         let mut out = [0i16; 552 * 2];
+        let mut dsp = crate::audio::exec::Dsp::new(None);
         let mut peak = 0i32;
         for _ in 0..20 {
-            syn.audio_frame(&data, &mut Silent, &mut out, 552);
+            syn.audio_frame(&data, &mut Silent, &mut dsp, &mut out, 552);
             peak = peak.max(out.iter().map(|s| (*s as i32).abs()).max().unwrap());
         }
         assert!(peak > 1000, "peak {peak}");
@@ -1258,7 +1340,7 @@ mod unit_tests {
 
     #[test]
     fn voice_steal_order() {
-        let mut syn = Synth::new(32006, None);
+        let mut syn = Synth::new(32006);
         let vc = |priority| VoiceConfig {
             priority,
             fx_bus: 0,
@@ -1298,7 +1380,7 @@ mod unit_tests {
 
     #[test]
     fn time_to_samples_rounds_like_c() {
-        let syn = Synth::new(32006, None);
+        let syn = Synth::new(32006);
         // The FGM tick: 184000000 / 32006 = 5748 us -> 184 samples.
         assert_eq!(syn.time_to_samples_no_round(5748), 184);
         assert_eq!(syn.time_to_samples(16000), 512);

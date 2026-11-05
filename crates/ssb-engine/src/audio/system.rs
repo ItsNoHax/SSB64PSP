@@ -14,8 +14,11 @@
 //! - The game calls the sound API synchronously under the platform's lock
 //!   (`SharedAudio`), as it does under `osSetIntMask` on the N64.
 
+use alloc::boxed::Box;
+
 use super::csplayer::Csp;
 use super::data::AudioData;
+use super::exec::{Dsp, Exec, FrameList};
 use super::fgm::Fgm;
 use super::reverb::{self, Fx};
 use super::synth::{Client, Clients, Synth, AL_STOPPED};
@@ -72,12 +75,30 @@ impl Clients for Players<'_> {
     }
 }
 
+/// [`AudioSystem::op_stats`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpStats {
+    pub peak_ops: u16,
+    pub peak_arena: u16,
+    pub flushes: u32,
+}
+
 /// The whole audio system: synthesizer, sequence player, FGM engine and the
 /// `syAudio` state. Built once from the pack's resident audio section; all
 /// pools are allocated here, so rendering never allocates.
 pub struct AudioSystem {
     data: AudioData,
     synth: Synth,
+    /// The synthesizer's DSP half, which renders the ops the control pass
+    /// records (`exec`). Boxed: 64-byte aligned for an executor on another
+    /// processor, which owns it while it runs a frame (see
+    /// [`AudioSystem::render_frame_via`]).
+    dsp: Box<Dsp>,
+    /// [`AudioSystem::set_fx_type`]'s effect, installed in `dsp` at the next
+    /// frame's start ([`AudioSystem::apply_pending_fx`]).
+    fx_pending: Option<Option<Fx>>,
+    /// [`AudioSystem::set_reverb_kernel`] changed `fx_kernel`.
+    kernel_pending: bool,
     csp: Csp,
     fgm: Fgm,
     /// `dSYAudioSoundQuality == 0`.
@@ -134,12 +155,15 @@ impl AudioSystem {
             reverb::params_for(fx_type, &data.custom_fx, &data.presets),
             N64_OUTPUT_RATE,
         );
-        let mut synth = Synth::new(N64_OUTPUT_RATE, Some(fx));
+        let mut synth = Synth::new(N64_OUTPUT_RATE);
         let fgm = Fgm::new(&mut synth, &data);
         let csp = Csp::new(&mut synth, &data);
         Self {
             data,
             synth,
+            dsp: Box::new(Dsp::new(Some(fx))),
+            fx_pending: None,
+            kernel_pending: false,
             csp,
             fgm,
             mono: false,
@@ -175,6 +199,43 @@ impl AudioSystem {
     /// `out[..samples * 2]` (interleaved L, R), running the frame's
     /// sequencer, FGM and `syAudio` work. Applies the mono option.
     pub fn render_frame(&mut self, out: &mut [i16], samples: usize) {
+        self.apply_pending_fx();
+        self.render_frame_via(out, samples, None);
+        self.mono_pass(&mut out[..samples * 2]);
+    }
+
+    /// Installs what [`AudioSystem::set_fx_type`] and
+    /// [`AudioSystem::set_reverb_kernel`] left pending in the DSP state;
+    /// `true` when it changed. [`AudioSystem::render_frame`] calls it
+    /// first; with an executor on another processor, call it before
+    /// [`AudioSystem::render_frame_via`] while that processor is idle.
+    pub fn apply_pending_fx(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(fx) = self.fx_pending.take() {
+            self.dsp.fx = fx;
+            changed = true;
+        }
+        if core::mem::take(&mut self.kernel_pending) || changed {
+            if let Some(fx) = &mut self.dsp.fx {
+                fx.set_kernel(self.fx_kernel);
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    /// [`AudioSystem::render_frame`]'s control pass, its ops run by `exec`
+    /// (the DSP state here when `None`) and the mono option left to
+    /// [`AudioSystem::mono_pass`]. An `exec` on another processor runs the
+    /// ops on this system's [`AudioSystem::dsp_mut`] and
+    /// [`AudioSystem::data`], and must finish the frame before the next
+    /// call or [`AudioSystem::apply_pending_fx`].
+    pub fn render_frame_via(
+        &mut self,
+        out: &mut [i16],
+        samples: usize,
+        exec: Option<&mut dyn Exec>,
+    ) {
         let t_total = super::prof::start();
         self.data.samples.frame();
         let out = &mut out[..samples * 2];
@@ -182,12 +243,13 @@ impl AudioSystem {
             csp: &mut self.csp,
             fgm: &mut self.fgm,
         };
+        let exec: &mut dyn Exec = match exec {
+            Some(exec) => exec,
+            None => &mut *self.dsp,
+        };
         self.synth
-            .audio_frame(&self.data, &mut players, out, samples);
+            .audio_frame(&self.data, &mut players, exec, out, samples);
         let t = super::prof::start();
-        if self.mono {
-            mono(out);
-        }
         // audio.c:1090-1096: free the slots whose script has ended.
         for slot in &mut self.sound_players {
             if let Some(node) = *slot {
@@ -399,29 +461,63 @@ impl AudioSystem {
     pub fn set_quality(&mut self, quality: u32) {
         self.mono = quality == 0;
     }
-    /// `syAudioSetFXType`: rebuilds the aux effect (see the module doc).
+    /// `syAudioSetFXType`: rebuilds the aux effect (see the module doc),
+    /// installed at the next frame's start.
     pub fn set_fx_type(&mut self, fx_type: i32) {
         if fx_type == self.fx_type {
             return;
         }
         self.fx_type = fx_type;
-        self.synth.fx = (fx_type != reverb::AL_FX_NONE).then(|| {
-            let mut fx = Fx::new(
+        self.fx_pending = Some((fx_type != reverb::AL_FX_NONE).then(|| {
+            Fx::new(
                 reverb::params_for(fx_type, &self.data.custom_fx, &self.data.presets),
                 N64_OUTPUT_RATE,
-            );
-            fx.set_kernel(self.fx_kernel);
-            fx
-        });
+            )
+        }));
+    }
+
+    /// The mono option (`syAudioSetQuality`) over a frame
+    /// [`AudioSystem::render_frame_via`] rendered.
+    pub fn mono_pass(&self, out: &mut [i16]) {
+        if self.mono {
+            mono(out);
+        }
+    }
+
+    /// `syAudioSetQuality(0)` is in effect: [`AudioSystem::mono_pass`]
+    /// averages the channels.
+    pub fn is_mono(&self) -> bool {
+        self.mono
+    }
+
+    /// The mono pass on its own (`out` interleaved L, R), for a frame
+    /// finished outside the lock while [`AudioSystem::is_mono`].
+    pub fn mono_frame(out: &mut [i16]) {
+        mono(out);
+    }
+
+    /// The DSP state the frame's ops run on.
+    pub fn dsp_mut(&mut self) -> &mut Dsp {
+        &mut self.dsp
+    }
+
+    /// The audio data the frame's ops read.
+    pub fn data(&self) -> &AudioData {
+        &self.data
+    }
+
+    /// Runs a frame's recorded ops on this system's DSP state: the local
+    /// fallback for an executor on another processor.
+    pub fn exec_frame_list(&mut self, list: &FrameList, out: &mut [i16]) {
+        self.dsp.run_frame(list, &self.data, out);
     }
 
     /// Installs a platform kernel for the reverb's plain sections
-    /// (`reverb::SectionKernel`), kept across [`AudioSystem::set_fx_type`].
+    /// (`reverb::SectionKernel`), kept across [`AudioSystem::set_fx_type`]
+    /// and installed at the next frame's start.
     pub fn set_reverb_kernel(&mut self, kernel: Option<reverb::SectionKernel>) {
         self.fx_kernel = kernel;
-        if let Some(fx) = &mut self.synth.fx {
-            fx.set_kernel(kernel);
-        }
+        self.kernel_pending = true;
     }
 
     // --- Diagnostics ------------------------------------------------------------
@@ -446,6 +542,20 @@ impl AudioSystem {
     /// Physical voices stolen so far (`_allocatePVoice`).
     pub fn voice_steals(&self) -> u32 {
         self.synth.steals
+    }
+    /// The op list's use (`exec`): most ops and arena bytes one run held,
+    /// and the runs a full list forced before its sub-frame ended.
+    pub fn op_stats(&self) -> OpStats {
+        OpStats {
+            peak_ops: self.synth.ops.peak_ops,
+            peak_arena: self.synth.ops.peak_arena,
+            flushes: self.synth.flushes,
+        }
+    }
+    /// Runs the op list after at most `n` ops (1: each op as it is
+    /// recorded, the unsplit order; `exec::OpList::set_limit`).
+    pub fn set_op_limit(&mut self, n: usize) {
+        self.synth.ops.set_limit(n);
     }
     /// The BGM id the status machine holds (-1 when none).
     pub fn bgm_id(&self) -> i32 {
@@ -695,6 +805,47 @@ mod tests {
         let r = super::super::golden::run_with(sys, || 0, || {});
         assert!(calls.load(Ordering::Relaxed) > before + 1000);
         assert_eq!(r.hashes, super::super::golden::HASHES);
+    }
+
+    /// The split renderer equals the unsplit one: the golden scenario
+    /// with each op run as it is recorded (the control pass and the DSP
+    /// interleaved, as before the split), with the list run every 7 ops,
+    /// and with whole sub-frames recorded first. Whole sub-frames fit the list.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn split_equals_direct() {
+        let Some(section) = testdata::section() else {
+            return;
+        };
+        for limit in [1, 7, crate::audio::exec::OPS_CAP] {
+            let mut sys = AudioSystem::new(section).unwrap();
+            sys.set_op_limit(limit);
+            let r = super::super::golden::run_on(&mut sys, || 0, || {});
+            let st = sys.op_stats();
+            std::println!("limit {limit}: {st:?}");
+            assert_eq!(r.hashes, super::super::golden::HASHES, "limit {limit}");
+            if limit == crate::audio::exec::OPS_CAP {
+                assert_eq!(st.flushes, 0);
+            }
+        }
+    }
+
+    /// A whole frame's op lists, recorded then run at once (an executor
+    /// on another processor), render the golden hashes.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn frame_list_equals_direct() {
+        let Some(section) = testdata::section() else {
+            return;
+        };
+        let mut list = FrameList::boxed();
+        for limit in [1, 7, crate::audio::exec::OPS_CAP] {
+            let mut sys = AudioSystem::new(section).unwrap();
+            sys.set_op_limit(limit);
+            let golden = super::super::golden::via_frame_list(&mut list);
+            let r = super::super::golden::run_on_by(&mut sys, || 0, || {}, golden);
+            assert_eq!(r.hashes, super::super::golden::HASHES, "limit {limit}");
+        }
     }
 
     /// The same calls produce the same PCM, sample for sample, including

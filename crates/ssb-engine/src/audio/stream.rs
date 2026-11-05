@@ -496,8 +496,18 @@ impl Samples {
         }
     }
 
+    /// `[start, start + nbytes)` clamped to the wave's bank tbl.
+    #[inline]
+    fn range(&self, w: WaveRef, start: i32, nbytes: i32) -> (usize, usize) {
+        let len = self.tbl_len(w.bank);
+        let start = (start.max(0) as usize).min(len);
+        (start, (start + nbytes.max(0) as usize).min(len))
+    }
+
     /// `syAudioDma`'s role for `_decodeChunk`: the bytes `[start, start +
-    /// nbytes)` of the wave's bank tbl, clamped to the tbl.
+    /// nbytes)` of the wave's bank tbl, clamped to the tbl. A streamed
+    /// read copies at most `scratch.len()` bytes into `scratch`
+    /// ([`Self::read_len`] when that is [`FETCH_MAX`]).
     #[inline]
     pub fn read<'a>(
         &'a self,
@@ -505,14 +515,33 @@ impl Samples {
         wt: &WaveTable,
         start: i32,
         nbytes: i32,
-        scratch: &'a mut [u8; FETCH_MAX],
+        scratch: &'a mut [u8],
     ) -> &'a [u8] {
-        let len = self.tbl_len(w.bank);
-        let start = (start.max(0) as usize).min(len);
-        let end = (start + nbytes.max(0) as usize).min(len);
+        let (start, end) = self.range(w, start, nbytes);
         match self {
             Self::Resident(t) => &t[(w.bank != 0) as usize][start..end],
             Self::Streamed(s) => s.read(w, wt, start, end, scratch),
+        }
+    }
+
+    /// The length of [`Self::read`] into a [`FETCH_MAX`]-byte scratch: a
+    /// scratch this long reads the same bytes.
+    #[inline]
+    pub fn read_len(&self, w: WaveRef, start: i32, nbytes: i32) -> usize {
+        let (start, end) = self.range(w, start, nbytes);
+        (end - start).min(match self {
+            Self::Resident(_) => usize::MAX,
+            Self::Streamed(_) => FETCH_MAX,
+        })
+    }
+
+    /// [`Self::read`] of resident samples (empty for streamed ones).
+    #[inline]
+    pub fn resident(&self, w: WaveRef, start: i32, nbytes: i32) -> &'static [u8] {
+        let (start, end) = self.range(w, start, nbytes);
+        match self {
+            Self::Resident(t) => &t[(w.bank != 0) as usize][start..end],
+            Self::Streamed(_) => &[],
         }
     }
 
@@ -773,17 +802,33 @@ mod tests {
         let (prefix, reg) = split(section);
         let c = cache(reg.len(), CACHE_SLOTS_FOR_TESTS);
         let mut src = Mem(reg);
-        let sys = AudioSystem::new_streamed(prefix, c).unwrap();
-        let r = golden::run_with(
-            sys,
+        let mut sys = AudioSystem::new_streamed(prefix, c).unwrap();
+        let r = golden::run_on(
+            &mut sys,
             || 0,
             || {
                 c.service(&mut src, 1);
             },
         );
         let s = c.stats();
-        println!("golden over the cache: {s:?}");
+        println!("golden over the cache: {s:?}, ops {:?}", sys.op_stats());
+        assert_eq!(sys.op_stats().flushes, 0, "a streamed frame fits the list");
         assert_eq!(s.misses, 0);
+        assert_eq!(r.hashes, golden::HASHES);
+
+        // The same over whole-frame lists (streamed chunks in the arena).
+        let c = cache(reg.len(), CACHE_SLOTS_FOR_TESTS);
+        let mut sys = AudioSystem::new_streamed(prefix, c).unwrap();
+        let mut list = crate::audio::exec::FrameList::boxed();
+        let r = golden::run_on_by(
+            &mut sys,
+            || 0,
+            || {
+                c.service(&mut src, 1);
+            },
+            golden::via_frame_list(&mut list),
+        );
+        assert_eq!(c.stats().misses, 0);
         assert_eq!(r.hashes, golden::HASHES);
     }
 
@@ -830,8 +875,12 @@ mod tests {
                 }
                 let s = c.stats();
                 println!(
-                    "page every {every} frame(s), head {head}: heads {heads} B, misses {} ({} B), fetched {}, queue max {}",
-                    s.misses, s.miss_bytes, s.fetched, s.queue_max
+                    "page every {every} frame(s), head {head}: heads {heads} B, misses {} ({} B), fetched {}, queue max {}, ops {:?}",
+                    s.misses,
+                    s.miss_bytes,
+                    s.fetched,
+                    s.queue_max,
+                    sys.op_stats()
                 );
                 if every == 1 && head == HEAD {
                     assert_eq!(s.misses, 0);

@@ -25,6 +25,7 @@ pub mod heap;
 pub mod hwcount;
 pub mod input;
 pub mod memory;
+pub mod me;
 pub mod meshdraw;
 pub mod movie;
 pub mod particles;

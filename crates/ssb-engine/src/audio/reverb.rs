@@ -93,6 +93,25 @@ struct Delay {
 pub type SectionKernel =
     unsafe fn(x: *mut i16, y: *mut i16, out: *mut i16, n: usize, coef: [i32; 3]);
 
+/// A `T` in cache lines of its own: what another processor writes back
+/// never covers a neighbour's bytes.
+#[derive(Debug, Clone)]
+#[repr(C, align(64))]
+struct Own<T>(T);
+
+impl<T> core::ops::Deref for Own<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for Own<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 /// `ALFx`.
 #[derive(Debug, Clone)]
 pub struct Fx {
@@ -105,7 +124,7 @@ pub struct Fx {
     /// `r->input - r->base`.
     input: usize,
     length: usize,
-    delay: Vec<Delay>,
+    delay: Vec<Own<Delay>>,
     /// Whether [`Fx::pull_fused`] may run this effect (see there).
     fused: bool,
 }
@@ -184,7 +203,7 @@ impl Fx {
             if fc != 0 {
                 d.lp = Some(LowPass::new(fc));
             }
-            delay.push(d);
+            delay.push(Own(d));
         }
         // The fused path needs plain sections (no chorus; the low-pass
         // never changes the output, `APPLY_LOWPASS`) whose input and output
@@ -200,9 +219,11 @@ impl Fx {
                     && gap(i, o) >= FIXED_SAMPLE
                     && gap(o, i) >= FIXED_SAMPLE
             });
-        // 16-byte alignment: at most 7 samples of slack.
-        let base = vec![0; length + 7];
-        let org = (base.as_ptr() as usize).wrapping_neg() % 16 / 2;
+        // 64-byte alignment (16 for `SectionKernel`, 64 so another
+        // processor can own the line's cache lines): at most 31 samples of
+        // slack in front, at most 31 behind to fill the last line.
+        let base = vec![0; length + 62];
+        let org = (base.as_ptr() as usize).wrapping_neg() % 64 / 2;
         Self {
             base,
             org,

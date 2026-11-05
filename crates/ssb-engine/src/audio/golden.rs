@@ -39,11 +39,14 @@ impl Report {
     }
 }
 
-struct Runner<C: FnMut() -> u32, H: FnMut()> {
-    sys: AudioSystem,
+struct Runner<'a, C: FnMut() -> u32, H: FnMut(), R: FnMut(&mut AudioSystem, &mut [i16], usize)> {
+    sys: &'a mut AudioSystem,
     clock: C,
     /// Called after every frame (a host test's streamer).
     between: H,
+    /// Renders one frame ([`AudioSystem::render_frame`] unless
+    /// [`run_on_by`]).
+    render: R,
     hash: u64,
     ticks: u32,
     frames: u32,
@@ -51,10 +54,12 @@ struct Runner<C: FnMut() -> u32, H: FnMut()> {
     buf: [i16; FRAME_SAMPLES_MAX * 2],
 }
 
-impl<C: FnMut() -> u32, H: FnMut()> Runner<C, H> {
+impl<C: FnMut() -> u32, H: FnMut(), R: FnMut(&mut AudioSystem, &mut [i16], usize)>
+    Runner<'_, C, H, R>
+{
     fn frame(&mut self, n: usize) {
         let t = (self.clock)();
-        self.sys.render_frame(&mut self.buf, n);
+        (self.render)(self.sys, &mut self.buf, n);
         self.ticks = self.ticks.wrapping_add((self.clock)().wrapping_sub(t));
         self.frames += 1;
         for s in &self.buf[..n * 2] {
@@ -81,7 +86,24 @@ pub fn run(section: &'static [u8], clock: impl FnMut() -> u32) -> Result<Report,
 }
 
 /// Runs the scenario on `sys` (fresh), calling `between` after every frame.
-pub fn run_with(sys: AudioSystem, clock: impl FnMut() -> u32, between: impl FnMut()) -> Report {
+pub fn run_with(mut sys: AudioSystem, clock: impl FnMut() -> u32, between: impl FnMut()) -> Report {
+    run_on(&mut sys, clock, between)
+}
+
+/// [`run_with`] on a borrowed system, which the caller can inspect after.
+pub fn run_on(sys: &mut AudioSystem, clock: impl FnMut() -> u32, between: impl FnMut()) -> Report {
+    run_on_by(sys, clock, between, |sys, out, n| sys.render_frame(out, n))
+}
+
+/// [`run_on`] with each frame rendered by `render(sys, out, samples)`,
+/// which must leave what [`AudioSystem::render_frame`] would in
+/// `out[..samples * 2]` (an executor on another processor).
+pub fn run_on_by(
+    sys: &mut AudioSystem,
+    clock: impl FnMut() -> u32,
+    between: impl FnMut(),
+    render: impl FnMut(&mut AudioSystem, &mut [i16], usize),
+) -> Report {
     let mut r = Report {
         hashes: [0; SEGMENTS],
         ticks: [0; SEGMENTS],
@@ -92,6 +114,7 @@ pub fn run_with(sys: AudioSystem, clock: impl FnMut() -> u32, between: impl FnMu
         sys,
         clock,
         between,
+        render,
         hash: 0xCBF2_9CE4_8422_2325,
         ticks: 0,
         frames: 0,
@@ -152,4 +175,31 @@ pub fn run_with(sys: AudioSystem, clock: impl FnMut() -> u32, between: impl FnMu
     }
     x.end(&mut r, 3);
     r
+}
+
+/// A [`run_on_by`] renderer that records each frame's ops into `list`
+/// and runs the whole list at the frame's end, as an executor on another
+/// processor does: the output poisoned first, so the list must write
+/// every sample.
+#[cfg(test)]
+pub(crate) fn via_frame_list(
+    list: &mut super::exec::FrameList,
+) -> impl FnMut(&mut AudioSystem, &mut [i16], usize) + '_ {
+    use super::data::AudioData;
+    use super::exec::{Exec, FrameList, OpList};
+    struct Rec<'a>(&'a mut FrameList);
+    impl Exec for Rec<'_> {
+        fn run(&mut self, ops: &OpList, _: &AudioData, _: &mut [i16]) {
+            assert!(self.0.append(ops), "a frame fits the frame list");
+        }
+    }
+    move |sys, out, n| {
+        sys.apply_pending_fx();
+        list.clear();
+        let out = &mut out[..n * 2];
+        out.fill(0x5A5A);
+        sys.render_frame_via(out, n, Some(&mut Rec(list)));
+        sys.exec_frame_list(list, out);
+        sys.mono_pass(out);
+    }
 }

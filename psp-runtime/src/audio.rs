@@ -283,6 +283,9 @@ struct ThreadState {
     rest_min: u32,
     latency_max: u32,
     voices_max: u32,
+    /// The Media Engine executor, while the ME runs the frames
+    /// ([`crate::me`]).
+    me: Option<Box<crate::me::MeExec>>,
 }
 
 impl ThreadState {
@@ -304,6 +307,7 @@ impl ThreadState {
             rest_min: u32::MAX,
             latency_max: 0,
             voices_max: 0,
+            me: None,
         })
     }
 }
@@ -503,7 +507,11 @@ pub fn start(section: Section) -> Result<&'static GameAudio, StartError> {
         Section::Streamed { prefix, cache } => AudioSystem::new_streamed(prefix, cache),
     }
     .map_err(StartError::System)?;
-    sys_.set_reverb_kernel(Some(crate::reverb_vfpu::section));
+    // The ME runs the frames when it can (integer reverb there: no VFPU).
+    let me = crate::me::MeExec::start(sys_.dsp_mut());
+    if me.is_none() {
+        sys_.set_reverb_kernel(Some(crate::reverb_vfpu::section));
+    }
     #[cfg(feature = "profile")]
     ssb_engine::audio::prof::set_clock(now);
     let lock = SemaLock::new().map_err(StartError::Sema)?;
@@ -521,6 +529,8 @@ pub fn start(section: Section) -> Result<&'static GameAudio, StartError> {
     if THREAD_STATE.load(Ordering::Acquire).is_null() {
         THREAD_STATE.store(Box::into_raw(ThreadState::boxed()), Ordering::Release);
     }
+    // SAFETY: the thread that owns it has not started.
+    unsafe { (*THREAD_STATE.load(Ordering::Acquire)).me = me };
     STOP.store(false, Ordering::Release);
     // SAFETY: a NUL-terminated name and a `extern "C"` entry. VFPU: the
     // synth may reach rust-psp's VFPU libm (R4 §1).
@@ -559,7 +569,7 @@ pub fn start(section: Section) -> Result<&'static GameAudio, StartError> {
 fn selftest(section: Section) {
     use core::fmt::Write;
     use ssb_engine::audio::golden;
-    struct Buf([u8; 512], usize);
+    struct Buf([u8; 640], usize);
     impl Write for Buf {
         fn write_str(&mut self, t: &str) -> core::fmt::Result {
             let n = t.len().min(self.0.len() - self.1);
@@ -568,7 +578,7 @@ fn selftest(section: Section) {
             Ok(())
         }
     }
-    let mut b = Buf([0; 512], 0);
+    let mut b = Buf([0; 640], 0);
     let sys_ = match section {
         Section::Resident(s) => AudioSystem::new(s),
         Section::Streamed { prefix, cache } => AudioSystem::new_streamed(prefix, cache),
@@ -582,15 +592,41 @@ fn selftest(section: Section) {
             }
         }
     };
-    // The reverb's VFPU kernel as the audio thread runs it; this thread's
-    // VFPU registers (gum's) kept around it.
-    let run = |mut s: AudioSystem| {
-        s.set_reverb_kernel(Some(crate::reverb_vfpu::section));
-        crate::reverb_vfpu::with_saved(|| golden::run_with(s, now, settle))
+    // On the ME as the audio thread runs it when the ME is up; else the
+    // reverb's VFPU kernel as the audio thread runs it, this thread's VFPU
+    // registers (gum's) kept around it.
+    let run = |mut s: AudioSystem| match crate::me::MeExec::start(s.dsp_mut()) {
+        Some(mut m) => {
+            let r = golden::run_on_by(&mut s, now, settle, |s, out, n| {
+                if s.apply_pending_fx() {
+                    m.sc_touched();
+                }
+                let dsp: *mut _ = s.dsp_mut();
+                m.begin(dsp, s.data());
+                s.render_frame_via(out, n, Some(&mut *m));
+                m.finish(&mut out[..n * 2]);
+                s.mono_pass(&mut out[..n * 2]);
+            });
+            (r, "me")
+        }
+        None => {
+            s.set_reverb_kernel(Some(crate::reverb_vfpu::section));
+            (crate::reverb_vfpu::with_saved(|| golden::run_with(s, now, settle)), "sc")
+        }
     };
     match sys_.map(run) {
-        Ok(r) => {
-            let _ = write!(b, "selftest ok={} voices={}", r.ok(), r.max_voices);
+        Ok((r, exec)) => {
+            let me = crate::me::stats();
+            let _ = write!(
+                b,
+                "selftest ok={} voices={} exec={} me_state={} me_lists={} me_fallbacks={}",
+                r.ok(),
+                r.max_voices,
+                exec,
+                me.state,
+                me.frames,
+                me.fallbacks,
+            );
             for k in 0..golden::SEGMENTS {
                 let _ = write!(
                     b,
@@ -726,13 +762,34 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
             st.voices_max = 0;
             VOICES_MAX.store(0, Ordering::Release);
         }
+        if st.me.as_ref().is_some_and(|m| m.gave_up()) {
+            // Back to the SC executor for good: its VFPU reverb, its stages.
+            st.me = None;
+            api.shared.with(|s| {
+                s.set_reverb_kernel(Some(crate::reverb_vfpu::section));
+                s.dsp_mut().set_profiled(true);
+            });
+        }
         while st.fifo_len < BLOCK {
             let ai_len = st.ai.ai_len;
             let off = st.fifo_len * 2;
             let fifo = &mut st.fifo.0[off..];
-            let (n, voices, steals, drops, osc_drops) = api.shared.with(|s| {
+            let me = &mut st.me;
+            let (n, voices, steals, drops, osc_drops, mono) = api.shared.with(|s| {
                 let n = s.frame_samples(ai_len).min(FRAME_SAMPLES_MAX);
-                s.render_frame(fifo, n);
+                match me {
+                    // The control pass here; the ops run on the ME below,
+                    // outside the lock.
+                    Some(m) => {
+                        if s.apply_pending_fx() {
+                            m.sc_touched();
+                        }
+                        let dsp: *mut _ = s.dsp_mut();
+                        m.begin(dsp, s.data());
+                        s.render_frame_via(fifo, n, Some(&mut **m));
+                    }
+                    None => s.render_frame(fifo, n),
+                }
                 let d = s.drops();
                 let drops = [
                     d.synth_params,
@@ -744,8 +801,15 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
                 ]
                 .iter()
                 .fold(0u32, |a, &b| a.saturating_add(b));
-                (n, s.active_voices(), s.voice_steals(), drops, d.oscillators)
+                (n, s.active_voices(), s.voice_steals(), drops, d.oscillators, s.is_mono())
             });
+            if let Some(m) = &mut st.me {
+                let out = &mut st.fifo.0[off..off + n * 2];
+                m.finish(out);
+                if mono {
+                    AudioSystem::mono_frame(out);
+                }
+            }
             st.fifo_len += n;
             st.ai.tic(n as u32);
             bump(&TICS, 1);

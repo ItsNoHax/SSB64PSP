@@ -1544,7 +1544,7 @@ mod tests {
 
     fn setup() -> Option<(AudioData, Synth, Fgm)> {
         let d = testdata::data()?;
-        let mut syn = Synth::new(32006, None);
+        let mut syn = Synth::new(32006);
         let fgm = Fgm::new(&mut syn, &d);
         Some((d, syn, fgm))
     }
@@ -1682,7 +1682,7 @@ mod tests {
             assert_eq!((s1 as u32 >> 16) & 0x7FFF, want);
         }
         let seeds = fgm.rng_seeds();
-        let mut syn2 = Synth::new(32006, None);
+        let mut syn2 = Synth::new(32006);
         let mut again = Fgm::new(&mut syn2, &d);
         assert_eq!(again.rng_seeds(), (1, 1));
         again.set_rng_seed1(seeds.0);

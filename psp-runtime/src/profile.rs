@@ -175,6 +175,8 @@ mod imp {
         run_max_tick: u32,
         /// The audio thread's counters at the last report.
         audio_last: crate::audio::Stats,
+        /// The ME executor's counters at the last report.
+        me_last: crate::me::Stats,
         /// The renderer's stage totals at the last report.
         stages_last: [u32; ssb_engine::audio::prof::STAGES],
         /// `heap::counts` at the last frame end.
@@ -202,6 +204,7 @@ mod imp {
         run_max: 0,
         run_max_tick: 0,
         audio_last: crate::audio::Stats::ZERO,
+        me_last: crate::me::Stats::ZERO,
         stages_last: [0; ssb_engine::audio::prof::STAGES],
         allocs_last: (0, 0),
     };
@@ -487,6 +490,26 @@ mod imp {
             crate::audio::dump_dropped(),
         );
         emit(&line.buf[..line.len]);
+        // The ME executor: the audio thread's polls and wait for it per
+        // second; sc_busy is busy less the wait (the thread sleeps then).
+        let m = crate::me::stats();
+        let ml = s.me_last;
+        let wait = m.wait_us.wrapping_sub(ml.wait_us);
+        let mut line = Line { buf: [0; 1024], len: 0 };
+        let _ = writeln!(
+            line,
+            "ame n={} state={} lists/s={} polls/s={} wait_us/s={} sc_busy_us/s={} fallbacks={} resets={}",
+            s.reports,
+            m.state,
+            per_s(m.frames.wrapping_sub(ml.frames)) / 10,
+            (u64::from(m.polls.wrapping_sub(ml.polls)) * 1_000_000 / u64::from(wall)) as u32,
+            (u64::from(wait) * 1_000_000 / u64::from(wall)) as u32,
+            (u64::from(busy.wrapping_sub(wait)) * 1_000_000 / u64::from(wall)) as u32,
+            m.fallbacks,
+            m.resets,
+        );
+        emit(&line.buf[..line.len]);
+        s.me_last = m;
         // The sample cache (RE-573), totals since boot.
         if let Some(c) = crate::audio::sample_stats() {
             let mut line = Line { buf: [0; 1024], len: 0 };
@@ -515,7 +538,7 @@ mod imp {
         let mut line = Line { buf: [0; 1024], len: 0 };
         let _ = writeln!(
             line,
-            "astage n={} seq={} snd={} adpcm={} resample={} envmix={} reverb={} bus={} post={} total={} pulls/s={} ns_pull={}",
+            "astage n={} seq={} snd={} adpcm={} resample={} envmix={} reverb={} bus={} post={} total={} pulls/s={} ns_pull={} ctl={}",
             s.reports,
             d[0],
             d[1],
@@ -528,6 +551,7 @@ mod imp {
             d[8],
             d[9],
             (u64::from(per_voice) * 1000 / u64::from(d[9].max(1))) as u32,
+            d[10],
         );
         emit(&line.buf[..line.len]);
         s.stages_last = st;

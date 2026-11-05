@@ -12,15 +12,16 @@ pub enum Stage {
     Seq,
     /// The sound player / FGM client handler.
     Snd,
-    /// `A_ADPCM` decoding (`_decodeChunk`).
+    /// `A_ADPCM` decoding (`_decodeChunk`). This and the stages to `Bus`
+    /// are the executor's (`exec::Dsp`).
     Adpcm,
-    /// `A_RESAMPLE` (or the unity-pitch `A_DMEMMOVE`).
+    /// `A_RESAMPLE` and every `A_DMEMMOVE`.
     Resample,
     /// `A_ENVMIXER`.
     Envmix,
     /// The aux effect (`n_alFxPull` after the aux bus).
     Reverb,
-    /// Bus clears and mixes, interleave and save.
+    /// Clears (the ADPCM tail's too) and mixes, interleave and save.
     Bus,
     /// Mono pass and the per-frame `syAudio` work after rendering.
     Post,
@@ -28,10 +29,14 @@ pub enum Stage {
     Total,
     /// Count of voice sub-frames pulled (not a time).
     Pulls,
+    /// The synthesizer's control pass over the sub-frames (parameter
+    /// updates, envelopes, loop bookkeeping, recording the DSP commands;
+    /// not the clients, not the executor).
+    Ctl,
 }
 
 /// Number of [`Stage`]s.
-pub const STAGES: usize = 10;
+pub const STAGES: usize = 11;
 
 #[cfg(feature = "audio_profile")]
 mod imp {
