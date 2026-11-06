@@ -67,6 +67,7 @@ crates/ssb-rom/src/explain.rs	SPRITES	layout: a SpriteFile manifest (the file ID
 crates/ssb-rom/src/figatree.rs	RATE	port constants: the figatree decoder's fixed-point scales (ftAnimParseDObjFigatree's code)
 crates/ssb-rom/src/figatree.rs	VALUE	port constants: the figatree decoder's fixed-point scales (ftAnimParseDObjFigatree's code)
 crates/ssb-rom/src/fighter.rs	EXPECTED	test fixture
+crates/ssb-rom/src/filter_compensation.rs	COMPENSATED	layout: archive file IDs and texture byte offsets of the textures whose filter compensation runs, the owner's choice (RE-588)
 crates/ssb-rom/src/ground_obj.rs	ANIMS	link-time labels: ll*AnimJoint offsets that the grJungle/grYamabuki/grZebes/grInishie/grCastle/itMonster/itPakkun functions pass as immediates, ordered and named by the port; the dGRPupupuWhispy* entries are indices into the generated arrays
 crates/ssb-rom/src/ground_obj.rs	OBJECTS	link-time labels (ll*DObjDesc offsets that grPupupuInitAll, grJungleMakeTaruCann, ... pass as immediates) plus port fields (display link, instance count, build kind) that no d* array holds; follow-up: derive the object list from the stage init functions
 crates/ssb-rom/src/menu_pack.rs	BACKUP_CLEAR	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it

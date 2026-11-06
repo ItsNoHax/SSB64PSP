@@ -25,6 +25,60 @@ pub const LARGE_ERROR_THRESHOLD: u8 = 32;
 pub const PALETTE_OPTIMIZE_MAX_SWEEPS: usize = 8;
 pub const INTEGER_OPTIMIZE_MAX_SWEEPS: usize = 8;
 
+/// Textures whose single-image compensation solve runs, as
+/// `(home file, data file, data offset)`; every other texture packs plain.
+/// The 37 cheapest of the 71 that compensation accepts: the owner's choice for a
+/// pack built on the PSP in under 10 minutes (RE-588 item 6). Layout only.
+/// `(118, Some(110), 0xBD0)` solves nothing: it draws file 111's compensated
+/// copy of that texture, cached under the same coverage.
+pub const COMPENSATED: &[(u32, Option<u16>, u32)] = &[
+    (52, None, 0xF48),
+    (52, None, 0x30F0),
+    (52, None, 0x9C68),
+    (52, None, 0x9D70),
+    (52, None, 0x1C568),
+    (52, None, 0x1CB98),
+    (52, None, 0x1FDC0),
+    (68, None, 0x5968),
+    (71, None, 0x6840),
+    (73, None, 0x2060),
+    (83, None, 0xC178),
+    (86, None, 0x1A68),
+    (104, Some(103), 0x2B00),
+    (109, None, 0x1C00),
+    (111, Some(110), 0xBD0),
+    (114, None, 0x82D8),
+    (118, Some(110), 0xBD0),
+    (137, Some(120), 0x418),
+    (138, Some(121), 0x5A8),
+    (149, None, 0xE0),
+    (160, Some(112), 0x18C0),
+    (161, None, 0xE0),
+    (161, None, 0x8E0),
+    (161, None, 0x950),
+    (296, Some(299), 0x78),
+    (313, Some(299), 0x18),
+    (317, Some(299), 0x78),
+    (320, None, 0xD518),
+    (323, Some(299), 0x78),
+    (324, Some(299), 0x18),
+    (330, None, 0x7650),
+    (332, None, 0xBF70),
+    (332, Some(299), 0x18),
+    (335, Some(299), 0x18),
+    (338, Some(299), 0x18),
+    (341, Some(299), 0x18),
+    (349, None, 0x4F0),
+    (350, None, 0x3E90),
+];
+
+/// Whether `COMPENSATED` lists this texture.
+pub fn compensated(home: u32, data_file: Option<u16>, data_offset: u32) -> bool {
+    COMPENSATED
+        .binary_search(&(home, data_file, data_offset))
+        .is_ok()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntegerFormat {
     Rgba8888,
@@ -1143,6 +1197,14 @@ pub fn solve_samples_ungated(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_compensated_list_is_sorted_and_unique() {
+        assert!(COMPENSATED.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(COMPENSATED.len(), 38);
+        assert!(compensated(52, None, 0xF48));
+        assert!(!compensated(300, None, 0x2490));
+    }
 
     #[test]
     fn saddle_is_improved_without_touching_addressing() {

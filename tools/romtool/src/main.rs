@@ -1067,6 +1067,43 @@ fn texture_cache_key(
     }
 }
 
+/// [`primitive_filter_coverage`] when a texture the primitive converts is
+/// compensated ([`ssb_rom::filter_compensation::compensated`]) or the
+/// residuals audit runs; else empty, since only compensation reads it
+/// (RE-588: the on-PSP build skips it).
+fn coverage_if_compensated(
+    compensated: bool,
+    m: &ssb_rom::mesh::Mesh,
+    prim: &ssb_rom::mesh::Primitive,
+) -> filter_coverage::Coverage {
+    if compensated || residuals::enabled() {
+        primitive_filter_coverage(m, prim)
+    } else {
+        filter_coverage::Coverage::default()
+    }
+}
+
+/// Whether one of `sprites`, converted from `home`, is compensated.
+fn any_compensated(home: u32, sprites: &[ssb_rom::mobj::Ptr]) -> bool {
+    sprites.iter().any(|p| listed(home, p.file, p.offset))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests of the solve itself list every texture.
+    static LIST_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`ssb_rom::filter_compensation::compensated`]; in tests, also every
+/// texture while [`LIST_ALL`] is set.
+fn listed(home: u32, data_file: Option<u16>, data_offset: u32) -> bool {
+    #[cfg(test)]
+    if LIST_ALL.get() {
+        return true;
+    }
+    ssb_rom::filter_compensation::compensated(home, data_file, data_offset)
+}
+
 fn primitive_filter_coverage(
     m: &ssb_rom::mesh::Mesh,
     prim: &ssb_rom::mesh::Primitive,
@@ -1456,7 +1493,7 @@ fn lod_blend_desc(
             }
         }
     }
-    let coverage = primitive_filter_coverage(m, prim);
+    let coverage = coverage_if_compensated(any_compensated(src.home.id, &data.sprites), m, prim);
     let policy = ssb_rom::filter_compensation::AlphaPolicy::Opaque;
     let mut next_textures =
         [ssb_rom::pack::TextureDesc::NO_ANIM; ssb_rom::pack::MatAnimDesc::MAX_TEXTURES];
@@ -1646,7 +1683,11 @@ fn pack_mesh(
                 )
             }
             Some(t) => {
-                let original_coverage = primitive_filter_coverage(m, prim);
+                let original_coverage = coverage_if_compensated(
+                    fix.is_some() || listed(src.home.id, t.data_file, t.data_offset),
+                    m,
+                    prim,
+                );
                 let coverage = if matches!(fix.map(|f| f.kind), Some(residual_fixes::Kind::Dense)) {
                     residual_fixes::dense_coverage(&original_coverage)
                 } else {
@@ -1805,7 +1846,11 @@ fn pack_mesh(
                             gate,
                             translucent_blend,
                         );
-                        let coverage = primitive_filter_coverage(m, prim);
+                        let coverage = coverage_if_compensated(
+                            any_compensated(src.home.id, &anim_data.sprites),
+                            m,
+                            prim,
+                        );
                         let converted: Vec<u32> = anim_data
                             .sprites
                             .iter()
@@ -2096,7 +2141,11 @@ fn texture_part_textures(
     out[0] = own;
     let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
     let alpha_policy = ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
-    let coverage = primitive_filter_coverage(m, prim);
+    let parts: Vec<ssb_rom::mobj::Ptr> = (1..out.len())
+        .filter(|k| tag.ids >> k & 1 != 0)
+        .filter_map(|k| ssb_rom::mobj::read_sprite_at(src.home, tag.at, k))
+        .collect();
+    let coverage = coverage_if_compensated(any_compensated(src.home.id, &parts), m, prim);
     for (k, slot) in out.iter_mut().enumerate().skip(1) {
         if tag.ids >> k & 1 == 0 {
             continue;
@@ -8603,8 +8652,37 @@ fn convert_texture(
         ))
     };
 
+    // RE-588: only listed textures are compensated; every other one packs
+    // as a rejected compensation leaves it, without the work. The residuals
+    // audit takes the full path, whose records it reads.
+    let plain = direct_fit.is_none()
+        && !residuals::enabled()
+        && !listed(src.home.id, t.data_file, t.data_offset);
     let mut mipped = |palette: Vec<u32>| {
         let img = decode_mirrored(&tlut)?;
+        if plain {
+            if psm.is_paletted() && t.format == texture::Format::Ci {
+                if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
+                    let source = decode_index_field(file, t)?;
+                    let limit = if psm == psp::Psm::PsmT4 {
+                        16
+                    } else {
+                        palette.len()
+                    };
+                    // The source indices, under every palette state when
+                    // each holds the indices' range.
+                    let states = if states.iter().all(|p| p.len() >= limit) {
+                        states
+                    } else {
+                        std::slice::from_ref(&palette)
+                    };
+                    return Some(psp::pack_mipped_indices(
+                        &img, psm, &palette, swizzle, &source, states,
+                    ));
+                }
+            }
+            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+        }
         // RE-311: a bounded texgen primitive trains on its real-normal pose
         // coverage plus a one-point-per-texel regularization over the whole
         // reachable box, and must pass two holdouts: the disjoint-pose
@@ -8969,7 +9047,10 @@ fn convert_texture(
                 }
             }
         }
-        let solved = if train_samples.is_empty() {
+        // RE-588: only the listed textures run the solve (PSP build budget).
+        let solved = if !listed(src.home.id, t.data_file, t.data_offset) {
+            None
+        } else if train_samples.is_empty() {
             ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t, alpha_policy)
         } else {
             ssb_rom::filter_compensation::solve_samples(
@@ -18728,7 +18809,7 @@ mod tests {
     }
 
     /// One `convert_texture` call on a synthetic file, with the residual
-    /// recorder on: the packed texture, whether a compensated result was
+    /// recorder on and every texture listed for compensation: the packed texture, whether a compensated result was
     /// kept, and the recorder's `(method, attempted, natural, final)`.
     fn convert_recorded(
         home: u32,
@@ -18755,6 +18836,7 @@ mod tests {
             all: &[],
         };
         super::residuals::enable();
+        super::LIST_ALL.set(true);
         let mut compensated = false;
         let packed = super::convert_texture(
             texels,

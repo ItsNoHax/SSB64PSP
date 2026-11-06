@@ -18,8 +18,8 @@
 
 ## Current work
 
+- Landed (batch 172): texture compensation only for the owner's 37 textures; coverage and fits skipped for the rest; host `romtool pack` 122 to 4.3 s; 55 goldens rebaselined (owner-approved; RE-588 item 8).
 - Landed (batch 171): `ssb-engine` sine tables read from the pack's new `TABLES` section (`ssb-tables`, fixed `.bss` store on the PSP; pack v142): r12 +0.16 (16.55, under 16.7), battle +0.17 ms; host tests build the section from the ROM (RE-589).
-- Landed (batch 164): pack -2.31 MB (49.29 to 46.98 MB): wallpapers at a 304-texel stride (RE-419), Zebes acid and two more two-tile blends' unreachable tile-0 slots unpacked (RE-364); runtime code unchanged; PSP-2000 frame hashes equal, no window slower (r12 -0.12 ms, one round).
 - Landed (batch 162): sprite lookups memoized (`SpriteIndex.memo`): r12 -0.12 (16.59, under 16.7), battle -0.35, vs4 -0.10 ms; no window slower; free memory -8 KiB, fighter select -256 KiB more (RE-585 item 52).
 - Landed (batch 161): map surfaces bucketed by kind (`SurfaceTable`): r12 -0.14, r18 -0.17, battle -0.10, Fall -0.11 ms; no window slower; free memory +8 KiB (RE-585 item 51).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
@@ -29,7 +29,7 @@
 ## Next
 
 1. Electric `vs4@2170` (r12 16.55, r18 15.65 ms; target 16.7 met; budget headroom next). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
-2. ROM-free release (PLAN, RE-588): owner chose 37 compensated textures (55 goldens change); then portable packer, the other tables into the pack, installer.
+2. ROM-free release (PLAN, RE-588): host pack 4.3 s with the 37 compensated textures (PSP estimate 8-11.5 min, limit 10): break down the remaining time; then portable packer, the other tables into the pack, installer.
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 171 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 172 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

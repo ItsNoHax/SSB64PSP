@@ -123,7 +123,7 @@ the Media Engine (batch 159), started by the game's own kernel module
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Remaining: owner choice of texture compensation kept (exact needs ~30+ min; RE-588), portable packer crate, the other `ssb-tablegen` tables into the pack (`TABLES` section and `ssb-tables` reader landed with the sine tables, RE-589), installer. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
+| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Remaining: break down and cut the 4.3 s host pack (estimate 8-11.5 min on the PSP with the owner's 37 compensated textures; RE-588 item 8), portable packer crate, the other `ssb-tablegen` tables into the pack (`TABLES` section and `ssb-tables` reader landed with the sine tables, RE-589), installer. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
 
 ## Completed
 
