@@ -1721,7 +1721,27 @@ fn pack_mesh(
                 ) {
                     key.residual_variant = fix.unwrap().variant;
                 }
+                // The key an uncompensated result is cached under. A texture
+                // that cannot be compensated (RE-588) looks it up first,
+                // instead of converting and then finding it packed.
+                let plain_key = || {
+                    let mut key = texture_cache_key(
+                        id,
+                        &t,
+                        0,
+                        animated,
+                        ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+                    );
+                    key.animated_source = None;
+                    key.residual_variant = 0;
+                    key
+                };
+                let plain = fix.is_none()
+                    && !residuals::enabled()
+                    && !listed(src.home.id, t.data_file, t.data_offset);
                 let resolved = if let Some(&i) = tex_index.get(&key) {
+                    Some(i)
+                } else if let Some(&i) = tex_index.get(&plain_key()).filter(|_| plain) {
                     Some(i)
                 } else {
                     residuals::discard_conversion();
@@ -1742,20 +1762,7 @@ fn pack_mesh(
                         direct_fit,
                     )
                     .map(|tex| {
-                        let final_key = if compensated {
-                            key
-                        } else {
-                            let mut key = texture_cache_key(
-                                id,
-                                &t,
-                                0,
-                                animated,
-                                ssb_rom::filter_compensation::AlphaPolicy::Opaque,
-                            );
-                            key.animated_source = None;
-                            key.residual_variant = 0;
-                            key
-                        };
+                        let final_key = if compensated { key } else { plain_key() };
                         if let Some(&i) = tex_index.get(&final_key) {
                             residuals::discard_conversion();
                             return i;

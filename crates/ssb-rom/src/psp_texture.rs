@@ -2187,6 +2187,26 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
     let padded_h = pad_to_power_of_two(img.height);
     let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
     let mut data = alloc::vec![0u8; stride_bytes * padded_h as usize];
+    // `nearest_entry` scans the whole palette; a level holds few distinct
+    // colours, so each is looked up once (direct-mapped by colour, a
+    // collision recomputes). Same indices (RE-588: the on-PSP build budget).
+    let mut memo: Vec<(u32, u8)> = if format.is_paletted() {
+        alloc::vec![(0, 0); 1024]
+    } else {
+        Vec::new()
+    };
+    let mut memo_valid = alloc::vec![false; memo.len()];
+    let mut nearest = |px: [u8; 4]| -> u8 {
+        let key = u32::from_le_bytes(px);
+        let slot = (key.wrapping_mul(0x9E37_79B1) >> 22) as usize;
+        if memo_valid[slot] && memo[slot].0 == key {
+            return memo[slot].1;
+        }
+        let i = nearest_entry(palette, px);
+        memo[slot] = (key, i);
+        memo_valid[slot] = true;
+        i
+    };
 
     for y in 0..img.height as usize {
         for x in 0..img.width as usize {
@@ -2199,7 +2219,7 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
             ];
             match format {
                 Psm::PsmT4 => {
-                    let i = nearest_entry(palette, px) & 0xF;
+                    let i = nearest(px) & 0xF;
                     let at = y * stride_bytes + x / 2;
                     // Low nibble first: PPSSPP's PsmT4 reader (RE-280) reads
                     // the even-indexed texel from the low nibble, not the
@@ -2210,7 +2230,7 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
                         data[at] = (data[at] & 0x0F) | (i << 4);
                     }
                 }
-                Psm::PsmT8 => data[y * stride_bytes + x] = nearest_entry(palette, px),
+                Psm::PsmT8 => data[y * stride_bytes + x] = nearest(px),
                 Psm::Psm5551 => {
                     let v = pack_5551(px).to_le_bytes();
                     let at = y * stride_bytes + x * 2;

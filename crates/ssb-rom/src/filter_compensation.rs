@@ -497,13 +497,33 @@ pub fn optimize_palette_indices(
         }
     }
 
-    let local_error = |sample: &PaletteSample, index: &[u8]| -> u64 {
-        let colors = sample.taps.map(|t| palette_c[index[t] as usize]);
-        sq_error(
-            compose_bilinear(colors, sample.sf, sample.tf),
-            sample.target,
-        )
+    // `compose_bilinear` is exact integer arithmetic, linear in each tap:
+    // channel = (sum of tap colour x weight) >> 8, clamped. While one texel
+    // varies, the other taps' sum (`rest`) and that texel's summed weight
+    // (`w`, several taps when addressing folds them) stay fixed, so each
+    // candidate costs `(rest + w * colour) >> 8` per affected sample: the
+    // same errors as composing all four taps, without the lookups (RE-588:
+    // the on-PSP build budget).
+    struct Partial {
+        rest: [i32; 4],
+        w: i32,
+        target: [i32; 4],
+    }
+    let error_with = |partials: &[Partial], c: [i32; 4]| -> u64 {
+        partials
+            .iter()
+            .map(|p| {
+                (0..4)
+                    .map(|ch| {
+                        let v = ((p.rest[ch] + p.w * c[ch]) >> 8).clamp(0, 255);
+                        let e = v - p.target[ch];
+                        (e * e) as u64
+                    })
+                    .sum::<u64>()
+            })
+            .sum()
     };
+    let mut partials: Vec<Partial> = Vec::new();
 
     // Steps 2-5: coordinate descent, capped and self-terminating.
     for _ in 0..PALETTE_OPTIMIZE_MAX_SWEEPS {
@@ -513,23 +533,42 @@ pub fn optimize_palette_indices(
             if affected.is_empty() {
                 continue;
             }
+            partials.clear();
+            partials.extend(affected.iter().map(|&si| {
+                let sample = &samples[si as usize];
+                let invs = 16 - sample.sf;
+                let invt = 16 - sample.tf;
+                let weights = [
+                    invs * invt,
+                    sample.sf * invt,
+                    invs * sample.tf,
+                    sample.sf * sample.tf,
+                ];
+                let mut rest = [0i32; 4];
+                let mut w = 0;
+                for (&tap, &weight) in sample.taps.iter().zip(&weights) {
+                    if tap == texel {
+                        w += weight;
+                    } else {
+                        let c = palette_c[index[tap] as usize];
+                        for ch in 0..4 {
+                            rest[ch] += c[ch] * weight;
+                        }
+                    }
+                }
+                Partial {
+                    rest,
+                    w,
+                    target: sample.target,
+                }
+            }));
             let current = index[texel];
-            let mut best = (
-                affected
-                    .iter()
-                    .map(|&si| local_error(&samples[si as usize], &index))
-                    .sum::<u64>(),
-                current,
-            );
+            let mut best = (error_with(&partials, palette_c[current as usize]), current);
             for cand in 0..max_index as u8 {
                 if cand == current {
                     continue;
                 }
-                index[texel] = cand;
-                let err: u64 = affected
-                    .iter()
-                    .map(|&si| local_error(&samples[si as usize], &index))
-                    .sum();
+                let err = error_with(&partials, palette_c[cand as usize]);
                 if err < best.0 {
                     best = (err, cand);
                 }
@@ -864,6 +903,7 @@ pub fn refine_integer(
         histogram[e.max as usize] += 1;
     }
     let visible_limit = totals.visible_sse;
+    let mut next_max: Vec<u8> = Vec::new();
     for _ in 0..INTEGER_OPTIMIZE_MAX_SWEEPS {
         let mut changed = false;
         for (texel, affected) in influence.iter().enumerate() {
@@ -934,7 +974,11 @@ pub fn refine_integer(
                     }
                     image.pixels[offset] = candidate;
                     let mut new_local = IntegerTotals::default();
-                    let mut hist = histogram;
+                    // The candidate's histogram is `histogram` with these
+                    // samples' maxima moved, applied in place and reverted
+                    // below rather than copying all 256 bins per candidate
+                    // (RE-588: the on-PSP build budget).
+                    next_max.clear();
                     let mut cutout_preserved = true;
                     for &si in affected {
                         let next = error(si, &image);
@@ -944,14 +988,27 @@ pub fn refine_integer(
                             cutout_preserved = false;
                         }
                         new_local.add(next);
-                        hist[cache[si].max as usize] -= 1;
-                        hist[next.max as usize] += 1;
+                        histogram[cache[si].max as usize] -= 1;
+                        histogram[next.max as usize] += 1;
+                        next_max.push(next.max);
                     }
+                    let new_top = next_max.iter().copied().max().unwrap_or(0);
                     let next = totals.replace(old_local, new_local);
                     if (policy != AlphaPolicy::Translucent || next.visible_sse <= visible_limit)
                         && cutout_preserved
                     {
-                        let max = hist.iter().rposition(|&v| v != 0).unwrap_or(0) as u8;
+                        // Bins above `current_max` were empty and only the
+                        // moved maxima can fill one.
+                        let max = if new_top >= current_max {
+                            new_top
+                        } else if histogram[current_max as usize] != 0 {
+                            current_max
+                        } else {
+                            histogram[..current_max as usize]
+                                .iter()
+                                .rposition(|&v| v != 0)
+                                .unwrap_or(0) as u8
+                        };
                         let score = (
                             next.sse,
                             next.above_32,
@@ -964,6 +1021,10 @@ pub fn refine_integer(
                             best = score;
                             best_value = candidate;
                         }
+                    }
+                    for (&si, &m) in affected.iter().zip(&next_max) {
+                        histogram[m as usize] -= 1;
+                        histogram[cache[si].max as usize] += 1;
                     }
                 }
                 image.pixels[offset] = best_value;

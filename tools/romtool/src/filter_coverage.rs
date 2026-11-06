@@ -109,6 +109,46 @@ fn evenly_spaced(samples: &[[i32; 2]], limit: usize) -> Vec<[i32; 2]> {
         .collect()
 }
 
+/// `sort_unstable` then `dedup`, the same result. Points of authored
+/// (`i16`) UVs sort as 32-bit keys by a four-pass byte radix sort (a 1 KiB
+/// histogram, small for the PSP's 16 KiB data cache): the comparison sort
+/// of up to ~460,000 raw holdout points per primitive was most of the
+/// coverage time (RE-588).
+fn sort_dedup(points: &mut Vec<[i32; 2]>) {
+    let bias = |v: i32| u32::try_from(v + 0x8000).ok().filter(|&b| b <= 0xFFFF);
+    let keys: Option<Vec<u32>> = points
+        .iter()
+        .map(|p| Some(bias(p[0])? << 16 | bias(p[1])?))
+        .collect();
+    let Some(mut keys) = keys.filter(|k| k.len() >= 4096) else {
+        points.sort_unstable();
+        points.dedup();
+        return;
+    };
+    let mut scratch = vec![0u32; keys.len()];
+    for shift in [0, 8, 16, 24] {
+        let mut start = [0usize; 257];
+        for &k in &keys {
+            start[(k >> shift & 0xFF) as usize + 1] += 1;
+        }
+        for i in 1..start.len() {
+            start[i] += start[i - 1];
+        }
+        for &k in &keys {
+            let slot = &mut start[(k >> shift & 0xFF) as usize];
+            scratch[*slot] = k;
+            *slot += 1;
+        }
+        std::mem::swap(&mut keys, &mut scratch);
+    }
+    keys.dedup();
+    points.clear();
+    points.extend(
+        keys.iter()
+            .map(|&k| [(k >> 16) as i32 - 0x8000, (k & 0xFFFF) as i32 - 0x8000]),
+    );
+}
+
 fn inside(uv: &[[i32; 2]; 3], p: [i32; 2]) -> bool {
     if uv[0] == uv[1] && uv[1] == uv[2] {
         return p == uv[0];
@@ -176,7 +216,36 @@ fn add_cell(
     train: &mut Vec<[i32; 2]>,
     validation: &mut Vec<[i32; 2]>,
 ) {
-    add_cell_where(|p| inside(uv, p), x, y, train, validation);
+    // The closed triangle is convex: a cell whose four lattice corners
+    // are inside it has every S10.5 point inside, so the per-point test
+    // is skipped (same samples, RE-588).
+    let (x0, y0) = (x * 32, y * 32);
+    if [[x0, y0], [x0 + 31, y0], [x0, y0 + 31], [x0 + 31, y0 + 31]]
+        .iter()
+        .all(|&p| inside(uv, p))
+    {
+        add_cell_where(|_| true, x, y, train, validation);
+    } else {
+        add_cell_where(|p| inside(uv, p), x, y, train, validation);
+    }
+}
+
+/// The S10.5 points of one texel cell, as a 32x32 bit set.
+#[derive(Default)]
+struct CellSet([u32; 32]);
+
+impl CellSet {
+    /// Adds cell-local `(s, t)`; whether it was absent.
+    fn insert(&mut self, s: i32, t: i32) -> bool {
+        let (row, bit) = (&mut self.0[t as usize], 1u32 << s);
+        let absent = *row & bit == 0;
+        *row |= bit;
+        absent
+    }
+
+    fn contains(&self, s: i32, t: i32) -> bool {
+        self.0[t as usize] & (1u32 << s) != 0
+    }
 }
 
 /// [`add_cell`]'s probe pattern for any footprint predicate.
@@ -190,18 +259,19 @@ fn add_cell_where(
     let base = [x * 32, y * 32];
     let mut local_train = Vec::new();
     let mut local_validation = Vec::new();
+    let (mut train_set, mut validation_set) = (CellSet::default(), CellSet::default());
     let mut push = |s: i32, t: i32, validate: bool| {
         if !(0..32).contains(&s) || !(0..32).contains(&t) {
             return;
         }
         let p = [base[0] + s, base[1] + t];
         if inside(p) {
-            let out = if validate {
-                &mut local_validation
+            let (out, set) = if validate {
+                (&mut local_validation, &mut validation_set)
             } else {
-                &mut local_train
+                (&mut local_train, &mut train_set)
             };
-            if !out.contains(&p) {
+            if set.insert(s, t) {
                 out.push(p);
             }
         }
@@ -263,14 +333,15 @@ fn add_cell_where(
                 if inside(p) {
                     if local_train.is_empty() {
                         local_train.push(p);
-                    } else if !local_train.contains(&p) && local_validation.is_empty() {
+                        train_set.insert(s, t);
+                    } else if !train_set.contains(s, t) && local_validation.is_empty() {
                         local_validation.push(p);
                     }
                 }
             }
         }
     }
-    local_validation.retain(|p| !local_train.contains(p));
+    local_validation.retain(|p| !train_set.contains(p[0] - base[0], p[1] - base[1]));
     train.extend(local_train.into_iter().take(TRAIN_PER_CELL));
     validation.extend(local_validation.into_iter().take(VALIDATE_PER_CELL));
 }
@@ -305,11 +376,9 @@ pub(super) fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
         }
     }
     result.train.extend(&base);
-    result.train.sort_unstable();
-    result.train.dedup();
+    sort_dedup(&mut result.train);
     if result.train.len() > MAX_TRAIN {
-        base.sort_unstable();
-        base.dedup();
+        sort_dedup(&mut base);
         // The N=8 lattice and UV extrema are immutable broad coverage. A
         // stretched primitive gets a deterministic spread of extra probes
         // within the remaining training budget.
@@ -321,12 +390,10 @@ pub(super) fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
             .collect();
         let extra_limit = MAX_TRAIN.saturating_sub(base.len());
         base.extend(evenly_spaced(&extras, extra_limit));
-        base.sort_unstable();
-        base.dedup();
+        sort_dedup(&mut base);
         result.train = base;
     }
-    result.validation.sort_unstable();
-    result.validation.dedup();
+    sort_dedup(&mut result.validation);
     result
         .validation
         .retain(|p| result.train.binary_search(p).is_err());
@@ -699,6 +766,31 @@ pub(super) fn build_texgen(p: &TexgenPrimitive<'_>) -> Coverage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radix_sort_dedup_matches_the_comparison_sort() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for (len, span) in [(10, 64), (5000, 64), (20000, 70000), (9000, 0x8000)] {
+            let mut points: Vec<[i32; 2]> = (0..len)
+                .map(|_| {
+                    let v = next();
+                    let c = |b: u64| (b % (2 * span as u64)) as i32 - span;
+                    [c(v), c(v >> 32)]
+                })
+                .collect();
+            let mut expected = points.clone();
+            expected.sort_unstable();
+            expected.dedup();
+            sort_dedup(&mut points);
+            assert_eq!(points, expected, "len {len} span {span}");
+        }
+    }
     use ssb_rom::{n64_filter, texture::Rgba8};
 
     /// The polygon clip `touched` used to run in f64, in exact rational
