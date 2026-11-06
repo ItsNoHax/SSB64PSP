@@ -931,13 +931,14 @@ impl PartTables {
     /// `dobj_lookup` immediately before `shield_anim_joints`, and both point
     /// into the same `*ShieldPose` file, so 51 of those matched the record
     /// shape exactly until the table itself had to parse.
-    pub fn scan<'a>(
-        files: impl Iterator<Item = &'a File>,
+    pub fn scan<F: core::borrow::Borrow<File>>(
+        files: impl Iterator<Item = F>,
         accept: impl Fn(u32, u32, u32) -> bool,
     ) -> Self {
         let mut by_graph = BTreeMap::new();
         let mut costumes = BTreeMap::new();
         for file in files {
+            let file = file.borrow();
             let targets: BTreeMap<u32, (u16, u32)> = file
                 .extern_relocs
                 .iter()

@@ -672,23 +672,28 @@ pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
     } else {
         raw.to_vec()
     };
-    let colours: Vec<u32> = match tex.format {
-        Psm::Psm8888 => linear
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|&c| u32::from_le_bytes(c))
-            .collect(),
-        _ => linear
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|&c| expand_5551(u16::from_le_bytes(c)))
-            .collect(),
+    // Texel `k`'s colour, read from `linear` (no per-texel copy: RE-588,
+    // the on-device build's peak).
+    let colour = |k: usize| match tex.format {
+        Psm::Psm8888 => u32::from_le_bytes([
+            linear[4 * k],
+            linear[4 * k + 1],
+            linear[4 * k + 2],
+            linear[4 * k + 3],
+        ]),
+        _ => expand_5551(u16::from_le_bytes([linear[2 * k], linear[2 * k + 1]])),
     };
-    let mut palette = colours.clone();
-    palette.sort_unstable();
-    palette.dedup();
+    // The distinct colours, ascending; past 256 there is no palette.
+    let mut palette: Vec<u32> = Vec::new();
+    for k in 0..linear.len() / bytes_per_texel {
+        let c = colour(k);
+        if let Err(at) = palette.binary_search(&c) {
+            if palette.len() == 256 {
+                return None;
+            }
+            palette.insert(at, c);
+        }
+    }
     let format = match palette.len() {
         0..=16 => Psm::PsmT4,
         17..=256 => Psm::PsmT8,
@@ -709,7 +714,7 @@ pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
         for x in 0..stride as usize {
             // Columns past the old stride repeat its last one, which the
             // old padding already made the edge texel (RE-220).
-            let c = colours[y * tex.stride as usize + x.min(tex.stride as usize - 1)];
+            let c = colour(y * tex.stride as usize + x.min(tex.stride as usize - 1));
             let i = palette.binary_search(&c).ok()? as u8;
             if format == Psm::PsmT4 {
                 data[y * new_stride_bytes + x / 2] |= i << ((x & 1) * 4);
@@ -718,6 +723,7 @@ pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
             }
         }
     }
+    drop(linear);
     if tex.swizzled {
         data = swizzle(&data, new_stride_bytes, rows);
     }

@@ -2311,12 +2311,121 @@ impl FileDesc {
     pub const SIZE: usize = 20;
 }
 
-/// The blob regrouped by archive file (`PackWriter::relayout`).
+/// The blob regrouped by archive file (`PackWriter::relayout`): where each
+/// chunk goes, not its bytes; `finish_to` streams them in this order.
 struct Layout {
-    blob: Vec<u8>,
+    /// `(chunk index, new blob offset)`, in ascending new offset.
+    placed: Vec<(u32, u32)>,
+    blob_len: usize,
     shared_len: u32,
     files: Vec<FileDesc>,
     deps: Vec<u16>,
+}
+
+/// Where [`PackWriter::finish_to`] writes the pack: append-only, in order.
+pub trait PackSink {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), SinkError>;
+}
+
+/// A [`PackSink`] that failed (a file sink's I/O error).
+pub type SinkError = alloc::boxed::Box<dyn core::error::Error + Send + Sync>;
+
+impl PackSink for Vec<u8> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), SinkError> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+/// A [`PackSink`] over any `std::io::Write` (a `BufWriter<File>`).
+#[cfg(feature = "std")]
+pub struct IoSink<W: std::io::Write>(pub W);
+
+#[cfg(feature = "std")]
+impl<W: std::io::Write> PackSink for IoSink<W> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), SinkError> {
+        Ok(self.0.write_all(bytes)?)
+    }
+}
+
+/// A [`PackSink`] and how many bytes went into it.
+struct Out<'a> {
+    sink: &'a mut dyn PackSink,
+    pos: usize,
+}
+
+impl Out<'_> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), SinkError> {
+        self.pos += bytes.len();
+        self.sink.write(bytes)
+    }
+
+    /// Zeros up to `at`.
+    fn pad_to(&mut self, at: usize) -> Result<(), SinkError> {
+        const ZEROS: [u8; 4096] = [0; 4096];
+        assert!(at >= self.pos, "pack write at {} is past {at}", self.pos);
+        while self.pos < at {
+            let n = (at - self.pos).min(ZEROS.len());
+            self.write(&ZEROS[..n])?;
+        }
+        Ok(())
+    }
+}
+
+/// The header and tables' small writes, buffered onto an [`Out`]: the
+/// tables are never whole in memory.
+struct TableOut<'o, 's> {
+    out: &'o mut Out<'s>,
+    buf: Vec<u8>,
+    err: Option<SinkError>,
+}
+
+impl<'o, 's> TableOut<'o, 's> {
+    const FLUSH: usize = 64 * 1024;
+
+    fn new(out: &'o mut Out<'s>) -> Self {
+        Self {
+            out,
+            buf: Vec::with_capacity(Self::FLUSH + 256),
+            err: None,
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.err.is_none() {
+            if let Err(e) = self.out.write(&self.buf) {
+                self.err = Some(e);
+            }
+        }
+        self.buf.clear();
+    }
+
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+        if self.buf.len() >= Self::FLUSH {
+            self.flush();
+        }
+    }
+
+    fn push(&mut self, byte: u8) {
+        self.extend_from_slice(&[byte]);
+    }
+
+    /// Zeros up to absolute pack offset `at` (never shrinks).
+    fn resize(&mut self, at: usize, zero: u8) {
+        self.flush();
+        if self.err.is_none() {
+            if let Err(e) = self.out.pad_to(at) {
+                self.err = Some(e);
+            }
+        }
+        debug_assert_eq!(zero, 0);
+    }
+
+    fn finish(mut self) -> Result<(), SinkError> {
+        self.flush();
+        self.err.map_or(Ok(()), Err)
+    }
 }
 
 /// Builds a pack file.
@@ -2356,7 +2465,8 @@ pub struct PackWriter {
     sprites: Vec<SpriteDesc>,
     texture_parts: Vec<TexturePartDesc>,
     fighter_models: Vec<FighterModelDesc>,
-    blob: Vec<u8>,
+    /// Compressed in RAM (RE-588): the on-device build cannot hold it raw.
+    blob: crate::blob_store::BlobStore,
     /// Every [`Self::push_blob`] range, in push order, with whose bytes
     /// they are (RE-475): `finish` groups the blob by archive file.
     chunks: Vec<Chunk>,
@@ -2372,6 +2482,8 @@ pub struct PackWriter {
     /// The `TABLES` section (`ssb_tablegen::tables_section`), written after
     /// the audio section.
     tables: Vec<u8>,
+    /// [`Self::set_audio_later`]'s length.
+    late_audio: Option<usize>,
 }
 
 /// Whose bytes a blob range holds (RE-475).
@@ -2401,6 +2513,15 @@ impl PackWriter {
     /// Sets the audio section `finish` appends after the blob (D-049).
     pub fn set_audio(&mut self, section: Vec<u8>) {
         self.audio = section;
+        self.late_audio = None;
+    }
+
+    /// Declares an audio section of `len` bytes that `finish_to`'s
+    /// `make_audio` makes after the blob is written (RE-588: the section
+    /// and the blob are never in memory together).
+    pub fn set_audio_later(&mut self, len: usize) {
+        self.audio = Vec::new();
+        self.late_audio = Some(len);
     }
 
     /// Sets the `TABLES` section `finish` appends after the audio section
@@ -2411,15 +2532,13 @@ impl PackWriter {
 
     /// Appends bytes to the blob, aligned, returning their offset.
     fn push_blob(&mut self, bytes: &[u8], owner: ChunkOwner) -> u32 {
-        let at = align_up(self.blob.len());
-        self.blob.resize(at, 0);
-        self.blob.extend_from_slice(bytes);
+        let at = self.blob.push(bytes);
         self.chunks.push(Chunk {
-            offset: at as u32,
+            offset: at,
             len: bytes.len() as u32,
             owner,
         });
-        at as u32
+        at
     }
 
     /// Records archive file `file`'s extern file IDs (RE-475): loading it
@@ -3265,11 +3384,20 @@ impl PackWriter {
         script: &[u8],
         joints: &[(Option<u32>, Option<u32>)],
     ) -> u32 {
+        let mut stored = Vec::new();
         let shared = self.anim_files.get(&source_file).and_then(|blobs| {
-            blobs
-                .iter()
-                .copied()
-                .find(|&(at, len)| self.blob.get(at as usize..(at + len) as usize) == Some(script))
+            blobs.iter().copied().find(|&(at, len)| {
+                len as usize == script.len() && {
+                    // Each entry is one whole chunk (`push_blob` below).
+                    let i = self.chunks.partition_point(|c| c.offset < at);
+                    let i = (i..self.chunks.len())
+                        .take_while(|&i| self.chunks[i].offset == at)
+                        .find(|&i| self.chunks[i].len == len)
+                        .expect("anim blob is a chunk");
+                    self.blob.read_chunk(i, &mut stored);
+                    stored == script
+                }
+            })
         });
         let (script_offset, script_len) = match shared {
             Some(at) => at,
@@ -3604,8 +3732,8 @@ impl PackWriter {
 
     /// Regroups the blob (RE-475): the shared chunks first, then each
     /// archive file's chunks together in file order, and rewrites every
-    /// descriptor offset into it. Each moved range is checked against its
-    /// old bytes.
+    /// descriptor offset into it. Only the chunks' places are computed:
+    /// `finish_to` streams their bytes, asserting each lands at its place.
     fn relayout(&mut self) -> Layout {
         let tex_owner = self.texture_owners();
         // Material-animation files and palettes stay resident: the stage
@@ -3629,54 +3757,56 @@ impl PackWriter {
             ChunkOwner::Texture(t) => tex_owner.get(t as usize).copied().flatten(),
             ChunkOwner::Shared => None,
         };
-        let mut blob: Vec<u8> = Vec::with_capacity(self.blob.len());
+        // The new blob's length so far.
+        let mut blob_len = 0usize;
+        let mut placed: Vec<(u32, u32)> = Vec::with_capacity(self.chunks.len());
         // (old offset, len, new offset), in push (old offset) order.
         let mut moved: Vec<(u32, u32, u32)> = alloc::vec![(0, 0, 0); self.chunks.len()];
-        let place = |blob: &mut Vec<u8>, c: &Chunk| -> u32 {
-            let at = align_up(blob.len());
-            blob.resize(at, 0);
-            blob.extend_from_slice(&self.blob[c.offset as usize..(c.offset + c.len) as usize]);
-            at as u32
+        let mut place = |blob_len: &mut usize, i: usize, c: &Chunk| {
+            let at = align_up(*blob_len);
+            *blob_len = at + c.len as usize;
+            placed.push((i as u32, at as u32));
+            moved[i] = (c.offset, c.len, at as u32);
         };
         let mut by_file: alloc::collections::BTreeMap<u32, Vec<usize>> = Default::default();
         for (i, c) in self.chunks.iter().enumerate() {
             match owner_of(c) {
-                None => moved[i] = (c.offset, c.len, place(&mut blob, c)),
+                None => place(&mut blob_len, i, c),
                 Some(f) => by_file.entry(f).or_default().push(i),
             }
         }
-        blob.resize(align_up(blob.len()), 0);
-        let shared_len = blob.len() as u32;
+        blob_len = align_up(blob_len);
+        let shared_len = blob_len as u32;
         let mut files = Vec::new();
         let mut deps = Vec::new();
         let mut ids: alloc::collections::BTreeSet<u32> = by_file.keys().copied().collect();
         ids.extend(self.file_deps.keys().copied());
         for file in ids {
-            let start = align_up(blob.len()) as u32;
+            let start = align_up(blob_len) as u32;
             for &i in by_file.get(&file).map_or(&[][..], |v| &v[..]) {
-                let c = self.chunks[i];
-                moved[i] = (c.offset, c.len, place(&mut blob, &c));
+                place(&mut blob_len, i, &self.chunks[i]);
             }
             let len = if by_file.contains_key(&file) {
-                blob.len() as u32 - start
+                blob_len as u32 - start
             } else {
                 0
             };
             let own_deps = self.file_deps.get(&file).map_or(&[][..], |v| &v[..]);
             files.push(FileDesc {
                 file,
-                blob_start: if len == 0 { blob.len() as u32 } else { start },
+                blob_start: if len == 0 { blob_len as u32 } else { start },
                 len,
                 first_dep: deps.len() as u32,
                 dep_count: own_deps.len() as u32,
             });
             deps.extend_from_slice(own_deps);
         }
-        blob.resize(align_up(blob.len()), 0);
+        blob_len = align_up(blob_len);
 
         // The chunk holding `old` (the last one starting at or before it:
         // an empty chunk shares its offset with the next).
-        let old_blob = core::mem::take(&mut self.blob);
+        // The range check stands in for a byte compare of the two blobs
+        // (never both resident): a range inside one chunk moves with it.
         let remap = |old: u32, len: u32| -> u32 {
             let i = moved.partition_point(|&(o, _, _)| o <= old);
             assert!(i > 0, "blob offset {old} precedes every chunk");
@@ -3685,13 +3815,7 @@ impl PackWriter {
                 len == 0 || old + len <= o + l,
                 "blob range {old}+{len} crosses chunk {o}+{l}"
             );
-            let new = n + (old - o);
-            assert_eq!(
-                &old_blob[old as usize..(old + len) as usize],
-                &blob[new as usize..(new + len) as usize],
-                "relayout moved {old}+{len} wrongly"
-            );
-            new
+            n + (old - o)
         };
         for m in &mut self.meshes {
             m.vertex_offset = remap(m.vertex_offset, m.vertex_count * VERTEX_SIZE as u32);
@@ -3731,14 +3855,34 @@ impl PackWriter {
             }
         }
         Layout {
-            blob,
+            placed,
+            blob_len,
             shared_len,
             files,
             deps,
         }
     }
 
-    pub fn finish(mut self) -> Vec<u8> {
+    /// The pack's bytes, in a `Vec` (tests and small packs).
+    pub fn finish(self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.finish_to(&mut out, &mut || unreachable!("no late audio"))
+            .expect("a Vec sink cannot fail");
+        out
+    }
+
+    /// Writes the pack to `sink` in order, returning its length: the header
+    /// and tables, then the blob chunk by chunk in the relaid order, then
+    /// the audio and `TABLES` sections. Never holds a second blob or the
+    /// whole output.
+    ///
+    /// After [`Self::set_audio_later`], `make_audio` makes the audio section
+    /// once the blob is written and dropped.
+    pub fn finish_to(
+        mut self,
+        sink: &mut dyn PackSink,
+        make_audio: &mut dyn FnMut() -> Result<Vec<u8>, SinkError>,
+    ) -> Result<usize, SinkError> {
         let layout = self.relayout();
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
@@ -3769,12 +3913,13 @@ impl PackWriter {
         // Sorted by (node, costume) so the reader can binary-search rather
         // than scan; `finish` takes `self` by value, so this is the one
         // place that can still mutate the list before it is written.
-        let mut costume_overrides = self.costume_overrides;
+        let mut costume_overrides = core::mem::take(&mut self.costume_overrides);
         costume_overrides.sort_unstable_by_key(|o| (o.node, o.costume));
-        let mut texture_parts = self.texture_parts;
+        let mut texture_parts = core::mem::take(&mut self.texture_parts);
         texture_parts.sort_unstable_by_key(|t| (t.mesh, t.prim));
 
-        let mut out = Vec::with_capacity(blob_offset + layout.blob.len());
+        let mut sink = Out { sink, pos: 0 };
+        let mut out = TableOut::new(&mut sink);
 
         // Header.
         out.extend_from_slice(&MAGIC.to_le_bytes());
@@ -3783,7 +3928,7 @@ impl PackWriter {
         out.extend_from_slice(&(self.prims.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.textures.len() as u32).to_le_bytes());
         out.extend_from_slice(&(blob_offset as u32).to_le_bytes());
-        out.extend_from_slice(&(layout.blob.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(layout.blob_len as u32).to_le_bytes());
         out.extend_from_slice(&(self.objects.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.stages.len() as u32).to_le_bytes());
@@ -3806,20 +3951,21 @@ impl PackWriter {
         out.extend_from_slice(&layout.shared_len.to_le_bytes());
         out.extend_from_slice(&(layout.files.len() as u32).to_le_bytes());
         out.extend_from_slice(&(layout.deps.len() as u32).to_le_bytes());
-        let audio_offset = if self.audio.is_empty() {
+        let audio_len = self.late_audio.unwrap_or(self.audio.len());
+        let audio_offset = if audio_len == 0 {
             0
         } else {
-            (blob_offset + layout.blob.len()).next_multiple_of(AUDIO_ALIGN)
+            (blob_offset + layout.blob_len).next_multiple_of(AUDIO_ALIGN)
         };
         out.extend_from_slice(&(audio_offset as u32).to_le_bytes());
-        out.extend_from_slice(&(self.audio.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(audio_len as u32).to_le_bytes());
         let tables_offset = if self.tables.is_empty() {
             0
         } else {
-            let end = if self.audio.is_empty() {
-                blob_offset + layout.blob.len()
+            let end = if audio_len == 0 {
+                blob_offset + layout.blob_len
             } else {
-                audio_offset + self.audio.len()
+                audio_offset + audio_len
             };
             end.next_multiple_of(TABLES_ALIGN)
         };
@@ -4122,16 +4268,47 @@ impl PackWriter {
         }
 
         out.resize(blob_offset, 0);
-        out.extend_from_slice(&layout.blob);
-        if !self.audio.is_empty() {
-            out.resize(audio_offset, 0);
-            out.extend_from_slice(&self.audio);
+        out.finish()?;
+        // Only the blob and the sections are left to write (RE-588).
+        let blob = core::mem::take(&mut self.blob);
+        let audio = core::mem::take(&mut self.audio);
+        let tables = core::mem::take(&mut self.tables);
+        let late_audio = self.late_audio;
+        drop((self, costume_overrides, texture_parts));
+        let Layout {
+            placed, blob_len, ..
+        } = layout;
+        // The blob, each chunk where `relayout` placed it.
+        let mut chunk = Vec::new();
+        for &(i, new) in &placed {
+            let at = blob_offset + new as usize;
+            assert_eq!(
+                blob_offset + align_up(sink.pos - blob_offset),
+                at,
+                "chunk {i} is not where the relayout placed it"
+            );
+            sink.pad_to(at)?;
+            blob.read_chunk(i as usize, &mut chunk);
+            sink.write(&chunk)?;
         }
-        if !self.tables.is_empty() {
-            out.resize(tables_offset, 0);
-            out.extend_from_slice(&self.tables);
+        sink.pad_to(blob_offset + blob_len)?;
+        drop((blob, chunk, placed));
+        if audio_len != 0 {
+            sink.pad_to(audio_offset)?;
+            match late_audio {
+                Some(len) => {
+                    let audio = make_audio()?;
+                    assert_eq!(audio.len(), len, "late audio section length");
+                    sink.write(&audio)?;
+                }
+                None => sink.write(&audio)?,
+            }
         }
-        out
+        if !tables.is_empty() {
+            sink.pad_to(tables_offset)?;
+            sink.write(&tables)?;
+        }
+        Ok(sink.pos)
     }
 
     pub fn mesh_count(&self) -> usize {
@@ -4148,6 +4325,49 @@ impl PackWriter {
     }
     pub fn blob_len(&self) -> usize {
         self.blob.len()
+    }
+
+    /// How many [`Self::push_blob`] chunks the blob holds.
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// The blob store's bytes held, and the chunks' raw bytes (RE-588).
+    pub fn blob_held(&self) -> (usize, usize) {
+        (self.blob.held(), self.blob.raw_bytes())
+    }
+
+    /// Gives back the descriptor tables' growth slack (up to half of each,
+    /// from capacity doubling), keeping 1/32 headroom for later additions
+    /// (RE-588: the on-device build's peak). Changes no output.
+    pub fn trim_descriptors(&mut self) {
+        fn trim<T>(v: &mut Vec<T>) {
+            v.shrink_to(v.len() + v.len() / 32);
+        }
+        trim(&mut self.meshes);
+        trim(&mut self.prims);
+        trim(&mut self.textures);
+        trim(&mut self.objects);
+        trim(&mut self.nodes);
+        trim(&mut self.anims);
+        trim(&mut self.anim_joints);
+        trim(&mut self.stages);
+        trim(&mut self.lines);
+        trim(&mut self.coll_vertices);
+        trim(&mut self.points);
+        trim(&mut self.fighters);
+        trim(&mut self.fighter_shades);
+        trim(&mut self.mat_anims);
+        trim(&mut self.mat_anim_palettes);
+        trim(&mut self.costume_overrides);
+        trim(&mut self.particle_banks);
+        trim(&mut self.particle_scripts);
+        trim(&mut self.particle_textures);
+        trim(&mut self.lod_blends);
+        trim(&mut self.sprites);
+        trim(&mut self.texture_parts);
+        trim(&mut self.fighter_models);
+        trim(&mut self.chunks);
     }
 }
 

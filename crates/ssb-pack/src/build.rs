@@ -51,12 +51,6 @@ pub struct PackStats {
     pub non_owner_first: usize,
 }
 
-/// A built pack: its bytes and what went into them.
-pub struct Built {
-    pub bytes: Vec<u8>,
-    pub stats: PackStats,
-}
-
 /// Builds the asset pack from the ROM's bytes: one pack, the opening's
 /// models and the menu scenes' content included; each scene loads its own
 /// files from it (RE-475; the opening's models and the menus had packs of
@@ -64,12 +58,16 @@ pub struct Built {
 ///
 /// Installs the `TABLES` section it builds (`ssb_tables::install`) before
 /// anything reads a table.
+///
+/// Writes the pack to `sink` in order (`PackWriter::finish_to`): the whole
+/// pack is never in memory at once (RE-588).
 pub fn build(
     rom: &[u8],
     opts: &PackOptions,
     log: &dyn PackLog,
     observer: &dyn PackObserver,
-) -> PackResult<Built> {
+    sink: &mut dyn ssb_rom::pack::PackSink,
+) -> PackResult<PackStats> {
     use ssb_rom::{mesh, pack as fmt};
 
     let (only_file, swizzle) = (opts.only_file, opts.swizzle);
@@ -88,6 +86,14 @@ pub fn build(
     drop(source);
     ssb_tables::install(Vec::leak(tables.clone())).map_err(|e| format!("tables section: {e}"))?;
 
+    // The audio section: sequences, both banks, the FGM files and the
+    // synthesizer's constant tables, loaded once at boot (D-049). Made
+    // here for its length and again after the blob is written (RE-588: the
+    // section and the blob are never in memory together).
+    let make_audio =
+        || ssb_rom::audio::build_section(data).map_err(|e| format!("audio section: {e:?}"));
+    let audio_len = make_audio()?.len();
+    ctx.log.phase("tables");
     let mut writer = fmt::PackWriter::new();
     // The same texture (image *and* palette, RE-098) is bound by many
     // primitives; upload each once.
@@ -120,6 +126,7 @@ pub fn build(
     let mut object_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
 
     let loaded = load_all(&archive);
+    ctx.log.phase("load_all");
     let skeleton_graphs = fighter_skeleton_graphs(&loaded);
     let ground_graphs = ground_layer1_graphs(&loaded);
     let transition_graphs = lb_transition_graphs();
@@ -128,9 +135,10 @@ pub fn build(
         if only_file.is_some_and(|f| f != id) {
             continue;
         }
-        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(id as usize) else {
             continue;
         };
+        let file = &*file;
 
         let all = ssb_rom::scan::root_display_lists(file);
         // convert() inlines G_DL callees, so packing a list that another list
@@ -1553,9 +1561,7 @@ pub fn build(
                         );
                         model_part_flags_added += 1;
                     }
-                    let Some(part_file) =
-                        loaded.files.get(mp.dl.0 as usize).and_then(Option::as_ref)
-                    else {
+                    let Some(part_file) = loaded.files.get(mp.dl.0 as usize) else {
                         continue;
                     };
                     let mut stored_first: Option<ssb_rom::mesh::Mesh> = None;
@@ -1593,7 +1599,7 @@ pub fn build(
                                 .unwrap_or_default();
                             let world = graph.world_transforms()[node];
                             let mobjs = part_materials(
-                                part_file,
+                                &part_file,
                                 mp.mobjsubs,
                                 mp.costume_matanim_joints,
                                 costume,
@@ -1614,7 +1620,7 @@ pub fn build(
                                     depth_seed: None,
                                     stream: 0,
                                 }],
-                                ssb_rom::mesh::Source::of(part_file),
+                                ssb_rom::mesh::Source::of(&part_file),
                                 initial,
                             )
                             .into_iter()
@@ -1642,7 +1648,7 @@ pub fn build(
                             &mut mat_anim_index,
                             &mat_anim_data,
                             Texels {
-                                home: part_file,
+                                home: &part_file,
                                 all: &loaded.files,
                             },
                             mp.dl.0,
@@ -1708,16 +1714,18 @@ pub fn build(
         .into());
     }
 
+    writer.trim_descriptors();
+    ctx.log.phase("meshes");
     // RE-426: each fighter's high- and low-detail objects, including the
     // fighters that share another's graphs.
     for entry in ssb_rom::fighter::FIGHTER_FILES
         .iter()
         .filter(|e| e.kind != 12)
     {
-        let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+        let Some(main) = loaded.files.get(entry.file as usize) else {
             continue;
         };
-        let [Some(hi), lo] = ssb_rom::fighter::common_parts(main, *entry) else {
+        let [Some(hi), lo] = ssb_rom::fighter::common_parts(&main, *entry) else {
             continue;
         };
         if !loaded
@@ -1745,8 +1753,8 @@ pub fn build(
     let mut deferred_stage_anims: Vec<StageAnim> = Vec::new();
     for ground in &loaded.stages {
         let map = ground.map_geometry.and_then(|(f, at)| {
-            let file = loaded.files.get(f as usize)?.as_ref()?;
-            ssb_rom::collision::read(file, at)
+            let file = loaded.files.get(f as usize)?;
+            ssb_rom::collision::read(&file, at)
         });
         if map.is_some() {
             with_collision += 1;
@@ -1766,9 +1774,8 @@ pub fn build(
         if let Some(words) = loaded
             .files
             .get(ground.file as usize)
-            .and_then(Option::as_ref)
             .filter(|_| ground.offset == 0x14)
-            .and_then(ssb_rom::stage::hazard_words)
+            .and_then(|f| ssb_rom::stage::hazard_words(&f))
         {
             let mut surface_y = 0.0;
             if ssb_rom::stage::vs_ground_kind(ground.file) == Some(3) {
@@ -1800,7 +1807,7 @@ pub fn build(
             if af != layer.graph.0 || anim_file.is_some_and(|f| f != af) {
                 continue;
             }
-            let Some(file) = loaded.files.get(af as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(af as usize) else {
                 continue;
             };
             let Some(&object) = object_index.get(&layer.graph) else {
@@ -1839,6 +1846,7 @@ pub fn build(
         }
     }
 
+    ctx.log.phase("objects+stages");
     // Fighters: 27 small reads, in `FTKind` order so the table can be indexed
     // by kind. A character whose attributes will not decode is skipped rather
     // than packed as zeros, which would look like a fighter with no gravity.
@@ -1880,52 +1888,47 @@ pub fn build(
     )> = Vec::new();
     for (kind, entry) in ssb_rom::anim::FIGHTER_ANIMS.iter().enumerate() {
         let file_entry = ssb_rom::fighter::FIGHTER_FILES[kind];
-        let nodes = loaded.files[file_entry.file as usize]
-            .as_ref()
-            .and_then(|main| {
-                let part = ssb_rom::fighter::common_parts(main, file_entry)[0]?;
-                let mask = ssb_rom::fighter::setup_parts(main, file_entry)?;
-                let first = object_index.get(&(part.model_file, part.graph))?;
-                let object = writer.object(*first)?;
-                // The nth animation script drives the nth *set* mask bit.
-                Some(
-                    (0..object.node_count)
-                        .filter(|i| mask >> i & 1 != 0)
-                        .map(|i| object.first_node + i)
-                        .collect::<Vec<u32>>(),
-                )
-            });
+        let nodes = loaded.files.get(file_entry.file as usize).and_then(|main| {
+            let part = ssb_rom::fighter::common_parts(&main, file_entry)[0]?;
+            let mask = ssb_rom::fighter::setup_parts(&main, file_entry)?;
+            let first = object_index.get(&(part.model_file, part.graph))?;
+            let object = writer.object(*first)?;
+            // The nth animation script drives the nth *set* mask bit.
+            Some(
+                (0..object.node_count)
+                    .filter(|i| mask >> i & 1 != 0)
+                    .map(|i| object.first_node + i)
+                    .collect::<Vec<u32>>(),
+            )
+        });
         let Some(nodes) = nodes else {
             anims_failed.push(format!("{}: no skeleton", entry.name));
             continue;
         };
         // Motions that insert hidden model parts bind by the original tree
         // walk (RE-432): each needs every descriptor's depth and the parts.
-        let walk = loaded.files[file_entry.file as usize]
-            .as_ref()
-            .and_then(|main| {
-                let common = ssb_rom::fighter::common_parts(main, file_entry)[0]?;
-                let mask = ssb_rom::fighter::setup_parts(main, file_entry)?;
-                let object =
-                    writer.object(*object_index.get(&(common.model_file, common.graph))?)?;
-                let graph = loaded
-                    .graphs
-                    .get(&common.model_file)?
-                    .iter()
-                    .find(|g| g.offset == common.graph)?;
-                let depths: Vec<u32> = graph.nodes.iter().map(|n| n.desc.depth()).collect();
-                let used = ssb_rom::anim::HIDDEN_PARTS[kind]
-                    .iter()
-                    .fold(0u32, |m, &bits| m | bits);
-                let count = (0..27)
-                    .filter(|i| used >> (31 - i) & 1 != 0)
-                    .max()
-                    .map_or(0, |i| i + 1);
-                let hidden = (0..count)
-                    .map(|i| ssb_rom::fighter::hidden_part(main, file_entry, i))
-                    .collect::<Option<Vec<_>>>()?;
-                Some((depths, mask, hidden, object.first_node))
-            });
+        let walk = loaded.files.get(file_entry.file as usize).and_then(|main| {
+            let common = ssb_rom::fighter::common_parts(&main, file_entry)[0]?;
+            let mask = ssb_rom::fighter::setup_parts(&main, file_entry)?;
+            let object = writer.object(*object_index.get(&(common.model_file, common.graph))?)?;
+            let graph = loaded
+                .graphs
+                .get(&common.model_file)?
+                .iter()
+                .find(|g| g.offset == common.graph)?;
+            let depths: Vec<u32> = graph.nodes.iter().map(|n| n.desc.depth()).collect();
+            let used = ssb_rom::anim::HIDDEN_PARTS[kind]
+                .iter()
+                .fold(0u32, |m, &bits| m | bits);
+            let count = (0..27)
+                .filter(|i| used >> (31 - i) & 1 != 0)
+                .max()
+                .map_or(0, |i| i + 1);
+            let hidden = (0..count)
+                .map(|i| ssb_rom::fighter::hidden_part(&main, file_entry, i))
+                .collect::<Option<Vec<_>>>()?;
+            Some((depths, mask, hidden, object.first_node))
+        });
 
         for (slot, &id) in entry.files.iter().enumerate() {
             if id == 0 {
@@ -2079,9 +2082,10 @@ pub fn build(
         // `XRotN`: `XRotN`, then every model joint, then `YRotN`. The
         // `dobj_lookup` array has one `DObjDesc` per entry and ends right
         // after `YRotN`, which checks that count.
-        if let Some(refs) = loaded.files[file_entry.file as usize]
-            .as_ref()
-            .and_then(|main| ssb_rom::fighter::shield_pose_refs(main, file_entry))
+        if let Some(refs) = loaded
+            .files
+            .get(file_entry.file as usize)
+            .and_then(|main| ssb_rom::fighter::shield_pose_refs(&main, file_entry))
         {
             match shield_pose_joints(&loaded, refs, &nodes) {
                 Ok(tables) => deferred_shield_poses.push((kind as u32, refs, tables)),
@@ -2093,7 +2097,7 @@ pub fn build(
     // Now that the fighter block is complete and dense, the stage entries can
     // go after it without disturbing `fighter_anim`'s indexing.
     for (stage_index, af, joints) in deferred_stage_anims {
-        let Some(file) = loaded.files.get(af as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(af as usize) else {
             continue;
         };
         writer.add_anim(
@@ -2116,7 +2120,6 @@ pub fn build(
         let file = loaded
             .files
             .get(asset.file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("transition {}: file {} missing", asset.name, asset.file))?;
         let graph = loaded
             .graphs
@@ -2169,7 +2172,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("effect {effect_index}: file {file_id} missing"))?;
         let graph = loaded
             .graphs
@@ -2210,7 +2212,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("quake: file {file_id} missing"))?;
         for (m, &table) in ssb_rom::effect::QUAKE_ANIM_JOINTS.iter().enumerate() {
             let script = ssb_rom::objanim::joint_scripts(&file.data, table, 1)
@@ -2239,7 +2240,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("variant anim {first_slot:#X}: file {file_id} missing"))?;
         let graph = loaded
             .graphs
@@ -2294,7 +2294,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("ground effect {desc}: file {file_id} missing"))?;
         let graph = loaded
             .graphs
@@ -2336,7 +2335,6 @@ pub fn build(
         let file = loaded
             .files
             .get(anim_file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("entry anim {slot:#X}: file {anim_file} missing"))?;
         let graph = loaded
             .graphs
@@ -2501,7 +2499,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("weapon anim {slot}: file {file_id} missing"))?;
         let graph = loaded
             .graphs
@@ -2564,7 +2561,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or("monster anims: file 86 missing")?;
         for (kind, visual) in ssb_rom::mmonster::VISUALS.iter().enumerate() {
             let object = object_index
@@ -2607,11 +2603,7 @@ pub fn build(
     {
         const SHELL_TREE: u32 = 0x5F88;
         const SHELL_SPIN_SCRIPT: u32 = 0x6018;
-        let file = loaded
-            .files
-            .get(86)
-            .and_then(Option::as_ref)
-            .ok_or("shell spin: file 86 missing")?;
+        let file = loaded.files.get(86).ok_or("shell spin: file 86 missing")?;
         let object = object_index
             .get(&(86, SHELL_TREE))
             .and_then(|&index| writer.object(index))
@@ -2649,8 +2641,9 @@ pub fn build(
         if layer.graph != (124 + kind as u32, course.start) {
             return Err("target course base differs from US labels".into());
         }
-        let file = loaded.files[124 + kind]
-            .as_ref()
+        let file = loaded
+            .files
+            .get(124 + kind)
             .ok_or("target course data missing")?;
         let scripts = ssb_rom::objanim::joint_scripts(&file.data, course.scripts, 11);
         for (instance, script) in scripts.into_iter().skip(1).enumerate() {
@@ -2672,8 +2665,9 @@ pub fn build(
 
     // Platform children keep independent clocks; their parent's course
     // animation continues to move the collision group after boarding.
-    let file = loaded.files[ssb_rom::bonus2::FILE as usize]
-        .as_ref()
+    let file = loaded
+        .files
+        .get(ssb_rom::bonus2::FILE as usize)
         .ok_or("platform file missing")?;
     for (i, tree) in ssb_rom::bonus2::TREES.iter().enumerate() {
         let object = object_index
@@ -2704,8 +2698,9 @@ pub fn build(
         let Some((graph, table)) = labels else {
             continue;
         };
-        let file = loaded.files[137 + kind]
-            .as_ref()
+        let file = loaded
+            .files
+            .get(137 + kind)
             .ok_or("Bumper course missing")?;
         let placements = object_index
             .get(&(file.id, *graph))
@@ -2765,7 +2760,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("ground {}: file {file_id} missing", anim.name))?;
         let graph = loaded
             .graphs
@@ -2820,7 +2814,6 @@ pub fn build(
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("ground material {}: file {file_id} missing", asset.name))?;
         let mut joints = Vec::new();
         let graph_at = asset.graph;
@@ -2834,8 +2827,8 @@ pub fn build(
                     asset.name
                 )
             })?;
-        let materials = loaded.materials(file, graph);
-        let tables = ground_mat_scripts(&loaded, file, graph_at, &materials);
+        let materials = loaded.materials(&file, graph);
+        let tables = ground_mat_scripts(&loaded, &file, graph_at, &materials);
         let (_, table) = tables
             .iter()
             .find(|(s, _)| *s == slot)
@@ -2889,7 +2882,6 @@ pub fn build(
             let file = loaded
                 .files
                 .get(file_id as usize)
-                .and_then(Option::as_ref)
                 .ok_or_else(|| format!("sector: file {file_id} missing"))?;
             if let Some(len) = writer.anim_file_len(file_id) {
                 if len as usize != file.data.len() {
@@ -2912,11 +2904,7 @@ pub fn build(
     // runtime blends toward, read from the same file bytes as the scripts.
     let mut shield_pose_anims = 0usize;
     for (kind, refs, tables) in &deferred_shield_poses {
-        let Some(file) = loaded
-            .files
-            .get(refs.file as usize)
-            .and_then(Option::as_ref)
-        else {
+        let Some(file) = loaded.files.get(refs.file as usize) else {
             continue;
         };
         for (angle, joints) in tables.iter().enumerate() {
@@ -2935,11 +2923,7 @@ pub fn build(
     // `FTAttributes.translate_scales` is an internal pointer into Luigi's
     // *Main file. Read the actual ROM vectors instead of copying decomp data.
     for entry in &ssb_rom::fighter::FIGHTER_FILES {
-        let Some(main) = loaded
-            .files
-            .get(entry.file as usize)
-            .and_then(Option::as_ref)
-        else {
+        let Some(main) = loaded.files.get(entry.file as usize) else {
             continue;
         };
         let Some(reloc) = main
@@ -2966,6 +2950,8 @@ pub fn build(
         );
     }
 
+    writer.trim_descriptors();
+    ctx.log.phase("anims");
     // Independent LBParticle banks live outside relocData. Decode and convert
     // them after scene work so their frame textures append without disturbing
     // any existing material texture indices (RE-180/181).
@@ -2998,8 +2984,9 @@ pub fn build(
     }
 
     // The player interface shares its ROM file between the tree and mask.
-    let interface_file = loaded.files[ssb_rom::player_interface::FILE as usize]
-        .as_ref()
+    let interface_file = loaded
+        .files
+        .get(ssb_rom::player_interface::FILE as usize)
         .ok_or("player interface file missing")?;
     let frame =
         ssb_rom::player_interface::frame(&interface_file.data).ok_or("magnifier frame missing")?;
@@ -3056,7 +3043,6 @@ pub fn build(
     let shadow_file = loaded
         .files
         .get(84)
-        .and_then(Option::as_ref)
         .ok_or("fighter shadow source file 84 missing")?;
     let shadow = fighter_shadow_texture(&shadow_file.data, swizzle)?;
     writer.add_fighter_shadow_texture(&shadow);
@@ -3149,7 +3135,6 @@ pub fn build(
         let f = loaded
             .files
             .get(file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("file {file} missing"))?;
         if writer
             .anim_file_len(file)
@@ -3167,10 +3152,9 @@ pub fn build(
         let file = loaded
             .files
             .get(f.file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("sprite file {} missing", f.file))?;
         for &at in f.offsets {
-            let s = ssb_rom::sprite::decode(file, at)
+            let s = ssb_rom::sprite::decode(&file, at)
                 .map_err(|e| format!("sprite {}+{at:#x}: {e:?}", f.file))?;
             // The unlock message's collage is CI4 through an RGBA16
             // palette: 5551 holds it exactly at half 8888's size, as the
@@ -3201,9 +3185,8 @@ pub fn build(
         let file = loaded
             .files
             .get(f.file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("congratulations file {} missing", f.file))?;
-        let s = ssb_rom::sprite::decode(file, ssb_rom::ending::CONGRA_SPRITE)
+        let s = ssb_rom::sprite::decode(&file, ssb_rom::ending::CONGRA_SPRITE)
             .map_err(|e| format!("congratulations picture {}: {e:?}", f.file))?;
         for (at, part) in [
             (
@@ -3226,11 +3209,10 @@ pub fn build(
     let staffroll = loaded
         .files
         .get(ssb_rom::ending::STAFFROLL_FILE as usize)
-        .and_then(Option::as_ref)
         .ok_or("staff roll file 195 missing")?;
     for (i, &at) in ssb_rom::ending::NAME_IMAGES.iter().enumerate() {
         let [w, h] = ssb_game::spgame::staffroll::NAME_GLYPHS[i];
-        let s = ssb_rom::ending::name_glyph(staffroll, at, u16::from(w), u16::from(h))
+        let s = ssb_rom::ending::name_glyph(&staffroll, at, u16::from(w), u16::from(h))
             .map_err(|e| format!("staff roll letter {i} at {at:#x}: {e:?}"))?;
         let texture = add_sprite_texture(&mut writer, &s, swizzle);
         writer.add_sprite(sprite_desc(
@@ -3250,17 +3232,15 @@ pub fn build(
     let training = loaded
         .files
         .get(ssb_rom::sprite::TRAINING_FILE as usize)
-        .and_then(Option::as_ref)
         .ok_or("Training sprite table missing")?;
     for slot in ssb_rom::sprite::training_sprite_slots() {
-        let (file_id, at) = ssb_rom::sprite::training_sprite_ref(training, slot)
+        let (file_id, at) = ssb_rom::sprite::training_sprite_ref(&training, slot)
             .map_err(|e| format!("Training sprite pointer {slot:#x}: {e:?}"))?;
         let file = loaded
             .files
             .get(file_id as usize)
-            .and_then(Option::as_ref)
             .ok_or("Training sprite source missing")?;
-        let s = ssb_rom::sprite::decode(file, at)
+        let s = ssb_rom::sprite::decode(&file, at)
             .map_err(|e| format!("Training sprite {file_id}+{at:#x}: {e:?}"))?;
         let texture = add_sprite_texture(&mut writer, &s, swizzle);
         writer.add_sprite(sprite_desc(
@@ -3290,10 +3270,9 @@ pub fn build(
     let common = loaded
         .files
         .get(ssb_rom::sprite::PLAYERS_COMMON.file as usize)
-        .and_then(Option::as_ref)
         .ok_or("sprite file 17 missing")?;
     for lut in 0..ssb_rom::sprite::GATE_LUTS.len() {
-        let s = ssb_rom::sprite::decode_gate(common, lut)
+        let s = ssb_rom::sprite::decode_gate(&common, lut)
             .map_err(|e| format!("gate card {lut}: {e:?}"))?;
         let texture = add_sprite_texture(&mut writer, &s, swizzle);
         writer.add_sprite(sprite_desc(
@@ -3312,15 +3291,13 @@ pub fn build(
     let card_file = loaded
         .files
         .get(ssb_rom::sprite::PLAYERS_1P_MODE_FILE as usize)
-        .and_then(Option::as_ref)
         .ok_or("sprite file 23 missing")?;
     for (lut, &(lut_file, _)) in ssb_rom::sprite::TRAINING_GATE_LUTS.iter().enumerate() {
         let lut_file = loaded
             .files
             .get(lut_file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("sprite file {lut_file} missing"))?;
-        let s = ssb_rom::sprite::decode_training_gate(card_file, lut_file, lut)
+        let s = ssb_rom::sprite::decode_training_gate(&card_file, &lut_file, lut)
             .map_err(|e| format!("training gate card {lut}: {e:?}"))?;
         let texture = add_sprite_texture(&mut writer, &s, swizzle);
         writer.add_sprite(sprite_desc(
@@ -3346,9 +3323,8 @@ pub fn build(
         let f = loaded
             .files
             .get(file as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("wallpaper file {file} missing"))?;
-        let s = ssb_rom::sprite::decode(f, at)
+        let s = ssb_rom::sprite::decode(&f, at)
             .map_err(|e| format!("wallpaper {file}+{at:#x}: {e:?}"))?;
         let tex = ssb_rom::psp_texture::pack_rgba_trimmed(
             &s.image,
@@ -3368,9 +3344,8 @@ pub fn build(
         let map = loaded
             .files
             .get(map_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("stage file {map_id} missing"))?;
-        let (file, at) = ssb_rom::stage::wallpaper(map, header)
+        let (file, at) = ssb_rom::stage::wallpaper(&map, header)
             .ok_or_else(|| format!("stage file {map_id}: no wallpaper"))?;
         add_wallpaper(
             &mut writer,
@@ -3391,18 +3366,16 @@ pub fn build(
         let map = loaded
             .files
             .get(map_id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("stage file {map_id} missing"))?;
-        let target = ssb_rom::stage::wallpaper(map, ssb_rom::stage::BONUS_MAP_HEADER)
+        let target = ssb_rom::stage::wallpaper(&map, ssb_rom::stage::BONUS_MAP_HEADER)
             .ok_or_else(|| format!("stage file {map_id}: no wallpaper"))?;
         if bonus.as_ref().is_none_or(|(t, _, _)| *t != target) {
             let (file, at) = target;
             let f = loaded
                 .files
                 .get(file as usize)
-                .and_then(Option::as_ref)
                 .ok_or_else(|| format!("wallpaper file {file} missing"))?;
-            let s = ssb_rom::sprite::decode(f, at)
+            let s = ssb_rom::sprite::decode(&f, at)
                 .map_err(|e| format!("wallpaper {file}+{at:#x}: {e:?}"))?;
             let tex = ssb_rom::psp_texture::pack_rgba_trimmed(
                 &s.image,
@@ -3442,7 +3415,6 @@ pub fn build(
         loaded
             .files
             .get(id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("file {id} missing"))
     };
     // Every fighter's emblem and stock icon, which the 1P Game's interface
@@ -3452,10 +3424,10 @@ pub fn build(
     // own (`FTStocksZako`).
     for e in ssb_rom::fighter::FIGHTER_FILES.iter() {
         let main = file_of(e.file)?;
-        let fs = ssb_rom::sprite::fighter_sprites(main, e.offset)
+        let fs = ssb_rom::sprite::fighter_sprites(&main, e.offset)
             .ok_or_else(|| format!("{}: no FTSprites", e.name))?;
         if let Some((file, at)) = fs.emblem {
-            let s = ssb_rom::sprite::decode(file_of(file)?, at)
+            let s = ssb_rom::sprite::decode(&*file_of(file)?, at)
                 .map_err(|err| format!("{} emblem: {err:?}", e.name))?;
             let texture = add_sprite_texture(&mut writer, &s, swizzle);
             writer.add_sprite(sprite_desc(
@@ -3473,12 +3445,13 @@ pub fn build(
             continue;
         };
         for (costume, &(lut_file, lut_at)) in fs.stock_luts.iter().enumerate() {
-            let lut = file_of(lut_file)?
+            let lut_file = file_of(lut_file)?;
+            let lut = lut_file
                 .data
                 .get(lut_at as usize..lut_at as usize + 32)
                 .ok_or_else(|| format!("{} stock LUT {costume}", e.name))?;
             let s = ssb_rom::sprite::decode_with_tlut(
-                file_of(file)?,
+                &*file_of(file)?,
                 at,
                 &ssb_rom::texture::parse_tlut(lut),
             )
@@ -3497,6 +3470,7 @@ pub fn build(
         }
     }
 
+    ctx.log.phase("particles+interface");
     // The scenes' own sprites, plays and cameras (RE-475; the menu packs
     // before it, RE-461).
     let menu_sprites = add_menu_scenes(&mut writer, &loaded.files, swizzle)?;
@@ -3531,14 +3505,38 @@ pub fn build(
             writer.set_file_deps(id, &deps);
         }
     }
-    // The audio section: sequences, both banks, the FGM files and the
-    // synthesizer's constant tables, loaded once at boot (D-049).
-    let audio = ssb_rom::audio::build_section(data).map_err(|e| format!("audio section: {e:?}"))?;
-    pack_log!(ctx, "  audio section {} bytes", audio.len());
-    writer.set_audio(audio);
+    ctx.log.phase("menus+deps");
+    let (hits, decodes) = loaded.files.stats();
+    pack_log!(
+        ctx,
+        "  file store  {hits} hits, {decodes} decodes of {} files (RE-588)",
+        loaded.files.len()
+    );
+    // Only the writer is needed from here (RE-588): the write is the peak.
+    let shield_fighters = deferred_shield_poses.len();
+    drop((
+        loaded,
+        tex_index,
+        mat_anim_index,
+        mat_anim_data,
+        object_index,
+        deferred_shield_poses,
+    ));
+    pack_log!(ctx, "  audio section {audio_len} bytes");
+    writer.set_audio_later(audio_len);
     pack_log!(ctx, "  tables section {} bytes", tables.len());
     writer.set_tables(tables);
-    let bytes = writer.finish();
+    ctx.log.phase("audio");
+    let (held, raw) = writer.blob_held();
+    pack_log!(
+        ctx,
+        "  blob store  {held} bytes held for {raw} raw ({} chunks, RE-588)",
+        writer.chunk_count()
+    );
+    writer
+        .finish_to(sink, &mut || Ok(make_audio()?))
+        .map_err(|e| format!("pack write: {e}"))?;
+    ctx.log.phase("finish");
     let stats = PackStats {
         meshes,
         triangles,
@@ -3574,10 +3572,10 @@ pub fn build(
         particle_scripts,
         particle_textures,
         particle_frames,
-        shield_fighters: deferred_shield_poses.len(),
+        shield_fighters,
         wide_tiles: ctx.wide_tiles.get(),
         lod_blend_sites: ctx.lod_blend_sites.take(),
         non_owner_first: ctx.non_owner_first.get(),
     };
-    Ok(Built { bytes, stats })
+    Ok(stats)
 }

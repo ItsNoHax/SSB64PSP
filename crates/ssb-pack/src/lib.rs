@@ -142,6 +142,11 @@ pub trait PackLog {
     fn diag(&self, args: fmt::Arguments<'_>) {
         self.line(args);
     }
+
+    /// The build reached phase `name` (memory measurement: a counting
+    /// allocator reports its live and peak bytes here). Prints nothing by
+    /// default.
+    fn phase(&self, _name: &str) {}
 }
 
 /// The log that drops every line.

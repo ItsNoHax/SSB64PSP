@@ -1656,7 +1656,7 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
         Default::default();
     let mut graphs = 0usize;
     for &(id, offset) in loaded.fighter_graphs.keys() {
-        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(id as usize) else {
             continue;
         };
         let Some(graph) = loaded
@@ -1671,7 +1671,7 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
             let subs: Vec<Vec<u32>> = loaded
                 .tables
                 .table_for(id, offset)
-                .and_then(|at| ssb_rom::mobj::read_table(file, at, graph.nodes.len()))
+                .and_then(|at| ssb_rom::mobj::read_table(&file, at, graph.nodes.len()))
                 .map(|t| {
                     t.nodes
                         .iter()
@@ -1679,9 +1679,10 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
                         .collect()
                 })
                 .unwrap_or_default();
-            let resolved = ssb_rom::matanim::resolve_scripts(file, table, graph.nodes.len(), |n| {
-                subs.get(n).map_or(0, Vec::len)
-            });
+            let resolved =
+                ssb_rom::matanim::resolve_scripts(&file, table, graph.nodes.len(), |n| {
+                    subs.get(n).map_or(0, Vec::len)
+                });
             for (node, chain) in resolved.into_iter().enumerate() {
                 for (m, script) in chain.into_iter().enumerate() {
                     if let Some(script) = script {
@@ -1698,7 +1699,7 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
         if let Some((a, _)) = super::fighter_accessory(&loaded, id, graph) {
             let chain: Vec<u32> = a
                 .mobjsubs
-                .and_then(|(_, at)| ssb_rom::mobj::read_chain(file, at))
+                .and_then(|(_, at)| ssb_rom::mobj::read_chain(&file, at))
                 .map(|c| c.iter().map(|m| m.at).collect())
                 .unwrap_or_default();
             if let Some((_, at)) = a.costume_matanim_joints.filter(|&(f, _)| f == id) {
@@ -1726,15 +1727,12 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
             .map(|(joint, part, _)| (joint, part))
             .collect();
         if let Some(fg) = loaded.fighter_graphs.get(&(id, offset)) {
-            let main = loaded
-                .files
-                .get(fg.entry.file as usize)
-                .and_then(Option::as_ref);
+            let main = loaded.files.get(fg.entry.file as usize);
             for (joint, part) in parts.clone().into_iter().chain(
                 (0..graph.nodes.len() as u32)
                     .map(|n| (n + ssb_rom::fighter::JOINT_COMMON_START, 0)),
             ) {
-                let Some(mp) = main.and_then(|main| {
+                let Some(mp) = main.as_deref().and_then(|main| {
                     ssb_rom::fighter::model_part(main, fg.entry, joint, part, fg.detail)
                 }) else {
                     parts.remove(&(joint, part));
@@ -1744,10 +1742,10 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
                 let Some((sf, at)) = mp.mobjsubs else {
                     continue;
                 };
-                let Some(sub_file) = loaded.files.get(sf as usize).and_then(Option::as_ref) else {
+                let Some(sub_file) = loaded.files.get(sf as usize) else {
                     continue;
                 };
-                let chain: Vec<u32> = ssb_rom::mobj::read_chain(sub_file, at)
+                let chain: Vec<u32> = ssb_rom::mobj::read_chain(&sub_file, at)
                     .map(|c| c.iter().map(|m| m.at).collect())
                     .unwrap_or_default();
                 let Some((cf, table)) = mp.costume_matanim_joints else {
@@ -1790,17 +1788,13 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
         .iter()
         .filter(|e| e.kind != 12)
     {
-        let Some(main) = loaded
-            .files
-            .get(entry.file as usize)
-            .and_then(Option::as_ref)
-        else {
+        let Some(main) = loaded.files.get(entry.file as usize) else {
             continue;
         };
-        let Some(tparts) = ssb_rom::fighter::texture_parts(main, *entry) else {
+        let Some(tparts) = ssb_rom::fighter::texture_parts(&main, *entry) else {
             continue;
         };
-        for (d, cp) in ssb_rom::fighter::common_parts(main, *entry)
+        for (d, cp) in ssb_rom::fighter::common_parts(&main, *entry)
             .into_iter()
             .enumerate()
         {
@@ -1833,7 +1827,7 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
     let (mut evaluated, mut differs, mut unread) = (0usize, 0usize, 0usize);
     let mut track_counts = [0usize; TRACKS];
     for (&(id, script), uses) in &scripts {
-        let file = loaded.files[id as usize].as_ref().expect("loaded above");
+        let file = loaded.files.get(id as usize).expect("loaded above");
         let mut reads = [false; 2];
         // The texture id every use that draws with `TextureIDCurrent` is
         // made with, when each is a texture part's.
@@ -1916,7 +1910,7 @@ pub fn costumes(rom_path: &Path, opts: &[&str]) -> Res {
         })
         .collect();
     for (&(id, graph, node, m), at) in &texture_part_at {
-        let file = loaded.files[id as usize].as_ref().expect("a fighter model");
+        let file = loaded.files.get(id as usize).expect("a fighter model");
         for &(kind, p, d) in at {
             let expect = made(kind, p, d);
             for costume in 0..super::fighter_costume_count(id) {

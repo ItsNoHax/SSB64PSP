@@ -497,10 +497,10 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let ground_graphs = ground_layer1_graphs(&loaded);
     let transition_graphs = lb_transition_graphs();
     for id in &ids {
-        let Some(file) = loaded.files.get(*id as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(*id as usize) else {
             continue;
         };
-        let resolver = scene::DlResolver::new(file);
+        let resolver = scene::DlResolver::new(&file);
         for g in loaded.graphs.get(id).into_iter().flatten() {
             for node_dl in g.display_lists() {
                 let member = resolver.resolve(node_dl);
@@ -516,7 +516,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
             // Convert the graph the way the packer does -- in draw order,
             // sharing one vertex cache -- so this reports what actually
             // happens rather than what a standalone conversion would.
-            let plan = plan_draw_order(file, g, &resolver);
+            let plan = plan_draw_order(&file, g, &resolver);
             let mut decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
@@ -527,7 +527,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 })
                 .collect();
             seed_player_interface_commands((*id, g.offset), &mut decoded);
-            let materials = loaded.materials(file, g);
+            let materials = loaded.materials(&file, g);
             let initial = initial_material_for(
                 &skeleton_graphs,
                 &ground_graphs,
@@ -550,7 +550,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
 
             for (p, converted) in plan.iter().zip(ssb_rom::mesh::convert_sequence(
                 &items,
-                ssb_rom::mesh::Source::of(file),
+                ssb_rom::mesh::Source::of(&file),
                 initial,
             )) {
                 let key: String = match converted {
@@ -876,10 +876,10 @@ fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
         if only_file.is_some_and(|f| f != id) {
             continue;
         }
-        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(id as usize) else {
             continue;
         };
-        let resolver = ssb_rom::scene::DlResolver::new(file);
+        let resolver = ssb_rom::scene::DlResolver::new(&file);
         for graph in graphs {
             let initial = initial_material_for(
                 &skeleton_graphs,
@@ -888,8 +888,8 @@ fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
                 id,
                 graph.offset,
             );
-            let materials = loaded.materials(file, graph);
-            let base = plan_draw_order(file, graph, &resolver);
+            let materials = loaded.materials(&file, graph);
+            let base = plan_draw_order(&file, graph, &resolver);
             let mut variants: Vec<(String, Vec<PlannedList>)> = vec![("base".into(), base.clone())];
             for (_, set, parts) in skeleton_sets_for(loaded, id, graph) {
                 variants.push((format!("skeleton{set}"), plan_skeleton_order(graph, &parts)));
@@ -913,7 +913,7 @@ fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
             if let Some((a, before)) = fighter_accessory(loaded, id, graph) {
                 if let Some((plan, _)) = plan_with_accessory(&base, graph, &a, before) {
                     access_materials.push(part_materials(
-                        file,
+                        &file,
                         a.mobjsubs,
                         a.costume_matanim_joints,
                         1,
@@ -927,7 +927,7 @@ fn lighting_rows(loaded: &Loaded, only_file: Option<u32>) -> Vec<LightingRow> {
                 } else {
                     &materials
                 };
-                for load in trace_graph_at(loaded, file, graph.offset, plan, materials, initial) {
+                for load in trace_graph_at(loaded, &file, graph.offset, plan, materials, initial) {
                     rows.push(LightingRow {
                         file: id,
                         graph: graph.offset,
@@ -1088,8 +1088,25 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         }
     }
     let (data, _) = load_rom(path)?;
-    let ssb_pack::Built { bytes, stats } =
-        ssb_pack::build(&data, &pack_opts, &StdoutLog, &residuals::Observer)?;
+    if let Some(dir) = out_path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    // Streamed to the file as it is laid out (RE-588: the build never holds
+    // the pack). Rewritten in place, so hard links to it keep working.
+    let mut sink = ssb_rom::pack::IoSink(std::io::BufWriter::new(fs::File::create(&out_path)?));
+    let stats = ssb_pack::build(
+        &data,
+        &pack_opts,
+        &StdoutLog,
+        &residuals::Observer,
+        &mut sink,
+    )
+    .and_then(|stats| {
+        std::io::Write::flush(&mut sink.0)?;
+        Ok(stats)
+    })
+    .map_err(|e| format!("{e} ({} is incomplete)", out_path.display()))?;
+    drop((sink, data));
     let ssb_pack::PackStats {
         meshes,
         triangles,
@@ -1130,12 +1147,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         lod_blend_sites,
         non_owner_first,
     } = stats;
-    if let Some(dir) = out_path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    fs::write(&out_path, &bytes)?;
 
     // Verify what we just wrote actually loads, rather than trusting it.
+    let bytes = fs::read(&out_path)?;
     let pack = ssb_rom::pack::Pack::open(&bytes)
         .map_err(|e| format!("wrote a pack that will not load: {e:?}"))?;
 
@@ -1955,11 +1969,7 @@ fn verify_stage_anims_against_pack(loaded: &Loaded, pack_path: &Path) -> Res {
         let Some(packed_script) = pack.anim_script(&a) else {
             return Err(format!("stage {stage_index}: packed script bytes missing").into());
         };
-        let Some(file) = loaded
-            .files
-            .get(a.source_file as usize)
-            .and_then(Option::as_ref)
-        else {
+        let Some(file) = loaded.files.get(a.source_file as usize) else {
             return Err(
                 format!("stage {stage_index}: source file {} absent", a.source_file).into(),
             );
@@ -3052,7 +3062,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
             }
             if let Some((af, at)) = l.anim_joints {
                 if af == l.graph.0 {
-                    if let Some(f) = loaded.files.get(af as usize).and_then(Option::as_ref) {
+                    if let Some(f) = loaded.files.get(af as usize) {
                         let scripts = ssb_rom::objanim::joint_scripts(&f.data, at, nodes);
                         for (n, s) in scripts.iter().enumerate() {
                             let Some(script) = *s else { continue };
@@ -3109,14 +3119,14 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
             // the graph's own file for `resolve_scripts` to make sense of them.
             if let Some((mf, mat)) = l.matanim_joints {
                 if mf == l.graph.0 {
-                    if let Some(f) = loaded.files.get(mf as usize).and_then(Option::as_ref) {
+                    if let Some(f) = loaded.files.get(mf as usize) {
                         let chain_table = match l.mobjsub_table {
                             Some((tf, at)) if tf == l.graph.0 => {
-                                ssb_rom::mobj::read_table(f, at, nodes)
+                                ssb_rom::mobj::read_table(&f, at, nodes)
                             }
                             _ => None,
                         };
-                        let scripts = ssb_rom::matanim::resolve_scripts(f, mat, nodes, |n| {
+                        let scripts = ssb_rom::matanim::resolve_scripts(&f, mat, nodes, |n| {
                             chain_table.as_ref().map_or(0, |t| t.nodes[n].len())
                         });
                         for (node, chain) in scripts.iter().enumerate() {
@@ -3190,7 +3200,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                                                 .map(|m| m.at);
                                             if let Some(sub_at) = sub_at {
                                                 match ssb_rom::mobj::read_palettes(
-                                                    f,
+                                                    &f,
                                                     sub_at,
                                                     entries as usize,
                                                 ) {
@@ -3237,8 +3247,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
             let decoded = loaded
                 .files
                 .get(f as usize)
-                .and_then(Option::as_ref)
-                .and_then(|cf| ssb_rom::collision::read(cf, at));
+                .and_then(|cf| ssb_rom::collision::read(&cf, at));
             match decoded {
                 Some(map) => {
                     let n = |k| map.lines_of(k).count();
@@ -3302,7 +3311,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     println!("  still running after {ANIM_REPLAY_FRAMES} frames: {anim_running}/{anim_ok}");
     let anim_bytes: usize = anim_src_files
         .iter()
-        .filter_map(|f| loaded.files.get(*f as usize).and_then(Option::as_ref))
+        .filter_map(|f| loaded.files.get(*f as usize))
         .map(|f| f.data.len())
         .sum();
     println!(
@@ -3421,17 +3430,17 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     // Every `MObjSub` reached, by file and offset, for the `unk10` census.
     let mut subs: BTreeSet<(u32, u32)> = BTreeSet::new();
 
-    for file in files.iter().flatten() {
+    for file in files.iter() {
         if only_file.is_some_and(|f| f != file.id) {
             continue;
         }
-        let resolver = scene::DlResolver::new(file);
+        let resolver = scene::DlResolver::new(&file);
         for g in graphs.get(&file.id).into_iter().flatten() {
             let Some(offset) = tables.table_for(file.id, g.offset) else {
                 if g.nodes.iter().any(|n| {
                     n.desc
                         .dl
-                        .is_some_and(|at| mobj_demand(file, &resolver, at) > 0)
+                        .is_some_and(|at| mobj_demand(&file, &resolver, at) > 0)
                 }) {
                     unpaired += 1;
                     // Naming these matters: an unpaired graph draws its nodes
@@ -3444,7 +3453,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
                 continue;
             };
             // `PartTables::scan` already required this to parse.
-            let Some(table) = mobj::read_table(file, offset, g.nodes.len()) else {
+            let Some(table) = mobj::read_table(&file, offset, g.nodes.len()) else {
                 unreadable += 1;
                 continue;
             };
@@ -3453,7 +3462,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
                 let want = node
                     .desc
                     .dl
-                    .map_or(0, |at| mobj_demand(file, &resolver, at));
+                    .map_or(0, |at| mobj_demand(&file, &resolver, at));
                 let have = table.nodes[i].len();
                 match () {
                     _ if want == have => {
@@ -3525,13 +3534,10 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     }
     let mut unk10: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
     for &(f, at) in &subs {
-        let Some(data) = files
-            .get(f as usize)
-            .and_then(Option::as_ref)
-            .map(|x| &x.data)
-        else {
+        let Some(file) = files.get(f as usize) else {
             continue;
         };
+        let data = &file.data;
         let word = |o: usize| {
             data.get(o..o + 4)
                 .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
@@ -3588,7 +3594,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
 /// `tools/mobjtable-ground-truth.py` from the decomp's `MObjSub **name[]`
 /// declarations.
 fn search_unpaired_tables(
-    files: &[Option<ssb_rom::archive::File>],
+    files: &ssb_pack::FileStore<'_>,
     graphs: &BTreeMap<u32, Vec<ssb_rom::scene::SceneGraph>>,
     unpaired: &[(u32, u32, usize)],
     expect_tables: Option<&Path>,
@@ -3614,7 +3620,7 @@ fn search_unpaired_tables(
     let mut found: Vec<(u32, u32, u32)> = Vec::new();
 
     for &(file_id, graph_offset, _) in unpaired {
-        let Some(file) = files.get(file_id as usize).and_then(Option::as_ref) else {
+        let Some(file) = files.get(file_id as usize) else {
             continue;
         };
         let Some(graph) = graphs
@@ -3623,14 +3629,14 @@ fn search_unpaired_tables(
         else {
             continue;
         };
-        let resolver = ssb_rom::scene::DlResolver::new(file);
+        let resolver = ssb_rom::scene::DlResolver::new(&file);
         let demand: Vec<usize> = graph
             .nodes
             .iter()
-            .map(|n| n.desc.dl.map_or(0, |at| mobj_demand(file, &resolver, at)))
+            .map(|n| n.desc.dl.map_or(0, |at| mobj_demand(&file, &resolver, at)))
             .collect();
 
-        let hits = ssb_rom::mobj::search_tables(file, &demand);
+        let hits = ssb_rom::mobj::search_tables(&file, &demand);
         match hits.len() {
             0 => none += 1,
             1 => {
@@ -3739,7 +3745,7 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
         if only_file.is_some_and(|f| f != id) {
             continue;
         }
-        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(id as usize) else {
             continue;
         };
 
@@ -3747,7 +3753,7 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
         // palette comes from its `MObj` chain, so a standalone conversion dumps
         // its textures unpalettised -- which would make this tool report a
         // problem the pack does not have, and hide one it does.
-        for m in file_meshes(&loaded, file) {
+        for m in file_meshes(&loaded, &file) {
             if written >= count {
                 break;
             }
@@ -3763,7 +3769,7 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                 // them out of the drawing file gives noise that looks exactly
                 // like a broken decoder (RE-037, RE-047).
                 let texels = Texels {
-                    home: file,
+                    home: &file,
                     all: &loaded.files,
                 };
                 let home = t.data_file.map_or(id, u32::from);
@@ -3775,9 +3781,10 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                 }
 
                 let need = texture::data_len(t.width as u32, t.height as u32, t.size);
-                let Some(src) = texels
-                    .bytes(t.data_file)
-                    .and_then(|d| d.get(t.data_offset as usize..t.data_offset as usize + need))
+                let Some(src_file) = texels.bytes(t.data_file) else {
+                    continue;
+                };
+                let Some(src) = src_file.get(t.data_offset as usize..t.data_offset as usize + need)
                 else {
                     continue;
                 };
@@ -3786,8 +3793,10 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                         let (off, n) = palette_bank_offset(off, t.palette_entries, t.palette);
                         texels
                             .bytes(t.palette_file)
-                            .and_then(|d| d.get(off as usize..off as usize + n * 2))
-                            .map(texture::parse_tlut)
+                            .and_then(|d| {
+                                d.get(off as usize..off as usize + n * 2)
+                                    .map(texture::parse_tlut)
+                            })
                             .unwrap_or_default()
                     }
                     None => Vec::new(),
@@ -3985,11 +3994,11 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
     // Same conversion the packer runs, so these counts describe the pack. On
     // the standalone path a fighter's textures come out palette-less, and this
     // reported 142 failures that the shipped pack does not have.
-    for file in loaded.files.iter().flatten() {
+    for file in loaded.files.iter() {
         if only_file.is_some_and(|f| f != file.id) {
             continue;
         }
-        for m in file_meshes(&loaded, file) {
+        for m in file_meshes(&loaded, &file) {
             for prim in &m.primitives {
                 let Some(t) = prim.material.texture else {
                     continue;
@@ -4038,10 +4047,14 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         sv / t.height.max(1) as f32,
                     );
                 }
+                let texel_file;
                 let texels = match t.data_file {
                     None => &file.data[..],
-                    Some(id) => match loaded.files.get(id as usize).and_then(Option::as_ref) {
-                        Some(f) => &f.data[..],
+                    Some(id) => match loaded.files.get(id as usize) {
+                        Some(f) => {
+                            texel_file = f;
+                            &texel_file.data[..]
+                        }
                         None => {
                             *why.entry("cross-file, target file did not load".into())
                                 .or_default() += 1;
@@ -4109,13 +4122,16 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 let tlut: Vec<u16> = match t.palette_offset {
                     Some(off) => {
                         let (off, entries) = palette_bank_offset(off, t.palette_entries, t.palette);
+                        let pal_file;
                         let pal = match t.palette_file {
                             None => Some(&file.data[..]),
-                            Some(id) => loaded
-                                .files
-                                .get(id as usize)
-                                .and_then(Option::as_ref)
-                                .map(|f| &f.data[..]),
+                            Some(id) => match loaded.files.get(id as usize) {
+                                Some(f) => {
+                                    pal_file = f;
+                                    Some(&pal_file.data[..])
+                                }
+                                None => None,
+                            },
                         };
                         pal.and_then(|p| p.get(off as usize..off as usize + entries * 2))
                             .map(texture::parse_tlut)
@@ -4136,7 +4152,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 let tex = convert_texture(
                     ctx,
                     Texels {
-                        home: file,
+                        home: &file,
                         all: &loaded.files,
                     },
                     &t,
@@ -4548,13 +4564,13 @@ fn figatree(path: &Path, opts: &[&str]) -> Res {
     let mut skeletons: BTreeMap<&str, Skeleton> = BTreeMap::new();
     for (i, entry) in fighter::FIGHTER_FILES.iter().enumerate() {
         let name = anim::FIGHTER_ANIMS[i].name;
-        let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+        let Some(main) = loaded.files.get(entry.file as usize) else {
             continue;
         };
-        let mask = fighter::setup_parts(main, *entry).unwrap_or(u64::MAX);
+        let mask = fighter::setup_parts(&main, *entry).unwrap_or(u64::MAX);
         // The high-detail entry of `FTCommonPartContainer` — the skeleton the
         // game builds a fighter from at full detail.
-        let Some(part) = fighter::common_parts(main, *entry)[0] else {
+        let Some(part) = fighter::common_parts(&main, *entry)[0] else {
             continue;
         };
         let Some(nodes) = loaded
@@ -5513,18 +5529,18 @@ fn build_texgen_census(
         if only_file.is_some_and(|f| f != id) {
             continue;
         }
-        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+        let Some(file) = loaded.files.get(id as usize) else {
             continue;
         };
 
         let graphs: &[ssb_rom::scene::SceneGraph] =
             loaded.graphs.get(&id).map_or(&[], Vec::as_slice);
-        let resolver = ssb_rom::scene::DlResolver::new(file);
+        let resolver = ssb_rom::scene::DlResolver::new(&file);
         let mut authoritative: BTreeSet<u32> = BTreeSet::new();
 
         for (gi, graph) in graphs.iter().enumerate() {
-            let plan = plan_draw_order(file, graph, &resolver);
-            let materials = loaded.materials(file, graph);
+            let plan = plan_draw_order(&file, graph, &resolver);
+            let materials = loaded.materials(&file, graph);
             // One walker for the whole graph: the RDP/RSP state and the vertex
             // cache persist across a graph's nodes exactly as they do on
             // hardware, which is the only way a cross-node reuse can show up.
@@ -5547,11 +5563,11 @@ fn build_texgen_census(
                 walk.space = p.space;
                 walk.world = p.world;
                 walk.mobjs = materials.get(p.node).cloned().unwrap_or_default();
-                walk.walk(&cmds, file, gi as u32, p.node, &mut census, verbose);
+                walk.walk(&cmds, &file, gi as u32, p.node, &mut census, verbose);
             }
         }
 
-        let all = ssb_rom::scan::find_root_display_lists(file);
+        let all = ssb_rom::scan::find_root_display_lists(&file);
         let called: BTreeSet<u32> = all.iter().flat_map(|d| d.referenced_lists()).collect();
         for dl in all
             .iter()
@@ -5562,7 +5578,7 @@ fn build_texgen_census(
             walk.dl = dl.offset;
             walk.walk(
                 &dl.commands,
-                file,
+                &file,
                 u32::MAX,
                 usize::MAX,
                 &mut census,
@@ -6475,12 +6491,12 @@ mod tests {
         let mut weapons = 0;
         let mut effect_modes = Vec::new();
         for (file_id, graphs) in &loaded.graphs {
-            let Some(file) = loaded.files.get(*file_id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(*file_id as usize) else {
                 continue;
             };
-            let resolver = ssb_rom::scene::DlResolver::new(file);
+            let resolver = ssb_rom::scene::DlResolver::new(&file);
             for graph in graphs {
-                let plan = super::plan_draw_order(file, graph, &resolver);
+                let plan = super::plan_draw_order(&file, graph, &resolver);
                 let heads: Vec<_> = plan.iter().filter(|p| p.list_id == Some(1)).collect();
                 if heads.is_empty() {
                     continue;
@@ -6684,10 +6700,10 @@ mod tests {
         let mut texgen_prims = 0usize;
         let mut missing_texture = 0usize;
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for mesh in super::file_meshes(&loaded, file) {
+            for mesh in super::file_meshes(&loaded, &file) {
                 for p in &mesh.primitives {
                     if p.material.texture_gen != ssb_rom::mesh::TextureGen::None {
                         texgen_prims += 1;
@@ -6746,10 +6762,10 @@ mod tests {
         let mut palette_conflicts = 0usize;
         let mut textures_seen = 0usize;
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for mesh in super::file_meshes(&loaded, file) {
+            for mesh in super::file_meshes(&loaded, &file) {
                 for p in &mesh.primitives {
                     let Some(t) = p.material.texture else {
                         continue;
@@ -6903,10 +6919,10 @@ mod tests {
         let mut without_branch_not_normal = 0usize;
         let mut affected_files: BTreeSet<u32> = BTreeSet::new();
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for mesh in super::file_meshes(&loaded, file) {
+            for mesh in super::file_meshes(&loaded, &file) {
                 for p in &mesh.primitives {
                     if !p.material.lit {
                         continue;
@@ -6995,10 +7011,10 @@ mod tests {
         let mut disagreements = 0usize;
         let mut affected_files: BTreeSet<u32> = BTreeSet::new();
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for mesh in super::file_meshes(&loaded, file) {
+            for mesh in super::file_meshes(&loaded, &file) {
                 for p in &mesh.primitives {
                     for &i in &p.indices {
                         let Some(v) = mesh.vertices.get(i as usize) else {
@@ -7058,17 +7074,17 @@ mod tests {
         let mut vertices_checked = 0usize;
         let mut changed = 0usize;
         for entry in ssb_rom::fighter::FIGHTER_FILES.iter() {
-            let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+            let Some(main) = loaded.files.get(entry.file as usize) else {
                 continue;
             };
-            for part in ssb_rom::fighter::common_parts(main, *entry)
+            for part in ssb_rom::fighter::common_parts(&main, *entry)
                 .into_iter()
                 .flatten()
             {
                 if !graphs_checked.insert((part.model_file, part.graph)) {
                     continue; // several fighters share one model file/graph
                 }
-                let Some(file) = loaded.files[part.model_file as usize].as_ref() else {
+                let Some(file) = loaded.files.get(part.model_file as usize) else {
                     continue;
                 };
                 let Some(g) = loaded
@@ -7078,8 +7094,8 @@ mod tests {
                 else {
                     continue;
                 };
-                let resolver = ssb_rom::scene::DlResolver::new(file);
-                let plan = super::plan_draw_order(file, g, &resolver);
+                let resolver = ssb_rom::scene::DlResolver::new(&file);
+                let plan = super::plan_draw_order(&file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -7089,7 +7105,7 @@ mod tests {
                             .unwrap_or_default()
                     })
                     .collect();
-                let materials = loaded.materials(file, g);
+                let materials = loaded.materials(&file, g);
                 let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                     .iter()
                     .zip(&decoded)
@@ -7104,12 +7120,12 @@ mod tests {
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL,
                 );
                 let unseeded = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     ssb_rom::mesh::InitialMaterial::default(),
                 );
                 for (a, b) in seeded.iter().zip(&unseeded) {
@@ -7149,21 +7165,22 @@ mod tests {
             (296, 0x2200, [-39, -1, 71], [-174, 156]),
             (323, 0x2410, [-24, 58, 61], [-130, 435]),
         ] {
-            let file = loaded.files[id].as_ref().unwrap();
+            let file = loaded.files.get(id).unwrap();
             let graph = loaded.graphs[&(id as u32)]
                 .iter()
                 .find(|g| g.offset == graph_offset)
                 .unwrap();
-            let plan = super::plan_draw_order(file, graph, &ssb_rom::scene::DlResolver::new(file));
+            let plan =
+                super::plan_draw_order(&file, graph, &ssb_rom::scene::DlResolver::new(&file));
             let pack_opts = super::PackOptions::default();
             let ctx = &super::PackCtx::new(&pack_opts, &super::NoLog, &super::NoObserver);
             let converted = super::convert_graph_at(
                 ctx,
                 &loaded,
-                file,
+                &file,
                 graph.offset,
                 &plan,
-                &loaded.materials(file, graph),
+                &loaded.materials(&file, graph),
                 &mut BTreeMap::new(),
                 ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL,
             );
@@ -7226,21 +7243,21 @@ mod tests {
         let (data, info) = super::load_rom(path.as_ref()).unwrap();
         let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
         let loaded = super::load_all(&archive);
-        let file = loaded.files[296].as_ref().unwrap();
+        let file = loaded.files.get(296).unwrap();
         let graph = loaded.graphs[&296]
             .iter()
             .find(|g| g.offset == 0x2200)
             .unwrap();
-        let plan = super::plan_draw_order(file, graph, &ssb_rom::scene::DlResolver::new(file));
+        let plan = super::plan_draw_order(&file, graph, &ssb_rom::scene::DlResolver::new(&file));
         let pack_opts = super::PackOptions::default();
         let ctx = &super::PackCtx::new(&pack_opts, &super::NoLog, &super::NoObserver);
         let converted = super::convert_graph_at(
             ctx,
             &loaded,
-            file,
+            &file,
             graph.offset,
             &plan,
-            &loaded.materials(file, graph),
+            &loaded.materials(&file, graph),
             &mut BTreeMap::new(),
             ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL,
         );
@@ -7282,7 +7299,7 @@ mod tests {
         let mut other_unlit_verts = 0usize;
         let mut other_still_normal_like = 0usize;
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
             let graphs: &[ssb_rom::scene::SceneGraph] =
@@ -7290,7 +7307,7 @@ mod tests {
             let on_a_skeleton = graphs
                 .iter()
                 .any(|g| skeleton_graphs.contains(&(id, g.offset)));
-            for mesh in super::file_meshes(&loaded, file) {
+            for mesh in super::file_meshes(&loaded, &file) {
                 for v in &mesh.vertices {
                     if v.lit {
                         continue;
@@ -7360,10 +7377,10 @@ mod tests {
         let mut zmode_counts: std::collections::BTreeMap<&'static str, usize> =
             std::collections::BTreeMap::new();
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for mesh in super::file_meshes(&loaded, file) {
+            for mesh in super::file_meshes(&loaded, &file) {
                 for p in &mesh.primitives {
                     prims_checked += 1;
                     let m = &p.material;
@@ -7421,11 +7438,7 @@ mod tests {
         let mut depth_test_changed = 0usize;
         let mut depth_write_changed = 0usize;
         for asset in ssb_rom::transition::ASSETS {
-            let Some(file) = loaded
-                .files
-                .get(asset.file as usize)
-                .and_then(Option::as_ref)
-            else {
+            let Some(file) = loaded.files.get(asset.file as usize) else {
                 continue;
             };
             let Some(g) = loaded
@@ -7435,8 +7448,8 @@ mod tests {
             else {
                 continue;
             };
-            let resolver = ssb_rom::scene::DlResolver::new(file);
-            let plan = super::plan_draw_order(file, g, &resolver);
+            let resolver = ssb_rom::scene::DlResolver::new(&file);
+            let plan = super::plan_draw_order(&file, g, &resolver);
             let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
@@ -7446,7 +7459,7 @@ mod tests {
                         .unwrap_or_default()
                 })
                 .collect();
-            let materials = loaded.materials(file, g);
+            let materials = loaded.materials(&file, g);
             let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                 .iter()
                 .zip(&decoded)
@@ -7461,12 +7474,12 @@ mod tests {
                 .collect();
             let seeded = ssb_rom::mesh::convert_sequence(
                 &items,
-                ssb_rom::mesh::Source::of(file),
+                ssb_rom::mesh::Source::of(&file),
                 ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL,
             );
             let unseeded = ssb_rom::mesh::convert_sequence(
                 &items,
-                ssb_rom::mesh::Source::of(file),
+                ssb_rom::mesh::Source::of(&file),
                 ssb_rom::mesh::InitialMaterial::default(),
             );
             for (a, b) in seeded.iter().zip(&unseeded) {
@@ -7517,17 +7530,17 @@ mod tests {
         let mut depth_test_changed = 0usize;
         let mut depth_write_changed = 0usize;
         for entry in ssb_rom::fighter::FIGHTER_FILES.iter() {
-            let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+            let Some(main) = loaded.files.get(entry.file as usize) else {
                 continue;
             };
-            for part in ssb_rom::fighter::common_parts(main, *entry)
+            for part in ssb_rom::fighter::common_parts(&main, *entry)
                 .into_iter()
                 .flatten()
             {
                 if !graphs_checked.insert((part.model_file, part.graph)) {
                     continue; // several fighters share one model file/graph
                 }
-                let Some(file) = loaded.files[part.model_file as usize].as_ref() else {
+                let Some(file) = loaded.files.get(part.model_file as usize) else {
                     continue;
                 };
                 let Some(g) = loaded
@@ -7537,8 +7550,8 @@ mod tests {
                 else {
                     continue;
                 };
-                let resolver = ssb_rom::scene::DlResolver::new(file);
-                let plan = super::plan_draw_order(file, g, &resolver);
+                let resolver = ssb_rom::scene::DlResolver::new(&file);
+                let plan = super::plan_draw_order(&file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -7548,7 +7561,7 @@ mod tests {
                             .unwrap_or_default()
                     })
                     .collect();
-                let materials = loaded.materials(file, g);
+                let materials = loaded.materials(&file, g);
                 let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                     .iter()
                     .zip(&decoded)
@@ -7563,12 +7576,12 @@ mod tests {
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL,
                 );
                 let unseeded = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     ssb_rom::mesh::InitialMaterial::default(),
                 );
                 for (a, b) in seeded.iter().zip(&unseeded) {
@@ -7663,7 +7676,7 @@ mod tests {
         for stage in &loaded.stages {
             for layer in &stage.layers {
                 let (file_id, graph_offset) = layer.graph;
-                let Some(file) = loaded.files.get(file_id as usize).and_then(Option::as_ref) else {
+                let Some(file) = loaded.files.get(file_id as usize) else {
                     continue;
                 };
                 let Some(g) = loaded
@@ -7675,7 +7688,7 @@ mod tests {
                 };
                 let stats = by_layer.entry(layer.index).or_default();
 
-                let resolver = ssb_rom::scene::DlResolver::new(file);
+                let resolver = ssb_rom::scene::DlResolver::new(&file);
                 for node in &g.nodes {
                     let Some(dl) = node.desc.dl else { continue };
                     match resolver.resolve(dl) {
@@ -7693,7 +7706,7 @@ mod tests {
                     }
                 }
 
-                let plan = super::plan_draw_order(file, g, &resolver);
+                let plan = super::plan_draw_order(&file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -7703,7 +7716,7 @@ mod tests {
                             .unwrap_or_default()
                     })
                     .collect();
-                let materials = loaded.materials(file, g);
+                let materials = loaded.materials(&file, g);
                 let initial = super::initial_material_for(
                     &skeleton_graphs,
                     &ground_graphs,
@@ -7725,7 +7738,7 @@ mod tests {
                     .collect();
                 let meshes = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     initial,
                 );
                 for mesh in meshes.into_iter().flatten() {
@@ -7773,7 +7786,7 @@ mod tests {
                 if !graphs_checked.insert(layer.graph) {
                     continue; // several stages can share one layer-1 graph
                 }
-                let Some(file) = loaded.files.get(file_id as usize).and_then(Option::as_ref) else {
+                let Some(file) = loaded.files.get(file_id as usize) else {
                     continue;
                 };
                 let Some(g) = loaded
@@ -7783,8 +7796,8 @@ mod tests {
                 else {
                     continue;
                 };
-                let resolver = ssb_rom::scene::DlResolver::new(file);
-                let plan = super::plan_draw_order(file, g, &resolver);
+                let resolver = ssb_rom::scene::DlResolver::new(&file);
+                let plan = super::plan_draw_order(&file, g, &resolver);
                 let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                     .iter()
                     .map(|p| {
@@ -7794,7 +7807,7 @@ mod tests {
                             .unwrap_or_default()
                     })
                     .collect();
-                let materials = loaded.materials(file, g);
+                let materials = loaded.materials(&file, g);
                 let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                     .iter()
                     .zip(&decoded)
@@ -7809,12 +7822,12 @@ mod tests {
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL,
                 );
                 let unseeded = ssb_rom::mesh::convert_sequence(
                     &items,
-                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::Source::of(&file),
                     ssb_rom::mesh::InitialMaterial::default(),
                 );
                 for (a, b) in seeded.iter().zip(&unseeded) {
@@ -8022,16 +8035,16 @@ mod tests {
         let mut named: std::collections::BTreeMap<(u32, u32), (u8, f64)> = Default::default();
 
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for m in super::file_meshes(&loaded, file) {
+            for m in super::file_meshes(&loaded, &file) {
                 for prim in &m.primitives {
                     let Some(t) = prim.material.texture else {
                         continue;
                     };
                     let texels = super::Texels {
-                        home: file,
+                        home: &file,
                         all: &loaded.files,
                     };
                     let home = t.data_file.map_or(id, u32::from);
@@ -8043,9 +8056,11 @@ mod tests {
                     }
 
                     let need = ssb_rom::texture::data_len(t.width as u32, t.height as u32, t.size);
-                    let Some(src) = texels
-                        .bytes(t.data_file)
-                        .and_then(|d| d.get(t.data_offset as usize..t.data_offset as usize + need))
+                    let Some(src_file) = texels.bytes(t.data_file) else {
+                        continue;
+                    };
+                    let Some(src) =
+                        src_file.get(t.data_offset as usize..t.data_offset as usize + need)
                     else {
                         continue;
                     };
@@ -8054,8 +8069,10 @@ mod tests {
                             let (off, n) = palette_bank_offset(off, t.palette_entries, t.palette);
                             texels
                                 .bytes(t.palette_file)
-                                .and_then(|d| d.get(off as usize..off as usize + n * 2))
-                                .map(ssb_rom::texture::parse_tlut)
+                                .and_then(|d| {
+                                    d.get(off as usize..off as usize + n * 2)
+                                        .map(ssb_rom::texture::parse_tlut)
+                                })
                                 .unwrap_or_default()
                         }
                         None => Vec::new(),
@@ -8218,10 +8235,10 @@ mod tests {
         let mut primitives_examined = 0u64;
 
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
-            for m in super::file_meshes(&loaded, file) {
+            for m in super::file_meshes(&loaded, &file) {
                 for prim in &m.primitives {
                     let Some(t) = prim.material.texture else {
                         continue;
@@ -8609,7 +8626,7 @@ mod tests {
         let mut files_examined = 0u64;
 
         for id in 0..archive.len() as u32 {
-            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            let Some(file) = loaded.files.get(id as usize) else {
                 continue;
             };
             files_examined += 1;
@@ -8617,12 +8634,12 @@ mod tests {
             // Exactly `file_meshes`'s own two-source root discovery, so
             // this walker's scope is the scope the real pack covers -- not
             // a superset or subset.
-            let resolver = ssb_rom::scene::DlResolver::new(file);
+            let resolver = ssb_rom::scene::DlResolver::new(&file);
             let graphs: &[ssb_rom::scene::SceneGraph] =
                 loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
             let mut claimed = BTreeSet::new();
             for graph in graphs {
-                let plan = super::plan_draw_order(file, graph, &resolver);
+                let plan = super::plan_draw_order(&file, graph, &resolver);
                 for p in &plan {
                     if p.dl == super::NO_LIST {
                         continue;
@@ -8630,18 +8647,18 @@ mod tests {
                     claimed.insert(p.dl);
                     if let Some(bytes) = file.data.get(p.dl as usize..) {
                         if let Ok(cmds) = ssb_rom::dl::decode_list_at(bytes, p.dl) {
-                            walk(&cmds, file, 0, &mut None, &mut stats);
+                            walk(&cmds, &file, 0, &mut None, &mut stats);
                         }
                     }
                 }
             }
-            let all = ssb_rom::scan::find_root_display_lists(file);
+            let all = ssb_rom::scan::find_root_display_lists(&file);
             let called: BTreeSet<u32> = all.iter().flat_map(|d| d.referenced_lists()).collect();
             for dl in all
                 .iter()
                 .filter(|d| !called.contains(&d.offset) && !claimed.contains(&d.offset))
             {
-                walk(&dl.commands, file, 0, &mut None, &mut stats);
+                walk(&dl.commands, &file, 0, &mut None, &mut stats);
             }
         }
 

@@ -1,9 +1,114 @@
-//! Every archive file decoded once, with its scene graphs.
+//! The archive's files, decoded on demand, with their scene graphs.
 
 use crate::*;
+use alloc::rc::Rc;
+use ssb_rom::archive::File;
 
-pub struct Loaded {
-    pub files: Vec<Option<ssb_rom::archive::File>>,
+/// The archive's files decoded on demand (RE-588): the most recently used
+/// are kept up to a byte budget, the rest re-decode (`Archive::load` is
+/// pure), so the build never holds every decoded file at once.
+pub struct FileStore<'r> {
+    /// `None`: no files (tests of single conversions).
+    archive: Option<&'r ssb_rom::archive::Archive<'r>>,
+    /// Most recently used last.
+    cache: RefCell<Vec<(u32, Rc<File>)>>,
+    held: Cell<usize>,
+    budget: usize,
+    /// Files that do not decode.
+    absent: RefCell<BTreeSet<u32>>,
+    /// Hits, and decodes.
+    stats: Cell<(usize, usize)>,
+}
+
+/// The default [`FileStore`] budget.
+pub const FILE_STORE_BUDGET: usize = 512 << 10;
+
+fn file_bytes(f: &File) -> usize {
+    f.data.capacity()
+        + f.extern_relocs.capacity() * core::mem::size_of::<ssb_rom::archive::ExternReloc>()
+        + f.intern_relocs.capacity() * core::mem::size_of::<ssb_rom::archive::InternReloc>()
+}
+
+impl<'r> FileStore<'r> {
+    pub fn new(archive: &'r ssb_rom::archive::Archive<'r>, budget: usize) -> Self {
+        Self {
+            archive: Some(archive),
+            cache: RefCell::new(Vec::new()),
+            held: Cell::new(0),
+            budget,
+            absent: RefCell::new(BTreeSet::new()),
+            stats: Cell::new((0, 0)),
+        }
+    }
+
+    /// A store with no files.
+    pub fn empty() -> Self {
+        Self {
+            archive: None,
+            cache: RefCell::new(Vec::new()),
+            held: Cell::new(0),
+            budget: 0,
+            absent: RefCell::new(BTreeSet::new()),
+            stats: Cell::new((0, 0)),
+        }
+    }
+
+    /// The archive's file count.
+    pub fn len(&self) -> usize {
+        self.archive.map_or(0, |a| a.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// File `id`, decoded, or `None` if there is no such file or it does
+    /// not decode.
+    pub fn get(&self, id: usize) -> Option<Rc<File>> {
+        let id = u32::try_from(id)
+            .ok()
+            .filter(|&id| (id as usize) < self.len())?;
+        let mut cache = self.cache.borrow_mut();
+        let (hits, decodes) = self.stats.get();
+        if let Some(i) = cache.iter().rposition(|(f, _)| *f == id) {
+            let entry = cache.remove(i);
+            let file = entry.1.clone();
+            cache.push(entry);
+            self.stats.set((hits + 1, decodes));
+            return Some(file);
+        }
+        if self.absent.borrow().contains(&id) {
+            return None;
+        }
+        self.stats.set((hits, decodes + 1));
+        let Some(Ok(file)) = self.archive.map(|a| a.load(id)) else {
+            self.absent.borrow_mut().insert(id);
+            return None;
+        };
+        let file = Rc::new(file);
+        let mut held = self.held.get() + file_bytes(&file);
+        cache.push((id, file.clone()));
+        while held > self.budget && cache.len() > 1 {
+            let (_, old) = cache.remove(0);
+            held -= file_bytes(&old);
+        }
+        self.held.set(held);
+        Some(file)
+    }
+
+    /// Every file that decodes, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = Rc<File>> + '_ {
+        (0..self.len()).filter_map(|id| self.get(id))
+    }
+
+    /// Lookups served from the cache, and decodes.
+    pub fn stats(&self) -> (usize, usize) {
+        self.stats.get()
+    }
+}
+
+pub struct Loaded<'r> {
+    pub files: FileStore<'r>,
     pub graphs: BTreeMap<u32, Vec<ssb_rom::scene::SceneGraph>>,
     pub tables: ssb_rom::mobj::PartTables,
     pub stages: Vec<ssb_rom::stage::GroundData>,
@@ -27,16 +132,13 @@ pub struct FighterGraph {
     pub fallback: Vec<usize>,
 }
 
-pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
+pub fn load_all<'r>(archive: &'r ssb_rom::archive::Archive<'r>) -> Loaded<'r> {
     use ssb_rom::{mobj, scene};
 
-    let files: Vec<Option<ssb_rom::archive::File>> = (0..archive.len() as u32)
-        .map(|id| archive.load(id).ok())
-        .collect();
+    let files = FileStore::new(archive, FILE_STORE_BUDGET);
     let mut graphs: BTreeMap<u32, Vec<scene::SceneGraph>> = files
         .iter()
-        .flatten()
-        .map(|f| (f.id, scene::find_scene_graphs(f)))
+        .map(|f| (f.id, scene::find_scene_graphs(&f)))
         .collect();
     for &(file, graph) in DIRECT_WEAPON_GRAPHS.iter().chain(
         &[
@@ -95,7 +197,7 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
     }
     // A record only counts if a graph really starts where it points *and* the
     // table it names parses for that graph's node count; see `PartTables::scan`.
-    let mut tables = mobj::PartTables::scan(files.iter().flatten(), |model, graph, table| {
+    let mut tables = mobj::PartTables::scan(files.iter(), |model, graph, table| {
         let Some(nodes) = graphs
             .get(&model)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
@@ -103,9 +205,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
         else {
             return false;
         };
-        files[model as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some())
+        files
+            .get(model as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some())
     });
     // `sc1PBonusStageInitPlatforms` attaches these exact MObj tables to
     // descriptor 0 (a child of the existing yakumono, not an empty root).
@@ -115,9 +217,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .and_then(|gs| gs.iter().find(|g| g.offset == tree[0]))
             .expect("platform graph absent");
         assert!(
-            files[ssb_rom::bonus2::FILE as usize]
-                .as_ref()
-                .is_some_and(|f| mobj::read_table(f, tree[2], graph.nodes.len()).is_some()),
+            files
+                .get(ssb_rom::bonus2::FILE as usize)
+                .is_some_and(|f| mobj::read_table(&f, tree[2], graph.nodes.len()).is_some()),
             "platform material table invalid"
         );
         tables.insert(ssb_rom::bonus2::FILE, tree[0], tree[2]);
@@ -131,8 +233,7 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
     };
     let stages: Vec<ssb_rom::stage::GroundData> = files
         .iter()
-        .flatten()
-        .flat_map(|f| ssb_rom::stage::find_ground_data(f, is_graph))
+        .flat_map(|f| ssb_rom::stage::find_ground_data(&f, is_graph))
         .collect();
 
     // Stage controller objects the controller does not build from a
@@ -179,9 +280,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
     }
 
     for (file, graph, table) in leaf_tables {
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, 1).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, 1).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -191,9 +292,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -212,9 +313,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&graph_file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[graph_file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(graph_file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(graph_file, graph, table);
         }
@@ -338,9 +439,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -419,9 +520,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -456,9 +557,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -479,9 +580,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -509,9 +610,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -541,9 +642,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -560,9 +661,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -589,9 +690,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -614,9 +715,9 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
             .get(&file)
             .and_then(|gs| gs.iter().find(|g| g.offset == graph))
             .map_or(0, |g| g.nodes.len());
-        let parses = files[file as usize]
-            .as_ref()
-            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        let parses = files
+            .get(file as usize)
+            .is_some_and(|f| mobj::read_table(&f, table, nodes).is_some());
         if parses {
             tables.insert(file, graph, table);
         }
@@ -633,10 +734,10 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
         .iter()
         .filter(|e| e.kind != 12)
     {
-        let Some(main) = files.get(entry.file as usize).and_then(Option::as_ref) else {
+        let Some(main) = files.get(entry.file as usize) else {
             continue;
         };
-        let [Some(hi), lo] = ssb_rom::fighter::common_parts(main, *entry) else {
+        let [Some(hi), lo] = ssb_rom::fighter::common_parts(&main, *entry) else {
             continue;
         };
         if fighter_graphs.contains_key(&(hi.model_file, hi.graph)) {
@@ -694,7 +795,7 @@ pub fn load_all(archive: &ssb_rom::archive::Archive) -> Loaded {
     }
 }
 
-impl Loaded {
+impl Loaded<'_> {
     /// The materials for each node of a graph at the default costume, or
     /// empty vectors when no record names its table.
     pub fn materials(
@@ -775,14 +876,10 @@ impl Loaded {
         let Some(fg) = self.fighter_graphs.get(&(file, graph_offset)) else {
             return;
         };
-        let Some(main) = self
-            .files
-            .get(fg.entry.file as usize)
-            .and_then(Option::as_ref)
-        else {
+        let Some(main) = self.files.get(fg.entry.file as usize) else {
             return;
         };
-        let Some(parts) = ssb_rom::fighter::texture_parts(main, fg.entry) else {
+        let Some(parts) = ssb_rom::fighter::texture_parts(&main, fg.entry) else {
             return;
         };
         let Some(kind) = ssb_game::fighter::FighterKind::from_ordinal(fg.entry.kind) else {
@@ -1025,7 +1122,6 @@ pub fn shield_pose_joints(
     let file = loaded
         .files
         .get(refs.file as usize)
-        .and_then(Option::as_ref)
         .ok_or_else(|| format!("file {} missing", refs.file))?;
     let data = &file.data;
     let word = |at: usize| -> Option<u32> {

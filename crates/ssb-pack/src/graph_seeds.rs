@@ -16,9 +16,9 @@ pub fn fighter_skeleton_graphs(loaded: &Loaded) -> alloc::collections::BTreeSet<
     ssb_rom::fighter::FIGHTER_FILES
         .iter()
         .flat_map(|entry| {
-            let main = loaded.files[entry.file as usize].as_ref();
+            let main = loaded.files.get(entry.file as usize);
             main.into_iter().flat_map(|main| {
-                ssb_rom::fighter::common_parts(main, *entry)
+                ssb_rom::fighter::common_parts(&main, *entry)
                     .into_iter()
                     .flatten()
                     .map(|part| (part.model_file, part.graph))
@@ -36,23 +36,23 @@ pub fn skeleton_sets_for(
     graph: &ssb_rom::scene::SceneGraph,
 ) -> Vec<(&'static str, u32, Vec<ssb_rom::fighter::SkeletonPart>)> {
     let mut out = Vec::new();
-    let Some(model) = loaded.files.get(file as usize).and_then(Option::as_ref) else {
+    let Some(model) = loaded.files.get(file as usize) else {
         return out;
     };
     for entry in &ssb_rom::fighter::FIGHTER_FILES {
-        let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+        let Some(main) = loaded.files.get(entry.file as usize) else {
             continue;
         };
         // RE-426: either detail's graph; the skeleton draws under the
         // node's own `MObj`s at both.
-        if !ssb_rom::fighter::common_parts(main, *entry)
+        if !ssb_rom::fighter::common_parts(&main, *entry)
             .iter()
             .flatten()
             .any(|part| (part.model_file, part.graph) == (file, graph.offset))
         {
             continue;
         }
-        let Some(sk) = ssb_rom::fighter::skeletons(main, *entry, graph.nodes.len(), model) else {
+        let Some(sk) = ssb_rom::fighter::skeletons(&main, *entry, graph.nodes.len(), &model) else {
             continue;
         };
         for (i, set) in sk.sets.into_iter().enumerate() {
@@ -210,18 +210,12 @@ pub fn kirby_copy_hats(
         return Vec::new();
     };
     let (Some(main), Some(motion)) = (
-        loaded
-            .files
-            .get(entry.file as usize)
-            .and_then(Option::as_ref),
-        loaded
-            .files
-            .get(KIRBY_COPY_TABLE.0 as usize)
-            .and_then(Option::as_ref),
+        loaded.files.get(entry.file as usize),
+        loaded.files.get(KIRBY_COPY_TABLE.0 as usize),
     ) else {
         return Vec::new();
     };
-    let Some(detail) = ssb_rom::fighter::common_parts(main, *entry)
+    let Some(detail) = ssb_rom::fighter::common_parts(&main, *entry)
         .iter()
         .position(|p| p.is_some_and(|p| (p.model_file, p.graph) == (file, graph.offset)))
     else {
@@ -240,7 +234,7 @@ pub fn kirby_copy_hats(
         .into_iter()
         .filter_map(|p| {
             let mp =
-                ssb_rom::fighter::model_part(main, *entry, KIRBY_COPY_JOINT, p, detail as u32)?;
+                ssb_rom::fighter::model_part(&main, *entry, KIRBY_COPY_JOINT, p, detail as u32)?;
             (mp.dl.0 == file).then_some((p, mp))
         })
         .collect()
@@ -248,17 +242,17 @@ pub fn kirby_copy_hats(
 
 /// The playable fighter whose high- or low-detail `FTCommonPart` is
 /// `graph`, its main file and the detail (0 high, 1 low; RE-426).
-pub fn playable_fighter_of<'a>(
-    loaded: &'a Loaded,
+pub fn playable_fighter_of(
+    loaded: &Loaded,
     file: u32,
     graph: &ssb_rom::scene::SceneGraph,
 ) -> Option<(
     ssb_rom::fighter::FighterFile,
-    &'a ssb_rom::archive::File,
+    alloc::rc::Rc<ssb_rom::archive::File>,
     u32,
 )> {
     let fg = loaded.fighter_graphs.get(&(file, graph.offset))?;
-    let main = loaded.files.get(fg.entry.file as usize)?.as_ref()?;
+    let main = loaded.files.get(fg.entry.file as usize)?;
     Some((fg.entry, main, fg.detail))
 }
 
@@ -306,14 +300,10 @@ pub fn fighter_model_parts(
         .iter()
         .filter(|e| e.kind != 12 && e.kind != entry.kind)
     {
-        let Some(other_main) = loaded
-            .files
-            .get(other.file as usize)
-            .and_then(Option::as_ref)
-        else {
+        let Some(other_main) = loaded.files.get(other.file as usize) else {
             continue;
         };
-        let shares = ssb_rom::fighter::common_parts(other_main, *other)
+        let shares = ssb_rom::fighter::common_parts(&other_main, *other)
             .iter()
             .flatten()
             .any(|c| (c.model_file, c.graph) == (file, graph.offset));
@@ -342,7 +332,7 @@ pub fn fighter_model_parts(
             if node as usize >= graph.nodes.len() || present >> node & 1 == 0 {
                 return None;
             }
-            let mp = ssb_rom::fighter::model_part(main, entry, joint as u32, part, detail)?;
+            let mp = ssb_rom::fighter::model_part(&main, entry, joint as u32, part, detail)?;
             (mp.flags & 0xF == 0).then_some((joint as u32, part, mp))
         })
         .collect()
@@ -415,7 +405,7 @@ pub fn fighter_accessory(
     graph: &ssb_rom::scene::SceneGraph,
 ) -> Option<(ssb_rom::fighter::AccessPart, bool)> {
     let (entry, main, _) = playable_fighter_of(loaded, file, graph)?;
-    let access = ssb_rom::fighter::access_part(main, entry)?;
+    let access = ssb_rom::fighter::access_part(&main, entry)?;
     if access.dl.0 != file || access.mobjsubs.is_some_and(|(f, _)| f != file) {
         return None;
     }

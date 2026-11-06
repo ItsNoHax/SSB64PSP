@@ -43,7 +43,7 @@ pub fn add_menu_sprite_texture(
 /// that lists it. Sprites the pack already holds are not added again.
 pub fn add_menu_scenes(
     writer: &mut ssb_rom::pack::PackWriter,
-    files: &[Option<ssb_rom::archive::File>],
+    files: &FileStore<'_>,
     swizzle: bool,
 ) -> Result<usize, PackError> {
     use ssb_rom::menu_pack::MenuScene;
@@ -51,7 +51,6 @@ pub fn add_menu_scenes(
     let file = |id: u32| {
         files
             .get(id as usize)
-            .and_then(Option::as_ref)
             .ok_or_else(|| format!("menu sprite file {id:#x} missing"))
     };
     let mut sprites = 0usize;
@@ -62,7 +61,7 @@ pub fn add_menu_scenes(
                 if writer.has_sprite(f.file, at, SpriteDesc::ROLE_NONE, 0) {
                     continue;
                 }
-                let s = ssb_rom::sprite::decode(data, at)
+                let s = ssb_rom::sprite::decode(&data, at)
                     .map_err(|e| format!("menu sprite {:#x}+{at:#x}: {e:?}", f.file))?;
                 let texture = add_menu_sprite_texture(writer, &s, swizzle);
                 writer.add_sprite(sprite_desc(f.file, at, &s, texture, 0, 0, 0));
@@ -80,7 +79,7 @@ pub fn add_menu_scenes(
                     .get(lut as usize..lut as usize + 32)
                     .ok_or_else(|| format!("menu palette {id:#x}+{lut:#x} missing"))?;
                 let s = ssb_rom::sprite::decode_with_tlut(
-                    data,
+                    &data,
                     at,
                     &ssb_rom::texture::parse_tlut(bytes),
                 )
@@ -101,7 +100,7 @@ pub fn add_menu_scenes(
         if scene == MenuScene::Title
             && !writer.has_anim(AnimDesc::EFFECT, ssb_rom::title::LABELS_SLOT)
         {
-            add_title_anims(writer, file(ssb_rom::title::FILE)?)?;
+            add_title_anims(writer, &*file(ssb_rom::title::FILE)?)?;
             for slot in [
                 ssb_rom::title::LABELS_SLOT,
                 ssb_rom::title::PRESS_START_SLOT,
@@ -147,8 +146,8 @@ pub fn add_menu_scenes(
         {
             sprites += add_explain(
                 writer,
-                file(ssb_rom::explain::FILE_MAIN)?,
-                file(ssb_rom::explain::FILE_GRAPHICS)?,
+                &*file(ssb_rom::explain::FILE_MAIN)?,
+                &*file(ssb_rom::explain::FILE_GRAPHICS)?,
                 swizzle,
             )?;
             for slot in [ssb_rom::explain::PHASES_SLOT, ssb_rom::explain::KEYS_SLOT] {

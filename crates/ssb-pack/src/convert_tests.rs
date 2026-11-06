@@ -58,7 +58,7 @@ fn convert_texture_resolves_the_requested_palette_bank() {
     };
     let texels = crate::Texels {
         home: &file,
-        all: &[],
+        all: &crate::FileStore::empty(),
     };
 
     let base = TextureRef {
@@ -172,7 +172,7 @@ fn convert_recorded(
     };
     let texels = crate::Texels {
         home: &file,
-        all: &[],
+        all: &crate::FileStore::empty(),
     };
     let opts = PackOptions {
         list_all: true,

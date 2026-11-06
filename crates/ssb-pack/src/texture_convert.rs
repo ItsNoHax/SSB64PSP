@@ -230,8 +230,10 @@ pub fn convert_texture(
         Some(off) => {
             let (off, n) = palette_bank_offset(off, t.palette_entries, bank);
             src.bytes(t.palette_file)
-                .and_then(|f| f.get(off as usize..off as usize + n * 2))
-                .map(texture::parse_tlut)
+                .and_then(|f| {
+                    f.get(off as usize..off as usize + n * 2)
+                        .map(texture::parse_tlut)
+                })
                 .unwrap_or_default()
         }
         None => Vec::new(),
@@ -241,7 +243,7 @@ pub fn convert_texture(
         return None;
     }
     if t.tlut.enabled() {
-        extend_short_tlut(ctx, src, file, t, &mut tlut);
+        extend_short_tlut(ctx, src, &file, t, &mut tlut);
     }
     // The colour each index value yields, for an indexed natural format.
     let index_colours: Vec<u32> = if t.tlut.enabled() {
@@ -306,7 +308,7 @@ pub fn convert_texture(
     // reproduces it exactly, since `sceGuTexScale` renormalises UVs against
     // whatever dimensions the packed texture actually reports (RE-067).
     let decode_mirrored = |tlut: &[u16]| {
-        let mut img = decode_texture(file, t, tlut)?;
+        let mut img = decode_texture(&file, t, tlut)?;
         if t.rgb_unused {
             for px in img.pixels.as_chunks_mut::<4>().0 {
                 px[..3].fill(0xFF);
@@ -339,7 +341,7 @@ pub fn convert_texture(
         if plain {
             if psm.is_paletted() && t.format == texture::Format::Ci {
                 if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
-                    let source = decode_index_field(file, t)?;
+                    let source = decode_index_field(&file, t)?;
                     let limit = if psm == psp::Psm::PsmT4 {
                         16
                     } else {
@@ -556,7 +558,7 @@ pub fn convert_texture(
         }
         if psm.is_paletted() && t.format == texture::Format::Ci {
             if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
-                let source = decode_index_field(file, t)?;
+                let source = decode_index_field(&file, t)?;
                 let limit = if psm == psp::Psm::PsmT4 {
                     16
                 } else {

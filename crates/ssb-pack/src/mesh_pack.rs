@@ -120,15 +120,32 @@ pub struct Texels<'a> {
     /// The file the display list came from.
     pub home: &'a ssb_rom::archive::File,
     /// The whole archive, for a reference that names another file.
-    pub all: &'a [Option<ssb_rom::archive::File>],
+    pub all: &'a FileStore<'a>,
+}
+
+/// A file's bytes: borrowed from the home file, or held from the store.
+pub enum FileData<'a> {
+    Home(&'a [u8]),
+    Other(alloc::rc::Rc<ssb_rom::archive::File>),
+}
+
+impl core::ops::Deref for FileData<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Home(b) => b,
+            Self::Other(f) => &f.data,
+        }
+    }
 }
 
 impl<'a> Texels<'a> {
     /// The bytes of the file a reference's half names, or of `home`.
-    pub fn bytes(&self, which: Option<u16>) -> Option<&'a [u8]> {
+    pub fn bytes(&self, which: Option<u16>) -> Option<FileData<'a>> {
         match which {
-            None => Some(&self.home.data[..]),
-            Some(id) => self.all.get(id as usize)?.as_ref().map(|f| &f.data[..]),
+            None => Some(FileData::Home(&self.home.data[..])),
+            Some(id) => self.all.get(id as usize).map(FileData::Other),
         }
     }
 }
@@ -444,7 +461,7 @@ pub fn source_fully_opaque(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Op
         return None;
     }
     let file = src.bytes(t.data_file)?;
-    let indices = decode_index_field(file, t)?;
+    let indices = decode_index_field(&file, t)?;
     let bank = if t.size == texture::BitSize::Bits4 {
         t.palette
     } else {
@@ -492,7 +509,7 @@ pub fn source_texels_rgba(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Opt
     if !t.tlut.enabled() || t.format != texture::Format::Ci {
         return None;
     }
-    let indices = decode_index_field(file, t)?;
+    let indices = decode_index_field(&file, t)?;
     let bank = if t.size == texture::BitSize::Bits4 {
         t.palette
     } else {
@@ -1146,7 +1163,7 @@ pub fn pack_mesh(
                     };
                     let i = writer.add_mat_anim(
                         anim.source_file,
-                        file_bytes,
+                        &file_bytes,
                         anim.script,
                         anim_data.source_offset,
                         &palettes,
@@ -1388,9 +1405,8 @@ pub fn convert_mat_anim_palette(
     use ssb_rom::texture;
 
     let n = entries.max(1) as usize;
-    let bytes = src
-        .bytes(p.file)?
-        .get(p.offset as usize..p.offset as usize + n * 2)?;
+    let file = src.bytes(p.file)?;
+    let bytes = file.get(p.offset as usize..p.offset as usize + n * 2)?;
     let tlut = texture::parse_tlut(bytes);
     Some(
         tlut.iter()
@@ -1420,7 +1436,7 @@ pub fn reachable_palettes(
     for &script in core::iter::once(&key.script).chain(&data.extra_scripts) {
         let mut joint = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
         for _ in 0..MAT_ANIM_REPLAY_FRAMES {
-            joint.tick(file, 1.0).ok()?;
+            joint.tick(&file, 1.0).ok()?;
             let texture = joint
                 .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
                 .map(|v| (v.max(0.0) as usize).min(data.sprites.len().saturating_sub(1)));
@@ -1496,11 +1512,10 @@ pub fn record_texture_source(
     writer.set_texture_tile(i, t);
     let row = ssb_rom::texture::data_len(u32::from(t.source_width.max(t.width)), 1, t.size);
     let at = t.data_offset as usize;
-    if let Some(bytes) = src
-        .bytes(t.data_file)
-        .and_then(|f| f.get(at..at + row * usize::from(t.height)))
-    {
-        writer.set_texture_source(i, bytes, compensated);
+    if let Some(file) = src.bytes(t.data_file) {
+        if let Some(bytes) = file.get(at..at + row * usize::from(t.height)) {
+            writer.set_texture_source(i, bytes, compensated);
+        }
     }
 }
 

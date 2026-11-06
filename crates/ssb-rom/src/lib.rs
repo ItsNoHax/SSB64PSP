@@ -15,6 +15,7 @@ pub mod anim;
 pub mod anim_color;
 pub mod archive;
 pub mod audio;
+pub mod blob_store;
 pub mod camanim;
 pub mod campaign;
 pub mod collision;
