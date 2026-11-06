@@ -102,9 +102,16 @@ mod sin_table;
 #[allow(dead_code)]
 mod source;
 mod stat_flags;
+pub mod tables;
 mod throw_descs;
 
 pub use source::Source;
+
+/// The pack's `TABLES` section read from `rom`; the empty section (every
+/// table zeros, the stub) for `None` ([`tables`]).
+pub fn tables_section(rom: Option<&Source>) -> Result<Vec<u8>> {
+    tables::section(rom)
+}
 
 use std::path::{Path, PathBuf};
 
@@ -133,7 +140,9 @@ pub enum Crate {
     /// each fighter's main file, the loading-break transitions and the
     /// manager effects' objects and animations.
     Rom,
-    /// `ssb-engine`: `gSYSinTable`.
+    /// `ssb-engine`: none; its tables (`gSYSinTable`,
+    /// `dLBCommonSinLookup`) are in the pack's `TABLES` section
+    /// ([`tables`]).
     Engine,
 }
 
@@ -242,13 +251,8 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             files.push(d_arrays::generate_rom(rom)?);
             files
         }
-        Crate::Engine => vec![
-            Generated {
-                name: "sin_table.rs",
-                text: sin_table::generate(rom)?,
-            },
-            d_arrays::generate_engine(rom)?,
-        ],
+        // Its tables are in the pack's `TABLES` section ([`tables`]).
+        Crate::Engine => Vec::new(),
     })
 }
 

@@ -23,3 +23,6 @@ std = ["ssb-engine/std", "ssb-game/std", "ssb-rom/std"]
 [dev-dependencies]
 # `ssb_tablegen::test_rom` finds the ROM for the ROM-backed tests.
 ssb-tablegen = { workspace = true }
+# The tables read before any `install` (`ssb_engine::math`'s sines): built
+# from the ROM (`host-rom`).
+ssb-tables = { workspace = true, features = ["host-rom"] }

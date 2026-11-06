@@ -84,7 +84,8 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 ### Asset Pipeline
 
 - `romtool pack`: reads ROM, decompresses VPK0, relocates archive files, writes the pack
-- Pack contents: shared region, each archive file's bytes, audio section
+- Pack contents: shared region, each archive file's bytes, audio section, `TABLES` section
+- `TABLES` section: ROM-derived tables read at boot instead of compiled in ([D-048](decisions/D-048.md)); ids and writer `ssb_tablegen::tables`, reader `ssb-tables` (`Table<T>` statics), boot `psp_runtime::tables::load`; host tests build it from the ROM (`ssb-tables` feature `host-rom`). Holds `ssb-engine`'s two sine tables; the other generated tables are still `include!`d from `OUT_DIR`
 - Version: `ssb-rom/src/pack.rs`; current in [STATUS.md](../STATUS.md)
 - Paletted textures stay paletted ([D-003](decisions/D-003.md))
 - ROM-backed audits in `romtool`: `verify`, `scene-deps`, `residuals`, `matcolors`, `texgen`

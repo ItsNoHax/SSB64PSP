@@ -94,6 +94,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "ssb-tablegen",
+ "ssb-tables",
 ]
 
 [[package]]
@@ -123,6 +124,7 @@ dependencies = [
  "ssb-game",
  "ssb-pose",
  "ssb-rom",
+ "ssb-tables",
 ]
 
 [[package]]
@@ -139,6 +141,13 @@ name = "ssb-tablegen"
 version = "0.1.0"
 dependencies = [
  "sha1_smol",
+]
+
+[[package]]
+name = "ssb-tables"
+version = "0.1.0"
+dependencies = [
+ "ssb-tablegen",
 ]
 
 [[package]]

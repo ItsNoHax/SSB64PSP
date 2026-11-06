@@ -1,0 +1,34 @@
+[package]
+name = "ssb-tables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reads the ROM-derived tables from the pack's TABLES section at run time; no ROM data, no PSP code."
+
+[dependencies]
+# `host-rom` only: builds the section from the user's ROM on first use.
+ssb-tablegen = { workspace = true, optional = true }
+
+[build-dependencies]
+# The table ids and the section format (`ssb_tablegen::tables`, layout
+# only), and the `ssb64_stub_tables` cfg (`build.rs`).
+ssb-tablegen = { workspace = true }
+
+[features]
+default = []
+std = []
+# Host tests and tools: a table read before `install` builds the section
+# from the ROM (`SSB64_ROM`, else the one `.z64` in `rom/`), or the empty
+# (stub) section with `SSB64_STUB_TABLES=1`. Never on the PSP.
+host-rom = ["std", "dep:ssb-tablegen"]
+# Runtimes that install the section at boot, before any read (the PSP):
+# every table has a fixed place in one `.bss` store, so a read is a
+# constant address with no install check; `install` is `unsafe`; a read
+# before it reads zeros. Never with `host-rom`.
+eager = []
+
+[dev-dependencies]
+# The round-trip tests build sections with the writer.
+ssb-tablegen = { workspace = true }

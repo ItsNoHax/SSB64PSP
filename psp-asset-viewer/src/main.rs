@@ -341,6 +341,12 @@ unsafe fn run() -> ! {
         // SAFETY: `loaded` lives for the rest of the program.
         let bytes: &'static [u8] = unsafe { core::slice::from_raw_parts(b.as_ptr(), b.as_slice().len()) };
         let _ = ssb_psp_runtime::scene_files::boot(bytes, c);
+        // The ROM-derived tables (D-048); without them every table reads
+        // as zeros, which the pack status line below does not hide: a
+        // stale pack is rejected there.
+        let head = &bytes[..bytes.len().min(ssb_rom::pack::Header::SIZE)];
+        // SAFETY: boot, on the main thread, before any table read.
+        let _ = unsafe { ssb_psp_runtime::tables::load(c, head) };
     }
     // A pack that loads from disk but fails to *parse* is a different problem
     // from having no pack, and discarding the error made the two look

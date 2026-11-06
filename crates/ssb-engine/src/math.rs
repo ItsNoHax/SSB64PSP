@@ -8,6 +8,7 @@
 //! comparison possible.
 
 use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use ssb_tables::{Table, TableId};
 
 /// A 2D vector.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -1053,16 +1054,14 @@ pub fn lb_common_check_adjust_sim_2d(a: &mut Vec3, b: Vec3, angle: f32) -> bool 
 }
 
 /// `gSYSinTable` (`sys/sintable.c`): `u16[2048]`, the sine over `[0, PI)`
-/// scaled by 32768, read from the user's ROM at build time (`build.rs`,
-/// `ssb-tablegen`). Hand-authored data, not a formula: rounding
+/// scaled by 32768, read from the pack's `TABLES` section (`ssb-tables`;
+/// D-048). Hand-authored data, not a formula: rounding
 /// `sin(i * PI / 2048) * 32768` misses most entries (RE-505).
-mod sy_sin_table {
-    include!(concat!(env!("OUT_DIR"), "/sin_table.rs"));
-}
+static SY_SIN_TABLE: Table<[u16; 2048]> = Table::new(TableId::SinTable);
 
 /// `gSYSinTable` by entry (0..2048).
 pub fn sy_sin_table_entry(index: usize) -> u16 {
-    sy_sin_table::SY_SIN_TABLE[index]
+    SY_SIN_TABLE[index]
 }
 
 /// `syGetSinCosUShort` (`lb/lbdef.h:85`): the sine and cosine words of a
@@ -1075,8 +1074,9 @@ pub fn sy_sin_table_entry(index: usize) -> u16 {
 /// the same read at `id + 0x400`.
 pub fn sy_sin_cos_ushort(angle: f32) -> (i32, i32) {
     let id = (angle * 651.898_6) as i32 as u32 & 0xFFF;
+    let table = SY_SIN_TABLE.get();
     let word = |id: u32| {
-        let v = i32::from(sy_sin_table::SY_SIN_TABLE[(id & 0x7FF) as usize]);
+        let v = i32::from(table[(id & 0x7FF) as usize]);
         if id & 0x800 != 0 {
             -v
         } else {
@@ -1144,16 +1144,16 @@ fn lb_sin_index(index: u16) -> f32 {
 
 /// `dLBCommonSinLookup[index]`: the sine of `index / 651.8986` (an `f32`
 /// angle) rounded to six decimals, for the 1024 steps of a quarter turn.
-/// The table is generated at build time from the ROM by `ssb-tablegen`
-/// (D-048) and never committed. `lb_sin_index` folds every angle into
+/// The table is read from the pack's `TABLES` section (`ssb-tables`;
+/// D-048) and never committed. `lb_sin_index` folds every angle into
 /// `0..1024`, so no caller indexes past the table; an index past its end
 /// reads 0.0.
 pub fn lb_sine_sample(index: u16) -> f32 {
-    LB_SINE.get(index as usize).copied().unwrap_or(0.0)
+    LB_SINE.get().get(index as usize).copied().unwrap_or(0.0)
 }
 
-/// The generated table, kept in one place in `.rodata`.
-static LB_SINE: [f32; 1024] = crate::d_arrays::LB_COMMON_SIN_LOOKUP;
+/// `dLBCommonSinLookup`, the ROM's words as read from the pack.
+static LB_SINE: Table<[f32; 1024]> = Table::new(TableId::LbCommonSinLookup);
 
 // --- LookAt quantization (FTOFRAC8) ----------------------------------------
 //

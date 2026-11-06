@@ -39,6 +39,7 @@ pub mod scene_files;
 pub mod sqrt_selftest;
 pub mod stack_pin;
 pub mod stack_poison;
+pub mod tables;
 #[cfg(feature = "texture_probe")]
 pub mod texprobe;
 pub mod thread;

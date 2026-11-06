@@ -4664,6 +4664,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let (data, info) = load_rom(path)?;
     let archive = Archive::open(&data, info.region)?;
 
+    // The TABLES section (D-048, `ssb-tables`), installed before anything
+    // reads a table: the packer reads `ssb_engine::math`'s sines.
+    let source = ssb_tablegen::Source::open(path).map_err(|e| format!("tables: {e}"))?;
+    let tables = ssb_tablegen::tables_section(Some(&source)).map_err(|e| format!("tables: {e}"))?;
+    drop(source);
+    ssb_tables::install(Vec::leak(tables.clone())).map_err(|e| format!("tables section: {e}"))?;
+
     let mut writer = fmt::PackWriter::new();
     // The same texture (image *and* palette, RE-098) is bound by many
     // primitives; upload each once.
@@ -8079,6 +8086,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ssb_rom::audio::build_section(&data).map_err(|e| format!("audio section: {e:?}"))?;
     println!("  audio section {} bytes", audio.len());
     writer.set_audio(audio);
+    println!("  tables section {} bytes", tables.len());
+    writer.set_tables(tables);
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;

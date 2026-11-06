@@ -442,8 +442,9 @@ fn read_at(fd: SceUid, at: usize, dst: *mut u8, len: usize) -> bool {
     }
 }
 
-/// Reads one leaked 64-byte-aligned buffer of `len` bytes at `at`.
-fn read_leaked(fd: SceUid, at: usize, len: usize) -> Result<&'static [u8], LoadError> {
+/// Reads one leaked 64-byte-aligned buffer of `len` bytes at `at` (also the
+/// tables section's, `crate::tables`).
+pub(crate) fn read_leaked(fd: SceUid, at: usize, len: usize) -> Result<&'static [u8], LoadError> {
     let buf = AlignedBuf::cache_lines(len).ok_or(LoadError::OutOfMemory)?;
     if !read_at(fd, at, buf.as_mut_ptr(), len) {
         return Err(LoadError::ShortRead);

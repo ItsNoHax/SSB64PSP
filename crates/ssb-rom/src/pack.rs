@@ -510,7 +510,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `psp_texture::pack_rgba_trimmed`, RE-419); a two-tile blend's
 // `MatAnimDesc::textures` past the replay's highest `TextureIDCurrent` are
 // `NO_ANIM` (Zebes' acid, RE-364). No table layout change.
-pub const VERSION: u32 = 141;
+// 142 appends the `TABLES` section after the audio section: the ROM-derived
+// tables a runtime reads at boot instead of compiling them in (D-048,
+// `ssb-tables`; format `ssb_tablegen::tables`). `Header::SIZE` 124 -> 132
+// (`tables_offset`, `tables_len`); [`resident_len`] is unchanged.
+pub const VERSION: u32 = 142;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -590,10 +594,15 @@ pub struct Header {
     /// aligned after the blob; 0 with `audio_len` 0 when the pack has none.
     pub audio_offset: u32,
     pub audio_len: u32,
+    /// File offset of the `TABLES` section (`ssb-tables`, D-048),
+    /// [`TABLES_ALIGN`]-aligned after the audio section (or the blob); 0
+    /// with `tables_len` 0 when the pack has none.
+    pub tables_offset: u32,
+    pub tables_len: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 124;
+    pub const SIZE: usize = 132;
 }
 
 /// A vertex in the GE's expected layout.
@@ -2360,6 +2369,9 @@ pub struct PackWriter {
     /// The audio section ([`crate::audio::build_section`]), written after
     /// the blob.
     audio: Vec<u8>,
+    /// The `TABLES` section (`ssb_tablegen::tables_section`), written after
+    /// the audio section.
+    tables: Vec<u8>,
 }
 
 /// Whose bytes a blob range holds (RE-475).
@@ -2389,6 +2401,12 @@ impl PackWriter {
     /// Sets the audio section `finish` appends after the blob (D-049).
     pub fn set_audio(&mut self, section: Vec<u8>) {
         self.audio = section;
+    }
+
+    /// Sets the `TABLES` section `finish` appends after the audio section
+    /// (D-048, `ssb-tables`).
+    pub fn set_tables(&mut self, section: Vec<u8>) {
+        self.tables = section;
     }
 
     /// Appends bytes to the blob, aligned, returning their offset.
@@ -3795,6 +3813,18 @@ impl PackWriter {
         };
         out.extend_from_slice(&(audio_offset as u32).to_le_bytes());
         out.extend_from_slice(&(self.audio.len() as u32).to_le_bytes());
+        let tables_offset = if self.tables.is_empty() {
+            0
+        } else {
+            let end = if self.audio.is_empty() {
+                blob_offset + layout.blob.len()
+            } else {
+                audio_offset + self.audio.len()
+            };
+            end.next_multiple_of(TABLES_ALIGN)
+        };
+        out.extend_from_slice(&(tables_offset as u32).to_le_bytes());
+        out.extend_from_slice(&(self.tables.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -4097,6 +4127,10 @@ impl PackWriter {
             out.resize(audio_offset, 0);
             out.extend_from_slice(&self.audio);
         }
+        if !self.tables.is_empty() {
+            out.resize(tables_offset, 0);
+            out.extend_from_slice(&self.tables);
+        }
         out
     }
 
@@ -4180,6 +4214,22 @@ pub fn audio_range(head: &[u8]) -> Option<(usize, usize)> {
     let len = u32_at(head, 120) as usize;
     (len != 0).then(|| (u32_at(head, 116) as usize, len))
 }
+
+/// Where the pack's `TABLES` section lies in the file: `(offset, len)`, read
+/// from a header buffer like [`audio_range`]. The section is loaded once at
+/// boot and stays resident (`ssb_tables::install`). `None` for another
+/// version's header or a pack built without it.
+pub fn tables_range(head: &[u8]) -> Option<(usize, usize)> {
+    if head.len() < Header::SIZE || u32_at(head, 0) != MAGIC || u32_at(head, 4) != VERSION {
+        return None;
+    }
+    let len = u32_at(head, 128) as usize;
+    (len != 0).then(|| (u32_at(head, 124) as usize, len))
+}
+
+/// The `TABLES` section's file alignment: a cache line, so the boot read
+/// lands in an aligned buffer and 4-byte tables are read in place.
+pub const TABLES_ALIGN: usize = 64;
 
 /// The audio section's file alignment: a streamed page
 /// (`ssb_engine::audio::stream::PAGE`), so every page read starts on a
@@ -4694,6 +4744,13 @@ impl<'a> Pack<'a> {
     /// Where the blob region starts in the file.
     pub fn blob_start(&self) -> usize {
         self.blob_offset
+    }
+
+    /// The `TABLES` section ([`tables_range`]) when the buffer holds it (a
+    /// whole pack, on the host); `None` otherwise.
+    pub fn tables(&self) -> Option<&'a [u8]> {
+        let (at, len) = tables_range(self.data)?;
+        self.data.get(at..at.checked_add(len)?)
     }
 
     /// The shared blob region's length (RE-475).
@@ -6255,6 +6312,42 @@ mod tests {
         assert_ne!(p.flags & flags::LIGHT2_COLOR, 0);
         assert_eq!(p.light1_color, 0, "black is a real LIGHT_1 write");
         assert_eq!(p.light2_color, 0x004C_4C4C);
+    }
+
+    /// The `TABLES` section follows the audio section (or the blob), on a
+    /// cache line, and the header names it.
+    #[test]
+    fn the_tables_section_follows_the_audio_on_a_cache_line() {
+        let tables: Vec<u8> = (0..40u8).collect();
+        for audio in [Vec::new(), alloc::vec![7u8; 5]] {
+            let mut w = PackWriter::new();
+            w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
+            w.set_audio(audio.clone());
+            w.set_tables(tables.clone());
+            let bytes = w.finish();
+            let (at, len) = tables_range(&bytes).unwrap();
+            assert_eq!(at % TABLES_ALIGN, 0);
+            assert_eq!(len, tables.len());
+            assert_eq!(at + len, bytes.len());
+            let pack = Pack::open(&bytes).unwrap();
+            assert_eq!(pack.tables(), Some(&tables[..]));
+            let before = match audio_range(&bytes) {
+                Some((a, n)) => a + n,
+                None => pack.blob_start() + w_blob_len(&bytes),
+            };
+            assert!(before <= at && at - before < TABLES_ALIGN);
+        }
+        // No section: no range.
+        let mut w = PackWriter::new();
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        assert_eq!(tables_range(&bytes), None);
+        assert_eq!(Pack::open(&bytes).unwrap().tables(), None);
+    }
+
+    /// The header's `blob_len`.
+    fn w_blob_len(bytes: &[u8]) -> usize {
+        u32_at(bytes, 24) as usize
     }
 
     /// RE-543: a manager effect packs file 342 whole and the ground Thunder
@@ -8999,6 +9092,7 @@ mod tests {
         assert_eq!(u32_at(&head, 4), VERSION - 1);
         assert_eq!(resident_len(&head), None);
         assert_eq!(audio_range(&head), None);
+        assert_eq!(tables_range(&head), None);
         let e = Pack::open(&head).err().unwrap();
         assert_eq!(e, PackError::BadVersion(VERSION - 1));
         assert_eq!(

@@ -14,6 +14,11 @@ ssb-rom = { workspace = true, features = ["std"] }
 # checked the display-list decoder (RE-017).
 ssb-game = { workspace = true, features = ["std"] }
 ssb-engine = { workspace = true, features = ["std"] }
+# `pack` writes the TABLES section and installs it before packing (the
+# packer reads `ssb_engine::math`'s sines); any other command reading a
+# table builds it from the ROM (`host-rom`).
+ssb-tables = { workspace = true, features = ["host-rom"] }
+ssb-tablegen = { workspace = true }
 
 [build-dependencies]
 # Only for the `ssb64_stub_tables` cfg (`build.rs`).

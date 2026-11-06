@@ -8,9 +8,12 @@ repository.workspace = true
 description = "Platform-agnostic engine abstractions (Layer B) for the SSB64 PSP port."
 
 [dependencies]
+# `gSYSinTable` and `dLBCommonSinLookup`, from the pack's TABLES section
+# (`math`).
+ssb-tables = { workspace = true }
 
 [build-dependencies]
-# Writes `gSYSinTable` from the user's ROM into OUT_DIR (`build.rs`).
+# Only for the `ssb64_stub_tables` cfg (`build.rs`).
 ssb-tablegen = { workspace = true }
 
 # `math::sqrt_exact` on `no_std` targets other than the PSP (CI's
@@ -30,3 +33,5 @@ audio_profile = []
 ssb-rom = { workspace = true }
 # `ssb_tablegen::test_rom` finds the ROM.
 ssb-tablegen = { workspace = true }
+# The tables read before any `install`: built from the ROM (`host-rom`).
+ssb-tables = { workspace = true, features = ["host-rom"] }

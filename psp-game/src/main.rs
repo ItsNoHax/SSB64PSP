@@ -5526,6 +5526,18 @@ unsafe fn run() -> ! {
             }
         }
         boot_log::log("scene_files_boot");
+        // The ROM-derived tables (D-048), before the first scene reads one.
+        let head = &bytes[..bytes.len().min(ssb_rom::pack::Header::SIZE)];
+        // SAFETY: boot, on the main thread, before any table read: no
+        // scene has started and no other thread reads tables.
+        match assets::c_path(path).map(|c| unsafe { ssb_psp_runtime::tables::load(c, head) }) {
+            Some(Ok(len)) => boot_log::log_args(format_args!("tables {len} bytes")),
+            Some(Err(e)) => {
+                boot_log::log_args(format_args!("tables not loaded: {}", e.as_str()));
+                ssb_psp_runtime::memory::fatal(&["Could not load ssb64.pak's tables:", e.as_str()]);
+            }
+            None => {}
+        }
     }
     // The controller motor (a no-op on the PSP: `NoMotor`), before the
     // first scene's rumble calls.

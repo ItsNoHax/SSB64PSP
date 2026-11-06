@@ -8,8 +8,9 @@
 //! type and the shape. The generated constants keep the symbol's name in
 //! `UPPER_SNAKE` without the `d`: `dIFCommonPlayerDamageDigitWidths` is
 //! `IF_COMMON_PLAYER_DAMAGE_DIGIT_WIDTHS`, written into `OUT_DIR` as
-//! `d_arrays.rs` for `ssb-game` ([`game_a`], [`game_b`]), `ssb-rom`
-//! ([`rom`]) and `ssb-engine` ([`engine`]).
+//! `d_arrays.rs` for `ssb-game` ([`game_a`], [`game_b`]) and `ssb-rom`
+//! ([`rom`]). `ssb-engine`'s ([`engine`]) go to the pack's `TABLES`
+//! section instead ([`crate::tables`]).
 //!
 //! Arrays declared inside a decompiled function ([`DArray::local`]) are
 //! ROM tables too: IDO compiles each initialised local aggregate into an
@@ -276,12 +277,20 @@ pub fn generate_rom(rom: Option<&Source>) -> Result<Generated> {
     })
 }
 
-/// `ssb-engine`'s `d_arrays.rs`.
-pub fn generate_engine(rom: Option<&Source>) -> Result<Generated> {
-    Ok(Generated {
-        name: "d_arrays.rs",
-        text: file("the decomp's small `d*` arrays", &[engine::LIST], rom)?,
-    })
+/// `ssb-engine`'s array `name` ([`engine::LIST`]) as raw words, for the
+/// pack's `TABLES` section ([`crate::tables`]); zeros for a stub.
+pub fn engine_words(name: &str, rom: Option<&Source>) -> Result<Vec<u32>> {
+    let a = engine::LIST
+        .iter()
+        .find(|a| a.name == name)
+        .unwrap_or_else(|| panic!("no engine d_array {name}"));
+    let d = OverlayData::new(rom, a.overlay);
+    // The last element lies in the overlay, even for a stub.
+    d.bytes(
+        a.vram + (a.dims[0] as u32 - 1) * a.row_bytes(),
+        a.elem.size(),
+    )?;
+    a.words(rom)
 }
 
 #[cfg(test)]
@@ -327,7 +336,7 @@ mod tests {
             game_a::LIST.len() + game_b::LIST.len() + locals(local::GAME)
         );
         assert_eq!(n(&rom), rom::LIST.len() + locals(local::ROM));
-        let engine = generate_engine(None).unwrap().text;
-        assert_eq!(n(&engine), engine::LIST.len());
+        let engine = engine_words("LB_COMMON_SIN_LOOKUP", None).unwrap();
+        assert_eq!(engine, vec![0; 1024]);
     }
 }

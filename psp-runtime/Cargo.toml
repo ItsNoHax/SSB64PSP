@@ -20,6 +20,9 @@ ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 # The fighter tick and joint samples the host tests run too (D-052).
 ssb-pose = { path = "../crates/ssb-pose", default-features = false }
+# The ROM-derived tables, installed from the pack's TABLES section at boot
+# (`tables`, D-048).
+ssb-tables = { path = "../crates/ssb-tables", default-features = false, features = ["eager"] }
 
 [features]
 # Masks every FPU exception on the game's threads (`fpu.rs`) instead of
