@@ -132,42 +132,41 @@ fn inside(uv: &[[i32; 2]; 3], p: [i32; 2]) -> bool {
 }
 
 fn touched(uv: &[[i32; 2]; 3], x: i32, y: i32) -> bool {
-    // Clip the UV triangle against the texel cell. The intersection can be a
-    // sliver with no lattice point at all; such a cell has no S10.5 sample.
-    let mut poly: Vec<[f64; 2]> = uv.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
-    for (axis, edge, keep_greater) in [
-        (0, (x * 32) as f64, true),
-        (0, ((x + 1) * 32) as f64, false),
-        (1, (y * 32) as f64, true),
-        (1, ((y + 1) * 32) as f64, false),
-    ] {
-        let old = core::mem::take(&mut poly);
-        if old.is_empty() {
+    // Whether the closed UV triangle meets the closed texel cell: a 2-D
+    // separating-axis test over the cell's axes and the triangle's edge
+    // normals, exact in integers (RE-588: the PSP runs f64 in software).
+    // A degenerate triangle's edges share one normal, the segment's; a
+    // point has none and only the cell's axes decide. The intersection can
+    // still be a sliver with no lattice point; such a cell has no S10.5
+    // sample.
+    let (x0, x1) = (i64::from(x) * 32, (i64::from(x) + 1) * 32);
+    let (y0, y1) = (i64::from(y) * 32, (i64::from(y) + 1) * 32);
+    let p = uv.map(|q| [i64::from(q[0]), i64::from(q[1])]);
+    if p.iter().all(|q| q[0] < x0)
+        || p.iter().all(|q| q[0] > x1)
+        || p.iter().all(|q| q[1] < y0)
+        || p.iter().all(|q| q[1] > y1)
+    {
+        return false;
+    }
+    let corners = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]];
+    for i in 0..3 {
+        let (a, b) = (p[i], p[(i + 1) % 3]);
+        let n = [a[1] - b[1], b[0] - a[0]];
+        let dot = |q: [i64; 2]| n[0] * q[0] + n[1] * q[1];
+        let (tmin, tmax) = p
+            .iter()
+            .map(|&q| dot(q))
+            .fold((i64::MAX, i64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        let (cmin, cmax) = corners
+            .iter()
+            .map(|&q| dot(q))
+            .fold((i64::MAX, i64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        if tmax < cmin || cmax < tmin {
             return false;
         }
-        let keep = |p: [f64; 2]| {
-            if keep_greater {
-                p[axis] >= edge
-            } else {
-                p[axis] <= edge
-            }
-        };
-        let mut prev = *old.last().unwrap();
-        for &cur in &old {
-            if keep(cur) != keep(prev) {
-                let ratio = (edge - prev[axis]) / (cur[axis] - prev[axis]);
-                poly.push([
-                    prev[0] + ratio * (cur[0] - prev[0]),
-                    prev[1] + ratio * (cur[1] - prev[1]),
-                ]);
-            }
-            if keep(cur) {
-                poly.push(cur);
-            }
-            prev = cur;
-        }
     }
-    !poly.is_empty()
+    true
 }
 
 fn add_cell(
@@ -701,6 +700,101 @@ pub(super) fn build_texgen(p: &TexgenPrimitive<'_>) -> Coverage {
 mod tests {
     use super::*;
     use ssb_rom::{n64_filter, texture::Rgba8};
+
+    /// The polygon clip `touched` used to run in f64, in exact rational
+    /// arithmetic: homogeneous `(x, y, w)`, `w > 0`, reduced by their gcd.
+    /// The reference the integer test must equal (RE-588).
+    fn touched_rational_clip(uv: &[[i32; 2]; 3], x: i32, y: i32) -> bool {
+        fn gcd(a: i128, b: i128) -> i128 {
+            if b == 0 {
+                a.abs()
+            } else {
+                gcd(b, a % b)
+            }
+        }
+        let norm = |p: [i128; 3]| {
+            let g = gcd(gcd(p[0], p[1]), p[2]).max(1);
+            let s = if p[2] < 0 { -1 } else { 1 };
+            p.map(|v| v / g * s)
+        };
+        let mut poly: Vec<[i128; 3]> = uv
+            .iter()
+            .map(|p| [i128::from(p[0]), i128::from(p[1]), 1])
+            .collect();
+        for (axis, edge, keep_greater) in [
+            (0, i128::from(x) * 32, true),
+            (0, (i128::from(x) + 1) * 32, false),
+            (1, i128::from(y) * 32, true),
+            (1, (i128::from(y) + 1) * 32, false),
+        ] {
+            let old = core::mem::take(&mut poly);
+            if old.is_empty() {
+                return false;
+            }
+            // Signed distance numerator: `p[axis]/w - edge`, times `w > 0`.
+            let d = |p: [i128; 3]| p[axis] - edge * p[2];
+            let keep = |p: [i128; 3]| if keep_greater { d(p) >= 0 } else { d(p) <= 0 };
+            let mut prev = *old.last().unwrap();
+            for &cur in &old {
+                if keep(cur) != keep(prev) {
+                    let (dp, dc) = (d(prev), d(cur));
+                    // `dp` and `dc` differ in sign, so `w` is nonzero.
+                    poly.push(norm(core::array::from_fn(|i| prev[i] * dc - cur[i] * dp)));
+                }
+                if keep(cur) {
+                    poly.push(cur);
+                }
+                prev = cur;
+            }
+        }
+        !poly.is_empty()
+    }
+
+    #[test]
+    fn integer_touched_matches_the_exact_clip() {
+        let mut r = 0x9E37_79B9u32;
+        let mut next = |m: i32| {
+            r ^= r << 13;
+            r ^= r >> 17;
+            r ^= r << 5;
+            (r % m as u32) as i32 - m / 2
+        };
+        let mut hits = 0;
+        for i in 0..200_000 {
+            // Every eighth triangle snaps to the cell lattice, so vertices
+            // and edges land exactly on cell boundaries; others are free,
+            // including slivers and collinear or repeated vertices.
+            let snap = i % 8 == 0;
+            let mut v = || {
+                let q = [next(512), next(512)];
+                if snap {
+                    q.map(|c| c / 16 * 16)
+                } else {
+                    q
+                }
+            };
+            let mut uv = [v(), v(), v()];
+            if i % 16 == 1 {
+                uv[2] = uv[0];
+            }
+            let (x, y) = (next(16), next(16));
+            let t = touched(&uv, x, y);
+            assert_eq!(t, touched_rational_clip(&uv, x, y), "{uv:?} cell {x},{y}");
+            hits += usize::from(t);
+        }
+        assert!(hits > 10_000, "{hits}");
+    }
+
+    #[test]
+    fn a_triangle_meeting_one_cell_corner_touches_it() {
+        // Exact: the edge (-128,128)-(208,-160) passes through the corner
+        // (96,-64) of cell (2,-3), which the rational clip confirms. The
+        // former f64 clip rounded this touch away; the pack never meets the case
+        // (RE-588: byte-identical).
+        let uv = [[144, 144], [-128, 128], [208, -160]];
+        assert!(touched(&uv, 2, -3));
+        assert!(touched_rational_clip(&uv, 2, -3));
+    }
 
     #[test]
     fn saddle_diagonal_worst_case_is_missed_by_sparse_lattice() {
