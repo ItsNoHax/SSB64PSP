@@ -21,7 +21,9 @@
 //! A table a section lacks reads as zeros (the stub); `section(None)` is
 //! the empty section.
 
-use std::fmt::Write;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt::Write;
 
 use crate::{d_arrays, sin_table, Result, Source};
 
@@ -224,6 +226,7 @@ pub fn section(rom: Option<&Source>) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     #[test]
     fn the_empty_section_is_a_header() {

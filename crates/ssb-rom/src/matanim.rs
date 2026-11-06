@@ -103,8 +103,7 @@ impl core::fmt::Display for MatAnimError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for MatAnimError {}
+impl core::error::Error for MatAnimError {}
 
 /// The colours one material ends up with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

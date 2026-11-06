@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "ssb-engine",
  "ssb-game",
+ "ssb-pack",
  "ssb-rom",
  "ssb-tablegen",
  "ssb-tables",
@@ -44,6 +45,18 @@ name = "ssb-game"
 version = "0.1.0"
 dependencies = [
  "ssb-engine",
+ "ssb-tablegen",
+ "ssb-tables",
+]
+
+[[package]]
+name = "ssb-pack"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "ssb-engine",
+ "ssb-game",
+ "ssb-rom",
  "ssb-tablegen",
  "ssb-tables",
 ]

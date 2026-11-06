@@ -1,8 +1,11 @@
 //! Authored-UV coverage for the build-time filter optimizer. All coordinates
 //! remain in the vertex stream's integer S10.5 domain.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
-pub(super) struct Coverage {
+pub struct Coverage {
     pub train: Vec<[i32; 2]>,
     pub validation: Vec<[i32; 2]>,
     /// Present only for a texgen primitive whose generated S10.5 footprint
@@ -20,7 +23,7 @@ pub(super) struct Coverage {
 /// scale makes them non-orthogonal after normalisation, which can reach the
 /// box corners that an orthonormal basis (a disk) never does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct TexgenBound {
+pub struct TexgenBound {
     pub min: [i32; 2],
     pub max: [i32; 2],
 }
@@ -76,7 +79,7 @@ impl TexgenBound {
 
 /// What the packer needs about a texgen primitive beyond its sample sets.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TexgenMeta {
+pub struct TexgenMeta {
     pub bound: TexgenBound,
     /// `G_TEXTURE_GEN_LINEAR`; reporting only.
     pub linear: bool,
@@ -139,7 +142,7 @@ fn sort_dedup(points: &mut Vec<[i32; 2]>) {
             scratch[*slot] = k;
             *slot += 1;
         }
-        std::mem::swap(&mut keys, &mut scratch);
+        core::mem::swap(&mut keys, &mut scratch);
     }
     keys.dedup();
     points.clear();
@@ -346,7 +349,7 @@ fn add_cell_where(
     validation.extend(local_validation.into_iter().take(VALIDATE_PER_CELL));
 }
 
-pub(super) fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
+pub fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
     let mut result = Coverage::default();
     let mut base = Vec::new();
     for uv in triangles {
@@ -402,7 +405,7 @@ pub(super) fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
 }
 
 /// One texgen primitive, in exactly the terms the runtime generator reads.
-pub(super) struct TexgenPrimitive<'a> {
+pub struct TexgenPrimitive<'a> {
     /// `G_TEXTURE_GEN_LINEAR` (the `acos` curve) rather than ordinary.
     pub linear: bool,
     /// Each triangle's three real `i8` vertex normals (`MeshVertex::rgba`,
@@ -470,7 +473,7 @@ fn quat_mul(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
 /// The 60 rotations of the icosahedral group as unit quaternions (one of
 /// each `±q` pair): the binary icosahedral group's 120 units.
 fn icosahedral_rotations() -> Vec<[f64; 4]> {
-    let phi = (1.0 + 5f64.sqrt()) / 2.0;
+    let phi = (1.0 + libm::sqrt(5.0)) / 2.0;
     let mut all = Vec::new();
     for i in 0..4 {
         for sign in [1.0, -1.0] {
@@ -534,7 +537,7 @@ fn texgen_poses(bases: &[[i32; 4]]) -> Vec<([f32; 3], [f32; 3])> {
     let group = icosahedral_rotations();
     let mut poses = Vec::with_capacity(group.len() * bases.len());
     for b in bases {
-        let len = ((b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3]) as f64).sqrt();
+        let len = libm::sqrt((b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3]) as f64);
         let b = b.map(|v| v as f64 / len);
         for g in &group {
             let [w, x, y, z] = quat_mul(*g, b);
@@ -579,7 +582,7 @@ fn texgen_uv(p: &TexgenPrimitive<'_>, n: [i8; 3], basis: ([f32; 3], [f32; 3])) -
 
 /// The pose-independent S10.5 box (see [`TexgenBound`]), padded by one unit
 /// for the f32 rounding of the dot product.
-pub(super) fn texgen_bound(p: &TexgenPrimitive<'_>) -> TexgenBound {
+pub fn texgen_bound(p: &TexgenPrimitive<'_>) -> TexgenBound {
     let longest = p
         .normals
         .iter()
@@ -587,7 +590,7 @@ pub(super) fn texgen_bound(p: &TexgenPrimitive<'_>) -> TexgenBound {
         .map(|n| n.iter().map(|&c| c as i32 * c as i32).sum::<i32>())
         .max()
         .unwrap_or(0);
-    let r = ((longest as f32).sqrt() / 127.0).min(1.0);
+    let r = (libm::sqrtf(longest as f32) / 127.0).min(1.0);
     let curve = |d: f32| {
         if p.linear {
             ssb_rom::psp_texture::linear_texgen_curve(d)
@@ -625,7 +628,7 @@ fn hashed_subsample(points: Vec<[i32; 2]>, limit: usize) -> Vec<[i32; 2]> {
     };
     let mut ordered: Vec<_> = points.into_iter().map(|p| (key(&p), p)).collect();
     ordered.sort_unstable();
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = alloc::collections::BTreeSet::new();
     let (first, rest): (Vec<_>, Vec<_>) = ordered
         .into_iter()
         .partition(|(_, p)| seen.insert([p[0].div_euclid(32), p[1].div_euclid(32)]));
@@ -657,7 +660,8 @@ fn reach_points(p: &TexgenPrimitive<'_>, phase: f32) -> Vec<[i32; 2]> {
     let Some(longest) = longest else {
         return Vec::new();
     };
-    let length = (longest.iter().map(|&c| c as i32 * c as i32).sum::<i32>() as f32).sqrt() / 127.0;
+    let length =
+        libm::sqrtf(longest.iter().map(|&c| c as i32 * c as i32).sum::<i32>() as f32) / 127.0;
     let mut out = Vec::new();
     for ring in 0..=RINGS {
         let rho = length * ((ring as f32 + phase) / RINGS as f32).min(1.0);
@@ -718,13 +722,13 @@ fn pose_points(p: &TexgenPrimitive<'_>, bases: &[[i32; 4]]) -> Vec<[i32; 2]> {
 /// Budget: [`texgen_budget`]. Critical probes take priority for up to
 /// [`PROBE_SHARE_PERCENT`] of it (cell-stratified); broad real-pose points
 /// fill the rest.
-pub(super) fn build_texgen(p: &TexgenPrimitive<'_>) -> Coverage {
+pub fn build_texgen(p: &TexgenPrimitive<'_>) -> Coverage {
     let bound = texgen_bound(p);
     let mut broad = pose_points(p, &TRAIN_BASES);
     broad.extend(reach_points(p, 0.0));
     broad.sort_unstable();
     broad.dedup();
-    let cells: std::collections::BTreeSet<[i32; 2]> = broad
+    let cells: alloc::collections::BTreeSet<[i32; 2]> = broad
         .iter()
         .map(|q| [q[0].div_euclid(32), q[1].div_euclid(32)])
         .collect();
@@ -1173,7 +1177,7 @@ mod tests {
         let p = metal_like(false, &normals);
         let c = build_texgen(&p);
         let bound = c.texgen.as_ref().unwrap().bound;
-        let cells: std::collections::BTreeSet<_> = c
+        let cells: alloc::collections::BTreeSet<_> = c
             .train
             .iter()
             .map(|q| [q[0].div_euclid(32), q[1].div_euclid(32)])
@@ -1268,7 +1272,7 @@ mod tests {
         let data = std::fs::read(path).unwrap();
         let info = ssb_rom::rom::identify(&data).unwrap();
         let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
-        let mut seen = std::collections::BTreeMap::new();
+        let mut seen = alloc::collections::BTreeMap::new();
         for (id, lists) in [
             (300u32, &[0xC60usize, 0xDD0, 0xEE0, 0x1130][..]),
             (303, &[0x1BF8, 0x1D40, 0x1E80][..]),
@@ -1297,8 +1301,29 @@ mod tests {
                     let mut material_prim = prim.clone();
                     material_prim.material.texture = Some(t);
                     let prim = &material_prim;
-                    let c = crate::texgen_filter_coverage(&mesh, prim, scale);
-                    assert_eq!(c, crate::texgen_filter_coverage(&mesh, prim, scale));
+                    let c = crate::texgen_filter_coverage(
+                        &crate::PackCtx::new(
+                            &crate::PackOptions::default(),
+                            &crate::NoLog,
+                            &crate::NoObserver,
+                        ),
+                        &mesh,
+                        prim,
+                        scale,
+                    );
+                    assert_eq!(
+                        c,
+                        crate::texgen_filter_coverage(
+                            &crate::PackCtx::new(
+                                &crate::PackOptions::default(),
+                                &crate::NoLog,
+                                &crate::NoObserver
+                            ),
+                            &mesh,
+                            prim,
+                            scale
+                        )
+                    );
                     let meta = c.texgen.as_ref().expect("bounded texgen coverage");
                     assert!(!c.train.is_empty() && !c.validation.is_empty());
                     assert!(c
@@ -1326,7 +1351,7 @@ mod tests {
                         state ^= state << 17;
                         (state >> 11) as f32 / (1u64 << 53) as f32 * 2.0 - 1.0
                     };
-                    let cells: std::collections::BTreeSet<_> = c
+                    let cells: alloc::collections::BTreeSet<_> = c
                         .train
                         .iter()
                         .map(|q| [q[0].div_euclid(32), q[1].div_euclid(32)])

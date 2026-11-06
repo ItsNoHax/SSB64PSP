@@ -4,16 +4,15 @@
 //! are exact primitive use sites, not a source-texture-wide override. The
 //! report's independent holdout and phase-uniform gates selected them.
 
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
+use alloc::collections::BTreeSet;
 
 use ssb_rom::mesh::TextureRef;
 
 use crate::filter_coverage;
-use crate::residuals::CrossFit;
+use crate::solver::CrossFit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
+pub enum Kind {
     Phase([i16; 2]),
     Dense,
     /// Section 11 `DIRECT_RGBA_OVERRIDE`/`USE_SITE_TEXTURE_VARIANT`: an
@@ -24,7 +23,7 @@ pub(super) enum Kind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Case {
+pub struct Case {
     pub variant: u16,
     pub source_file: u32,
     pub source_offset: u32,
@@ -44,7 +43,7 @@ pub(super) struct Case {
 /// 2026-09-24 and are deliberately absent: v6 has no solve, and v109/v111
 /// stay RGBA5551 through the promotion gate with only 5.7%/4.1% holdout
 /// gain against the shipped texels (bar: RGBA8888 and >= 25%).
-pub(super) const CASES: &[Case] = &[
+pub const CASES: &[Case] = &[
     Case {
         variant: 64,
         source_file: 52,
@@ -173,7 +172,7 @@ pub(super) const CASES: &[Case] = &[
 /// format/promotion/holdout gates reject at their exact sites (re-tested
 /// 2026-09-24). Keyed by source texture and report dimensions. The report
 /// keeps the measurement but no longer counts it as deployable.
-pub(super) const DENSE_GATE_REJECTED: &[(u32, u32, [u16; 2], &str)] = &[
+pub const DENSE_GATE_REJECTED: &[(u32, u32, [u16; 2], &str)] = &[
     (
         52,
         0x2EE8,
@@ -194,7 +193,7 @@ pub(super) const DENSE_GATE_REJECTED: &[(u32, u32, [u16; 2], &str)] = &[
     ),
 ];
 
-pub(super) fn dense_gate_rejected(file: u32, offset: u32, dims: [u32; 2]) -> Option<&'static str> {
+pub fn dense_gate_rejected(file: u32, offset: u32, dims: [u32; 2]) -> Option<&'static str> {
     DENSE_GATE_REJECTED
         .iter()
         .find(|&&(f, o, d, _)| f == file && o == offset && [d[0] as u32, d[1] as u32] == dims)
@@ -206,7 +205,7 @@ pub(super) fn dense_gate_rejected(file: u32, offset: u32, dims: [u32; 2]) -> Opt
 /// names them; the shipped pack carries none of these. Fit modes follow the
 /// triage's fix-class fit: the silhouette fit for alpha-constrained cutouts,
 /// otherwise the better of the free and alpha-held fits on U2.
-pub(super) const REVIEW_CASES: &[Case] = &[
+pub const REVIEW_CASES: &[Case] = &[
     review(
         397,
         107,
@@ -323,36 +322,18 @@ const fn review(
     }
 }
 
-static CANDIDATES: OnceLock<Vec<u16>> = OnceLock::new();
-
-/// Report-only: pack the named `REVIEW_CASES` variants too (A/B captures).
-pub(super) fn enable_candidates(variants: Vec<u16>) -> Result<(), String> {
-    for v in &variants {
-        if !REVIEW_CASES.iter().any(|c| c.variant == *v) {
-            return Err(format!("v{v} is not a review candidate"));
-        }
-    }
-    CANDIDATES
-        .set(variants)
-        .map_err(|_| "review candidates already set".to_string())
-}
-
-static HIDE_PROBE: OnceLock<bool> = OnceLock::new();
-
-/// Report-only silhouette probe: every packed `Kind::Direct` cutout texel
-/// gets alpha 0, so a capture shows the frame without those sites. Frame
-/// pixels that differ from this probe are pixels the site's texture drew.
-pub(super) fn enable_hide_probe() {
-    let _ = HIDE_PROBE.set(true);
-}
-
-pub(super) fn hide_probe() -> bool {
-    HIDE_PROBE.get().copied().unwrap_or(false)
-}
-
-pub(super) fn find(file: u32, dl: u32, prim: usize, tex: &TextureRef) -> Option<&'static Case> {
+/// The case for one primitive use site: [`CASES`], and the
+/// [`REVIEW_CASES`] whose variant is in `candidates`
+/// ([`crate::PackOptions::residual_candidates`]).
+pub fn find(
+    candidates: &[u16],
+    file: u32,
+    dl: u32,
+    prim: usize,
+    tex: &TextureRef,
+) -> Option<&'static Case> {
     let source = tex.data_file.map_or(file, u32::from);
-    let enabled = CANDIDATES.get().map_or(&[][..], Vec::as_slice);
+    let enabled = candidates;
     CASES
         .iter()
         .chain(REVIEW_CASES.iter().filter(|c| enabled.contains(&c.variant)))
@@ -366,7 +347,7 @@ pub(super) fn find(file: u32, dl: u32, prim: usize, tex: &TextureRef) -> Option<
 /// RE-312's measured method: four phase-varied samples in every cell touched
 /// by training or independent validation. Validation points are excluded,
 /// then the set is sorted/deduplicated in the report's `(t, s)` order.
-pub(super) fn dense_coverage(base: &filter_coverage::Coverage) -> filter_coverage::Coverage {
+pub fn dense_coverage(base: &filter_coverage::Coverage) -> filter_coverage::Coverage {
     let cells: BTreeSet<(i32, i32)> = base
         .train
         .iter()
@@ -395,6 +376,8 @@ pub(super) fn dense_coverage(base: &filter_coverage::Coverage) -> filter_coverag
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
 
     #[test]
@@ -431,7 +414,7 @@ mod tests {
 
     #[test]
     fn review_candidates_are_off_unless_named() {
-        assert!(CANDIDATES.get().is_none());
+        assert!(crate::PackOptions::default().residual_candidates.is_empty());
         assert!(REVIEW_CASES
             .iter()
             .all(|c| !CASES.iter().any(|d| d.variant == c.variant)));

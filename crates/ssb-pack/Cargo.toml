@@ -1,0 +1,32 @@
+[package]
+name = "ssb-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Builds the asset pack from ROM bytes: portable (no_std + alloc), no file I/O, no PSP code."
+
+[dependencies]
+ssb-rom = { workspace = true }
+ssb-engine = { workspace = true }
+ssb-game = { workspace = true }
+ssb-tables = { workspace = true }
+# The `TABLES` section reader only: its generators need `std` and run at
+# build time (the workspace entry keeps its default `std`).
+ssb-tablegen = { path = "../ssb-tablegen", default-features = false }
+# `f64` square root without `std` (correctly rounded, as `std`'s).
+libm = "0.2"
+
+[build-dependencies]
+# Only for the `ssb64_stub_tables` cfg (`build.rs`).
+ssb-tablegen = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["ssb-rom/std", "ssb-engine/std", "ssb-game/std", "ssb-tables/std", "ssb-tablegen/std"]
+
+[dev-dependencies]
+# `ssb_tablegen::test_rom` finds the ROM for the ROM-backed tests.
+ssb-tablegen = { workspace = true }
+ssb-tables = { workspace = true, features = ["host-rom"] }

@@ -2,8 +2,8 @@
 
 Three scans over every Rust crate but `crates/ssb-tablegen` (whose tables
 are the ROM layout by design): `crates/ssb-game`, `ssb-rom`, `ssb-engine`,
-`ssb-capture`, `psp-runtime`, `psp-game`, `psp-asset-viewer` and
-`tools/romtool`:
+`ssb-capture`, `ssb-pack`, `psp-runtime`, `psp-game`, `psp-asset-viewer`
+and `tools/romtool`:
 
 - large: a const or static array (or slice) whose initializer holds 8 or
   more numeric literals (24 in test code: `*tests*.rs`, `tests/`, or past a
@@ -48,6 +48,7 @@ CRATES = (
     "crates/ssb-rom",
     "crates/ssb-engine",
     "crates/ssb-capture",
+    "crates/ssb-pack",
     "psp-runtime",
     "psp-game",
     "psp-asset-viewer",

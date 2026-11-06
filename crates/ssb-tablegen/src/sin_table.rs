@@ -4,6 +4,9 @@
 //! It is hand-authored ROM data, not a formula (`round(sin(i * PI / 2048) *
 //! 32768)` misses most of its entries; RE-505), so it is read from the ROM.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::{Result, Source};
 
 /// `gSYSinTable`: ROM offset (`smashbrothers.us.yaml`, `sys/sintable`) and

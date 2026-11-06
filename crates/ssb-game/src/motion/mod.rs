@@ -1092,8 +1092,7 @@ fn texture_part_event(w: u32) -> (usize, i8) {
 /// `(joint, part)` with `ftParamGetJointID`'s -2 resolved, walked from each
 /// motion's script through its gotos, subroutines and parallel scripts. The
 /// asset pipeline packs the parts these name (RE-425).
-#[cfg(feature = "std")]
-pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, i32)> {
+pub fn model_part_events(kind: FighterKind) -> alloc::collections::BTreeSet<(i32, i32)> {
     part_events(kind, op::SET_MODEL_PART_ID)
 }
 
@@ -1101,19 +1100,17 @@ pub fn model_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, 
 /// `(texturepart_id, texture id)`, from the battle motions and the demo
 /// statuses' scripts (RE-426). The asset pipeline packs the textures these
 /// name.
-#[cfg(feature = "std")]
-pub fn texture_part_events(kind: FighterKind) -> std::collections::BTreeSet<(i32, i32)> {
+pub fn texture_part_events(kind: FighterKind) -> alloc::collections::BTreeSet<(i32, i32)> {
     part_events(kind, op::SET_TEXTURE_PART_ID)
 }
 
-#[cfg(feature = "std")]
-fn part_events(kind: FighterKind, wanted: u32) -> std::collections::BTreeSet<(i32, i32)> {
-    let mut out = std::collections::BTreeSet::new();
+fn part_events(kind: FighterKind, wanted: u32) -> alloc::collections::BTreeSet<(i32, i32)> {
+    let mut out = alloc::collections::BTreeSet::new();
     let Some(table) = fighter_scripts(kind) else {
         return out;
     };
     let item_joint = combat_attrs(kind).map_or(-2, |a| i32::from(a.joint_itemlight_id));
-    let mut todo: Vec<u32> = table
+    let mut todo: alloc::vec::Vec<u32> = table
         .motions
         .iter()
         .map(|m| m.script)
@@ -1129,7 +1126,7 @@ fn part_events(kind: FighterKind, wanted: u32) -> std::collections::BTreeSet<(i3
                 .map(|&s| s | DEMO_BIT),
         );
     }
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = alloc::collections::BTreeSet::new();
     while let Some(start) = todo.pop() {
         let mut pc = start;
         loop {

@@ -16,8 +16,16 @@
 //! sets `cfg(ssb64_stub_tables)`, so CI, which has no ROM, can type-check,
 //! lint and run every test that does not need ROM data. A stub build is not
 //! a playable game.
+//!
+//! Without the default `std` feature only the `TABLES` section's reader is
+//! built ([`tables_section`], [`Source`]): the portable packer
+//! (`ssb-pack`) builds the section on the device.
+
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
+
+use alloc::vec::Vec;
 
 // `ssb-rom`'s ROM reader, compiled in rather than depended on: `ssb-rom`'s
 // own build script runs this crate, so it cannot be a dependency of it.
@@ -35,32 +43,40 @@ pub mod vpk0;
 // file offset (`ifcommon`).
 #[path = "../../ssb-rom/src/sprite_offsets.rs"]
 #[allow(dead_code)]
+#[cfg(feature = "std")]
 pub mod sprite_offsets;
 // `ssb-rom`'s animation player, for a table gameplay keeps as the values a
 // fixed `AObjEvent32` script produces (`monster_weapons`).
 #[path = "../../ssb-rom/src/figatree.rs"]
 #[allow(dead_code)]
+#[cfg(feature = "std")]
 pub mod figatree;
 // `ssb-rom`'s figatree binding order, for the joint whose script decides a
 // fighter animation's end (`motion`'s `END_BLOCKS`).
 #[path = "../../ssb-rom/src/figatree_order.rs"]
+#[cfg(feature = "std")]
 pub mod figatree_order;
 #[path = "../../ssb-rom/src/interp.rs"]
 #[allow(dead_code)]
+#[cfg(feature = "std")]
 pub mod interp;
 #[path = "../../ssb-rom/src/objanim.rs"]
 #[allow(dead_code)]
+#[cfg(feature = "std")]
 pub mod objanim;
 // `ssb-rom`'s material animation player, for the texture id a fighter's
 // costume script gives its texture part (`model_parts`).
 #[path = "../../ssb-rom/src/matanim.rs"]
 #[allow(dead_code)]
+#[cfg(feature = "std")]
 pub mod matanim;
 
 // `interp` calls `ssb_engine::math::sqrt_exact`. `ssb-engine`'s build script
 // runs this crate too, so the name resolves to this crate's `math` instead,
 // the host `std` square root that `ssb-engine` uses with `std`.
+#[cfg(feature = "std")]
 extern crate self as ssb_engine;
+#[cfg(feature = "std")]
 mod math {
     /// `ssb_engine::math::sqrt_exact` with `std`.
     pub fn sqrt_exact(v: f32) -> f32 {
@@ -70,39 +86,67 @@ mod math {
 
 pub use error::{Error, Result};
 
+#[cfg(feature = "std")]
 mod anim_length;
+#[cfg(feature = "std")]
 mod anim_table;
+#[cfg(feature = "std")]
 mod battle_data;
+#[cfg(feature = "std")]
 mod capture_captain;
+#[cfg(feature = "std")]
 mod colanim;
+#[cfg(feature = "std")]
 mod computer;
 mod d_arrays;
+#[cfg(feature = "std")]
 mod effect_life;
+#[cfg(feature = "std")]
 mod emit;
+#[cfg(feature = "std")]
 mod ending_data;
+#[cfg(feature = "std")]
 mod fighters;
+#[cfg(feature = "std")]
 mod ground;
+#[cfg(feature = "std")]
 mod ground_effect;
+#[cfg(feature = "std")]
 mod hurtbox;
+#[cfg(feature = "std")]
 mod ifcommon;
+#[cfg(feature = "std")]
 mod item_attributes;
+#[cfg(feature = "std")]
 mod item_sounds;
+#[cfg(feature = "std")]
 mod kirby_attack100;
+#[cfg(feature = "std")]
 mod kirby_copy;
+#[cfg(feature = "std")]
 mod menu_data;
+#[cfg(feature = "std")]
 mod model_parts;
+#[cfg(feature = "std")]
 mod monster_weapons;
+#[cfg(feature = "std")]
 mod motion;
+#[cfg(feature = "std")]
 mod opening_data;
+#[cfg(feature = "std")]
 mod physics;
+#[cfg(feature = "std")]
 mod rom_layout;
+#[cfg(feature = "std")]
 mod sc1p_data;
 mod sin_table;
 // Every code overlay is listed; the generators use some of them.
 #[allow(dead_code)]
 mod source;
+#[cfg(feature = "std")]
 mod stat_flags;
 pub mod tables;
+#[cfg(feature = "std")]
 mod throw_descs;
 
 pub use source::Source;
@@ -113,11 +157,13 @@ pub fn tables_section(rom: Option<&Source>) -> Result<Vec<u8>> {
     tables::section(rom)
 }
 
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
 /// Each fighter's `<Name>Main` archive file and the offset of its
 /// `FTAttributes` in it, as the generator reads them: `(name, file,
 /// offset)`. `ssb-rom` checks these against `fighter::FIGHTER_FILES`.
+#[cfg(feature = "std")]
 pub fn fighter_main_files() -> Vec<(&'static str, u32, u32)> {
     fighters::FIGHTERS
         .iter()
@@ -126,6 +172,7 @@ pub fn fighter_main_files() -> Vec<(&'static str, u32, u32)> {
 }
 
 /// The crate whose tables a build script generates.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Crate {
     /// `ssb-game`: motion, colour-animation and CPU scripts, status flags,
@@ -147,6 +194,7 @@ pub enum Crate {
 }
 
 /// One generated file: its name in `OUT_DIR` and its Rust source.
+#[cfg(feature = "std")]
 pub struct Generated {
     pub name: &'static str,
     pub text: String,
@@ -154,6 +202,7 @@ pub struct Generated {
 
 /// Generates `krate`'s tables from `rom`, or their stubs when `rom` is
 /// `None`.
+#[cfg(feature = "std")]
 pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
     Ok(match krate {
         Crate::Game => {
@@ -269,6 +318,7 @@ pub const STUB_CFG: &str = "ssb64_stub_tables";
 /// `cfg(ssb64_stub_tables)` and sets it when `SSB64_STUB_TABLES=1`, as the
 /// generating crates' build scripts do, so its ROM-table tests are ignored
 /// in a stub build too.
+#[cfg(feature = "std")]
 pub fn declare_stub_cfg() {
     println!("cargo::rustc-check-cfg=cfg({STUB_CFG})");
     println!("cargo::rerun-if-env-changed={STUB_ENV}");
@@ -279,6 +329,7 @@ pub fn declare_stub_cfg() {
 
 /// Where the ROM is: `SSB64_ROM`, else the single `.z64` file in
 /// `<repository>/rom/`. `Ok(None)` when neither exists.
+#[cfg(feature = "std")]
 pub fn locate_rom(repo: &Path) -> std::result::Result<Option<PathBuf>, String> {
     if let Some(path) = std::env::var_os(ROM_ENV).filter(|p| !p.is_empty()) {
         let path = PathBuf::from(path);
@@ -316,6 +367,7 @@ pub fn locate_rom(repo: &Path) -> std::result::Result<Option<PathBuf>, String> {
 /// (`env!("CARGO_MANIFEST_DIR")`, two levels below the repository root):
 /// [`locate_rom`] from that root. `None` when there is none (CI); panics
 /// when `SSB64_ROM` names no file or `rom/` holds more than one ROM.
+#[cfg(feature = "std")]
 pub fn test_rom(manifest_dir: &str) -> Option<PathBuf> {
     locate_rom(&Path::new(manifest_dir).join("../..")).unwrap_or_else(|e| panic!("{e}"))
 }
@@ -324,6 +376,7 @@ pub fn test_rom(manifest_dir: &str) -> Option<PathBuf> {
 /// `CARGO_MANIFEST_DIR`. Writes the generated files into `OUT_DIR` and
 /// prints Cargo's rerun and `cfg` directives. Panics, with instructions,
 /// when no ROM is available and stubs were not asked for.
+#[cfg(feature = "std")]
 pub fn build_script(krate: Crate) {
     let manifest =
         PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));

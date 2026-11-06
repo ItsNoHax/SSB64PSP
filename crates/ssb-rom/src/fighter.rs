@@ -319,8 +319,7 @@ impl FighterAttributes {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for FighterError {}
+impl core::error::Error for FighterError {}
 
 /// One decoded fighter, with the record that located it.
 #[derive(Debug, Clone, Copy, PartialEq)]

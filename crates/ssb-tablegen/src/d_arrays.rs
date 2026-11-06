@@ -21,21 +21,34 @@
 //! `<FUNCTION>_<VARIABLE>` (`mnVSResultsMakeString`'s `widths` is
 //! `MN_VS_RESULTS_MAKE_STRING_WIDTHS`).
 
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
 use std::collections::HashSet;
+#[cfg(feature = "std")]
 use std::fmt::Write;
 
+#[cfg(feature = "std")]
 use crate::emit::{self, f32_lit};
 use crate::source::{Overlay, OverlayData};
-use crate::{Generated, Result, Source};
+#[cfg(feature = "std")]
+use crate::Generated;
+use crate::{Result, Source};
 
+// Without `std` only `engine` (the `TABLES` section's arrays) is read; the
+// rest feed the generators.
 mod engine;
+#[cfg(feature = "std")]
 mod game_a;
+#[cfg(feature = "std")]
 mod game_b;
+#[cfg(feature = "std")]
 pub(crate) mod local;
+#[cfg(feature = "std")]
 mod rom;
 
 /// An element type and how it is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub enum Elem {
     U8,
     U16,
@@ -59,6 +72,7 @@ impl Elem {
         }
     }
 
+    #[cfg(feature = "std")]
     fn rust(self) -> &'static str {
         match self {
             Elem::U8 => "u8",
@@ -70,6 +84,7 @@ impl Elem {
         }
     }
 
+    #[cfg(feature = "std")]
     fn read(self, d: &OverlayData, vram: u32) -> Result<String> {
         Ok(match self {
             Elem::U8 => d.u8(vram)?.to_string(),
@@ -107,6 +122,7 @@ impl Elem {
 
 /// Where one array is and its shape.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub struct DArray {
     /// The generated constant.
     pub name: &'static str,
@@ -153,6 +169,7 @@ impl DArray {
     /// An array declared inside a decompiled function: `function` is
     /// `"<function> <variable>"`, `vram` the address `tools/local_arrays.py`
     /// prints for it.
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub const fn local(
         name: &'static str,
         function: &'static str,
@@ -168,10 +185,12 @@ impl DArray {
     }
 
     /// The same array read with `stride` bytes between outermost rows.
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub const fn stride(self, stride: u32) -> Self {
         Self { stride, ..self }
     }
 
+    #[cfg(feature = "std")]
     fn rust_type(&self) -> String {
         let mut ty = self.elem.rust().to_string();
         for n in self.dims.iter().rev() {
@@ -203,6 +222,7 @@ impl DArray {
         }
     }
 
+    #[cfg(feature = "std")]
     fn value(&self, d: &OverlayData, vram: u32, dims: &[usize]) -> Result<String> {
         let Some((&n, rest)) = dims.split_first() else {
             return self.elem.read(d, vram);
@@ -218,6 +238,7 @@ impl DArray {
         Ok(format!("[{}]", cells.join(", ")))
     }
 
+    #[cfg(feature = "std")]
     fn emit(&self, rom: Option<&Source>, out: &mut String) -> Result<()> {
         let d = OverlayData::new(rom, self.overlay);
         // The last element lies in the overlay, even for a stub.
@@ -242,6 +263,7 @@ impl DArray {
     }
 }
 
+#[cfg(feature = "std")]
 fn file(what: &str, lists: &[&[DArray]], rom: Option<&Source>) -> Result<String> {
     let mut out = emit::header(what);
     let mut seen = HashSet::new();
@@ -254,6 +276,7 @@ fn file(what: &str, lists: &[&[DArray]], rom: Option<&Source>) -> Result<String>
 }
 
 /// `ssb-game`'s `d_arrays.rs`.
+#[cfg(feature = "std")]
 pub fn generate_game(rom: Option<&Source>) -> Result<Generated> {
     Ok(Generated {
         name: "d_arrays.rs",
@@ -266,6 +289,7 @@ pub fn generate_game(rom: Option<&Source>) -> Result<Generated> {
 }
 
 /// `ssb-rom`'s `d_arrays.rs`.
+#[cfg(feature = "std")]
 pub fn generate_rom(rom: Option<&Source>) -> Result<Generated> {
     Ok(Generated {
         name: "d_arrays.rs",
@@ -293,7 +317,7 @@ pub fn engine_words(name: &str, rom: Option<&Source>) -> Result<Vec<u32>> {
     a.words(rom)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     use crate::source::OVL2;

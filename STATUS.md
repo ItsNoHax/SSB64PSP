@@ -18,18 +18,18 @@
 
 ## Current work
 
+- Landed (batch 174): pack build moved into the portable `no_std` crate `ssb-pack`; `romtool pack` wraps it; pack byte-identical; host peak 145 MB vs 51.4 MB free on the PSP (RE-588 item 10).
 - Landed (batch 173): exact pack-build cuts (plain-key lookup, coverage bit set and radix sort, palette memo): host `romtool pack` 4.3 to 2.6 s, pack byte-identical; PSP estimate 5.8-7.9 min (RE-588 item 9).
 - Landed (batch 172): texture compensation only for the owner's 37 textures; coverage and fits skipped for the rest; host `romtool pack` 122 to 4.3 s; 55 goldens rebaselined (owner-approved; RE-588 item 8).
 - Landed (batch 171): `ssb-engine` sine tables read from the pack's new `TABLES` section (`ssb-tables`, fixed `.bss` store on the PSP; pack v142): r12 +0.16 (16.55, under 16.7), battle +0.17 ms; host tests build the section from the ROM (RE-589).
 - Landed (batch 162): sprite lookups memoized (`SpriteIndex.memo`): r12 -0.12 (16.59, under 16.7), battle -0.35, vs4 -0.10 ms; no window slower; free memory -8 KiB, fighter select -256 KiB more (RE-585 item 52).
-- Landed (batch 161): map surfaces bucketed by kind (`SurfaceTable`): r12 -0.14, r18 -0.17, battle -0.10, Fall -0.11 ms; no window slower; free memory +8 KiB (RE-585 item 51).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
 1. Electric `vs4@2170` (r12 16.55, r18 15.65 ms; target 16.7 met; budget headroom next). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
-2. ROM-free release (PLAN, RE-588): host pack 2.6 s (PSP estimate 5.8-7.9 min, limit 10); next the portable packer, to measure the build on the PSP; then the other tables into the pack, installer.
+2. ROM-free release (PLAN, RE-588): host pack 2.6 s (PSP estimate 5.8-7.9 min, limit 10); portable packer landed; next cut its 145 MB peak under the PSP's 51.4 MB, then measure the build on the PSP; then the other tables into the pack, installer.
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 173 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 174 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

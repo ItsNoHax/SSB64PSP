@@ -28,12 +28,13 @@
 | `crates/ssb-pose` | Portable fighter tick, joint sampling, spawn placement: shared by `psp-runtime` and host tests ([D-052](docs/decisions/D-052.md)) | PSP code, gameplay rules |
 | `crates/ssb-tablegen` | Build-time generation of the tables read from the ROM: their ROM layout and decoders; the pack `TABLES` section's ids, format and writer | Data values from the ROM |
 | `crates/ssb-tables` | Run-time reader of the pack's `TABLES` section: `install`, `Table<T>` statics; `host-rom` fallback for host tests ([D-048](docs/decisions/D-048.md)) | PSP code, data values from the ROM |
+| `crates/ssb-pack` | Portable pack build from ROM bytes (`no_std + alloc`): converters, `build`, `PackOptions`, `PackLog`, `PackObserver`; `romtool pack` wraps it ([RE-588](docs/evidence/re/RE-588.md), [D-046](docs/decisions/D-046.md)) | PSP code, file I/O |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
 | `psp-game` | Thin game application: orchestration only | Gameplay or PSP backend code |
 | `psp-kcall` | Kernel module: runs one function of the game in kernel mode at load ([RE-479](docs/evidence/re/RE-479.md)) | Anything else; it unloads itself |
 | `psp-asset-viewer` | Debug and render-validation tool | Game logic, match state, player features |
 
-- `ssb-game`, `ssb-engine`, `ssb-rom`, `ssb-pose`, `ssb-tables` → never depend on `psp-runtime`.
+- `ssb-game`, `ssb-engine`, `ssb-rom`, `ssb-pose`, `ssb-tables`, `ssb-pack` → never depend on `psp-runtime`.
 
 ## Documentation
 

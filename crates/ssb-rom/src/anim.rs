@@ -332,8 +332,7 @@ impl core::fmt::Display for AnimError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for AnimError {}
+impl core::error::Error for AnimError {}
 
 /// Largest joint count treated as plausible.
 ///

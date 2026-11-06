@@ -109,8 +109,7 @@ impl core::fmt::Display for AnimError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for AnimError {}
+impl core::error::Error for AnimError {}
 
 fn u32_at(data: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))

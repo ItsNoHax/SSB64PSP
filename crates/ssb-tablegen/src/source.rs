@@ -1,7 +1,13 @@
 //! The verified ROM image the tables are read from.
 
+use alloc::vec::Vec;
+#[cfg(not(feature = "std"))]
+use core::cell::RefCell;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+#[cfg(feature = "std")]
 use std::path::Path;
+#[cfg(feature = "std")]
 use std::sync::Mutex;
 
 use crate::archive::{Archive, File};
@@ -11,11 +17,16 @@ use crate::{Error, Result};
 /// A verified Super Smash Bros. (USA) ROM, read once.
 pub struct Source {
     rom: Vec<u8>,
+    #[cfg(feature = "std")]
     files: Mutex<HashMap<u32, File>>,
+    /// Without `std` (the portable packer): single-threaded.
+    #[cfg(not(feature = "std"))]
+    files: RefCell<alloc::collections::BTreeMap<u32, File>>,
 }
 
 impl Source {
     /// Reads and verifies the ROM at `path` (size, byte order and SHA-1).
+    #[cfg(feature = "std")]
     pub fn open(path: &Path) -> std::result::Result<Self, String> {
         let rom = std::fs::read(path).map_err(|e| e.to_string())?;
         Self::from_bytes(rom).map_err(|e| e.to_string())
@@ -26,7 +37,7 @@ impl Source {
         rom::identify(&rom)?;
         Ok(Self {
             rom,
-            files: Mutex::new(HashMap::new()),
+            files: Default::default(),
         })
     }
 
@@ -56,7 +67,10 @@ impl Source {
     /// Intern pointer slots hold file-relative byte offsets; extern slots
     /// are zero (`archive::Archive::load`).
     pub fn file(&self, id: u32) -> Result<File> {
+        #[cfg(feature = "std")]
         let mut files = self.files.lock().expect("file cache");
+        #[cfg(not(feature = "std"))]
+        let mut files = self.files.borrow_mut();
         if let Some(file) = files.get(&id) {
             return Ok(file.clone());
         }

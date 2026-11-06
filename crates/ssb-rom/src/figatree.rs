@@ -122,8 +122,7 @@ impl core::fmt::Display for Desynchronised {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Desynchronised {}
+impl core::error::Error for Desynchronised {}
 
 fn u16_be(data: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?]))

@@ -19,6 +19,8 @@ ssb-engine = { workspace = true, features = ["std"] }
 # table builds it from the ROM (`host-rom`).
 ssb-tables = { workspace = true, features = ["host-rom"] }
 ssb-tablegen = { workspace = true }
+# The pack build itself; `pack` is a wrapper: options, file output, summary.
+ssb-pack = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 # Only for the `ssb64_stub_tables` cfg (`build.rs`).

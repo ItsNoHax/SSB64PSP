@@ -8,6 +8,7 @@ members = [
     "crates/ssb-pose",
     "crates/ssb-tablegen",
     "crates/ssb-tables",
+    "crates/ssb-pack",
     "tools/romtool",
 ]
 
@@ -43,6 +44,9 @@ ssb-pose = { path = "crates/ssb-pose", default-features = false }
 ssb-tablegen = { path = "crates/ssb-tablegen" }
 # The ROM-derived tables read from the pack's TABLES section at run time.
 ssb-tables = { path = "crates/ssb-tables", default-features = false }
+# The portable pack build (ROM bytes in, pack bytes out): `romtool pack`
+# on the host, the installer on the PSP.
+ssb-pack = { path = "crates/ssb-pack", default-features = false }
 
 [profile.release]
 opt-level = 3

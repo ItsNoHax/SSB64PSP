@@ -15,8 +15,14 @@ description = "Generates ssb-game's, ssb-engine's and ssb-rom's ROM-derived tabl
 [dependencies]
 sha1_smol = { version = "1.0", default-features = false }
 
+[[bin]]
+name = "ssb-tablegen"
+path = "src/bin/ssb-tablegen.rs"
+required-features = ["std"]
+
 [features]
 # `ssb-rom`'s error type, compiled in here (`src/lib.rs`), gates its
-# `std::error::Error` impl on this feature.
+# `std::error::Error` impl on this feature. Without it only the `TABLES`
+# section reader builds, `no_std` (`ssb-pack` on the PSP).
 default = ["std"]
 std = []

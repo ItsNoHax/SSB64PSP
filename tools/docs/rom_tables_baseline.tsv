@@ -171,26 +171,26 @@ psp-runtime/src/scene.rs	SAMUS_GRAPPLE_BEAM_EFFECT_KEY	link-time labels: (file I
 psp-runtime/src/scene.rs	SHIELD_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	YOSHI_STAR_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by
 psp-runtime/src/texprobe.rs	STATE	tooling: PSP profiling and probe state, no ROM data
-tools/romtool/src/filter_coverage.rs	EVEN	tooling: texture-filter coverage experiment parameters, no ROM data
-tools/romtool/src/filter_coverage.rs	HOLDOUT_BASES	tooling: texture-filter coverage experiment parameters, no ROM data
-tools/romtool/src/filter_coverage.rs	IDENTITY	tooling: texture-filter coverage experiment parameters, no ROM data
-tools/romtool/src/filter_coverage.rs	PHASES	tooling: texture-filter coverage experiment parameters, no ROM data
-tools/romtool/src/filter_coverage.rs	TRAIN_BASES	tooling: texture-filter coverage experiment parameters, no ROM data
-tools/romtool/src/main.rs	BOSS_COMET_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
-tools/romtool/src/main.rs	DIRECT_WEAPON_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	EFFECT_CLD_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of effect trees drawn XLU; the dEFManager*EffectDesc is named, not copied
-tools/romtool/src/main.rs	FIGHTER_STATE_EFFECT_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of DL link 10 effect trees drawn under the fighters' head-0 depth state (RE-425, RE-567)
-tools/romtool/src/main.rs	IMPACT_WAVE_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	ITEM_MAT_ANIMS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	KIRBY_COPY_TABLE	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	PK_THUNDER_TRAIL_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
-tools/romtool/src/main.rs	SHIELD_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	WEAPON_MAT_ANIM_JOINTS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/main.rs	WEAPON_SEEDED_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
-tools/romtool/src/residual_fixes.rs	CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
-tools/romtool/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
-tools/romtool/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
+crates/ssb-pack/src/filter_coverage.rs	EVEN	tooling: texture-filter coverage experiment parameters, no ROM data
+crates/ssb-pack/src/filter_coverage.rs	HOLDOUT_BASES	tooling: texture-filter coverage experiment parameters, no ROM data
+crates/ssb-pack/src/filter_coverage.rs	IDENTITY	tooling: texture-filter coverage experiment parameters, no ROM data
+crates/ssb-pack/src/filter_coverage.rs	PHASES	tooling: texture-filter coverage experiment parameters, no ROM data
+crates/ssb-pack/src/filter_coverage.rs	TRAIN_BASES	tooling: texture-filter coverage experiment parameters, no ROM data
+crates/ssb-pack/src/graph_seeds.rs	BOSS_COMET_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	DIRECT_WEAPON_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	EFFECT_CLD_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	EFFECT_XLU_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of effect trees drawn XLU; the dEFManager*EffectDesc is named, not copied
+crates/ssb-pack/src/graph_seeds.rs	FIGHTER_STATE_EFFECT_GRAPHS	link-time labels: (file ID, ll*DObjDesc offset) of DL link 10 effect trees drawn under the fighters' head-0 depth state (RE-425, RE-567)
+crates/ssb-pack/src/graph_seeds.rs	IMPACT_WAVE_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	ITEM_MAT_ANIMS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	KIRBY_COPY_TABLE	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	PK_THUNDER_TRAIL_GRAPH	link-time label: (file ID, ll* offset) key romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	SHIELD_GRAPH	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	WEAPON_MAT_ANIM_JOINTS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/graph_seeds.rs	WEAPON_SEEDED_GRAPHS	link-time labels: (file ID, ll* offset) keys romtool checks the pack against
+crates/ssb-pack/src/residual_fixes.rs	CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
+crates/ssb-pack/src/residual_fixes.rs	DENSE_GATE_REJECTED	tooling: residual review fixtures (screen positions and verdicts), no ROM data
+crates/ssb-pack/src/residual_fixes.rs	REVIEW_CASES	tooling: residual review fixtures (screen positions and verdicts), no ROM data
 tools/romtool/src/residuals.rs	K	tooling: a filter kernel, no ROM data
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_RUMBLE	port constant: status ids transcribed from decomp FTSTATUS_PRESERVE_RUMBLE users, not read from the ROM
 crates/ssb-game/src/rumble.rs	PRIORITIES	port constant: decomp gmrumble.c source table (not read from the ROM); candidate for tablegen
@@ -200,7 +200,13 @@ crates/ssb-rom/tests/weapon_graphic_play.rs	SPIN_WEAPON_SOURCE	layout: a (file, 
 crates/ssb-capture/src/script.rs	DAMAGE_SEEDS	port constant: capture-script damage values written to Master Hand (scene input, not read from the ROM)
 crates/ssb-capture/src/script.rs	DUMMY	port constant: capture-script controller frames for the cpufx-r dummy (scene input, not read from the ROM)
 crates/ssb-capture/src/script.rs	LEAD	port constant: capture-script controller frames for the cpufx-r lead (scene input, not read from the ROM)
-tools/romtool/src/main.rs	BOSS_WALLPAPER_GRAPHS	layout: (file, offset) pairs naming the wallpaper display-proc graphs in the pack
+crates/ssb-pack/src/graph_seeds.rs	BOSS_WALLPAPER_GRAPHS	layout: (file, offset) pairs naming the wallpaper display-proc graphs in the pack
+crates/ssb-pack/src/effect_assets.rs	DIRECT_MANAGER_EFFECT_ASSETS	link-time labels: (file ID, ll* offset) of EFDesc o_dobjsetup pointers passed straight to gcAddDObjForGObj (RE-172); was in romtool main.rs, unseen by this scan
+crates/ssb-pack/src/effect_assets.rs	DIRECT_MANAGER_EFFECT_MOBJ_PAIRS	link-time labels: (file ID, graph, MObj) offsets of the direct EFDesc graphs (RE-172); was in romtool main.rs, unseen by this scan
+crates/ssb-pack/src/effect_assets.rs	EF_COMMON_EFFECTS2_MOBJ_PAIRS	link-time labels: file-84 (graph, MObj) offsets named by the EFDesc records (RE-172); was in romtool main.rs, unseen by this scan
+crates/ssb-pack/src/effect_assets.rs	MANAGER_EFFECT_ASSETS	link-time labels: (file ID, ll*DObjDesc offset) of the EFDesc display graphs (RE-172); was in romtool main.rs, unseen by this scan
+crates/ssb-pack/src/loaded.rs	FIGHTER_COSTUME_COUNTS	hand transcription of the executable's ftparam.c develop + 1 per fighter (RE-058/059 pattern); was in romtool main.rs, unseen by this scan; ssb-tablegen candidate
+crates/ssb-pack/src/texture_convert.rs	STALE_TLUT_ENTRIES	measured: TMEM entries past a short G_LOADTLUT, replayed through angrylion-rdp-plus (RE-313); was in romtool main.rs, unseen by this scan
 crates/ssb-game/src/ground_effect.rs	STAGE_FILES	layout: each battle gkind's Stage*File2 archive file ID, the base of the ground-effect descs' o_* offsets (the tablegen copy reads the ROM at build time)
 crates/ssb-rom/tests/scene_roots.rs	COPY_SPECIALS	fixture: per fighter kind, which FTData special slots (0-3) a Kirby copy reads, read from the decomp makers; slot indices, not ROM values
 crates/ssb-capture/src/script.rs	SLOTS	fixture: VS stage-select cursor slot after each scripted move (capture route), not ROM data
