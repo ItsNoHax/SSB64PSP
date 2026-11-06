@@ -34,7 +34,8 @@ crates/ssb-game/src/item/mmonster_tests.rs	N64	test fixture: N64 measurements or
 crates/ssb-game/src/matchtick/tests.rs	PROCESSES	fixture: decomp process priorities, links and file:line the order test checks; no ROM data
 crates/ssb-game/src/opening/clash.rs	CORNERS	link-time labels: the corners' ll*DL and ll*AnimJoint offsets (file 0x48) that mvOpeningClash passes as immediates
 crates/ssb-game/src/opening/fighters.rs	JUNGLE_CAMERA_SLOT	layout: llMVOpeningJungleFileID and the camera's offset, packed into a pack slot key
-crates/ssb-game/src/opening/fighters.rs	SCENES	the scenes' function-body constants (mvOpening* scene functions: name origin, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the generated opening_scenes.rs, its name letters from the generated mvOpening*MakeName offsets and pos
+crates/ssb-game/src/opening/fighters.rs	KEY_AT	layout: where each key script starts in the pack's OpeningKeys table (the scripts' halfword counts, ssb_tablegen::opening_data)
+crates/ssb-game/src/opening/fighters.rs	SCENE_STATICS	the scenes' function-body constants (mvOpening* scene functions: name origin, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the pack's OpeningCameras and OpeningKeys tables, its name letters from the generated mvOpening*MakeName offsets and pos
 crates/ssb-game/src/opening/movie.rs	PARTICLE_DISPLAYS	function-body constants: efDisplayInitAll's display links and list ids, written as immediates
 crates/ssb-game/src/opening/newcomers.rs	NEWCOMERS	link-time labels: each newcomer's FTKind, file ID and ll*DObjDesc/AnimJoint offsets that mvOpeningNewcomersMakeAll passes as immediates
 crates/ssb-game/src/opening/run.rs	FIGHTER_ANIM_JOINTS	link-time labels: the proxies' ll*AnimJoint offsets in llMVOpeningRunMainFileID, code immediates in mvOpeningRunMakeFighters
@@ -46,6 +47,7 @@ crates/ssb-game/src/players_vs_layer.rs	SPOTLIGHT_SCALES	function-body constants
 crates/ssb-game/src/results_layer.rs	STOCK_ROWS	function-body constants: mnVSResultsDrawResults{Time,Stock}Royal's row y positions and x offsets, written as immediates
 crates/ssb-game/src/results_layer.rs	TIME_ROWS	function-body constants: mnVSResultsDrawResults{Time,Stock}Royal's row y positions and x offsets, written as immediates
 crates/ssb-game/src/spgame/challenger.rs	DECALS	function-body constants: sc1PChallengerMakeDecals' positions and colours, written as immediates (sc1pchallenger.c:154-176)
+crates/ssb-game/src/spgame/setup.rs	COMPUTER_DESC	layout: SC1PGameComputer's field offsets in the pack's SC1PComputers rows; the values come from the pack
 crates/ssb-game/src/spgame/setup_tests.rs	N64_STAGE_START	test fixture: N64 measurements or expected ROM values
 crates/ssb-game/src/spgame/staffroll.rs	CAMERA_EYE	function-body constants: scStaffrollMakeCamera's eye (scstaffroll.c:2177-2180); the dGCPerspDefault projection it names is not copied
 crates/ssb-game/src/wpeffect.rs	CLASH_FX_MAX	port constant: a queue capacity computed from the weapon-pair count

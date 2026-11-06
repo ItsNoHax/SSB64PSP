@@ -7,12 +7,11 @@
 //! `refs/ssb-decomp-re/symbols/symbols_us.txt`; the overlay is the one the
 //! defining file's `.data` sits in (`smashbrothers.us.yaml`).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit::{self, f32_lit};
 use crate::source::{OverlayData, OVL24, OVL56, OVL6, OVL65};
 use crate::tables::{le_words, Ctx};
-use crate::{Generated, Result, Source};
+use crate::Result;
 
 /// `dSC1PStageClearBonusData` (`SC1PStageClearScore[58]`: `intptr_t offset`,
 /// the bonus text's sprite in `llSC1PStageClear1FileID`; `s32 points`), in
@@ -171,25 +170,6 @@ const BOSS_DISPLAYS: [(u32, &str); 4] = [
 /// `SC1PGameBossPlan::dl_link` of every plan (`DL_LINK`).
 const BOSS_DL_LINK: u8 = 5;
 
-pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let ovl56 = OverlayData::new(rom, OVL56);
-    let ovl65 = OverlayData::new(rom, OVL65);
-    Ok(vec![
-        Generated {
-            name: "stage_clear_bonus.rs",
-            text: bonus_points(ovl56)?,
-        },
-        Generated {
-            name: "sc1p_game_setup.rs",
-            text: game_setup(ovl65)?,
-        },
-        Generated {
-            name: "sc1p_boss.rs",
-            text: boss(ovl65)?,
-        },
-    ])
-}
-
 /// The `CampaignBonusLabels` table: `dSC1PStageClearBonusData`'s
 /// `offset`s.
 pub fn bonus_labels_bytes(c: &Ctx) -> Result<Vec<u8>> {
@@ -262,220 +242,183 @@ pub fn bumpers_bytes(c: &Ctx) -> Result<Vec<u8>> {
     Ok(le_words(&words))
 }
 
-fn bonus_points(d: OverlayData) -> Result<String> {
+/// `ssb-game`'s `StageClearPoints` table: `dSC1PStageClearBonusData`'s
+/// `points`.
+pub fn bonus_points_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL56);
     let (at, n) = STAGE_CLEAR_BONUS;
-    let mut w = emit::header("`dSC1PStageClearBonusData`'s `points`");
-    let _ = writeln!(w, "pub const BONUS_POINTS: [i32; {n}] = [");
-    let points = (0..n as u32)
-        .map(|i| d.i32(at + i * STAGE_CLEAR_BONUS_SIZE + 4))
+    let words = (0..n as u32)
+        .map(|i| d.u32(at + i * STAGE_CLEAR_BONUS_SIZE + 4))
         .collect::<Result<Vec<_>>>()?;
-    for row in points.chunks(16) {
-        let cells: Vec<String> = row.iter().map(|p| p.to_string()).collect();
-        let _ = writeln!(w, "    {},", cells.join(", "));
-    }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(le_words(&words))
 }
 
-fn name_of(names: &[&'static str], what: &str, id: u8) -> &'static str {
-    names
-        .get(usize::from(id))
-        .copied()
-        .unwrap_or_else(|| panic!("{what} {id} is not one the port names"))
+/// Checks that the port names enum value `id` (`names`, in enum order).
+fn check_named(names: &[&str], what: &str, id: u8) {
+    assert!(
+        usize::from(id) < names.len(),
+        "{what} {id} is not one the port names"
+    );
 }
 
-fn game_setup(d: OverlayData) -> Result<String> {
-    let mut w = emit::header("`dSC1PGameComputerDesc` and `dSC1PGameStageDesc`");
+/// `ssb-game`'s `SC1PComputers` table: `dSC1PGameComputerDesc`, the 22
+/// bytes of each stage's `SC1PGameComputer`.
+pub fn computers_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL65);
     let (at, n) = GAME_COMPUTER_DESC;
-    let _ = writeln!(w, "pub const COMPUTER_DESC: [ComputerDesc; {n}] = [");
+    let mut out = Vec::with_capacity(n * GAME_COMPUTER_SIZE as usize);
     for i in 0..n as u32 {
         let b = d.bytes(at + i * GAME_COMPUTER_SIZE, GAME_COMPUTER_SIZE)?;
-        let _ = writeln!(
-            w,
-            "    ComputerDesc {{\n        is_team_attack: {},\n        item_appearance: Appearance::{},\n        \
-             enemy_level: {:?},\n        enemy_handicap: {:?},\n        ally_level: {:?},\n        ally_handicap: {:?},\n    }},",
-            b[0] != 0,
-            name_of(&ITEM_APPEARANCE, "item_appearance_rate", b[1]),
-            &b[2..7],
-            &b[7..12],
-            &b[12..17],
-            &b[17..22],
-        );
+        check_named(&ITEM_APPEARANCE, "item_appearance_rate", b[1]);
+        out.extend(b);
     }
-    w.push_str("];\n");
+    Ok(out)
+}
+
+/// Bytes per `SC1PStages` row: `screenflash_alpha`, `gkind`,
+/// `opponent_count`, `fkind[2]`, `opponent_behavior`, `ally_count`,
+/// `ally_behavior` (`item_toggles` is all items on every stage).
+pub const STAGE_ROW: usize = 8;
+
+/// `ssb-game`'s `SC1PStages` table: `dSC1PGameStageDesc` without
+/// `item_toggles` ([`STAGE_ROW`]).
+pub fn stages_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL65);
     let (at, n) = GAME_STAGE_DESC;
-    let _ = writeln!(w, "pub const STAGE_DESC: [StageDesc; {n}] = [");
+    let mut out = Vec::with_capacity(n * STAGE_ROW);
     for i in 0..n as u32 {
         let at = at + i * GAME_STAGE_SIZE;
         let b = d.bytes(at, GAME_STAGE_SIZE)?;
-        if d.rom.is_some() {
-            assert_eq!(
-                d.u32(at + 4)?,
-                ALL_ITEMS,
-                "stage {i}'s item_toggles are not all items"
-            );
-        }
-        let fkind = |id: u8| -> String {
-            if id == FTKIND_NULL {
-                "None".to_string()
-            } else {
-                format!(
-                    "Some(FighterKind::{})",
-                    name_of(&FIGHTER_KINDS, "fkind", id)
-                )
-            }
-        };
-        let _ = writeln!(
-            w,
-            "    StageDesc {{\n        screenflash_alpha: 0x{:02X},\n        gkind: {},\n        \
-             opponent_count: {},\n        fkind: [{}, {}],\n        opponent_trait: Trait::{},\n        \
-             ally_count: {},\n        ally_trait: Trait::{},\n    }},",
-            b[0],
-            b[1],
-            b[8],
-            fkind(b[9]),
-            fkind(b[10]),
-            name_of(&COMPUTER_TRAITS, "opponent_behavior", b[11]),
-            b[12],
-            name_of(&COMPUTER_TRAITS, "ally_behavior", b[13]),
+        assert_eq!(
+            d.u32(at + 4)?,
+            ALL_ITEMS,
+            "stage {i}'s item_toggles are not all items"
         );
+        for id in [b[9], b[10]] {
+            if id != FTKIND_NULL {
+                check_named(&FIGHTER_KINDS, "fkind", id);
+            }
+        }
+        check_named(&COMPUTER_TRAITS, "opponent_behavior", b[11]);
+        check_named(&COMPUTER_TRAITS, "ally_behavior", b[13]);
+        out.extend([b[0], b[1], b[8], b[9], b[10], b[11], b[12], b[13]]);
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(out)
 }
 
-/// The port's name for the function at `addr`, or the first in `names` for
-/// a stub (which reads zeros).
-fn function(d: OverlayData, names: &[(u32, &'static str)], what: &str, addr: u32) -> &'static str {
-    if d.rom.is_none() {
-        return names[0].1;
-    }
+/// The index in `names` of the function at `addr`.
+fn function(names: &[(u32, &'static str)], what: &str, addr: u32) -> u32 {
     names
         .iter()
-        .find(|(a, _)| *a == addr)
-        .map(|(_, n)| *n)
-        .unwrap_or_else(|| panic!("{what} 0x{addr:08X} is not one the port names"))
+        .position(|(a, _)| *a == addr)
+        .unwrap_or_else(|| panic!("{what} 0x{addr:08X} is not one the port names")) as u32
 }
 
-fn boss(d: OverlayData) -> Result<String> {
-    let mut w = emit::header(
-        "`dSC1PGameBossWallpapers` and the effect, animation and plan arrays it points to, \
-         and `dSC1PGameBossCometEnvColor{R,G,B}`",
-    );
-    let mut colors = String::new();
+/// `ssb-game`'s `BossCometColors` table: `dSC1PGameBossCometEnvColor{R,G,B}`,
+/// by colour then channel.
+pub fn boss_comet_colors_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL65);
+    let mut out = Vec::new();
     for i in 0..BOSS_COMET_COLOR_COUNT {
-        let c: Vec<String> = BOSS_COMET_COLORS
-            .iter()
-            .map(|&a| d.u8(a + i).map(|v| format!("0x{v:02X}")))
-            .collect::<Result<_>>()?;
-        let _ = writeln!(colors, "    [{}],", c.join(", "));
+        for &a in &BOSS_COMET_COLORS {
+            out.push(d.u8(a + i)?);
+        }
     }
-    let _ = write!(
-        w,
-        "pub const COMET_ENV_COLORS: [[u8; 3]; {BOSS_COMET_COLOR_COUNT}] = [\n{colors}];\n"
-    );
+    Ok(out)
+}
 
+/// Most effects, animations and plans of one wallpaper.
+pub const BOSS_MAX_EFFECTS: usize = 2;
+pub const BOSS_MAX_ANIMS: usize = 4;
+pub const BOSS_MAX_PLANS: usize = 2;
+/// Words per `BossWallpapers` row:
+///
+/// | Words | Field |
+/// |---|---|
+/// | 0..9 | `loop_count`, the effect, anim and plan counts, `dobj_color_id`, `color_id`, `change_wait_base`, `change_damage_min`, `is_random_wallpaper` |
+/// | 9..21 | per effect: `proc_update` and `proc_display` (their index in the port's lists), `o_dobjdesc`, `o_mobjsub`, its animation's `o_anim_joint`, and `o_matanim_joint` (0 for an effect without materials) |
+/// | 21..25 | each animation's `anim_speed` |
+/// | 25..35 | per plan: `count`, `camera_tag`, `pos` |
+///
+/// Absent entries are zeros.
+pub const BOSS_ROW: usize = 9 + BOSS_MAX_EFFECTS * 6 + BOSS_MAX_ANIMS + BOSS_MAX_PLANS * 5;
+
+/// `ssb-game`'s `BossWallpapers` table: `dSC1PGameBossWallpapers` and the
+/// effect, animation and plan arrays it points to ([`BOSS_ROW`]).
+pub fn boss_wallpapers_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL65);
     let (at, n) = BOSS_WALLPAPERS;
     assert_eq!(n, BOSS.len());
-    let mut assets = String::new();
-    let _ = writeln!(w, "pub const WALLPAPERS: [WallpaperDesc; {n}] = [");
+    let mut words = Vec::with_capacity(n * BOSS_ROW);
     for (i, layout) in BOSS.iter().enumerate() {
         let at = at + i as u32 * BOSS_WALLPAPER_SIZE;
-        if d.rom.is_some() {
-            let counts = [
-                d.u32(at + 4)?,
-                d.u32(at + 8)?,
-                d.u32(at + 12)?,
-                d.u32(at + 36)?,
-                d.u32(at + 40)?,
-                d.u32(at + 44)?,
-            ];
-            let want = [
-                layout.effects.1 as u32,
-                layout.anims.1 as u32,
-                layout.plans.1 as u32,
-                layout.effects.0,
-                layout.anims.0,
-                layout.plans.0,
-            ];
-            assert_eq!(counts, want, "wallpaper {i}'s header names other arrays");
+        let counts = [
+            d.u32(at + 4)?,
+            d.u32(at + 8)?,
+            d.u32(at + 12)?,
+            d.u32(at + 36)?,
+            d.u32(at + 40)?,
+            d.u32(at + 44)?,
+        ];
+        let want = [
+            layout.effects.1 as u32,
+            layout.anims.1 as u32,
+            layout.plans.1 as u32,
+            layout.effects.0,
+            layout.anims.0,
+            layout.plans.0,
+        ];
+        assert_eq!(counts, want, "wallpaper {i}'s header names other arrays");
+        let mut row = Vec::with_capacity(BOSS_ROW);
+        row.push(d.u32(at)?);
+        row.extend(&counts[..3]);
+        for k in 0..5 {
+            row.push(d.u32(at + 16 + k * 4)?);
         }
-        let (loop_count, dobj_color_id, color_id) = (d.i32(at)?, d.i32(at + 16)?, d.i32(at + 20)?);
-        let (wait_base, damage_min) = (d.i32(at + 24)?, d.i32(at + 28)?);
-        let is_random = d.u32(at + 32)? != 0;
-
-        let mut effects = Vec::new();
-        let mut asset_cells = Vec::new();
-        for e in 0..layout.effects.1 as u32 {
+        for e in 0..BOSS_MAX_EFFECTS as u32 {
+            if e >= layout.effects.1 as u32 {
+                row.extend([0; 6]);
+                continue;
+            }
             let at = layout.effects.0 + e * EFFECT_SIZE;
-            let update = function(d, &BOSS_UPDATES, "proc_update", d.u32(at)?);
-            let display = function(d, &BOSS_DISPLAYS, "proc_display", d.u32(at + 4)?);
-            effects.push(format!("(Update::{update}, Display::{display})"));
+            row.push(function(&BOSS_UPDATES, "proc_update", d.u32(at)?));
+            row.push(function(&BOSS_DISPLAYS, "proc_display", d.u32(at + 4)?));
             // The effect's own source in file 114, with the animation
             // paired with it (`bossanim[effect]`): the controller binds the
             // material animation only to an effect with materials.
             let (graph, mobjsub) = (d.u32(at + 8)?, d.u32(at + 12)?);
             let anim = layout.anims.0 + e.min(layout.anims.1 as u32 - 1) * ANIM_SIZE;
             let (anim_joint, matanim) = (d.u32(anim)?, d.u32(anim + 4)?);
-            let some = |v: u32, keep: bool| {
-                if keep && v != 0 {
-                    format!("Some(0x{v:X})")
-                } else {
-                    "None".to_string()
-                }
-            };
-            asset_cells.push(format!(
-                "Some(EffectAsset {{\n            graph: 0x{graph:X},\n            mobjsub: {},\n            \
-                 anim_joint: {},\n            matanim_joint: {},\n        }})",
-                some(mobjsub, true),
-                some(anim_joint, true),
-                some(matanim, mobjsub != 0),
-            ));
+            row.extend([
+                graph,
+                mobjsub,
+                anim_joint,
+                if mobjsub != 0 { matanim } else { 0 },
+            ]);
         }
-        asset_cells.resize(2, "None".to_string());
-        let _ = writeln!(
-            assets,
-            "    [\n        {},\n        {},\n    ],",
-            asset_cells[0], asset_cells[1]
-        );
-
-        let mut speeds = Vec::new();
-        for a in 0..layout.anims.1 as u32 {
-            speeds.push(f32_lit(d.f32(layout.anims.0 + a * ANIM_SIZE + 8)?));
+        for a in 0..BOSS_MAX_ANIMS as u32 {
+            row.push(if a < layout.anims.1 as u32 {
+                d.u32(layout.anims.0 + a * ANIM_SIZE + 8)?
+            } else {
+                0
+            });
         }
-        let mut plans = String::new();
-        for p in 0..layout.plans.1 as u32 {
-            let at = layout.plans.0 + p * PLAN_SIZE;
-            if d.rom.is_some() {
-                assert_eq!(d.u8(at + 4)?, BOSS_DL_LINK, "plan {p} of wallpaper {i}");
+        for p in 0..BOSS_MAX_PLANS as u32 {
+            if p >= layout.plans.1 as u32 {
+                row.extend([0; 5]);
+                continue;
             }
-            let _ = writeln!(
-                plans,
-                "            Plan {{\n                count: {},\n                camera_tag: {},\n                \
-                 pos: Vec3::new({}, {}, {}),\n            }},",
-                d.i32(at)?,
-                d.u32(at + 8)?,
-                f32_lit(d.f32(at + 12)?),
-                f32_lit(d.f32(at + 16)?),
-                f32_lit(d.f32(at + 20)?),
-            );
+            let at = layout.plans.0 + p * PLAN_SIZE;
+            assert_eq!(d.u8(at + 4)?, BOSS_DL_LINK, "plan {p} of wallpaper {i}");
+            row.push(d.u32(at)?);
+            for k in [8, 12, 16, 20] {
+                row.push(d.u32(at + k)?);
+            }
         }
-        let _ = writeln!(
-            w,
-            "    WallpaperDesc {{\n        loop_count: {loop_count},\n        effects: &[{}],\n        \
-             anim_speeds: &[{}],\n        plans: &[\n{plans}        ],\n        dobj_color_id: {dobj_color_id},\n        \
-             color_id: {color_id},\n        change_wait_base: {wait_base},\n        \
-             change_damage_min: {damage_min},\n        is_random: {is_random},\n    }},",
-            effects.join(", "),
-            speeds.join(", "),
-        );
+        assert_eq!(row.len(), BOSS_ROW);
+        words.extend(row);
     }
-    w.push_str("];\n");
-    let _ = write!(
-        w,
-        "pub const EFFECT_ASSETS: [[Option<EffectAsset>; 2]; {n}] = [\n{assets}];\n"
-    );
-    Ok(w)
+    Ok(le_words(&words))
 }
 
 #[cfg(test)]
@@ -483,16 +426,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stubs_have_every_row() {
-        let files = generate(None).unwrap();
-        assert_eq!(files.len(), 3);
-        assert!(files[0].text.contains("pub const BONUS_POINTS: [i32; 58]"));
-        assert_eq!(files[1].text.matches("    ComputerDesc {").count(), 18);
-        assert_eq!(files[1].text.matches("    StageDesc {").count(), 18);
-        let boss = &files[2].text;
-        assert_eq!(boss.matches("    WallpaperDesc {").count(), 4);
-        assert_eq!(boss.matches("            Plan {").count(), 2 + 1 + 2 + 2);
-        assert_eq!(boss.matches("Some(EffectAsset {").count(), 1 + 1 + 2 + 2);
+    fn every_wallpaper_fits_a_row() {
+        for b in &BOSS {
+            assert!(b.effects.1 <= BOSS_MAX_EFFECTS);
+            assert!(b.anims.1 <= BOSS_MAX_ANIMS);
+            assert!(b.plans.1 <= BOSS_MAX_PLANS);
+        }
+        assert_eq!(BOSS_ROW, 35);
     }
 
     #[test]

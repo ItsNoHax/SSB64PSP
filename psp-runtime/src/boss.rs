@@ -523,6 +523,7 @@ fn effect_colors(e: &Effect) -> ssb_rom::skeleton::EffectColors {
 /// animation script ([`BossEffectFiles::find`]).
 fn make_visual(pack: &Pack<'_>, objects: &[ssb_rom::pack::ObjectDesc], data: Option<&[u8]>, e: &Effect) -> Option<Visual> {
     let asset = EFFECT_ASSETS
+        .get()
         .get(usize::from(e.wallpaper))?
         .get(usize::from(e.effect))
         .copied()

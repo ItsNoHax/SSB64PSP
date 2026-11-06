@@ -44,20 +44,29 @@ pub mod sprite {
     pub const BROS: u32 = 0x25188;
 
     /// `dMNTitleFireSpriteOffsets`: `llMNTitleFireAnimFrame1Sprite` to
-    /// `...Frame30Sprite`, generated from the ROM.
-    pub use super::generated::FIRE;
+    /// `...Frame30Sprite` (`TableId::TitleFire`).
+    pub static FIRE: ssb_tables::Table<[u32; 30]> =
+        ssb_tables::Table::new(ssb_tables::TableId::TitleFire);
 }
 
-/// `dMNTitleFireSpriteOffsets`, `dMNTitleFireColorsR`, `G` and `B` and
-/// `dMNTitleCommonSpriteDescs` (US: each kind's centre and sprite;
-/// `DropShadow`, `Smash`, `Super`, `Bros` and `TM` are the labels, `Footer`
-/// and `Header` the copyright and the upper border), generated at build time
-/// from the ROM by `crates/ssb-tablegen` (`menu_data.rs`).
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/title_data.rs"));
-}
-use generated::FIRE_COLORS;
-pub use generated::SPRITE_DESCS;
+/// `dMNTitleFireColorsR`, `G` and `B` by colour id
+/// (`TableId::TitleFireColors`).
+static FIRE_COLORS: ssb_tables::Table<[[u8; 3]; 7]> =
+    ssb_tables::Table::new(ssb_tables::TableId::TitleFireColors);
+/// `dMNTitleCommonSpriteDescs` as `x, y, sprite` (US: each kind's centre and
+/// sprite; `DropShadow`, `Smash`, `Super`, `Bros` and `TM` are the labels,
+/// `Footer` and `Header` the copyright and the upper border;
+/// `TableId::TitleSprites`).
+static SPRITE_ROWS: ssb_tables::Table<[[i32; 3]; 10]> =
+    ssb_tables::Table::new(ssb_tables::TableId::TitleSprites);
+/// [`SPRITE_ROWS`] as `([x, y], sprite)`.
+pub static SPRITE_DESCS: ssb_tables::Decoded<[([f32; 2], u32); 10]> =
+    ssb_tables::Decoded::new(|| {
+        core::array::from_fn(|i| {
+            let [x, y, sprite] = SPRITE_ROWS[i];
+            ([x as f32, y as f32], sprite as u32)
+        })
+    });
 
 /// `nMNTitleSpriteKind*` (US).
 const KIND_DROP_SHADOW: usize = 0;

@@ -380,7 +380,7 @@ fn the_rule_number_is_right_aligned_on_its_digits() {
         212.0,
         23.0,
         2,
-        &DARK_DIGIT_WIDTHS,
+        DARK_DIGIT_WIDTHS.get(),
         *TIME_DIGIT_COLORS,
         |p| xs.push((p.offset, p.x)),
     );
@@ -392,7 +392,7 @@ fn the_rule_number_is_right_aligned_on_its_digits() {
         208.0,
         23.0,
         2,
-        &DARK_DIGIT_WIDTHS,
+        DARK_DIGIT_WIDTHS.get(),
         *TIME_DIGIT_COLORS,
         |p| xs.push((p.offset, p.x)),
     );

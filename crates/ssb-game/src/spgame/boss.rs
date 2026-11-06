@@ -137,20 +137,115 @@ struct WallpaperDesc {
     is_random: bool,
 }
 
-// `WALLPAPERS` (`dSC1PGameBossWallpapers` and the effect, animation and plan
-// arrays it points to), `COMET_ENV_COLORS` (`dSC1PGameBossCometEnvColor{R,G,B}`,
-// the shooting stars' colours) and `EFFECT_ASSETS` (each effect's sources in
-// file 114, one `SC1PGameBossEffect` with its paired `SC1PGameBossAnim`, by
-// wallpaper and effect: `[wallpaper][effect]`), generated at build time from
-// the user's ROM by `crates/ssb-tablegen` (never committed).
-#[allow(clippy::all)]
-mod generated {
-    use super::{Display, EffectAsset, Plan, Update, WallpaperDesc};
-    use ssb_engine::math::Vec3;
-    include!(concat!(env!("OUT_DIR"), "/sc1p_boss.rs"));
+/// Most effects, animations and plans of one wallpaper.
+const WALLPAPER_EFFECTS: usize = 2;
+const WALLPAPER_ANIMS: usize = 4;
+const WALLPAPER_PLANS: usize = 2;
+/// `dSC1PGameBossWallpapers` and the effect, animation and plan arrays it
+/// points to, 35 words a wallpaper (`TableId::BossWallpapers`; words 0..9
+/// the header with the three counts at 1..4, 9..21 two effects, 21..25 the
+/// animation speeds, 25..35 two plans; `ssb_tablegen::sc1p_data::BOSS_ROW`).
+static WALLPAPER_ROWS: ssb_tables::Table<[[u32; 35]; 4]> =
+    ssb_tables::Table::new(ssb_tables::TableId::BossWallpapers);
+/// `dSC1PGameBossCometEnvColor{R,G,B}`: the shooting stars' colours
+/// (`TableId::BossCometColors`).
+pub static COMET_ENV_COLORS: ssb_tables::Table<[[u8; 3]; 7]> =
+    ssb_tables::Table::new(ssb_tables::TableId::BossCometColors);
+/// `proc_update` and `proc_display` in the order `ssb-tablegen` indexes them.
+const UPDATES: [Update; 6] = [
+    Update::Comet,
+    Update::Fall,
+    Update::Grow,
+    Update::Late,
+    Update::Plain,
+    Update::Closing,
+];
+const DISPLAYS: [Display; 4] = [
+    Display::Comet,
+    Display::Fall,
+    Display::Translucent,
+    Display::TranslucentDirect,
+];
+
+/// Each wallpaper's effect, animation-speed and plan arrays, which
+/// [`WALLPAPERS`] slices.
+struct Parts {
+    effects: [[(Update, Display); WALLPAPER_EFFECTS]; 4],
+    anim_speeds: [[f32; WALLPAPER_ANIMS]; 4],
+    plans: [[Plan; WALLPAPER_PLANS]; 4],
 }
-use generated::WALLPAPERS;
-pub use generated::{COMET_ENV_COLORS, EFFECT_ASSETS};
+
+static PARTS: ssb_tables::Decoded<Parts> = ssb_tables::Decoded::new(|| {
+    let w = |i: usize| WALLPAPER_ROWS[i];
+    Parts {
+        effects: core::array::from_fn(|i| {
+            core::array::from_fn(|e| {
+                let at = 9 + e * 6;
+                (UPDATES[w(i)[at] as usize], DISPLAYS[w(i)[at + 1] as usize])
+            })
+        }),
+        anim_speeds: core::array::from_fn(|i| {
+            core::array::from_fn(|a| f32::from_bits(w(i)[21 + a]))
+        }),
+        plans: core::array::from_fn(|i| {
+            core::array::from_fn(|p| {
+                let r = &w(i)[25 + p * 5..30 + p * 5];
+                Plan {
+                    count: r[0] as u8,
+                    camera_tag: r[1] as u8,
+                    pos: Vec3::new(
+                        f32::from_bits(r[2]),
+                        f32::from_bits(r[3]),
+                        f32::from_bits(r[4]),
+                    ),
+                }
+            })
+        }),
+    }
+});
+
+/// `dSC1PGameBossWallpapers`.
+static WALLPAPERS: ssb_tables::Decoded<[WallpaperDesc; 4]> = ssb_tables::Decoded::new(|| {
+    let parts = PARTS.get();
+    core::array::from_fn(|i| {
+        let r = WALLPAPER_ROWS[i];
+        let count = |k: usize, max: usize| (r[k] as usize).min(max);
+        WallpaperDesc {
+            loop_count: r[0] as u8,
+            effects: &parts.effects[i][..count(1, WALLPAPER_EFFECTS)],
+            anim_speeds: &parts.anim_speeds[i][..count(2, WALLPAPER_ANIMS)],
+            plans: &parts.plans[i][..count(3, WALLPAPER_PLANS)],
+            dobj_color_id: r[4] as i32,
+            color_id: r[5] as i32,
+            change_wait_base: r[6] as i32,
+            change_damage_min: r[7] as i32,
+            is_random: r[8] != 0,
+        }
+    })
+});
+
+/// Each effect's sources in file 114 (one `SC1PGameBossEffect` with its
+/// paired `SC1PGameBossAnim`), by wallpaper and effect:
+/// `[wallpaper][effect]`.
+pub static EFFECT_ASSETS: ssb_tables::Decoded<[[Option<EffectAsset>; WALLPAPER_EFFECTS]; 4]> =
+    ssb_tables::Decoded::new(|| {
+        core::array::from_fn(|i| {
+            let r = WALLPAPER_ROWS[i];
+            core::array::from_fn(|e| {
+                if e >= r[1] as usize {
+                    return None;
+                }
+                let at = 9 + e * 6;
+                let some = |v: u32| (v != 0).then_some(v);
+                Some(EffectAsset {
+                    graph: r[at + 2],
+                    mobjsub: some(r[at + 3]),
+                    anim_joint: some(r[at + 4]),
+                    matanim_joint: some(r[at + 5]),
+                })
+            })
+        })
+    });
 
 /// One effect GObj (`nGCCommonKindBossWallpaper`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -277,7 +372,7 @@ impl BossWallpaper {
     /// `sc1PGameBossWallpaperProcUpdate`.
     fn update_controller(&mut self, boss_damage: i32, extents: Extents) {
         if !self.is_skip_change {
-            if let Some(next) = WALLPAPERS.get(usize::from(self.wallpaper_id)) {
+            if let Some(next) = WALLPAPERS.get().get(usize::from(self.wallpaper_id)) {
                 // `sc1PGameBossUpdateWallpaperColorID`: the outgoing
                 // wallpaper's effects fade out by its colour id.
                 if let Some(old) = self.current {

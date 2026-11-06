@@ -7,11 +7,11 @@
 //! `refs/ssb-decomp-re/symbols/symbols_us.txt`; the overlay is the one the
 //! defining file's `.data` sits in (`smashbrothers.us.yaml`).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit::{self, f32_lit};
 use crate::source::{be_u16, OverlayData, OVL10, OVL26, OVL33};
-use crate::{Generated, Result, Source};
+use crate::tables::{le_words, Ctx};
+use crate::Result;
 
 /// `dMNTitleFireSpriteOffsets` (`intptr_t[30]`: `llMNTitleFireAnimFrame1Sprite`
 /// to `...Frame30Sprite`, offsets into file `llMNTitleFireAnimFileID`).
@@ -42,9 +42,9 @@ pub const PURIN_FALL: u32 = 0x8013_5D9C;
 /// `dMNCharactersAttack1MotionDescs`: `MNCharactersMotion[12][8]`, by `FTKind`.
 pub const ATTACK1_MOTIONS: (u32, usize) = (0x8013_5DA8, 12);
 /// `MNCharactersMotion`: `s32 status_id, anim_length; u32 flags`.
-const MOTION_SIZE: u32 = 12;
+pub const MOTION_SIZE: u32 = 12;
 /// The tracks of a motion row.
-const TRACKS: u32 = 8;
+pub const TRACKS: u32 = 8;
 /// `mnPlayersVSMakeGameRuleNumber`'s `offsets` (`intptr_t[10]`:
 /// `llMNPlayersCommon0DarkSprite` to `...9DarkSprite`, `ovl26`).
 pub const DARK_DIGIT_OFFSETS: (u32, usize) = (0x8013_B704, 10);
@@ -53,161 +53,114 @@ pub const PLAYERS_COMMON_FILE: u32 = 17;
 /// `Sprite.width` (`s16`) after `s16 x, y`.
 const SPRITE_WIDTH: usize = 4;
 
-pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let ovl10 = OverlayData::new(rom, OVL10);
-    let ovl33 = OverlayData::new(rom, OVL33);
-    Ok(vec![
-        Generated {
-            name: "title_data.rs",
-            text: title(ovl10)?,
-        },
-        Generated {
-            name: "characters_motion.rs",
-            text: characters(ovl33)?,
-        },
-        Generated {
-            name: "players_vs_digits.rs",
-            text: dark_digit_widths(rom)?,
-        },
-    ])
-}
-
-/// The `Sprite.width` of each sprite `mnPlayersVSMakeGameRuleNumber` steps
-/// by.
-fn dark_digit_widths(rom: Option<&Source>) -> Result<String> {
-    let mut w = emit::header("`llMNPlayersCommon0DarkSprite` to `...9DarkSprite`'s `width`");
-    let (at, n) = DARK_DIGIT_OFFSETS;
-    let mut widths = vec![0u16; n];
-    if let Some(rom) = rom {
-        let d = OverlayData::new(Some(rom), OVL26);
-        let data = rom.file(PLAYERS_COMMON_FILE)?.data;
-        for (i, width) in widths.iter_mut().enumerate() {
-            let offset = d.u32(at + i as u32 * 4)? as usize;
-            *width = be_u16(&data, offset + SPRITE_WIDTH)?;
-        }
-    }
-    let _ = writeln!(w, "pub const DARK_DIGIT_WIDTHS: [f32; {n}] = [");
-    for width in widths {
-        let _ = writeln!(w, "    {},", f32_lit(f32::from(width as i16)));
-    }
-    w.push_str("];\n");
-    Ok(w)
-}
-
-fn title(d: OverlayData) -> Result<String> {
-    let mut w = emit::header(
-        "`dMNTitleFireSpriteOffsets`, `dMNTitleFireColors{R,G,B}` and `dMNTitleCommonSpriteDescs`",
-    );
+/// `ssb-game`'s `TitleFire` table: `dMNTitleFireSpriteOffsets`.
+pub fn title_fire_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL10);
     let (at, n) = TITLE_FIRE_OFFSETS;
-    let _ = writeln!(w, "pub const FIRE: [u32; {n}] = [");
-    let offsets: Vec<u32> = (0..n as u32)
+    let words = (0..n as u32)
         .map(|i| d.u32(at + i * 4))
-        .collect::<Result<_>>()?;
-    for row in offsets.chunks(8) {
-        let cells: Vec<String> = row.iter().map(|o| format!("0x{o:X}")).collect();
-        let _ = writeln!(w, "    {},", cells.join(", "));
-    }
-    w.push_str("];\n");
-    let _ = writeln!(
-        w,
-        "pub const FIRE_COLORS: [[u8; 3]; {TITLE_FIRE_COLOR_COUNT}] = ["
-    );
+        .collect::<Result<Vec<_>>>()?;
+    Ok(le_words(&words))
+}
+
+/// The `TitleFireColors` table: `dMNTitleFireColors{R,G,B}`, by colour then
+/// channel.
+pub fn title_fire_colors_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL10);
+    let mut out = Vec::new();
     for i in 0..TITLE_FIRE_COLOR_COUNT {
-        let c: Vec<String> = TITLE_FIRE_COLORS
-            .iter()
-            .map(|&a| d.u8(a + i).map(|v| format!("0x{v:02X}")))
-            .collect::<Result<_>>()?;
-        let _ = writeln!(w, "    [{}],", c.join(", "));
+        for &a in &TITLE_FIRE_COLORS {
+            out.push(d.u8(a + i)?);
+        }
     }
-    w.push_str("];\n");
+    Ok(out)
+}
+
+/// The `TitleSprites` table: `dMNTitleCommonSpriteDescs` (`x`, `y`,
+/// `offset`).
+pub fn title_sprites_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL10);
     let (at, n) = TITLE_SPRITE_DESCS;
-    let _ = writeln!(w, "pub const SPRITE_DESCS: [([f32; 2], u32); {n}] = [");
-    for i in 0..n as u32 {
-        let at = at + i * 12;
-        let (x, y, offset) = (d.i32(at)?, d.i32(at + 4)?, d.u32(at + 8)?);
-        let (x, y) = (f32_lit(x as f32), f32_lit(y as f32));
-        let _ = writeln!(w, "    ([{x}, {y}], 0x{offset:X}),");
+    let words = (0..n as u32 * 3)
+        .map(|i| d.u32(at + i * 4))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(le_words(&words))
+}
+
+/// `rows` rows of [`TRACKS`] `MNCharactersMotion`s from `at`, each as its
+/// three words.
+fn motion_words(d: OverlayData, at: u32, rows: u32, out: &mut Vec<u32>) -> Result<()> {
+    for i in 0..rows * TRACKS * 3 {
+        out.push(d.u32(at + i * 4)?);
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(())
 }
 
-/// One `MNCharactersMotion` as a `RawTrack`.
-fn raw_track(d: OverlayData, at: u32) -> Result<String> {
-    Ok(format!(
-        "RawTrack {{ status: 0x{:X}, length: {}, flags: 0x{:X} }}",
-        d.u32(at)?,
-        d.i32(at + 4)?,
-        d.u32(at + 8)?
-    ))
-}
-
-/// `MNCharactersMotion[8]` at `at`.
-fn raw_row(d: OverlayData, at: u32, indent: &str) -> Result<String> {
-    let mut w = format!("{indent}[\n");
-    for t in 0..TRACKS {
-        let _ = writeln!(w, "{indent}    {},", raw_track(d, at + t * MOTION_SIZE)?);
-    }
-    let _ = writeln!(w, "{indent}],");
-    Ok(w)
-}
-
-fn characters(d: OverlayData) -> Result<String> {
-    let mut w = emit::header(
-        "`dMNCharactersSpecialMotion*`, `...CommonMotionDescs`, `...Kirby*` and `...Purin*` \
-         motion descriptors and `...Attack1MotionDescs`",
-    );
+/// The `CharactersSpecial` table: `dMNCharactersSpecialMotion*`, by
+/// `FTKind`, motion (Hi, N, Lw), track.
+pub fn characters_special_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL33);
     let (at, n) = SPECIAL_MOTIONS;
-    let _ = writeln!(w, "pub static SPECIAL: [[[RawTrack; 8]; 3]; {n}] = [");
+    let mut words = Vec::new();
     for f in 0..n as u32 {
-        w.push_str("    [\n");
-        for motion in 0..3 {
-            let at = at + f * SPECIAL_MOTION_SIZE + motion * TRACKS * MOTION_SIZE;
-            w.push_str(&raw_row(d, at, "        ")?);
-        }
-        w.push_str("    ],\n");
+        motion_words(d, at + f * SPECIAL_MOTION_SIZE, 3, &mut words)?;
     }
-    w.push_str("];\n");
-    for (name, (at, n)) in [("COMMON", COMMON_MOTIONS), ("ATTACK1", ATTACK1_MOTIONS)] {
-        let _ = writeln!(w, "pub static {name}: [[RawTrack; 8]; {n}] = [");
-        for row in 0..n as u32 {
-            w.push_str(&raw_row(d, at + row * TRACKS * MOTION_SIZE, "    ")?);
-        }
-        w.push_str("];\n");
-    }
-    for (name, at) in [
-        ("KIRBY_JUMP_AERIAL", KIRBY_JUMP_AERIAL),
-        ("PURIN_JUMP_AERIAL", PURIN_JUMP_AERIAL),
+    Ok(le_words(&words))
+}
+
+/// The `CharactersCommon` table: `dMNCharactersCommonMotionDescs`.
+pub fn characters_common_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL33);
+    let (at, n) = COMMON_MOTIONS;
+    let mut words = Vec::new();
+    motion_words(d, at, n as u32, &mut words)?;
+    Ok(le_words(&words))
+}
+
+/// The `CharactersAttack1` table: `dMNCharactersAttack1MotionDescs`.
+pub fn characters_attack1_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL33);
+    let (at, n) = ATTACK1_MOTIONS;
+    let mut words = Vec::new();
+    motion_words(d, at, n as u32, &mut words)?;
+    Ok(le_words(&words))
+}
+
+/// The `CharactersAerial` table: Kirby's eight jump-aerial tracks and his
+/// fall track, then Purin's.
+pub fn characters_aerial_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL33);
+    let mut words = Vec::new();
+    for (jump, fall) in [
+        (KIRBY_JUMP_AERIAL, KIRBY_FALL),
+        (PURIN_JUMP_AERIAL, PURIN_FALL),
     ] {
-        let _ = writeln!(w, "pub static {name}: [RawTrack; 8] =");
-        let row = raw_row(d, at, "")?;
-        let _ = writeln!(w, "{};", row.trim_end().trim_end_matches(','));
+        motion_words(d, jump, 1, &mut words)?;
+        for k in 0..3 {
+            words.push(d.u32(fall + k * 4)?);
+        }
     }
-    for (name, at) in [("KIRBY_FALL", KIRBY_FALL), ("PURIN_FALL", PURIN_FALL)] {
-        let _ = writeln!(w, "pub const {name}: RawTrack = {};", raw_track(d, at)?);
+    Ok(le_words(&words))
+}
+
+/// The `PlayersDarkDigitWidths` table: the `Sprite.width` of each sprite
+/// `mnPlayersVSMakeGameRuleNumber` steps by, as `f32`.
+pub fn dark_digit_widths_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let (at, n) = DARK_DIGIT_OFFSETS;
+    let d = OverlayData::new(Some(c.rom), OVL26);
+    let data = c.rom.file(PLAYERS_COMMON_FILE)?.data;
+    let mut words = Vec::with_capacity(n);
+    for i in 0..n as u32 {
+        let offset = d.u32(at + i * 4)? as usize;
+        let width = be_u16(&data, offset + SPRITE_WIDTH)?;
+        words.push(f32::from(width as i16).to_bits());
     }
-    Ok(w)
+    Ok(le_words(&words))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stubs_have_every_row() {
-        let files = generate(None).unwrap();
-        assert_eq!(files.len(), 3);
-        let digits = &files[2].text;
-        assert!(digits.contains("pub const DARK_DIGIT_WIDTHS: [f32; 10] = ["));
-        assert_eq!(digits.matches("    0.0,").count(), 10);
-        let title = &files[0].text;
-        assert_eq!(title.matches("    ([0.0, 0.0], 0x0),").count(), 10);
-        assert!(title.contains("pub const FIRE: [u32; 30]"));
-        let motion = &files[1].text;
-        // 12 x 24 + 39 x 8 + 12 x 8 + 2 x 8 tracks, plus the two falls.
-        let tracks = 12 * 24 + 39 * 8 + 12 * 8 + 2 * 8 + 2;
-        assert_eq!(motion.matches("RawTrack {").count(), tracks);
-    }
 
     #[test]
     fn the_layout_tables_are_contiguous() {

@@ -10749,7 +10749,7 @@ fn draw_pause_menu(
     use ssb_game::pause;
     let px = |x: i16| ssb_engine::coord::psp_pixel_edge(ssb_engine::coord::n64_to_psp_x(f32::from(x)));
     let py = |y: i16| ssb_engine::coord::psp_pixel_edge(ssb_engine::coord::n64_to_psp_y(f32::from(y)));
-    for [ulx, uly, lrx, lry] in pause::BORDER {
+    for [ulx, uly, lrx, lry] in *pause::BORDER {
         // `G_CYC_FILL` covers both corners.
         gpu.draw_rect_fill(px(ulx), py(uly), px(lrx + 1), py(lry + 1), Color::rgba(0xFF, 0xFF, 0xFF, 0xFF));
     }
@@ -10778,7 +10778,7 @@ fn draw_pause_menu(
         draw(d.sprite, d.pos, d.prim, d.env);
     }
     if retry {
-        for d in pause::BONUS_RETRY {
+        for d in *pause::BONUS_RETRY {
             draw(d.sprite, d.pos, d.prim, d.env);
         }
     }
@@ -10928,10 +10928,10 @@ fn draw_practice_timer(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, t: &s
 fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_game::battle::EndKind) {
     use ssb_game::hud;
     let (letters, f): (&[(f32, f32, u8)], _) = match end {
-        ssb_game::battle::EndKind::TimeUp => (&hud::TIME_UP, &ssb_rom::sprite::GAME_STATUS),
-        ssb_game::battle::EndKind::GameSet => (&hud::GAME_SET, &ssb_rom::sprite::GAME_STATUS),
-        ssb_game::battle::EndKind::Complete => (&hud::COMPLETE, &ssb_rom::sprite::ANNOUNCE_COMMON),
-        ssb_game::battle::EndKind::Failure => (&hud::FAILURE, &ssb_rom::sprite::ANNOUNCE_COMMON),
+        ssb_game::battle::EndKind::TimeUp => (hud::TIME_UP.get(), &ssb_rom::sprite::GAME_STATUS),
+        ssb_game::battle::EndKind::GameSet => (hud::GAME_SET.get(), &ssb_rom::sprite::GAME_STATUS),
+        ssb_game::battle::EndKind::Complete => (hud::COMPLETE.get(), &ssb_rom::sprite::ANNOUNCE_COMMON),
+        ssb_game::battle::EndKind::Failure => (hud::FAILURE.get(), &ssb_rom::sprite::ANNOUNCE_COMMON),
         // Master Hand's defeat announces nothing.
         ssb_game::battle::EndKind::BossDefeat => return,
     };
@@ -10954,7 +10954,7 @@ fn draw_announce(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, end: ssb_ga
 fn draw_countdown(p: &Pack<'_>, draw_state: &mut meshdraw::DrawState, c: &ssb_game::countdown::Countdown) {
     if c.sudden_death_letters {
         let letters = &ssb_rom::sprite::ANNOUNCE_COMMON;
-        for &(x, y, i) in &ssb_game::countdown::SUDDEN_DEATH {
+        for &(x, y, i) in ssb_game::countdown::SUDDEN_DEATH.get() {
             if let Some(s) = letters.offsets.get(usize::from(i)).and_then(|&at| p.sprite(letters.file, at)) {
                 // `ifCommonAnnounceSetColors`: white on black.
                 let d = meshdraw::SObjDraw {

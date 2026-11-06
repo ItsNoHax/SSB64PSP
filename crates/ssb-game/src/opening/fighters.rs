@@ -110,16 +110,44 @@ impl PartialEq for Params {
     }
 }
 
-// Each scene's `dMVOpening*CObjDescStart`, `...End` and `...KeyEvents`
-// (`FTKEY_EVENT_STICK(x, y, wait)` and `FTKEY_EVENT_BUTTON(buttons, wait)`
-// as `ft/ftkey.c` reads them, in halfwords), and the jungle's two scripts,
-// generated at build time from the user's ROM by `crates/ssb-tablegen`
-// (never committed).
-#[allow(clippy::all)]
-mod generated {
-    use super::{desc, v, CObjDesc};
-    include!(concat!(env!("OUT_DIR"), "/opening_scenes.rs"));
+/// Each scene's `dMVOpening*CObjDescStart` and `...End` as `eye, at,
+/// up_x`, in [`TABLE_ORDER`] (`TableId::OpeningCameras`).
+static CAMERAS: ssb_tables::Table<[[[f32; 7]; 2]; 8]> =
+    ssb_tables::Table::new(ssb_tables::TableId::OpeningCameras);
+/// Each scene's `dMVOpening*KeyEvents` (`FTKEY_EVENT_STICK(x, y, wait)` and
+/// `FTKEY_EVENT_BUTTON(buttons, wait)` as `ft/ftkey.c` reads them, in
+/// halfwords) in [`TABLE_ORDER`], then the jungle's two scripts
+/// (`TableId::OpeningKeys`).
+static KEYS: ssb_tables::Table<[u16; 124]> =
+    ssb_tables::Table::new(ssb_tables::TableId::OpeningKeys);
+/// The scenes' order in [`CAMERAS`] and [`KEYS`] (`ssb_tablegen::opening_data`).
+const TABLE_ORDER: [Kind; 8] = [
+    Kind::Mario,
+    Kind::Donkey,
+    Kind::Samus,
+    Kind::Fox,
+    Kind::Link,
+    Kind::Yoshi,
+    Kind::Pikachu,
+    Kind::Kirby,
+];
+/// Where each script starts in [`KEYS`]: the scenes' in [`TABLE_ORDER`],
+/// then the jungle's Donkey Kong and Samus, then the end.
+const KEY_AT: [usize; 11] = [0, 15, 24, 29, 40, 43, 50, 51, 56, 91, 124];
+
+/// Script `i` of [`KEY_AT`].
+fn keys(i: usize) -> &'static [u16] {
+    &KEYS.get()[KEY_AT[i]..KEY_AT[i + 1]]
 }
+
+/// Scene `i`'s start (`which` 0) or end (1) camera in [`CAMERAS`].
+fn camera(i: usize, which: usize) -> CObjDesc {
+    let c = CAMERAS[i][which];
+    desc(v(c[0], c[1], c[2]), v(c[3], c[4], c[5]), c[6])
+}
+
+/// [`SCENES`]' cameras and keys before they are read from the tables.
+const NO_CAMERA: CObjDesc = desc(v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0), 0.0);
 
 /// `mvOpening*MakeName`'s letters: `offsets` (ending in 0) with `pos_x`,
 /// each letter on the name's row.
@@ -224,15 +252,15 @@ const RIGHT_PANEL: [f32; 4] = [210.0, 10.0, 310.0, 230.0];
 const RIGHT_MOTION: [f32; 4] = [110.0, 10.0, 310.0, 230.0];
 const LEFT_MOTION: [f32; 4] = [10.0, 10.0, 210.0, 230.0];
 
-/// The eight scenes, in play order.
-pub const SCENES: [Params; 8] = [
+/// The eight scenes, in play order, without their cameras and keys.
+const SCENE_STATICS: [Params; 8] = [
     Params {
         kind: Kind::Mario,
         fighter: FighterKind::Mario,
         gkind: gkind::CASTLE,
-        start: generated::MARIO_START,
-        end: generated::MARIO_END,
-        keys: &generated::MARIO_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || MARIO_LETTERS.get().as_slice(),
         name_at: [80.0, 100.0],
         motion_viewport: RIGHT_MOTION,
@@ -251,9 +279,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Donkey,
         fighter: FighterKind::Donkey,
         gkind: gkind::JUNGLE,
-        start: generated::DONKEY_START,
-        end: generated::DONKEY_END,
-        keys: &generated::DONKEY_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         // The US build's "DK".
         letters: || DONKEY_LETTERS.get().as_slice(),
         name_at: [120.0, 100.0],
@@ -273,9 +301,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Link,
         fighter: FighterKind::Link,
         gkind: gkind::HYRULE,
-        start: generated::LINK_START,
-        end: generated::LINK_END,
-        keys: &generated::LINK_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || LINK_LETTERS.get().as_slice(),
         name_at: [100.0, 100.0],
         motion_viewport: [10.0, 90.0, 310.0, 230.0],
@@ -294,9 +322,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Samus,
         fighter: FighterKind::Samus,
         gkind: gkind::ZEBES,
-        start: generated::SAMUS_START,
-        end: generated::SAMUS_END,
-        keys: &generated::SAMUS_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || SAMUS_LETTERS.get().as_slice(),
         name_at: [80.0, 100.0],
         motion_viewport: RIGHT_MOTION,
@@ -315,9 +343,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Yoshi,
         fighter: FighterKind::Yoshi,
         gkind: gkind::YOSTER,
-        start: generated::YOSHI_START,
-        end: generated::YOSHI_END,
-        keys: &generated::YOSHI_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || YOSHI_LETTERS.get().as_slice(),
         name_at: [80.0, 100.0],
         motion_viewport: [10.0, 10.0, 310.0, 150.0],
@@ -336,9 +364,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Kirby,
         fighter: FighterKind::Kirby,
         gkind: gkind::PUPUPU,
-        start: generated::KIRBY_START,
-        end: generated::KIRBY_END,
-        keys: &generated::KIRBY_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || KIRBY_LETTERS.get().as_slice(),
         name_at: [90.0, 100.0],
         motion_viewport: LEFT_MOTION,
@@ -357,9 +385,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Fox,
         fighter: FighterKind::Fox,
         gkind: gkind::SECTOR,
-        start: generated::FOX_START,
-        end: generated::FOX_END,
-        keys: &generated::FOX_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || FOX_LETTERS.get().as_slice(),
         name_at: [110.0, 100.0],
         motion_viewport: LEFT_MOTION,
@@ -378,9 +406,9 @@ pub const SCENES: [Params; 8] = [
         kind: Kind::Pikachu,
         fighter: FighterKind::Pikachu,
         gkind: gkind::YAMABUKI,
-        start: generated::PIKACHU_START,
-        end: generated::PIKACHU_END,
-        keys: &generated::PIKACHU_KEYS,
+        start: NO_CAMERA,
+        end: NO_CAMERA,
+        keys: &[],
         letters: || PIKACHU_LETTERS.get().as_slice(),
         name_at: [65.0, 100.0],
         motion_viewport: RIGHT_MOTION,
@@ -396,6 +424,21 @@ pub const SCENES: [Params; 8] = [
         posed_axis: v(0.0, 1.0, 0.0),
     },
 ];
+
+/// The eight scenes, in play order.
+pub static SCENES: ssb_tables::Decoded<[Params; 8]> = ssb_tables::Decoded::new(|| {
+    let mut scenes = SCENE_STATICS;
+    for p in &mut scenes {
+        let i = TABLE_ORDER
+            .iter()
+            .position(|&k| k == p.kind)
+            .expect("every scene is in the tables");
+        p.start = camera(i, 0);
+        p.end = camera(i, 1);
+        p.keys = keys(i);
+    }
+    scenes
+});
 
 /// The scene's statics.
 pub fn params(kind: Kind) -> Option<&'static Params> {
@@ -708,7 +751,7 @@ impl Jungle {
                     lr: 1,
                     damage: 200,
                     charge: Some(9),
-                    keys: &generated::JUNGLE_DONKEY_KEYS,
+                    keys: keys(8),
                 },
                 Player {
                     kind: FighterKind::Samus,
@@ -717,7 +760,7 @@ impl Jungle {
                     lr: -1,
                     damage: 40,
                     charge: Some(6),
-                    keys: &generated::JUNGLE_SAMUS_KEYS,
+                    keys: keys(9),
                 },
             ],
             screen_flash: true,

@@ -8,13 +8,13 @@
 //! `mnVSResultsMakeString` offsets, `ssb_rom::sprite::ANNOUNCE_COMMON`), so
 //! each generator looks the offset up there.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
 use crate::d_arrays::local::mnvsresults;
-use crate::emit::{self, f32_lit};
 use crate::source::{OverlayData, OVL2};
 use crate::sprite_offsets::{BATTLE_PAUSE, GAME_STATUS};
-use crate::{Error, Generated, Result, Source};
+use crate::tables::{le_bytes, Ctx};
+use crate::{Error, Result};
 
 /// `dIFCommonTrafficSpriteColors{R,G,B}`: `u8[9]` each, indexed by
 /// `IFTraffic::color_id`.
@@ -50,30 +50,8 @@ const GAME_STATUS_FILE: u32 = 82;
 const ANNOUNCE_COMMON_FILE: u32 = 37;
 const BATTLE_PAUSE_FILE: u32 = 197;
 
-pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let d = OverlayData::new(rom, OVL2);
-    Ok(vec![
-        Generated {
-            name: "if_countdown.rs",
-            text: countdown(d)?,
-        },
-        Generated {
-            name: "if_announce.rs",
-            text: announce(d)?,
-        },
-        Generated {
-            name: "if_pause.rs",
-            text: pause(d)?,
-        },
-    ])
-}
-
-/// The manifest index of the sprite at file offset `offset`. A stub has no
-/// offsets to look up.
-fn sprite_index(d: OverlayData, manifest: &[u32], file: u32, offset: u32) -> Result<u8> {
-    if d.rom.is_none() {
-        return Ok(0);
-    }
+/// The manifest index of the sprite at file offset `offset`.
+fn sprite_index(manifest: &[u32], file: u32, offset: u32) -> Result<u8> {
     manifest
         .iter()
         .position(|&o| o == offset)
@@ -84,30 +62,31 @@ fn sprite_index(d: OverlayData, manifest: &[u32], file: u32, offset: u32) -> Res
         })
 }
 
-/// An `IFACharacter` array as `(x, y, sprite)` rows, the sprite indexing
+/// `ovl2`'s data.
+fn ovl2<'a>(c: &Ctx<'a>) -> OverlayData<'a> {
+    OverlayData::new(Some(c.rom), OVL2)
+}
+
+/// `n` halfwords as little-endian bytes.
+fn le_i16(halves: &[i16]) -> Vec<u8> {
+    le_bytes(halves, i16::to_le_bytes)
+}
+
+/// An `IFACharacter` array as `x, y, sprite` rows, the sprite indexing
 /// `manifest`.
 fn characters(
     d: OverlayData,
     (at, n): (u32, usize),
-    name: &str,
     (manifest, file): (&[u32], u32),
-) -> Result<String> {
-    let mut w = format!("pub const {name}: [(f32, f32, u8); {n}] = [\n");
+    out: &mut Vec<i16>,
+) -> Result<()> {
     for i in 0..n as u32 {
         let at = at + i * 8;
         let (x, y) = (d.i16(at)?, d.i16(at + 2)?);
-        let sprite = sprite_index(d, manifest, file, d.u32(at + 4)?)?;
-        let (x, y) = (f32_lit(f32::from(x)), f32_lit(f32::from(y)));
-        let _ = writeln!(w, "    ({x}, {y}, {sprite}),");
+        let sprite = sprite_index(manifest, file, d.u32(at + 4)?)?;
+        out.extend([x, y, i16::from(sprite)]);
     }
-    w.push_str("];\n");
-    Ok(w)
-}
-
-/// File 82's manifest with its file id.
-#[allow(non_snake_case)]
-fn GAME_STATUS_SPRITES() -> (&'static [u32], u32) {
-    (GAME_STATUS, GAME_STATUS_FILE)
+    Ok(())
 }
 
 /// File 37's manifest: the letters `mnVSResultsMakeString` reads, which
@@ -116,126 +95,124 @@ fn announce_sprites(d: OverlayData) -> Result<Vec<u32>> {
     mnvsresults::MAKE_STRING_OFFSETS.words(d.rom)
 }
 
-fn hex_bytes(bytes: &[u8]) -> String {
-    let cells: Vec<String> = bytes.iter().map(|v| format!("0x{v:02X}")).collect();
-    cells.join(", ")
+/// `ssb-game`'s `IfTrafficSprites` table: `dIFCommonTrafficSpriteOffsets`
+/// as `GAME_STATUS` indices, by colour id.
+pub fn traffic_sprites_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
+    let (at, n) = TRAFFIC_OFFSETS;
+    (0..n as u32)
+        .map(|i| sprite_index(GAME_STATUS, GAME_STATUS_FILE, d.u32(at + i * 4)?))
+        .collect()
 }
 
-fn countdown(d: OverlayData) -> Result<String> {
-    let mut w = emit::header(
-        "`dIFCommonTrafficSpriteData`, `...Offsets`, `...Colors{R,G,B}`, `...GoBacklight*`, \
-         `...GoShadow*`, `dIFCommonAnnounceGoSpriteData` and `...SuddenDeathSpriteData`",
-    );
-    let (at, n) = TRAFFIC_OFFSETS;
-    let (manifest, file) = GAME_STATUS_SPRITES();
-    let sprites = (0..n as u32)
-        .map(|i| sprite_index(d, manifest, file, d.u32(at + i * 4)?).map(|s| s.to_string()))
-        .collect::<Result<Vec<_>>>()?;
-    let _ = writeln!(
-        w,
-        "pub const TRAFFIC_SPRITES: [u8; {n}] = [{}];",
-        sprites.join(", ")
-    );
-    for (name, at) in ["TRAFFIC_R", "TRAFFIC_G", "TRAFFIC_B"]
-        .iter()
-        .zip(TRAFFIC_COLORS)
-    {
-        let bytes = d.bytes(at, TRAFFIC_COLOR_COUNT)?;
-        let _ = writeln!(
-            w,
-            "pub const {name}: [u8; {TRAFFIC_COLOR_COUNT}] = [{}];",
-            hex_bytes(&bytes)
-        );
+/// The `IfTrafficColors` table: `dIFCommonTrafficSpriteColorsR`, then `G`,
+/// then `B`.
+pub fn traffic_colors_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
+    let mut out = Vec::new();
+    for at in TRAFFIC_COLORS {
+        out.extend(d.bytes(at, TRAFFIC_COLOR_COUNT)?);
     }
-    for (name, regs) in [("BACKLIGHT", GO_BACKLIGHT), ("SHADOW", GO_SHADOW)] {
-        let _ = writeln!(w, "pub const {name}: [[u8; 3]; 2] = [");
+    Ok(out)
+}
+
+/// The `IfGoColors` table: `dIFCommonTrafficGoBacklight{R,G,B}` then
+/// `...GoShadow{R,G,B}`, each by state (before and at "Go") then channel.
+pub fn go_colors_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
+    let mut out = Vec::new();
+    for regs in [GO_BACKLIGHT, GO_SHADOW] {
         for state in 0..2 {
-            let c = regs
-                .iter()
-                .map(|&a| d.u8(a + state))
-                .collect::<Result<Vec<_>>>()?;
-            let _ = writeln!(w, "    [{}],", hex_bytes(&c));
+            for &a in &regs {
+                out.push(d.u8(a + state)?);
+            }
         }
-        w.push_str("];\n");
     }
+    Ok(out)
+}
+
+/// The `IfTraffic` table: `dIFCommonTrafficSpriteData` (`x`, `y`,
+/// `color_id`).
+pub fn traffic_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
     let (at, n) = TRAFFIC_DATA;
-    let _ = writeln!(w, "pub const TRAFFIC: [(f32, f32, u8); {n}] = [");
+    let mut out = Vec::new();
     for i in 0..n as u32 {
         let at = at + i * 6;
-        let (x, y, color) = (d.i16(at)?, d.i16(at + 2)?, d.u8(at + 4)?);
-        let (x, y) = (f32_lit(f32::from(x)), f32_lit(f32::from(y)));
-        let _ = writeln!(w, "    ({x}, {y}, {color}),");
+        out.extend([d.i16(at)?, d.i16(at + 2)?, i16::from(d.u8(at + 4)?)]);
     }
-    w.push_str("];\n");
-    w.push_str(&characters(d, ANNOUNCE_GO, "GO", GAME_STATUS_SPRITES())?);
-    let letters = announce_sprites(d)?;
-    w.push_str(&characters(
-        d,
-        ANNOUNCE_SUDDEN_DEATH,
-        "SUDDEN_DEATH",
-        (&letters, ANNOUNCE_COMMON_FILE),
-    )?);
-    Ok(w)
+    Ok(le_i16(&out))
 }
 
-fn announce(d: OverlayData) -> Result<String> {
-    let mut w = emit::header("`dIFCommonAnnounce{TimeUp,GameSet,Complete,Failure}SpriteData`");
+/// The announcer's arrays in the `IfAnnounce` table, in its order.
+pub const ANNOUNCE: [(u32, usize); 6] = [
+    ANNOUNCE_GO,
+    ANNOUNCE_SUDDEN_DEATH,
+    ANNOUNCE_TIME_UP,
+    ANNOUNCE_COMPLETE,
+    ANNOUNCE_GAME_SET,
+    ANNOUNCE_FAILURE,
+];
+/// The `IfAnnounce` table's rows.
+pub const ANNOUNCE_ROWS: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < ANNOUNCE.len() {
+        n += ANNOUNCE[i].1;
+        i += 1;
+    }
+    n
+};
+
+/// The `IfAnnounce` table: `dIFCommonAnnounce{Go,SuddenDeath,TimeUp,
+/// Complete,GameSet,Failure}SpriteData` as `x, y, sprite` rows: "GO!",
+/// `TIME_UP` and `GAME_SET` index file 82's manifest, the others file 37's
+/// letters.
+pub fn announce_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
     let letters = announce_sprites(d)?;
+    let status = (GAME_STATUS, GAME_STATUS_FILE);
     let letters = (letters.as_slice(), ANNOUNCE_COMMON_FILE);
-    for (rows, name, sprites) in [
-        (ANNOUNCE_TIME_UP, "TIME_UP", GAME_STATUS_SPRITES()),
-        (ANNOUNCE_COMPLETE, "COMPLETE", letters),
-        (ANNOUNCE_GAME_SET, "GAME_SET", GAME_STATUS_SPRITES()),
-        (ANNOUNCE_FAILURE, "FAILURE", letters),
-    ] {
-        w.push_str(&characters(d, rows, name, sprites)?);
+    let mut out = Vec::new();
+    for (rows, sprites) in ANNOUNCE
+        .into_iter()
+        .zip([status, letters, status, letters, status, letters])
+    {
+        characters(d, rows, sprites, &mut out)?;
     }
-    Ok(w)
+    Ok(le_i16(&out))
 }
 
-/// The first twelve decals every pause shows.
-const PAUSE_COMMON: usize = 12;
+/// Halfwords per `IfPauseDecals` row: `sprite` (a file 197 manifest index),
+/// `x`, `y`, `prim[3]`, `env[3]`.
+pub const DECAL_ROW: usize = 9;
 
-fn pause(d: OverlayData) -> Result<String> {
-    let mut w = emit::header("`dIFCommonBattlePauseDecalsSpriteData` and `...BorderRectangle`");
+/// The `IfPauseDecals` table: `dIFCommonBattlePauseDecalsSpriteData`
+/// ([`DECAL_ROW`]).
+pub fn pause_decals_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
     let (at, n) = PAUSE_DECALS;
-    let mut rows = Vec::new();
+    let mut out = Vec::new();
     for i in 0..n as u32 {
         let at = at + i * 16;
-        let sprite = sprite_index(d, BATTLE_PAUSE, BATTLE_PAUSE_FILE, d.u32(at)?)?;
-        let (x, y) = (d.i16(at + 4)?, d.i16(at + 6)?);
-        let c = d.bytes(at + 8, 6)?;
-        let (prim, env) = (hex_bytes(&c[..3]), hex_bytes(&c[3..]));
-        rows.push(format!(
-            "    Decal {{ sprite: {sprite}, pos: ({x}, {y}), prim: [{prim}], env: [{env}] }},\n"
-        ));
+        let sprite = sprite_index(BATTLE_PAUSE, BATTLE_PAUSE_FILE, d.u32(at)?)?;
+        out.extend([i16::from(sprite), d.i16(at + 4)?, d.i16(at + 6)?]);
+        out.extend(d.bytes(at + 8, 6)?.into_iter().map(i16::from));
     }
-    let (common, bonus) = rows.split_at(PAUSE_COMMON);
-    let _ = write!(
-        w,
-        "/// The decals every pause shows (`dIFCommonBattlePauseDecalsSpriteData[..12]`).\n\
-         pub const DECALS: [Decal; {}] = [\n{}];\n\n\
-         /// L and RETRY, which bonus courses add (`...[12..14]`).\n\
-         pub const BONUS_RETRY: [Decal; {}] = [\n{}];\n\n",
-        common.len(),
-        common.concat(),
-        bonus.len(),
-        bonus.concat()
-    );
+    Ok(le_i16(&out))
+}
+
+/// The `IfPauseBorder` table: `dIFCommonBattlePauseBorderRectangle` (`ulx,
+/// uly, lrx, lry`).
+pub fn pause_border_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = ovl2(c);
     let (at, n) = PAUSE_BORDER;
-    let _ = writeln!(
-        w,
-        "/// `dIFCommonBattlePauseBorderRectangle`: `ulx, uly, lrx, lry`.\n\
-         pub const BORDER: [[i16; 4]; {n}] = ["
-    );
-    for i in 0..n as u32 {
-        let r = (0..4)
-            .map(|k| d.i32(at + i * 16 + k * 4))
-            .collect::<Result<Vec<_>>>()?;
-        let _ = writeln!(w, "    [{}, {}, {}, {}],", r[0], r[1], r[2], r[3]);
+    let mut out = Vec::new();
+    for i in 0..n as u32 * 4 {
+        let v = d.i32(at + i * 4)?;
+        out.push(i16::try_from(v).expect("a pause border coordinate fits an s16"));
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(le_i16(&out))
 }
 
 #[cfg(test)]
@@ -243,16 +220,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stub_has_every_row() {
-        let files = generate(None).unwrap();
-        assert_eq!(files.len(), 3);
-        assert_eq!(files[0].text.matches("(0.0, 0.0, 0),").count(), 15 + 3 + 12);
-        assert_eq!(
-            files[1].text.matches("(0.0, 0.0, 0),").count(),
-            6 + 9 + 7 + 7
-        );
-        assert_eq!(files[2].text.matches("Decal {").count(), PAUSE_DECALS.1);
-        assert!(files[2].text.contains("pub const BONUS_RETRY: [Decal; 2]"));
+    fn the_announcer_has_44_rows() {
+        assert_eq!(ANNOUNCE_ROWS, 3 + 12 + 6 + 9 + 7 + 7);
     }
 
     #[test]

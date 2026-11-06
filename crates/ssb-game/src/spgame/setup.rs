@@ -73,15 +73,65 @@ pub struct StageDesc {
     pub ally_trait: Trait,
 }
 
-// `COMPUTER_DESC` (`dSC1PGameComputerDesc`, by [`Stage`]) and `STAGE_DESC`
-// (`dSC1PGameStageDesc`, by [`Stage`]), generated at build time from the
-// user's ROM by `crates/ssb-tablegen` (never committed).
-#[allow(clippy::all)]
-mod generated {
-    use super::{Appearance, ComputerDesc, FighterKind, StageDesc, Trait};
-    include!(concat!(env!("OUT_DIR"), "/sc1p_game_setup.rs"));
-}
-pub use generated::{COMPUTER_DESC, STAGE_DESC};
+/// `dSC1PGameComputerDesc`: each stage's 22 `SC1PGameComputer` bytes
+/// (`TableId::SC1PComputers`).
+static COMPUTER_ROWS: ssb_tables::Table<[[u8; 22]; 18]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SC1PComputers);
+/// `dSC1PGameStageDesc` without `item_toggles`: `screenflash_alpha`,
+/// `gkind`, `opponent_count`, `fkind[2]`, `opponent_behavior`,
+/// `ally_count`, `ally_behavior` (`TableId::SC1PStages`).
+static STAGE_ROWS: ssb_tables::Table<[[u8; 8]; 18]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SC1PStages);
+
+/// `nFTComputerTrait*` in enum order (`ssb-tablegen` checks the ROM's ids).
+const TRAITS: [Trait; 11] = [
+    Trait::Default,
+    Trait::Link,
+    Trait::YoshiTeam,
+    Trait::KirbyTeam,
+    Trait::PolyTeam,
+    Trait::MarioBros,
+    Trait::GiantDonkey,
+    Trait::Unk1,
+    Trait::Bonus3,
+    Trait::Ally,
+    Trait::None,
+];
+
+/// `dSC1PGameComputerDesc`, by [`Stage`].
+pub static COMPUTER_DESC: ssb_tables::Decoded<[ComputerDesc; 18]> =
+    ssb_tables::Decoded::new(|| {
+        core::array::from_fn(|i| {
+            let b = COMPUTER_ROWS[i];
+            let five = |at: usize| -> [u8; 5] { core::array::from_fn(|j| b[at + j]) };
+            ComputerDesc {
+                is_team_attack: b[0] != 0,
+                item_appearance: Appearance::from_switch(b[1]),
+                enemy_level: five(2),
+                enemy_handicap: five(7),
+                ally_level: five(12),
+                ally_handicap: five(17),
+            }
+        })
+    });
+/// `dSC1PGameStageDesc`, by [`Stage`]; `nFTKindNull` is `None`.
+pub static STAGE_DESC: ssb_tables::Decoded<[StageDesc; 18]> = ssb_tables::Decoded::new(|| {
+    core::array::from_fn(|i| {
+        let b = STAGE_ROWS[i];
+        StageDesc {
+            screenflash_alpha: b[0],
+            gkind: b[1],
+            opponent_count: b[2],
+            fkind: [
+                FighterKind::from_ordinal(b[3]),
+                FighterKind::from_ordinal(b[4]),
+            ],
+            opponent_trait: TRAITS[usize::from(b[5])],
+            ally_count: b[6],
+            ally_trait: TRAITS[usize::from(b[7])],
+        }
+    })
+});
 
 /// A generated `FTKind` table (`u8`) as the port's [`FighterKind`]s.
 const fn playable_kinds<const N: usize>(kinds: [u8; N]) -> [FighterKind; N] {

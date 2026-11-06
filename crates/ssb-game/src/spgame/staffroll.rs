@@ -49,13 +49,14 @@ pub const OPEN_PARENTHESIS: i32 = 0x47;
 pub const CLOSE_PARENTHESIS: i32 = 0x48;
 pub const E_ACCENT: i32 = 0x49;
 
-// `NAME_GLYPHS` and `TEXT_GLYPHS`, generated at build time from the user's
-// ROM by `crates/ssb-tablegen` (never committed): `NAME_GLYPHS` is
-// `dSCStaffrollNameAndJobSpriteInfo` (US), each letter quad's half width and
-// half height by name/job font index; `TEXT_GLYPHS` is
-// `dSCStaffrollTextBoxSpriteInfo` (US), each text box glyph's advance and
-// height by text font index.
-include!(concat!(env!("OUT_DIR"), "/staffroll_glyphs.rs"));
+/// `dSCStaffrollNameAndJobSpriteInfo` (US): each letter quad's half width
+/// and half height by name/job font index (`TableId::StaffrollNameGlyphs`).
+pub static NAME_GLYPHS: ssb_tables::Table<[[u8; 2]; 56]> =
+    ssb_tables::Table::new(ssb_tables::TableId::StaffrollNameGlyphs);
+/// `dSCStaffrollTextBoxSpriteInfo` (US): each text box glyph's advance and
+/// height by text font index (`TableId::StaffrollTextGlyphs`).
+pub static TEXT_GLYPHS: ssb_tables::Table<[[u8; 2]; 74]> =
+    ssb_tables::Table::new(ssb_tables::TableId::StaffrollTextGlyphs);
 
 /// `sSCStaffrollRollSpeed`'s two values.
 pub const ROLL_SPEED_SLOW: f32 = 0.003_750_000_1;

@@ -591,12 +591,11 @@ pub fn rule_number(
     }
 }
 
-mod digits {
-    include!(concat!(env!("OUT_DIR"), "/players_vs_digits.rs"));
-}
 /// The widths of `0DarkSprite` to `9DarkSprite` (the ROM's `Sprite.width`),
-/// which `mnPlayersVSMakeGameRuleNumber` steps by.
-pub use digits::DARK_DIGIT_WIDTHS;
+/// which `mnPlayersVSMakeGameRuleNumber` steps by
+/// (`TableId::PlayersDarkDigitWidths`).
+pub static DARK_DIGIT_WIDTHS: ssb_tables::Table<[f32; 10]> =
+    ssb_tables::Table::new(ssb_tables::TableId::PlayersDarkDigitWidths);
 
 pub(crate) fn piece(file: u32, offset: u32, x: f32, y: f32) -> Piece {
     Piece {
@@ -969,7 +968,7 @@ impl PlayersVs {
                     x,
                     23.0,
                     2,
-                    &DARK_DIGIT_WIDTHS,
+                    DARK_DIGIT_WIDTHS.get(),
                     *TIME_DIGIT_COLORS,
                     &mut put,
                 );
@@ -989,7 +988,7 @@ impl PlayersVs {
                 x,
                 23.0,
                 2,
-                &DARK_DIGIT_WIDTHS,
+                DARK_DIGIT_WIDTHS.get(),
                 *STOCK_DIGIT_COLORS,
                 &mut put,
             );

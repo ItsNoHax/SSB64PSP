@@ -12,7 +12,7 @@
 
 - Pack loading (`psp_runtime::scene_files`; RE-475, [D-046](decisions/D-046.md)):
   - boot: header, tables, shared region
-  - boot: pack `TABLES` section (`psp_runtime::tables::load`), read once into a leaked buffer and copied into `ssb-tables`' fixed `.bss` store (feature `eager`, `STORE_SIZE`, 172 KiB of tables today); the read buffer (172 KiB) stays allocated; host builds keep one zero-filled table of the largest size (`MAX_SIZE`) in `.rodata` for tables not yet installed (RE-589)
+  - boot: pack `TABLES` section (`psp_runtime::tables::load`), read once into a leaked buffer and copied into `ssb-tables`' fixed `.bss` store (feature `eager`, `STORE_SIZE`, 184 KiB of tables today); the read buffer (184 KiB) stays allocated; host builds keep one zero-filled table of the largest size (`MAX_SIZE`) in `.rodata` for tables not yet installed (RE-589)
   - tick 2 of boot: audio heads + 48-slot page cache (1.94 MB), never freed; samples stream from the pack ([D-049](decisions/D-049.md), RE-573, RE-582)
   - scene start: each scene's files with extern closure
   - runs `ssb_rom::loader_plan::Plan`: closure, `reloc_link::place_runs` Ascending runs, per-run blocks (RE-571)

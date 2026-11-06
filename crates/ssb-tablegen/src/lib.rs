@@ -103,7 +103,6 @@ mod d_arrays;
 mod effect_life;
 #[cfg(feature = "std")]
 mod emit;
-#[cfg(feature = "std")]
 mod ending_data;
 #[cfg(feature = "std")]
 mod fighters;
@@ -123,7 +122,6 @@ mod item_sounds;
 mod kirby_attack100;
 #[cfg(feature = "std")]
 mod kirby_copy;
-#[cfg(feature = "std")]
 mod menu_data;
 #[cfg(feature = "std")]
 mod model_parts;
@@ -131,13 +129,11 @@ mod model_parts;
 mod monster_weapons;
 #[cfg(feature = "std")]
 mod motion;
-#[cfg(feature = "std")]
 mod opening_data;
 #[cfg(feature = "std")]
 mod physics;
 #[cfg(feature = "std")]
 mod rom_layout;
-#[cfg(feature = "std")]
 mod sc1p_data;
 mod sin_table;
 // Every code overlay is listed; the generators use some of them.
@@ -281,11 +277,6 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
                 },
             ];
             files.extend(battle_data::generate(rom)?);
-            files.extend(ifcommon::generate(rom)?);
-            files.extend(menu_data::generate(rom)?);
-            files.extend(sc1p_data::generate(rom)?);
-            files.extend(ending_data::generate(rom)?);
-            files.extend(opening_data::generate(rom)?);
             files.push(d_arrays::generate_game());
             files
         }

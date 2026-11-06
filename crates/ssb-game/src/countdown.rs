@@ -23,18 +23,34 @@ pub const ROD: Sprite = 12;
 pub const FRAME: Sprite = 13;
 pub const ROD_SHADOW: Sprite = 14;
 
-/// The traffic light's and announcer's sprite tables (`dIFCommonTraffic*` and
-/// `dIFCommonAnnounce{Go,SuddenDeath}SpriteData` in `if/ifcommon.c`), generated
-/// at build time from the ROM by `crates/ssb-tablegen` (`ifcommon.rs`). The
-/// sprites are `GAME_STATUS` indices, and "SUDDEN DEATH!" file 37's
-/// (`ssb_rom::sprite::ANNOUNCE_COMMON`: A is 0, "!" 26); `TRAFFIC` is each
-/// lamp's position and colour id, `BACKLIGHT` and `SHADOW` the rod shadow's
-/// primitive and environment colours before and at "Go".
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/if_countdown.rs"));
-}
-pub use generated::SUDDEN_DEATH;
-use generated::{BACKLIGHT, GO, SHADOW, TRAFFIC, TRAFFIC_B, TRAFFIC_G, TRAFFIC_R, TRAFFIC_SPRITES};
+// The traffic light's and announcer's sprite tables (`dIFCommonTraffic*`
+// and `dIFCommonAnnounce{Go,SuddenDeath}SpriteData` in `if/ifcommon.c`),
+// read from the pack's `TABLES` section. The sprites are `GAME_STATUS`
+// indices, and "SUDDEN DEATH!" file 37's (`ssb_rom::sprite::ANNOUNCE_COMMON`:
+// A is 0, "!" 26).
+
+/// `dIFCommonTrafficSpriteOffsets` as `GAME_STATUS` indices, by colour id
+/// (`TableId::IfTrafficSprites`).
+static TRAFFIC_SPRITES: ssb_tables::Table<[u8; 9]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfTrafficSprites);
+/// `dIFCommonTrafficSpriteColorsR`, `G` and `B` (`TableId::IfTrafficColors`).
+static TRAFFIC_COLORS: ssb_tables::Table<[[u8; 9]; 3]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfTrafficColors);
+/// The rod shadow's primitive (`BACKLIGHT`) and environment (`SHADOW`)
+/// colours before and at "Go" (`TableId::IfGoColors`).
+static GO_COLORS: ssb_tables::Table<[[[u8; 3]; 2]; 2]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfGoColors);
+/// `dIFCommonTrafficSpriteData`: each lamp's `x, y, color_id`
+/// (`TableId::IfTraffic`).
+static TRAFFIC: ssb_tables::Table<[[i16; 3]; 15]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfTraffic);
+/// "GO!" (`dIFCommonAnnounceGoSpriteData`) as `(x, y, sprite)`.
+static GO: ssb_tables::Decoded<[(f32, f32, u8); 3]> =
+    ssb_tables::Decoded::new(|| crate::hud::announce(crate::hud::ANNOUNCE_GO));
+/// "SUDDEN DEATH!" (`dIFCommonAnnounceSuddenDeathSpriteData`) as `(x, y,
+/// sprite)`.
+pub static SUDDEN_DEATH: ssb_tables::Decoded<[(f32, f32, u8); 12]> =
+    ssb_tables::Decoded::new(|| crate::hud::announce(crate::hud::ANNOUNCE_SUDDEN_DEATH));
 
 /// The countdown thread's slide per tick.
 const SLIDE: f32 = 0.883_333_3;
@@ -78,14 +94,20 @@ pub struct Countdown {
     pub sudden_death_letters: bool,
 }
 
+/// Lamp `id`'s position in [`TRAFFIC`] as `(x, y)`.
+fn traffic_pos(id: usize) -> (f32, f32) {
+    let [x, y, _] = TRAFFIC[id];
+    (f32::from(x), f32::from(y))
+}
+
 fn traffic(id: usize) -> SObj {
-    let (x, y, color) = TRAFFIC[id];
-    let c = usize::from(color);
+    let c = TRAFFIC[id][2] as usize;
+    let [r, g, b] = *TRAFFIC_COLORS;
     SObj {
         sprite: TRAFFIC_SPRITES[c],
-        pos: (x, y),
+        pos: traffic_pos(id),
         scale: 1.0,
-        prim: [TRAFFIC_R[c], TRAFFIC_G[c], TRAFFIC_B[c]],
+        prim: [r[c], g[c], b[c]],
         env: [0; 3],
         attr: ATTR_CLOUD,
         rod_shadow: false,
@@ -131,8 +153,8 @@ impl Countdown {
         }
         c.push(traffic(10));
         let mut shadow = plain(ROD_SHADOW, 182.0, -11.0);
-        shadow.prim = BACKLIGHT[0];
-        shadow.env = SHADOW[0];
+        shadow.prim = GO_COLORS[0][0];
+        shadow.env = GO_COLORS[1][0];
         shadow.rod_shadow = true;
         c.push(shadow);
         c
@@ -230,8 +252,8 @@ impl Countdown {
                             .position(|s| s.is_some_and(|s| s.rod_shadow))
                         {
                             let mut shadow = self.list[i].unwrap();
-                            shadow.prim = BACKLIGHT[1];
-                            shadow.env = SHADOW[1];
+                            shadow.prim = GO_COLORS[0][1];
+                            shadow.env = GO_COLORS[1][1];
                             self.remove(i);
                             if i < self.current {
                                 self.current -= 1;
@@ -246,7 +268,7 @@ impl Countdown {
                         self.scale = 1.0;
                     }
                     let rscale = (self.scale - 1.0) * 0.5;
-                    let (x, y, _) = TRAFFIC[lamp];
+                    let (x, y) = traffic_pos(lamp);
                     if let Some(s) = self.list[self.current].as_mut() {
                         let (w, h) = sizes.get(usize::from(s.sprite)).copied().unwrap_or((0, 0));
                         s.scale = self.scale;

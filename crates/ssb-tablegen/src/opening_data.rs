@@ -7,13 +7,13 @@
 //! `refs/ssb-decomp-re/symbols/symbols_us.txt`; the overlay is the one the
 //! defining file's `.data` sits in (`smashbrothers.us.yaml`).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit::{self, f32_lit};
 use crate::source::{
     Overlay, OverlayData, OVL36, OVL37, OVL38, OVL39, OVL40, OVL41, OVL42, OVL43, OVL51,
 };
-use crate::{Generated, Result, Source};
+use crate::tables::{le_bytes, le_words, Ctx};
+use crate::Result;
 
 /// One scene's arrays: `dMVOpening<Name>CObjDescStart` (`CObjDesc`, 28 bytes:
 /// eye, at, `up.x`), `...End` and `...KeyEvents` (`FTKeyEvent[]` halfwords,
@@ -109,71 +109,62 @@ pub const JUNGLE_KEYS: [(&str, u32, usize); 2] = [
 /// second halfword.
 const KEY_END: u16 = 0;
 
-pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let mut w = emit::header(
-        "`dMVOpening*CObjDescStart`, `...End` and `...KeyEvents` of the eight fighter scenes and \
-         the jungle's key scripts",
-    );
+/// Halfwords in the `OpeningKeys` table: the eight scenes' scripts in
+/// [`SCENES`] order, then [`JUNGLE_KEYS`].
+pub const KEY_HALFWORDS: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < SCENES.len() {
+        n += SCENES[i].key_halfwords;
+        i += 1;
+    }
+    n + JUNGLE_KEYS[0].2 + JUNGLE_KEYS[1].2
+};
+
+/// `ssb-game`'s `OpeningCameras` table: each scene's
+/// `dMVOpening*CObjDescStart` then `...End` (eye, at, `up.x`), in [`SCENES`]
+/// order.
+pub fn cameras_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut words = Vec::new();
     for s in &SCENES {
-        let d = OverlayData::new(rom, s.overlay);
-        for (suffix, at) in [("START", s.start), ("END", s.end)] {
-            let _ = writeln!(
-                w,
-                "pub const {}_{suffix}: CObjDesc = {};",
-                s.name,
-                cobj_desc(d, at)?
-            );
+        let d = OverlayData::new(Some(c.rom), s.overlay);
+        for at in [s.start, s.end] {
+            for k in 0..7 {
+                words.push(d.u32(at + k * 4)?);
+            }
         }
-        keys(
-            &mut w,
-            d,
-            &format!("{}_KEYS", s.name),
-            s.keys,
-            s.key_halfwords,
-        )?;
     }
-    let d = OverlayData::new(rom, OVL51);
+    Ok(le_words(&words))
+}
+
+/// The `OpeningKeys` table: the eight scenes' `dMVOpening*KeyEvents`, then
+/// the jungle's two scripts, as halfwords ([`KEY_HALFWORDS`]).
+pub fn keys_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut halves = Vec::with_capacity(KEY_HALFWORDS);
+    for s in &SCENES {
+        let d = OverlayData::new(Some(c.rom), s.overlay);
+        keys(&mut halves, d, s.name, s.keys, s.key_halfwords)?;
+    }
+    let d = OverlayData::new(Some(c.rom), OVL51);
     for (name, at, n) in JUNGLE_KEYS {
-        keys(&mut w, d, &format!("{name}_KEYS"), at, n)?;
+        keys(&mut halves, d, name, at, n)?;
     }
-    Ok(vec![Generated {
-        name: "opening_scenes.rs",
-        text: w,
-    }])
+    Ok(le_bytes(&halves, u16::to_le_bytes))
 }
 
-/// A `CObjDesc` as the port's `desc(v(eye), v(at), up_x)`.
-fn cobj_desc(d: OverlayData, at: u32) -> Result<String> {
-    let f = |o: u32| d.f32(at + o).map(f32_lit);
-    Ok(format!(
-        "desc(v({}, {}, {}), v({}, {}, {}), {})",
-        f(0)?,
-        f(4)?,
-        f(8)?,
-        f(12)?,
-        f(16)?,
-        f(20)?,
-        f(24)?
-    ))
-}
-
-/// An `FTKeyEvent` script as halfwords. A ROM read checks that the script
-/// ends exactly at `n` halfwords.
-fn keys(w: &mut String, d: OverlayData, name: &str, at: u32, n: usize) -> Result<()> {
+/// An `FTKeyEvent` script as halfwords, checked to end exactly at `n`
+/// halfwords.
+fn keys(out: &mut Vec<u16>, d: OverlayData, name: &str, at: u32, n: usize) -> Result<()> {
     let halves = (0..n as u32)
         .map(|i| d.u16(at + i * 2))
         .collect::<Result<Vec<_>>>()?;
-    if d.rom.is_some() {
-        let mut i = 0;
-        while halves[i] != KEY_END {
-            i += 2;
-            assert!(i < n, "{name} runs past its {n} halfwords");
-        }
-        assert_eq!(i + 1, n, "{name} ends before its {n} halfwords");
+    let mut i = 0;
+    while halves[i] != KEY_END {
+        i += 2;
+        assert!(i < n, "{name} keys run past its {n} halfwords");
     }
-    let _ = writeln!(w, "pub const {name}: [u16; {n}] = [");
-    emit::hex_rows_u16(w, &halves, 11);
-    w.push_str("];\n");
+    assert_eq!(i + 1, n, "{name} keys end before its {n} halfwords");
+    out.extend_from_slice(&halves);
     Ok(())
 }
 
@@ -182,13 +173,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stubs_have_every_scene() {
-        let files = generate(None).unwrap();
-        assert_eq!(files.len(), 1);
-        let text = &files[0].text;
-        assert_eq!(text.matches("CObjDesc = desc(").count(), 16);
-        assert_eq!(text.matches("_KEYS: [u16; ").count(), 10);
-        assert!(text.contains("pub const JUNGLE_SAMUS_KEYS: [u16; 33]"));
+    fn the_keys_are_124_halfwords() {
+        assert_eq!(KEY_HALFWORDS, 15 + 9 + 5 + 11 + 3 + 7 + 1 + 5 + 35 + 33);
     }
 
     #[test]

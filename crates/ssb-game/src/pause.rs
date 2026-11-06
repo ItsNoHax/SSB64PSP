@@ -30,20 +30,38 @@ pub struct Decal {
     pub env: [u8; 3],
 }
 
-/// The pause menu's decals (`dIFCommonBattlePauseDecalsSpriteData` and
-/// `...BorderRectangle` in `if/ifcommon.c`), generated at build time from the
-/// ROM by `crates/ssb-tablegen` (`ifcommon.rs`).
-mod generated {
-    use super::Decal;
-    include!(concat!(env!("OUT_DIR"), "/if_pause.rs"));
+/// `dIFCommonBattlePauseDecalsSpriteData` (`if/ifcommon.c`): per decal
+/// `sprite, x, y, prim[3], env[3]` (`TableId::IfPauseDecals`).
+static DECAL_ROWS: ssb_tables::Table<[[i16; 9]; 14]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfPauseDecals);
+
+/// Decal `i` of [`DECAL_ROWS`].
+fn decal(i: usize) -> Decal {
+    let r = DECAL_ROWS[i];
+    Decal {
+        sprite: r[0] as u8,
+        pos: (r[1], r[2]),
+        prim: [r[3] as u8, r[4] as u8, r[5] as u8],
+        env: [r[6] as u8, r[7] as u8, r[8] as u8],
+    }
 }
-pub use generated::{BONUS_RETRY, BORDER, DECALS};
+
+/// The decals every pause shows (`dIFCommonBattlePauseDecalsSpriteData[..12]`).
+pub static DECALS: ssb_tables::Decoded<[Decal; 12]> =
+    ssb_tables::Decoded::new(|| core::array::from_fn(decal));
+/// L and RETRY, which bonus courses add (`...[12..14]`).
+pub static BONUS_RETRY: ssb_tables::Decoded<[Decal; 2]> =
+    ssb_tables::Decoded::new(|| core::array::from_fn(|i| decal(12 + i)));
+/// `dIFCommonBattlePauseBorderRectangle`: `ulx, uly, lrx, lry`
+/// (`TableId::IfPauseBorder`).
+pub static BORDER: ssb_tables::Table<[[i16; 4]; 5]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfPauseBorder);
 
 /// `ifCommonBattlePauseMakeSObjsAll`: ten decals unless the camera zooms.
 pub fn decals(kind: PauseKind) -> &'static [Decal] {
     match kind {
-        PauseKind::Default => &DECALS,
-        PauseKind::PlayerNA | PauseKind::Bonus => &DECALS[..10],
+        PauseKind::Default => DECALS.get(),
+        PauseKind::PlayerNA | PauseKind::Bonus => &DECALS.get()[..10],
     }
 }
 

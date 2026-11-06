@@ -2,10 +2,10 @@
 //! registers these values at the original presentation deadlines.
 use super::{bonus::Bonus, BattleState, Difficulty, SceneData, Stage};
 
-// `BONUS_POINTS`: `dSC1PStageClearBonusData`'s points, in bonus ID order
-// (including unused IDs), generated at build time from the user's ROM by
-// `crates/ssb-tablegen` (never committed).
-include!(concat!(env!("OUT_DIR"), "/stage_clear_bonus.rs"));
+/// `dSC1PStageClearBonusData`'s points, in bonus ID order (including unused
+/// IDs; `TableId::StageClearPoints`).
+pub static BONUS_POINTS: ssb_tables::Table<[i32; 58]> =
+    ssb_tables::Table::new(ssb_tables::TableId::StageClearPoints);
 /// `sc1PStageClearGetNoMissMultiplier`'s `nomiss`, by [`Stage`].
 pub use crate::d_arrays::SC_1P_STAGE_CLEAR_GET_NO_MISS_MULTIPLIER_NOMISS as NO_MISS_MULTIPLIERS;
 

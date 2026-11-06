@@ -120,12 +120,31 @@ struct RawTrack {
     flags: u32,
 }
 
-/// The motion tables (`dMNCharactersSpecialMotion*`, `...CommonMotionDescs`,
-/// `...Kirby*`, `...Purin*` and `...Attack1MotionDescs`), generated at build
-/// time from the ROM by `crates/ssb-tablegen` (`menu_data.rs`).
-mod generated {
-    use super::RawTrack;
-    include!(concat!(env!("OUT_DIR"), "/characters_motion.rs"));
+/// The motion tables as `[status, length, flags]` words:
+/// `SPECIAL_MOTIONS` (`dMNCharactersSpecialMotion*`, by fighter, motion,
+/// track), `COMMON_MOTIONS` (`...CommonMotionDescs`), `ATTACK1_MOTIONS`
+/// (`...Attack1MotionDescs`) and `AERIAL` (`...KirbyJumpAerial`, `...KirbyFall`, `...PurinJumpAerial`,
+/// `...PurinFall`; `TableId::Characters*`).
+static SPECIAL_MOTIONS: ssb_tables::Table<[[[[u32; 3]; 8]; 3]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CharactersSpecial);
+static COMMON_MOTIONS: ssb_tables::Table<[[[u32; 3]; 8]; MOTION_KINDS]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CharactersCommon);
+static ATTACK1_MOTIONS: ssb_tables::Table<[[[u32; 3]; 8]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CharactersAttack1);
+static AERIAL: ssb_tables::Table<[[u32; 3]; 18]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CharactersAerial);
+/// The first track of each [`AERIAL`] table (layout).
+const KIRBY_JUMP_AERIAL: usize = 0;
+const KIRBY_FALL: usize = 8;
+const PURIN_JUMP_AERIAL: usize = 9;
+const PURIN_FALL: usize = 17;
+
+fn raw([status, length, flags]: [u32; 3]) -> RawTrack {
+    RawTrack {
+        status,
+        length: length as i32,
+        flags,
+    }
 }
 
 /// `FTSTATUS_CHARACTERS_NULL`.
@@ -354,33 +373,33 @@ pub fn motion(kind: FighterKind, motion_kind: usize, track: usize) -> Track {
     let fk = (kind as usize).min(11);
     let track = track.min(7);
     if motion_kind <= SPECIAL_LW {
-        return track_of(fk, generated::SPECIAL[fk][motion_kind][track]);
+        return track_of(fk, raw(SPECIAL_MOTIONS[fk][motion_kind][track]));
     }
     if matches!(kind, FighterKind::Kirby | FighterKind::Purin) {
         if motion_kind == JUMP_AERIAL_F || motion_kind == JUMP_AERIAL_B {
             return if kind == FighterKind::Kirby {
-                track_of(fk, generated::KIRBY_JUMP_AERIAL[track])
+                track_of(fk, raw(AERIAL[KIRBY_JUMP_AERIAL + track]))
             } else {
-                track_of(fk, generated::PURIN_JUMP_AERIAL[track])
+                track_of(fk, raw(AERIAL[PURIN_JUMP_AERIAL + track]))
             };
         }
         if (ATTACK_AIR_START..=ATTACK_AIR_END).contains(&motion_kind) && track == 1 {
             return track_of(
                 fk,
                 if kind == FighterKind::Kirby {
-                    generated::KIRBY_FALL
+                    raw(AERIAL[KIRBY_FALL])
                 } else {
-                    generated::PURIN_FALL
+                    raw(AERIAL[PURIN_FALL])
                 },
             );
         }
     }
     if motion_kind == ATTACK1 {
-        return track_of(fk, generated::ATTACK1[fk][track]);
+        return track_of(fk, raw(ATTACK1_MOTIONS[fk][track]));
     }
     track_of(
         fk,
-        generated::COMMON[motion_kind.min(MOTION_KINDS - 1)][track],
+        raw(COMMON_MOTIONS[motion_kind.min(MOTION_KINDS - 1)][track]),
     )
 }
 

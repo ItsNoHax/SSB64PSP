@@ -397,16 +397,41 @@ pub fn timer_origin(x: f32, w: u16, h: u16) -> (f32, f32) {
     )
 }
 
-/// The announcer's letters (`dIFCommonAnnounce{TimeUp,Complete,GameSet,Failure}
-/// SpriteData` in `if/ifcommon.c`) as `(x, y, sprite)`, generated at build time
-/// from the ROM by `crates/ssb-tablegen` (`ifcommon.rs`): `TIME_UP` and
-/// `GAME_SET` are file 82's blue letters (`ssb_rom::sprite::GAME_STATUS`
-/// indices), `COMPLETE` and `FAILURE` file 37's A..Z
-/// (`ssb_rom::sprite::ANNOUNCE_COMMON`).
-pub use generated::{COMPLETE, FAILURE, GAME_SET, TIME_UP};
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/if_announce.rs"));
+/// The announcer's letters (`dIFCommonAnnounce{Go,SuddenDeath,TimeUp,
+/// Complete,GameSet,Failure}SpriteData` in `if/ifcommon.c`) as `x, y,
+/// sprite` rows, in that order (`TableId::IfAnnounce`).
+static ANNOUNCE: ssb_tables::Table<[[i16; 3]; 44]> =
+    ssb_tables::Table::new(ssb_tables::TableId::IfAnnounce);
+/// The first row of `GO`, `SUDDEN_DEATH`, `TIME_UP`, `COMPLETE`, `GAME_SET`
+/// and `FAILURE` in [`ANNOUNCE`] (layout).
+pub(crate) const ANNOUNCE_GO: usize = 0;
+pub(crate) const ANNOUNCE_SUDDEN_DEATH: usize = 3;
+const ANNOUNCE_TIME_UP: usize = 15;
+const ANNOUNCE_COMPLETE: usize = 21;
+const ANNOUNCE_GAME_SET: usize = 30;
+const ANNOUNCE_FAILURE: usize = 37;
+
+/// `N` announcer letters from row `at` of [`ANNOUNCE`] as `(x, y, sprite)`.
+pub(crate) fn announce<const N: usize>(at: usize) -> [(f32, f32, u8); N] {
+    core::array::from_fn(|i| {
+        let [x, y, sprite] = ANNOUNCE[at + i];
+        (f32::from(x), f32::from(y), sprite as u8)
+    })
 }
+
+/// The announcer's letters as `(x, y, sprite)`: `TIME_UP` and `GAME_SET`
+/// are file 82's blue letters (`ssb_rom::sprite::GAME_STATUS` indices),
+/// `COMPLETE` and `FAILURE` file 37's A..Z
+/// (`ssb_rom::sprite::ANNOUNCE_COMMON`).
+pub static TIME_UP: ssb_tables::Decoded<[(f32, f32, u8); 6]> =
+    ssb_tables::Decoded::new(|| announce(ANNOUNCE_TIME_UP));
+pub static COMPLETE: ssb_tables::Decoded<[(f32, f32, u8); 9]> =
+    ssb_tables::Decoded::new(|| announce(ANNOUNCE_COMPLETE));
+pub static GAME_SET: ssb_tables::Decoded<[(f32, f32, u8); 7]> =
+    ssb_tables::Decoded::new(|| announce(ANNOUNCE_GAME_SET));
+pub static FAILURE: ssb_tables::Decoded<[(f32, f32, u8); 7]> =
+    ssb_tables::Decoded::new(|| announce(ANNOUNCE_FAILURE));
+const _: () = assert!(ANNOUNCE_FAILURE + 7 == 44);
 
 /// `IFDCharacter`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

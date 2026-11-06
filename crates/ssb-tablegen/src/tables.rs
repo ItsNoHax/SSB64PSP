@@ -241,56 +241,56 @@ pub const IDS: &[TableDesc] = &[
         kind: Kind::U32,
         len: Len::Exact(12 * 3),
         doc: "`dSC1PBonusStageTargetDescs`: `start`, `dobjdesc`, `anim_joint`.",
-        read: std_reader!(crate::sc1p_data::courses_bytes),
+        read: Some(crate::sc1p_data::courses_bytes),
     },
     TableDesc {
         name: "Bonus2Trees",
         kind: Kind::U32,
         len: Len::Exact(6 * 4),
         doc: "`dSC1PBonusStagePlatformDescs`, then `dSC1PBonusStageBoardedPlatformDescs` (two words and two zeros).",
-        read: std_reader!(crate::sc1p_data::trees_bytes),
+        read: Some(crate::sc1p_data::trees_bytes),
     },
     TableDesc {
         name: "Bonus2Bumpers",
         kind: Kind::U32,
         len: Len::Exact(12 * 2),
         doc: "`dSC1PBonusStageBumperDescs`: `dobjdesc`, `anim_joint` (0, 0: none).",
-        read: std_reader!(crate::sc1p_data::bumpers_bytes),
+        read: Some(crate::sc1p_data::bumpers_bytes),
     },
     TableDesc {
         name: "CampaignBonusLabels",
         kind: Kind::U32,
         len: Len::Exact(58),
         doc: "`dSC1PStageClearBonusData`'s `offset`s.",
-        read: std_reader!(crate::sc1p_data::bonus_labels_bytes),
+        read: Some(crate::sc1p_data::bonus_labels_bytes),
     },
     TableDesc {
         name: "CampaignAllyCameras",
         kind: Kind::F32,
         len: Len::Exact(12 * 6 * 6),
         doc: "`sc1PIntroGetFighterCObjDesc`'s `cobj_descs` eye and at points.",
-        read: std_reader!(crate::sc1p_data::ally_cameras_bytes),
+        read: Some(crate::sc1p_data::ally_cameras_bytes),
     },
     TableDesc {
         name: "EndingCongra",
         kind: Kind::U32,
         len: Len::Exact(12 * 4),
         doc: "`dMNCongraPictures`: bottom file and offset, top file and offset.",
-        read: std_reader!(crate::ending_data::congra_bytes),
+        read: Some(crate::ending_data::congra_bytes),
     },
     TableDesc {
         name: "StaffrollNameImages",
         kind: Kind::U32,
         len: Len::Exact(56),
         doc: "`dSCStaffrollNameAndJobSpriteInfo`'s `offset`s.",
-        read: std_reader!(crate::ending_data::name_images_bytes),
+        read: Some(crate::ending_data::name_images_bytes),
     },
     TableDesc {
         name: "StaffrollTextSprites",
         kind: Kind::U32,
         len: Len::Exact(74),
         doc: "`dSCStaffrollTextBoxSpriteInfo`'s `offset`s.",
-        read: std_reader!(crate::ending_data::text_sprites_bytes),
+        read: Some(crate::ending_data::text_sprites_bytes),
     },
     TableDesc {
         name: "AnimFiles",
@@ -320,7 +320,183 @@ pub const IDS: &[TableDesc] = &[
         doc: "Master Hand's slots holding a 32-bit `AnimJoint` clip (1).",
         read: std_reader!(crate::anim_table::boss_joint_bytes),
     },
+    TableDesc {
+        name: "IfTrafficSprites",
+        kind: Kind::U8,
+        len: Len::Exact(9),
+        doc: "`dIFCommonTrafficSpriteOffsets` as file 82 manifest indices, by colour id.",
+        read: std_reader!(crate::ifcommon::traffic_sprites_bytes),
+    },
+    TableDesc {
+        name: "IfTrafficColors",
+        kind: Kind::U8,
+        len: Len::Exact(3 * 9),
+        doc: "`dIFCommonTrafficSpriteColorsR`, `G`, `B`.",
+        read: std_reader!(crate::ifcommon::traffic_colors_bytes),
+    },
+    TableDesc {
+        name: "IfGoColors",
+        kind: Kind::U8,
+        len: Len::Exact(2 * 2 * 3),
+        doc: "`dIFCommonTrafficGoBacklight{R,G,B}`, `...GoShadow{R,G,B}`: by state, channel.",
+        read: std_reader!(crate::ifcommon::go_colors_bytes),
+    },
+    TableDesc {
+        name: "IfTraffic",
+        kind: Kind::I16,
+        len: Len::Exact(15 * 3),
+        doc: "`dIFCommonTrafficSpriteData`: `x`, `y`, `color_id`.",
+        read: std_reader!(crate::ifcommon::traffic_bytes),
+    },
+    TableDesc {
+        name: "IfAnnounce",
+        kind: Kind::I16,
+        len: Len::Exact(IF_ANNOUNCE_ROWS * 3),
+        doc: "`dIFCommonAnnounce{Go,SuddenDeath,TimeUp,Complete,GameSet,Failure}SpriteData`: \
+              `x`, `y`, sprite (a manifest index).",
+        read: std_reader!(crate::ifcommon::announce_bytes),
+    },
+    TableDesc {
+        name: "IfPauseDecals",
+        kind: Kind::I16,
+        len: Len::Exact(14 * 9),
+        doc: "`dIFCommonBattlePauseDecalsSpriteData`: sprite (file 197 manifest index), `x`, `y`, \
+              `prim[3]`, `env[3]`.",
+        read: std_reader!(crate::ifcommon::pause_decals_bytes),
+    },
+    TableDesc {
+        name: "IfPauseBorder",
+        kind: Kind::I16,
+        len: Len::Exact(5 * 4),
+        doc: "`dIFCommonBattlePauseBorderRectangle`: `ulx`, `uly`, `lrx`, `lry`.",
+        read: std_reader!(crate::ifcommon::pause_border_bytes),
+    },
+    TableDesc {
+        name: "TitleFire",
+        kind: Kind::U32,
+        len: Len::Exact(30),
+        doc: "`dMNTitleFireSpriteOffsets`.",
+        read: Some(crate::menu_data::title_fire_bytes),
+    },
+    TableDesc {
+        name: "TitleFireColors",
+        kind: Kind::U8,
+        len: Len::Exact(7 * 3),
+        doc: "`dMNTitleFireColors{R,G,B}`: by colour, channel.",
+        read: Some(crate::menu_data::title_fire_colors_bytes),
+    },
+    TableDesc {
+        name: "TitleSprites",
+        kind: Kind::I32,
+        len: Len::Exact(10 * 3),
+        doc: "`dMNTitleCommonSpriteDescs` (US): `x`, `y`, `offset`.",
+        read: Some(crate::menu_data::title_sprites_bytes),
+    },
+    TableDesc {
+        name: "CharactersSpecial",
+        kind: Kind::U32,
+        len: Len::Exact(12 * 3 * 8 * 3),
+        doc: "`dMNCharactersSpecialMotion*` by `FTKind`, motion, track: `status_id`, \
+              `anim_length`, `flags`.",
+        read: Some(crate::menu_data::characters_special_bytes),
+    },
+    TableDesc {
+        name: "CharactersCommon",
+        kind: Kind::U32,
+        len: Len::Exact(39 * 8 * 3),
+        doc: "`dMNCharactersCommonMotionDescs` by motion kind, track.",
+        read: Some(crate::menu_data::characters_common_bytes),
+    },
+    TableDesc {
+        name: "CharactersAttack1",
+        kind: Kind::U32,
+        len: Len::Exact(12 * 8 * 3),
+        doc: "`dMNCharactersAttack1MotionDescs` by `FTKind`, track.",
+        read: Some(crate::menu_data::characters_attack1_bytes),
+    },
+    TableDesc {
+        name: "CharactersAerial",
+        kind: Kind::U32,
+        len: Len::Exact(2 * 9 * 3),
+        doc: "`dMNCharactersKirbyJumpAerialMotionDescs` and `...KirbyFallMotionDesc`, then Purin's.",
+        read: Some(crate::menu_data::characters_aerial_bytes),
+    },
+    TableDesc {
+        name: "PlayersDarkDigitWidths",
+        kind: Kind::F32,
+        len: Len::Exact(10),
+        doc: "`llMNPlayersCommon0DarkSprite` to `...9DarkSprite`'s `width`.",
+        read: Some(crate::menu_data::dark_digit_widths_bytes),
+    },
+    TableDesc {
+        name: "StageClearPoints",
+        kind: Kind::I32,
+        len: Len::Exact(58),
+        doc: "`dSC1PStageClearBonusData`'s `points`.",
+        read: Some(crate::sc1p_data::bonus_points_bytes),
+    },
+    TableDesc {
+        name: "SC1PComputers",
+        kind: Kind::U8,
+        len: Len::Exact(18 * 22),
+        doc: "`dSC1PGameComputerDesc`: each `SC1PGameComputer`'s 22 bytes.",
+        read: Some(crate::sc1p_data::computers_bytes),
+    },
+    TableDesc {
+        name: "SC1PStages",
+        kind: Kind::U8,
+        len: Len::Exact(18 * 8),
+        doc: "`dSC1PGameStageDesc` without `item_toggles` (`sc1p_data::STAGE_ROW`).",
+        read: Some(crate::sc1p_data::stages_bytes),
+    },
+    TableDesc {
+        name: "BossCometColors",
+        kind: Kind::U8,
+        len: Len::Exact(7 * 3),
+        doc: "`dSC1PGameBossCometEnvColor{R,G,B}`: by colour, channel.",
+        read: Some(crate::sc1p_data::boss_comet_colors_bytes),
+    },
+    TableDesc {
+        name: "BossWallpapers",
+        kind: Kind::U32,
+        len: Len::Exact(4 * 35),
+        doc: "`dSC1PGameBossWallpapers` and their effects, animations and plans \
+              (`sc1p_data::BOSS_ROW`).",
+        read: Some(crate::sc1p_data::boss_wallpapers_bytes),
+    },
+    TableDesc {
+        name: "StaffrollNameGlyphs",
+        kind: Kind::U8,
+        len: Len::Exact(56 * 2),
+        doc: "`dSCStaffrollNameAndJobSpriteInfo`'s `width`, `height`.",
+        read: Some(crate::ending_data::name_glyphs_bytes),
+    },
+    TableDesc {
+        name: "StaffrollTextGlyphs",
+        kind: Kind::U8,
+        len: Len::Exact(74 * 2),
+        doc: "`dSCStaffrollTextBoxSpriteInfo`'s `width`, `height`.",
+        read: Some(crate::ending_data::text_glyphs_bytes),
+    },
+    TableDesc {
+        name: "OpeningCameras",
+        kind: Kind::F32,
+        len: Len::Exact(8 * 2 * 7),
+        doc: "`dMVOpening*CObjDescStart` and `...End` of the eight fighter scenes: eye, at, `up.x`.",
+        read: Some(crate::opening_data::cameras_bytes),
+    },
+    TableDesc {
+        name: "OpeningKeys",
+        kind: Kind::U16,
+        len: Len::Exact(crate::opening_data::KEY_HALFWORDS),
+        doc: "`dMVOpening*KeyEvents` of the eight fighter scenes, then \
+              `dMVOpeningJungle{Donkey,Samus}KeyEvents`.",
+        read: Some(crate::opening_data::keys_bytes),
+    },
 ];
+
+/// `ifcommon::ANNOUNCE_ROWS` (layout).
+pub const IF_ANNOUNCE_ROWS: usize = 44;
 
 /// `ssb_rom::anim::SLOT_COUNT` (layout; `anim_table::SLOTS`).
 pub const ANIM_SLOTS: usize = 667;
@@ -334,13 +510,34 @@ const _: () = {
     assert!(crate::rom_layout::EFFECTS.len() == 46);
     assert!(crate::rom_layout::WEAPON_DESCS.len() == 35);
     assert!(crate::sc1p_data::BONUS_TARGETS.1 == 12);
-    assert!(crate::sc1p_data::TREE_COUNT == 6);
     assert!(crate::sc1p_data::BONUS_BUMPERS.1 == 12);
     assert!(crate::sc1p_data::STAGE_CLEAR_BONUS.1 == 58);
     assert!(crate::sc1p_data::ALLY_CAMERAS.1 == 12 && crate::sc1p_data::ALLY_CAMERAS.2 == 6);
     assert!(crate::ending_data::CONGRA_PICTURES.1 == 12);
     assert!(crate::ending_data::NAME_AND_JOB.1 == 56);
     assert!(crate::ending_data::TEXT_BOX.1 == 74);
+    assert!(crate::ifcommon::ANNOUNCE_ROWS == IF_ANNOUNCE_ROWS);
+    assert!(crate::ifcommon::TRAFFIC_OFFSETS.1 == 9);
+    assert!(crate::ifcommon::TRAFFIC_COLOR_COUNT == 9);
+    assert!(crate::ifcommon::TRAFFIC_DATA.1 == 15);
+    assert!(crate::ifcommon::PAUSE_DECALS.1 == 14 && crate::ifcommon::DECAL_ROW == 9);
+    assert!(crate::ifcommon::PAUSE_BORDER.1 == 5);
+};
+
+// The no_std generators' counts.
+const _: () = {
+    use crate::{ending_data as e, menu_data as m, opening_data as o, sc1p_data as s};
+    assert!(m::TITLE_FIRE_OFFSETS.1 == 30 && m::TITLE_FIRE_COLOR_COUNT == 7);
+    assert!(m::TITLE_SPRITE_DESCS.1 == 10);
+    assert!(m::SPECIAL_MOTIONS.1 == 12 && m::TRACKS == 8);
+    assert!(m::COMMON_MOTIONS.1 == 39 && m::ATTACK1_MOTIONS.1 == 12);
+    assert!(m::DARK_DIGIT_OFFSETS.1 == 10);
+    assert!(s::STAGE_CLEAR_BONUS.1 == 58 && s::TREE_COUNT == 6);
+    assert!(s::GAME_COMPUTER_DESC.1 == 18 && s::GAME_STAGE_DESC.1 == 18);
+    assert!(s::STAGE_ROW == 8 && s::BOSS_COMET_COLOR_COUNT == 7);
+    assert!(s::BOSS_WALLPAPERS.1 == 4 && s::BOSS_ROW == 35);
+    assert!(e::NAME_AND_JOB.1 == 56 && e::TEXT_BOX.1 == 74);
+    assert!(o::SCENES.len() == 8);
 };
 
 /// The `ssb-tables` build script's `table_ids.rs`: the ids, kinds and
