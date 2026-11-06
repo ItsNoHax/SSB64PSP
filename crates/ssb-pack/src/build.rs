@@ -84,7 +84,12 @@ pub fn build(
         ssb_tablegen::Source::from_bytes(data.to_vec()).map_err(|e| format!("tables: {e}"))?;
     let tables = ssb_tablegen::tables_section(Some(&source)).map_err(|e| format!("tables: {e}"))?;
     drop(source);
-    ssb_tables::install(Vec::leak(tables.clone())).map_err(|e| format!("tables section: {e}"))?;
+    // `unsafe` in a runtime's `eager` build (the PSP): no table is read yet,
+    // on any thread; the block is unused in the host's checked build.
+    #[allow(unused_unsafe)]
+    // SAFETY: nothing has read a table before this point in the build.
+    let installed = unsafe { ssb_tables::install(Vec::leak(tables.clone())) };
+    installed.map_err(|e| format!("tables section: {e}"))?;
 
     // The audio section: sequences, both banks, the FGM files and the
     // synthesizer's constant tables, loaded once at boot (D-049). Made

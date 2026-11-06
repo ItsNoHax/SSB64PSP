@@ -2001,11 +2001,14 @@ fn stack_set() -> usize {
     unsafe { core::ptr::read_volatile(&STACK_SET[1]) as usize }
 }
 
-#[cfg_attr(feature = "fcr31_probe", allow(unreachable_code))]
+#[cfg_attr(any(feature = "fcr31_probe", feature = "pack_probe"), allow(unreachable_code))]
 fn psp_main() {
     ssb_psp_runtime::fpu::init_thread(ssb_psp_runtime::fpu::GameThread::Main);
     #[cfg(feature = "fcr31_probe")]
     ssb_psp_runtime::fcr31_probe::run();
+    // Before anything the game allocates, so the build has the whole heap.
+    #[cfg(feature = "pack_probe")]
+    ssb_psp_runtime::pack_probe::run();
     #[cfg(not(feature = "boot_log"))]
     boot_log::log("psp_main");
     // The stack before the pin (RE-583).

@@ -23,6 +23,8 @@ ssb-pose = { path = "../crates/ssb-pose", default-features = false }
 # The ROM-derived tables, installed from the pack's TABLES section at boot
 # (`tables`, D-048).
 ssb-tables = { path = "../crates/ssb-tables", default-features = false, features = ["eager"] }
+# The portable pack build, for `pack_probe` only (RE-588).
+ssb-pack = { path = "../crates/ssb-pack", default-features = false, optional = true }
 
 [features]
 # Masks every FPU exception on the game's threads (`fpu.rs`) instead of
@@ -32,6 +34,10 @@ fpu_mask = []
 # PSPLink ldstart, then an XMB-style LoadExec of a probe EBOOT, then back to
 # PSPLink. Needs ARK. Off by default.
 fcr31_probe = []
+# Replaces the game with the on-PSP pack build probe (`pack_probe.rs`,
+# RE-588): `ms0:/PSP/GAME/ssb64probe/rom.z64` in, `ssb64.pak` and a timed
+# `packlog.txt` out. Off by default.
+pack_probe = ["dep:ssb-pack"]
 # Fills the stack below each fighter, stage, item and weapon pass with a
 # signalling NaN (`stack_poison.rs`), so a float operation LLVM speculates
 # onto an unwritten slot traps on the first frame that reaches it instead of

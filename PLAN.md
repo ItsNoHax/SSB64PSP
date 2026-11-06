@@ -123,7 +123,7 @@ the Media Engine (batch 159), started by the game's own kernel module
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Owner's 37 compensated textures (RE-588 item 8). Portable packer `ssb-pack` (`no_std`) landed; build peak 37.5 MiB live heap of 51.4 MB free, host 3.2 s (PSP estimate 6.5-9.3 min; RE-588 item 11). Remaining: measure the build on the PSP (probe EBOOT, ms0 sink), the other `ssb-tablegen` tables into the pack (`TABLES` section and `ssb-tables` reader landed with the sine tables, RE-589), installer. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
+| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Owner's 37 compensated textures (RE-588 item 8). Portable packer `ssb-pack` (`no_std`) landed; measured on the PSP-2000: 5.93 min, pack byte-identical, lowest free 11.3 MB (RE-588 item 12). Remaining: the other `ssb-tablegen` tables into the pack (`TABLES` section and `ssb-tables` reader landed with the sine tables, RE-589), installer. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
 
 ## Completed
 

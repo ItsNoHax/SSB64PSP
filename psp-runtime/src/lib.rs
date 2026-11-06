@@ -28,6 +28,8 @@ pub mod memory;
 pub mod me;
 pub mod meshdraw;
 pub mod movie;
+#[cfg(all(feature = "pack_probe", target_os = "psp"))]
+pub mod pack_probe;
 pub mod particles;
 pub mod profile;
 pub mod reverb_vfpu;
