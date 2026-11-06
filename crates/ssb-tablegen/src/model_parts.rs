@@ -14,7 +14,6 @@
 use alloc::vec::Vec;
 
 use crate::archive::File;
-#[cfg(feature = "std")]
 use crate::figatree_order::HiddenPart;
 use crate::fighters::FIGHTERS;
 use crate::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
@@ -141,7 +140,6 @@ fn hidden_parts(main: &File, attributes: u32, count: u8, dl: u64) -> Result<Vec<
 }
 
 /// What `figatree_order::figatree_order` builds a fighter's tree from.
-#[cfg(feature = "std")]
 pub struct Skeleton {
     /// Every high-detail `DObjDesc`'s `id & 0xFFF`, to the `DOBJ_ARRAY_MAX`
     /// entry.
@@ -155,7 +153,6 @@ pub struct Skeleton {
 /// Fighter `k`'s [`Skeleton`]: `lbCommonSetupFighterPartsDObjs` builds the
 /// tree from `commonparts[0].dobjdesc` and `setup_parts`, and
 /// `ftMainUpdateHiddenPartID` inserts `hiddenparts[i]` (RE-432).
-#[cfg(feature = "std")]
 pub fn skeleton(rom: &Source, k: usize) -> Result<Skeleton> {
     let f = &FIGHTERS[k];
     let main = rom.file(f.main_file)?;

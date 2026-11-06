@@ -212,7 +212,7 @@ impl Child {
                                 3 | 4 => {
                                     t.kind = Kind::Linear;
                                     if payload != 0.0 {
-                                        t.rate_base = (t.target - t.base) / payload;
+                                        t.rate_base = divide_or_one(t.target - t.base, payload);
                                     }
                                     t.rate_target = 0.0;
                                 }
@@ -222,7 +222,7 @@ impl Child {
                                     t.rate_target = word(&mut self.at)?;
                                     t.kind = Kind::Cubic;
                                     if payload != 0.0 {
-                                        t.length_invert = 1.0 / payload;
+                                        t.length_invert = divide_or_one(1.0, payload);
                                     }
                                 }
                                 // `SetVal0RateBlock`, `SetVal0Rate`.
@@ -231,7 +231,7 @@ impl Child {
                                     t.rate_target = 0.0;
                                     t.kind = Kind::Cubic;
                                     if payload != 0.0 {
-                                        t.length_invert = 1.0 / payload;
+                                        t.length_invert = divide_or_one(1.0, payload);
                                     }
                                 }
                                 // `SetValAfterBlock`, `SetValAfter`.
@@ -282,6 +282,16 @@ impl Child {
 pub struct Cycle {
     pub life: u16,
     pub end: [[f32; 2]; 2],
+}
+
+/// `delta / payload` behind the callers' nonzero-`payload` guard, out of
+/// line with a nonzero denominator: LLVM may speculate a division past the
+/// guard, and the PSP's trapping FPU faults on it (`FPU Exception (IUZ)` in
+/// this function on the PSP-2000 pack build; `ssb_rom::objanim`'s
+/// `divide_or_one`, RE-201).
+#[inline(never)]
+fn divide_or_one(delta: f32, payload: f32) -> f32 {
+    delta / if payload == 0.0 { 1.0 } else { payload }
 }
 
 fn cycle(data: &[u8], file: u32, script: u32) -> Result<Cycle> {

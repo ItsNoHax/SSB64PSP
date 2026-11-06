@@ -5,8 +5,9 @@
 //! `ssb_rom::figatree` plays the same scripts; this is a second, deliberately
 //! minimal reading of them (`romtool anims --verify` compares the two).
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use crate::source::{be_u16, be_u32};
 use crate::Source;
@@ -72,7 +73,7 @@ fn script_clip(data: &[u8], start: usize) -> Option<(u32, bool)> {
     let word = |i: usize| be_u16(data, start + i * 2).ok();
     let mut total = 0u32;
     let mut i = 0usize;
-    let mut frame_at = HashMap::new();
+    let mut frame_at = BTreeMap::new();
     loop {
         frame_at.insert(i, total);
         let w = word(i)?;
@@ -183,22 +184,27 @@ fn agreed<T: PartialEq + Copy>(data: &[u8], walk: impl Fn(&[u8], usize) -> Optio
     out
 }
 
-/// Lengths per animation file, computed once.
+/// Lengths per animation file, computed once (single-threaded: one
+/// section build).
 #[derive(Default)]
 pub struct Lengths {
-    frames: Mutex<HashMap<u32, Option<Option<u32>>>>,
-    clips: Mutex<HashMap<u32, Option<(u32, bool)>>>,
+    frames: RefCell<BTreeMap<u32, Option<Option<u32>>>>,
+    clips: RefCell<BTreeMap<u32, Option<(u32, bool)>>>,
 }
 
 impl Lengths {
     /// The animation's length in frames: `Some(Some(n))`; `Some(None)` when
     /// it loops; `None` when the file is not a figatree whose joints agree.
     pub fn frames(&self, rom: &Source, file: u32) -> Option<Option<u32>> {
-        let mut cache = self.frames.lock().expect("lengths");
-        *cache.entry(file).or_insert_with(|| {
-            let data = rom.file(file).ok()?.data;
-            agreed(&data, script_frames)
-        })
+        if let Some(&v) = self.frames.borrow().get(&file) {
+            return v;
+        }
+        let v = rom
+            .file(file)
+            .ok()
+            .and_then(|f| agreed(&f.data, script_frames));
+        self.frames.borrow_mut().insert(file, v);
+        v
     }
 
     /// The deciding joint's block payloads to its `End`: the joint whose
@@ -225,10 +231,14 @@ impl Lengths {
     /// The frames to the animation's `End` or first `Loop`, and whether it
     /// loops; `None` as for [`Self::frames`].
     pub fn clip(&self, rom: &Source, file: u32) -> Option<(u32, bool)> {
-        let mut cache = self.clips.lock().expect("lengths");
-        *cache.entry(file).or_insert_with(|| {
-            let data = rom.file(file).ok()?.data;
-            agreed(&data, script_clip)
-        })
+        if let Some(&v) = self.clips.borrow().get(&file) {
+            return v;
+        }
+        let v = rom
+            .file(file)
+            .ok()
+            .and_then(|f| agreed(&f.data, script_clip));
+        self.clips.borrow_mut().insert(file, v);
+        v
     }
 }

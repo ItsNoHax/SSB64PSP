@@ -531,7 +531,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // scripts and descs, CPU input scripts and attacks; `ssb_tablegen::{hurtbox,
 // model_parts, physics, colanim, computer}`). Everything outside the
 // section is unchanged.
-pub const VERSION: u32 = 146;
+// 147 adds `TABLES` entries: the fighters' motion scripts, motion descs,
+// `END_BLOCKS`, combat attributes and demo scripts (`ssb_tablegen::motion`).
+// Everything outside the section is unchanged.
+pub const VERSION: u32 = 147;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

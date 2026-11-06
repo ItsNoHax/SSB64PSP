@@ -1,5 +1,5 @@
 //! Fighter motion scripts (`ftMotionCommand` bytecode), for
-//! `ssb_game::motion`.
+//! `ssb_game::motion`, as the pack's `TABLES` section holds them.
 //!
 //! A status's hitboxes, hit-status windows and flag timings are bytecode in
 //! each fighter's `<id>_<Name>MainMotion` archive file, which
@@ -11,29 +11,149 @@
 //! animation length and clip from `dFT<Name>MotionDescs`, the special
 //! statuses' motion ids, the combat fields of `FTAttributes`, and the demo
 //! scripts of `dFT<Name>SubMotionDescs`.
+//!
+//! The tables (`TableId::Motion*`, `CombatAttrs`, `Demo*`):
+//!
+//! | Table | Element | Per |
+//! |---|---|---|
+//! | `MotionWords` | `u32` | each blob back to back: the 13 own `MainMotion` blobs, Metal Mario's own then Mario's |
+//! | `MotionDescs` | 4 `u32` | each fighter's motions: script, `anim_desc`, length \| clip << 16, `END_BLOCKS` run |
+//! | `MotionSpecial` | `i16` | each base fighter's special statuses' motion ids |
+//! | `MotionIndex` | 8 `u32` | `FTKind`: words, motions, special, demo words: start and count each |
+//! | `CommonStatusMotion` | `i16` | common status |
+//! | `CommonMovesetWords` | `u32` | `FTCommonMoveset` |
+//! | `MotionEndBlocks` | `u8` | the `END_BLOCKS` pool |
+//! | `CombatAttrs` | [`ATTR_WORDS`] `u32` | `FTKind`: the `FTAttributes` words `ssb_game::motion::CombatAttrs` decodes |
+//! | `DemoWords` | `u32` | each fighter's demo blob back to back |
+//! | `DemoRows` | 24 `u32` | `FTKind`: each demo row's script word, `NONE_PTR` for none |
 
-use std::fmt::Write;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use crate::anim_length::Lengths;
-use crate::emit::{self, f32_lit};
 use crate::figatree_order::{figatree_order, TreeJoint};
 use crate::fighters::{
     self, demo_words, motion_descs, Fighter, MainMotion, MotionDesc, RegionKind,
     ANIM_FLAG_SUBMOTION_SCRIPT, COMMON_MOVESET, FIGHTERS, NO_OFFSET,
 };
 use crate::model_parts::{skeleton, Skeleton};
+use crate::source::OVL1;
+use crate::tables::{le_bytes, le_words, Ctx};
 use crate::{Result, Source};
 
 /// A pointer outside the blob.
 const NONE_PTR: u32 = 0xFFFF_FFFF;
 /// Word indexes into the shared `FTCommonMoveset` carry this bit.
 const COMMON_BIT: u32 = 0x4000_0000;
-/// `nFTCommonStatusSpecialStart`.
-const SPECIAL_STATUS_START: u16 = 220;
 /// `nFTDemoStatusNull` .. `nFTDemoStatusIntroR` and the opening's nine
 /// fighter-specific rows.
-const DEMO_ROWS: usize = 24;
+pub const DEMO_ROWS: usize = 24;
+/// `MotionIndex` words per fighter.
+pub const INDEX_WORDS: usize = 8;
+/// `CombatAttrs` words per fighter: `size`, `rebound_anim_length`,
+/// `shield_size`, `shield_break_vel_y`, `jostle_width`, `jostle_x`,
+/// `hit_detect_range[3]` (`f32` bits); `effect_joint_ids[5]`,
+/// `joint_itemlight_id` (`s32`); `dead_fgm_ids[2]`, `deadup_sfx`,
+/// `damage_sfx`, `smash_sfx[3]`, `heavyget_sfx` (`u16`, one word each);
+/// the `is_have_*` bitfield word; `joint_rfoot_id`, `joint_lfoot_id`
+/// (`s32`); `joint_rfoot_rotate`, `joint_lfoot_rotate`, `unk_0x31C`,
+/// `unk_0x320`, `item_pickup[8]`, `throw_walk*_anim_length[3]` (`f32`
+/// bits).
+pub const ATTR_WORDS: usize = 41;
+/// `MotionEndBlocks`' bytes (layout: the pool's size, checked by the
+/// reader).
+pub const END_BLOCK_BYTES: usize = 16221;
 
+/// Whether `a` and `b` are the same name.
+const fn same(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// The `MainMotion` words of fighter `name`'s blob: its own file, then (a
+/// variant with a file of its own, Metal Mario) its base's.
+const fn blob_words(f: &Fighter) -> usize {
+    let Some(own) = f.main_motion else {
+        return 0;
+    };
+    let mut n = own.words as usize;
+    if let Some(base) = f.base {
+        let mut i = 0;
+        while i < FIGHTERS.len() {
+            if same(FIGHTERS[i].name, base) {
+                if let Some(b) = FIGHTERS[i].main_motion {
+                    n += b.words as usize;
+                }
+            }
+            i += 1;
+        }
+    }
+    n
+}
+
+/// `MotionWords`' words: every blob (layout).
+pub const MOTION_WORDS: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < FIGHTERS.len() {
+        n += blob_words(&FIGHTERS[i]);
+        i += 1;
+    }
+    n
+};
+
+/// `MotionDescs`' motions: every fighter's (layout).
+pub const MOTION_COUNT: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < FIGHTERS.len() {
+        n += FIGHTERS[i].motion_descs.1;
+        i += 1;
+    }
+    n
+};
+
+/// `MotionSpecial`'s entries: every base fighter's special statuses
+/// (layout).
+pub const SPECIAL_COUNT: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < FIGHTERS.len() {
+        if let Some((_, count)) = FIGHTERS[i].special_status_descs {
+            n += count;
+        }
+        i += 1;
+    }
+    n
+};
+
+/// The demo blob's words: from its first array to `dFT<Name>SubMotionDescs`.
+const fn demo_blob_words(f: &Fighter) -> usize {
+    match f.demo {
+        Some(d) => ((f.sub_motion_descs.0 - (OVL1.rom + (d.vram - OVL1.vram))) / 4) as usize,
+        None => 0,
+    }
+}
+
+/// `DemoWords`' words: every demo blob (layout).
+pub const DEMO_WORDS: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < FIGHTERS.len() {
+        n += demo_blob_words(&FIGHTERS[i]);
+        i += 1;
+    }
+    n
+};
+
+/// `nFTCommonStatusSpecialStart`: `CommonStatusMotion`'s entries.
+pub const COMMON_STATUS_COUNT: usize = crate::stat_flags::COMMON_STATUS_DESCS.1;
 /// A `MainMotion` file as words, its pointers resolved, the first word at
 /// index `base` of the blob it is part of.
 fn motion_words(rom: &Source, file: &MainMotion, base: u32) -> Result<Vec<u32>> {
@@ -71,14 +191,6 @@ fn motion_words(rom: &Source, file: &MainMotion, base: u32) -> Result<Vec<u32>> 
     Ok(words)
 }
 
-struct Motion {
-    script: u32,
-    length: u32,
-    clip: u32,
-    flags: u32,
-    end: u32,
-}
-
 /// `MotionDesc::end_blocks` without a run in `END_BLOCKS`.
 const NO_END_BLOCKS: u32 = 0xFFFF;
 
@@ -93,8 +205,8 @@ struct EndPool {
     words: Vec<u8>,
     /// By `(FTKind, anim_file, hidden-part bits)`: the deciding joint
     /// depends on the fighter's tree as well as the file.
-    at: std::collections::HashMap<(usize, u32, u32), u32>,
-    runs: std::collections::HashMap<Vec<u8>, u32>,
+    at: BTreeMap<(usize, u32, u32), u32>,
+    runs: BTreeMap<Vec<u8>, u32>,
 }
 
 impl EndPool {
@@ -151,14 +263,6 @@ impl EndPool {
     }
 }
 
-/// `f`'s `FTKind`: its index in `FIGHTERS`.
-fn fighter_index(f: &Fighter) -> usize {
-    FIGHTERS
-        .iter()
-        .position(|g| g.name == f.name)
-        .expect("a fighter of FIGHTERS")
-}
-
 fn length_of(rom: &Source, lengths: &Lengths, desc: &MotionDesc) -> (u32, u32) {
     if desc.anim_file == 0 {
         return (0, 0xFFFE);
@@ -175,438 +279,274 @@ fn length_of(rom: &Source, lengths: &Lengths, desc: &MotionDesc) -> (u32, u32) {
     (frames, clip)
 }
 
-fn emit_words(w: &mut String, label: &str, words: &[u32]) {
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\nstatic {label}: [u32; {}] = [",
-        words.len()
-    );
-    emit::hex_rows_u32(w, words);
-    w.push_str("];\n\n");
-}
-
-fn emit_motions(w: &mut String, label: &str, motions: &[Motion]) {
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\nstatic {label}: [MotionDesc; {}] = [",
-        motions.len()
-    );
-    for m in motions {
-        let script = if m.script == NONE_PTR {
-            "NO_SCRIPT".to_string()
-        } else {
-            m.script.to_string()
-        };
-        let _ = writeln!(
-            w,
-            "    MotionDesc {{ script: {script}, anim_length: {}, clip: 0x{:04X}, anim_flags: 0x{:08X}, end_blocks: 0x{:04X} }},",
-            m.length, m.clip, m.flags, m.end
-        );
-    }
-    w.push_str("];\n\n");
-}
-
-fn emit_attrs(w: &mut String, rom: Option<&Source>, f: &Fighter) -> Result<()> {
-    let up = f.name.to_uppercase();
-    let (mut floats, mut joints, mut light) = ([0f32; 9], [0i32; 5], 0i32);
-    // `dead_fgm_ids[2]`, `deadup_sfx`, `damage_sfx`, `smash_sfx[3]`,
-    // `heavyget_sfx`, and the `is_have_*` bitfield word.
-    let (mut sounds, mut have) = ([0u16; 8], 0u32);
-    // `joint_rfoot_id`, `joint_rfoot_rotate`, `joint_lfoot_id`,
-    // `joint_lfoot_rotate` (0x2FC..0x30C, after `shield_anim_joints`).
-    let (mut feet, mut foot_rotates) = ([0i32; 2], [0f32; 2]);
-    // `unk_0x31C` and `unk_0x320`: `func_ovl2_800DDF74`'s reach clamp and
-    // slope angle.
-    let (mut foot_reach, mut foot_slope_angle) = (0f32, 0f32);
-    // `item_pickup` (0xC4, after `smash_sfx`): an `FTItemPickup`'s four
-    // `Vec2f`.
-    let mut pickup = [0f32; 8];
-    // `throw_walkslow_anim_length` to `throw_walkfast_anim_length` (words 4
-    // to 6).
-    let mut throw_walk = [0f32; 3];
-    if let Some(rom) = rom {
-        let main = rom.file(f.main_file)?;
-        let at = f.attributes as usize;
-        let word = |off: usize| crate::source::be_u32(&main.data, at + off);
-        // `FTAttributes`: size, rebound_anim_length, shield_size,
-        // shield_break_vel_y, jostle_width, jostle_x, hit_detect_range.
-        for (i, off) in [0x00, 0x1C, 0x74, 0x78, 0x80, 0x84, 0x290, 0x294, 0x298]
-            .into_iter()
-            .enumerate()
-        {
-            floats[i] = f32::from_bits(word(off)?);
-        }
-        for (i, j) in joints.iter_mut().enumerate() {
-            *j = word(0x2A4 + 4 * i)? as i32;
-        }
-        light = word(0x33C)? as i32;
-        // `FTAttributes` from `dead_fgm_ids` (0xB4, after `cliffcatch_coll`)
-        // to `heavyget_sfx` (0xE8, after `item_pickup` and the two throw
-        // scales); `is_have_attack11..is_have_voice` is the word at 0x100.
-        let half = |off: usize| -> Result<u16> {
-            let w = word(off & !3)?;
-            Ok(if off & 2 == 0 {
-                (w >> 16) as u16
-            } else {
-                w as u16
-            })
-        };
-        for (i, off) in [0xB4, 0xB6, 0xB8, 0xBA, 0xBC, 0xBE, 0xC0, 0xE8]
-            .into_iter()
-            .enumerate()
-        {
-            sounds[i] = half(off)?;
-        }
-        have = word(0x100)?;
-        for i in 0..2 {
-            feet[i] = word(0x2FC + 8 * i)? as i32;
-            foot_rotates[i] = f32::from_bits(word(0x300 + 8 * i)?);
-        }
-        for (i, v) in pickup.iter_mut().enumerate() {
-            *v = f32::from_bits(word(0xC4 + 4 * i)?);
-        }
-        for (i, v) in throw_walk.iter_mut().enumerate() {
-            *v = f32::from_bits(word(0x10 + 4 * i)?);
-        }
-        foot_reach = f32::from_bits(word(0x31C)?);
-        foot_slope_angle = f32::from_bits(word(0x320)?);
-    }
-    // `is_have_voice`: the 22nd one-bit field, MSB first.
-    let is_have_voice = have & (1 << (31 - 21)) != 0;
-    // `is_have_attacks3`, `is_have_attackhi3`, `is_have_attacklw3`: the 4th
-    // to 6th fields.
-    let tilt = |i: u32| have & (1 << (31 - i)) != 0;
-    let tilts = format!("{}, {}, {}", tilt(3), tilt(4), tilt(5));
-    // Master Hand's -1: no item-light joint.
-    let light = if light < 0 {
-        "u8::MAX".to_string()
-    } else {
-        light.to_string()
+/// A fighter's `CombatAttrs` words ([`ATTR_WORDS`]), as the ROM holds
+/// them: `ssb_game::motion` decodes them.
+fn attr_words(rom: &Source, f: &Fighter) -> Result<[u32; ATTR_WORDS]> {
+    let main = rom.file(f.main_file)?;
+    let at = f.attributes as usize;
+    let word = |off: usize| crate::source::be_u32(&main.data, at + off);
+    // `FTAttributes` from `dead_fgm_ids` (0xB4, after `cliffcatch_coll`)
+    // to `heavyget_sfx` (0xE8, after `item_pickup` and the two throw
+    // scales).
+    let half = |off: usize| -> Result<u32> {
+        let w = word(off & !3)?;
+        Ok(if off & 2 == 0 { w >> 16 } else { w & 0xFFFF })
     };
-    let joints: Vec<String> = joints.iter().map(i32::to_string).collect();
-    let _ = write!(
-        w,
-        "pub static {up}_ATTRS: CombatAttrs = CombatAttrs {{\n\
-         \x20   size: {},\n    rebound_anim_length: {},\n\
-         \x20   shield_size: {},\n    shield_break_vel_y: {},\n\
-         \x20   jostle_width: {},\n    jostle_x: {},\n\
-         \x20   hit_detect_range: [{}, {}, {}],\n\
-         \x20   effect_joint_ids: [{}],\n\
-         \x20   joint_itemlight_id: {light},\n\
-         \x20   dead_fgm_ids: [{}, {}],\n    deadup_sfx: {},\n\
-         \x20   damage_sfx: {},\n    smash_sfx: [{}, {}, {}],\n\
-         \x20   heavyget_sfx: {},\n    is_have_voice: {is_have_voice},\n\
-         \x20   is_have_tilts: [{tilts}],\n\
-         \x20   foot_joint_ids: [{}, {}],\n    foot_rotates: [{}, {}],\n\
-         \x20   foot_reach: {},\n    foot_slope_angle: {},\n\
-         \x20   item_pickup: [{}],\n\
-         \x20   throw_walk_anim_lengths: [{}],\n}};\n\n",
-        f32_lit(floats[0]),
-        f32_lit(floats[1]),
-        f32_lit(floats[2]),
-        f32_lit(floats[3]),
-        f32_lit(floats[4]),
-        f32_lit(floats[5]),
-        f32_lit(floats[6]),
-        f32_lit(floats[7]),
-        f32_lit(floats[8]),
-        joints.join(", "),
-        sounds[0],
-        sounds[1],
-        sounds[2],
-        sounds[3],
-        sounds[4],
-        sounds[5],
-        sounds[6],
-        sounds[7],
-        feet[0].clamp(-1, 254) as u8,
-        feet[1].clamp(-1, 254) as u8,
-        f32_lit(foot_rotates[0]),
-        f32_lit(foot_rotates[1]),
-        f32_lit(foot_reach),
-        f32_lit(foot_slope_angle),
-        pickup
-            .iter()
-            .map(|&v| f32_lit(v))
-            .collect::<Vec<_>>()
-            .join(", "),
-        throw_walk
-            .iter()
-            .map(|&v| f32_lit(v))
-            .collect::<Vec<_>>()
-            .join(", "),
-    );
-    Ok(())
-}
-
-fn emit_demo(w: &mut String, rom: Option<&Source>, f: &Fighter, doc: &str) -> Result<()> {
-    let up = f.name.to_uppercase();
-    let (mut words, mut rows) = (Vec::new(), vec![NONE_PTR; DEMO_ROWS]);
-    if let Some(rom) = rom {
-        let (vram, mut blob) = demo_words(rom, f)?;
-        let index = |ptr: u32| -> u32 {
-            assert!(
-                ptr >= vram && (ptr - vram).is_multiple_of(4),
-                "{}: demo pointer 0x{ptr:08X}",
-                f.name
-            );
-            let i = (ptr - vram) / 4;
-            assert!(
-                (i as usize) < blob_len(f, rom),
-                "{}: demo pointer past the blob",
-                f.name
-            );
-            i
-        };
-        if let Some(demo) = f.demo {
-            for &p in demo.pointers {
-                blob[p as usize] = index(blob[p as usize]);
-            }
-        }
-        let subs = motion_descs(rom, f.sub_motion_descs)?;
-        for (row, desc) in rows.iter_mut().zip(&subs) {
-            if desc.offset != NO_OFFSET && desc.offset != 0 {
-                *row = index(desc.offset);
-            }
-        }
-        words = blob;
+    let mut out = Vec::with_capacity(ATTR_WORDS);
+    // `FTAttributes`: size, rebound_anim_length, shield_size,
+    // shield_break_vel_y, jostle_width, jostle_x, hit_detect_range.
+    for off in [0x00, 0x1C, 0x74, 0x78, 0x80, 0x84, 0x290, 0x294, 0x298] {
+        out.push(word(off)?);
     }
-    w.push_str(doc);
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\nstatic {up}_DEMO_WORDS: [u32; {}] = [",
-        words.len()
-    );
-    emit::hex_rows_u32(w, &words);
-    w.push_str("];\n\n");
-    let rows: Vec<String> = rows
-        .iter()
-        .map(|r| {
-            if *r == NONE_PTR {
-                "NO_SCRIPT".to_string()
-            } else {
-                r.to_string()
-            }
-        })
-        .collect();
-    let _ = write!(
-        w,
-        "#[rustfmt::skip]\npub static {up}_DEMO: DemoScripts = DemoScripts {{\n\
-         \x20   words: &{up}_DEMO_WORDS,\n    rows: [{}],\n}};\n\n",
-        rows.join(", ")
-    );
-    Ok(())
+    // `effect_joint_ids[5]`, `joint_itemlight_id`.
+    for i in 0..5 {
+        out.push(word(0x2A4 + 4 * i)?);
+    }
+    out.push(word(0x33C)?);
+    for off in [0xB4, 0xB6, 0xB8, 0xBA, 0xBC, 0xBE, 0xC0, 0xE8] {
+        out.push(half(off)?);
+    }
+    // `is_have_attack11..is_have_voice`.
+    out.push(word(0x100)?);
+    // `joint_rfoot_id`, `joint_lfoot_id`, then their `*_rotate`
+    // (0x2FC..0x30C, after `shield_anim_joints`).
+    for i in 0..2 {
+        out.push(word(0x2FC + 8 * i)?);
+    }
+    for i in 0..2 {
+        out.push(word(0x300 + 8 * i)?);
+    }
+    // `unk_0x31C` and `unk_0x320`: `func_ovl2_800DDF74`'s reach clamp
+    // and slope angle.
+    out.push(word(0x31C)?);
+    out.push(word(0x320)?);
+    // `item_pickup` (0xC4): an `FTItemPickup`'s four `Vec2f`.
+    for i in 0..8 {
+        out.push(word(0xC4 + 4 * i)?);
+    }
+    // `throw_walkslow_anim_length` to `throw_walkfast_anim_length`.
+    for i in 0..3 {
+        out.push(word(0x10 + 4 * i)?);
+    }
+    Ok(out.try_into().expect("ATTR_WORDS"))
 }
 
-fn blob_len(f: &Fighter, rom: &Source) -> usize {
-    demo_words(rom, f).map(|(_, w)| w.len()).unwrap_or(0)
+/// The fighter's demo blob, its pointers turned into word indexes, and each
+/// demo row's script word (`NONE_PTR`: none).
+fn demo(rom: &Source, f: &Fighter) -> Result<(Vec<u32>, [u32; DEMO_ROWS])> {
+    let mut rows = [NONE_PTR; DEMO_ROWS];
+    let (vram, mut blob) = demo_words(rom, f)?;
+    let len = blob.len();
+    let index = |ptr: u32| -> u32 {
+        assert!(
+            ptr >= vram && (ptr - vram).is_multiple_of(4),
+            "{}: demo pointer 0x{ptr:08X}",
+            f.name
+        );
+        let i = (ptr - vram) / 4;
+        assert!((i as usize) < len, "{}: demo pointer past the blob", f.name);
+        i
+    };
+    if let Some(demo) = f.demo {
+        for &p in demo.pointers {
+            blob[p as usize] = index(blob[p as usize]);
+        }
+    }
+    let subs = motion_descs(rom, f.sub_motion_descs)?;
+    for (row, desc) in rows.iter_mut().zip(&subs) {
+        if desc.offset != NO_OFFSET && desc.offset != 0 {
+            *row = index(desc.offset);
+        }
+    }
+    Ok((blob, rows))
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let lengths = Lengths::default();
+/// Every motion table, read once per section ([`Ctx`]).
+pub struct Tables {
+    words: Vec<u32>,
+    descs: Vec<u32>,
+    special: Vec<i16>,
+    index: Vec<u32>,
+    common_status: Vec<i16>,
+    common_words: Vec<u32>,
+    end_blocks: Vec<u8>,
+    attrs: Vec<u32>,
+    demo_words: Vec<u32>,
+    demo_rows: Vec<u32>,
+}
+
+/// `(start, count)` of a run appended to `v`.
+fn span<T>(v: &[T], from: usize) -> [u32; 2] {
+    [from as u32, (v.len() - from) as u32]
+}
+
+fn read(rom: &Source, lengths: &Lengths) -> Result<Tables> {
     let mut pool = EndPool::default();
-    let mut w = emit::header("fighter motion scripts, motion tables and combat attributes");
-    w.push_str("use super::{CombatAttrs, DemoScripts, FighterScripts, MotionDesc, NO_SCRIPT};\n\n");
-
-    let common = match rom {
-        Some(rom) => fighters::common_status_motions(rom)?,
-        None => vec![-1; crate::stat_flags::COMMON_STATUS_DESCS.1],
+    let mut t = Tables {
+        words: Vec::with_capacity(MOTION_WORDS),
+        descs: Vec::with_capacity(MOTION_COUNT * 4),
+        special: Vec::with_capacity(SPECIAL_COUNT),
+        index: Vec::with_capacity(FIGHTERS.len() * INDEX_WORDS),
+        common_status: fighters::common_status_motions(rom)?,
+        common_words: motion_words(rom, &COMMON_MOVESET, COMMON_BIT)?,
+        end_blocks: Vec::new(),
+        attrs: Vec::with_capacity(FIGHTERS.len() * ATTR_WORDS),
+        demo_words: Vec::with_capacity(DEMO_WORDS),
+        demo_rows: Vec::with_capacity(FIGHTERS.len() * DEMO_ROWS),
     };
-    w.push_str("/// `dFTCommonActionStatusDescs[..].mflags.motion_id`, indexed by status id\n");
-    w.push_str("/// (`-1`/`-2`: no motion).\n");
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\npub static COMMON_STATUS_MOTION: [i16; {}] = [",
-        common.len()
-    );
-    for row in common.chunks(16) {
-        let cells: Vec<String> = row.iter().map(i16::to_string).collect();
-        let _ = writeln!(w, "    {},", cells.join(", "));
-    }
-    w.push_str("];\n\n");
-    let _ = write!(
-        w,
-        "/// `nFTCommonStatusSpecialStart`.\npub const SPECIAL_STATUS_START: u16 = {SPECIAL_STATUS_START};\n\n"
-    );
-
-    let common_words = match rom {
-        Some(rom) => motion_words(rom, &COMMON_MOVESET, COMMON_BIT)?,
-        None => Vec::new(),
-    };
-    w.push_str(
-        "/// `FTCommonMoveset` (relocData 201): the item-swing, damage and star\n\
-         /// scripts fighter scripts call as subroutines. A script index with\n\
-         /// [`super::COMMON_BIT`] set points here.\n",
-    );
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\npub static COMMON_MOVESET_WORDS: [u32; {}] = [",
-        common_words.len()
-    );
-    emit::hex_rows_u32(&mut w, &common_words);
-    w.push_str("];\n\n");
-
-    for f in FIGHTERS.iter().filter(|f| f.base.is_none()) {
-        let up = f.name.to_uppercase();
-        let mm = f.main_motion.expect("a base fighter has a MainMotion file");
-        let (mut words, mut motions, mut special) = (Vec::new(), Vec::new(), Vec::new());
-        if let Some(rom) = rom {
-            words = motion_words(rom, &mm, 0)?;
-            let k = fighter_index(f);
-            let skel = skeleton(rom, k)?;
-            for d in motion_descs(rom, f.motion_descs)? {
-                let script = if d.offset == NO_OFFSET {
-                    NONE_PTR
-                } else {
-                    d.offset / 4
-                };
-                let (length, clip) = length_of(rom, &lengths, &d);
-                let end = pool.end_of(rom, &lengths, &skel, k, &d, length);
-                motions.push(Motion {
-                    script,
-                    length,
-                    clip,
-                    flags: d.anim_desc,
-                    end,
-                });
-            }
-            if let Some((at, count)) = f.special_status_descs {
-                special = fighters::status_motions(rom, at, count)?;
-            }
-        } else if let Some((_, count)) = f.special_status_descs {
-            special = vec![-1; count];
-        }
-        emit_words(&mut w, &format!("{up}_WORDS"), &words);
-        emit_motions(&mut w, &format!("{up}_MOTIONS"), &motions);
-        let cells: Vec<String> = special.iter().map(i16::to_string).collect();
-        let _ = write!(
-            w,
-            "#[rustfmt::skip]\nstatic {up}_SPECIAL_MOTION: [i16; {}] = [{}];\n\n",
-            special.len(),
-            cells.join(", ")
-        );
-        emit_attrs(&mut w, rom, f)?;
-        let _ = write!(
-            w,
-            "pub static {up}: FighterScripts = FighterScripts {{\n\
-             \x20   words: &{up}_WORDS,\n    motions: &{up}_MOTIONS,\n\
-             \x20   special_status_motion: &{up}_SPECIAL_MOTION,\n}};\n\n"
-        );
-        let lower = f.name.to_lowercase();
-        emit_demo(
-            &mut w,
-            rom,
-            f,
-            &format!(
-                "/// `dFT{0}SubMotionDescs` (`sc/scsubsys/scsubsysdata{lower}.c`): the\n\
-                 /// demo statuses' scripts, `nFTDemoStatusNull` to `nFTDemoStatusIntroR`.\n",
-                f.name
-            ),
-        )?;
-    }
-
-    for f in FIGHTERS.iter().filter(|f| f.base.is_some()) {
-        let base = fighters::fighter(f.base.expect("variant"));
-        let (up, bup) = (f.name.to_uppercase(), base.name.to_uppercase());
-        let base_mm = base.main_motion.expect("base MainMotion");
+    // Each fighter's `[words, special]` spans, by `FTKind`: a variant
+    // without a file of its own reads its base's.
+    let mut spans: Vec<([u32; 2], [u32; 2])> = Vec::with_capacity(FIGHTERS.len());
+    for (k, f) in FIGHTERS.iter().enumerate() {
+        let base = f.base.map(|b| {
+            FIGHTERS
+                .iter()
+                .position(|g| g.name == b)
+                .expect("a base of FIGHTERS")
+        });
         // Metal Mario's own MainMotion comes first in its blob; the base's
         // (`file_submotion`) follows it, its pointers moved by its length.
-        let (mut sub_base, words_ref) = (0, format!("&{bup}_WORDS"));
-        let words_ref = if let Some(own) = f.main_motion {
-            let (mut own_words, mut sub_words) = (Vec::new(), Vec::new());
-            if let Some(rom) = rom {
-                own_words = motion_words(rom, &own, 0)?;
+        let mut sub_base = 0;
+        let words = match (f.main_motion, base) {
+            (Some(own), None) => {
+                let from = t.words.len();
+                t.words.extend(motion_words(rom, &own, 0)?);
+                span(&t.words, from)
+            }
+            (Some(own), Some(b)) => {
+                let from = t.words.len();
+                let own_words = motion_words(rom, &own, 0)?;
                 sub_base = own_words.len() as u32;
-                sub_words = motion_words(rom, &base_mm, sub_base)?;
+                let base_mm = FIGHTERS[b].main_motion.expect("base MainMotion");
+                t.words.extend(own_words);
+                t.words.extend(motion_words(rom, &base_mm, sub_base)?);
+                span(&t.words, from)
             }
-            let _ = write!(
-                w,
-                "/// `{}_{}MainMotion`, then `{}_{}MainMotion` (`file_submotion`) from\n/// word {sub_base}.\n",
-                own.file, f.name, base_mm.file, base.name
-            );
-            let mut all = own_words;
-            all.extend(sub_words);
-            emit_words(&mut w, &format!("{up}_WORDS"), &all);
-            format!("&{up}_WORDS")
-        } else {
-            words_ref
+            (None, Some(b)) => spans[b].0,
+            (None, None) => panic!("{}: no MainMotion file", f.name),
         };
-        let mut motions = Vec::new();
-        if let Some(rom) = rom {
-            let k = fighter_index(f);
-            let skel = skeleton(rom, k)?;
-            for d in motion_descs(rom, f.motion_descs)? {
-                let script = if d.offset == NO_OFFSET {
-                    NONE_PTR
-                } else {
-                    assert_eq!(d.offset % 4, 0, "{}: unaligned script", f.name);
-                    if d.anim_desc & ANIM_FLAG_SUBMOTION_SCRIPT != 0 {
-                        sub_base + d.offset / 4
-                    } else {
-                        assert!(
-                            f.main_motion.is_some(),
-                            "{}: script names no MainMotion file",
-                            f.name
-                        );
-                        d.offset / 4
-                    }
-                };
-                let (length, clip) = length_of(rom, &lengths, &d);
-                let end = pool.end_of(rom, &lengths, &skel, k, &d, length);
-                motions.push(Motion {
-                    script,
-                    length,
-                    clip,
-                    flags: d.anim_desc,
-                    end,
-                });
+        let special = match (f.special_status_descs, base) {
+            (Some((at, count)), _) => {
+                let from = t.special.len();
+                t.special.extend(fighters::status_motions(rom, at, count)?);
+                span(&t.special, from)
             }
-        }
-        emit_motions(&mut w, &format!("{up}_MOTIONS"), &motions);
-        emit_attrs(&mut w, rom, f)?;
-        let _ = write!(
-            w,
-            "/// `dFT{}MotionDescs` over {}{}'s scripts; {}'s special statuses.\n\
-             pub static {up}: FighterScripts = FighterScripts {{\n\
-             \x20   words: {words_ref},\n    motions: &{up}_MOTIONS,\n\
-             \x20   special_status_motion: &{bup}_SPECIAL_MOTION,\n}};\n\n",
-            f.name,
-            if f.main_motion.is_some() {
-                "its own and "
+            (None, Some(b)) => spans[b].1,
+            (None, None) => [0, 0],
+        };
+        spans.push((words, special));
+
+        let skel = skeleton(rom, k)?;
+        let motions_from = t.descs.len() / 4;
+        for d in motion_descs(rom, f.motion_descs)? {
+            let script = if d.offset == NO_OFFSET {
+                NONE_PTR
+            } else if base.is_none() {
+                d.offset / 4
             } else {
-                ""
-            },
-            base.name,
-            base.name
-        );
-        let lower = f.name.to_lowercase();
-        emit_demo(
-            &mut w,
-            rom,
-            f,
-            &format!(
-                "/// `dFT{0}SubMotionDescs` (`sc/scsubsys/scsubsysdata{lower}.c`).\n",
-                f.name
-            ),
-        )?;
+                assert_eq!(d.offset % 4, 0, "{}: unaligned script", f.name);
+                if d.anim_desc & ANIM_FLAG_SUBMOTION_SCRIPT != 0 {
+                    sub_base + d.offset / 4
+                } else {
+                    assert!(
+                        f.main_motion.is_some(),
+                        "{}: script names no MainMotion file",
+                        f.name
+                    );
+                    d.offset / 4
+                }
+            };
+            let (length, clip) = length_of(rom, lengths, &d);
+            let end = pool.end_of(rom, lengths, &skel, k, &d, length);
+            assert!(length <= 0xFFFF && clip <= 0xFFFF && end <= 0xFFFF);
+            t.descs
+                .extend([script, d.anim_desc, length | clip << 16, end]);
+        }
+        let motions = [
+            motions_from as u32,
+            (t.descs.len() / 4 - motions_from) as u32,
+        ];
+
+        let (blob, rows) = demo(rom, f)?;
+        let demo_from = t.demo_words.len();
+        t.demo_words.extend(blob);
+        let demo = span(&t.demo_words, demo_from);
+        t.demo_rows.extend(rows);
+
+        t.index.extend(words);
+        t.index.extend(motions);
+        t.index.extend(special);
+        t.index.extend(demo);
+        t.attrs.extend(attr_words(rom, f)?);
     }
-    w.push_str(
-        "/// The deciding joint's figatree block payloads, one length-prefixed run\n\
-         /// per distinct run (`MotionDesc::end_blocks`).\n",
-    );
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\npub static END_BLOCKS: [u8; {}] = [",
-        pool.words.len()
-    );
-    for row in pool.words.chunks(16) {
-        let cells: Vec<String> = row.iter().map(u8::to_string).collect();
-        let _ = writeln!(w, "    {},", cells.join(", "));
+    t.end_blocks = pool.words;
+    assert_eq!(t.words.len(), MOTION_WORDS);
+    assert_eq!(t.descs.len(), MOTION_COUNT * 4);
+    assert_eq!(t.special.len(), SPECIAL_COUNT);
+    assert_eq!(t.demo_words.len(), DEMO_WORDS);
+    assert_eq!(t.common_status.len(), COMMON_STATUS_COUNT);
+    assert_eq!(t.end_blocks.len(), END_BLOCK_BYTES, "END_BLOCKS' size");
+    Ok(t)
+}
+
+/// The tables, read once per section ([`Ctx`]).
+fn cached<'c>(c: &'c Ctx) -> Result<&'c Tables> {
+    if let Some(t) = c.motion.get() {
+        return Ok(t);
     }
-    w.push_str("];\n");
-    w.truncate(w.trim_end().len());
-    w.push('\n');
-    Ok(w)
+    let t = read(c.rom, &c.lengths)?;
+    Ok(c.motion.get_or_init(|| t))
+}
+
+/// The `MotionWords` table.
+pub fn words_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.words))
+}
+
+/// The `MotionDescs` table.
+pub fn descs_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.descs))
+}
+
+/// The `MotionSpecial` table.
+pub fn special_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_bytes(&cached(c)?.special, i16::to_le_bytes))
+}
+
+/// The `MotionIndex` table.
+pub fn index_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.index))
+}
+
+/// The `CommonStatusMotion` table: `dFTCommonActionStatusDescs[..]
+/// .mflags.motion_id`, by status id (`-1`/`-2`: no motion).
+pub fn common_status_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_bytes(&cached(c)?.common_status, i16::to_le_bytes))
+}
+
+/// The `CommonMovesetWords` table.
+pub fn common_words_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.common_words))
+}
+
+/// The `MotionEndBlocks` table.
+pub fn end_blocks_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(cached(c)?.end_blocks.clone())
+}
+
+/// The `CombatAttrs` table.
+pub fn attrs_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.attrs))
+}
+
+/// The `DemoWords` table.
+pub fn demo_words_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.demo_words))
+}
+
+/// The `DemoRows` table.
+pub fn demo_rows_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_words(&cached(c)?.demo_rows))
 }
 
 #[cfg(test)]

@@ -3,9 +3,9 @@
 //!
 //! A status's attack collisions, hit-status windows, hurtbox edits and
 //! script flags are `ftMotionCommand` bytecode in the fighter's
-//! `relocData/*MainMotion.c`, not tables. The `scripts` module, generated
-//! at build time from the user's ROM (`crates/ssb-tablegen`), carries that
-//! bytecode word for word, and this module runs it the
+//! `relocData/*MainMotion.c`, not tables. The pack's `TABLES` section
+//! (`crates/ssb-tablegen`'s `motion`, RE-589) carries that bytecode word for
+//! word, read in place, and this module runs it the
 //! way the original does: `ftMainSetStatus` starts the status's script with
 //! `script_wait = anim_speed - frame_begin`, and every frame outside hitlag
 //! the wait drops by the animation speed and the commands run until the next
@@ -28,36 +28,124 @@
 //! Sounds, slope contours and throw descriptors are
 //! decoded and skipped; the ported status code owns throws.
 
-/// The fighters' motion scripts and tables, generated at build time from the
-/// user's ROM by `crates/ssb-tablegen` (never committed). Its floats are the
-/// ROM's words, not approximations of `core` constants (`unk_0x320` reads
-/// as 0.5235988).
-#[allow(clippy::approx_constant)]
-mod scripts {
-    include!(concat!(env!("OUT_DIR"), "/motion_scripts.rs"));
-}
-
 use ssb_engine::math::Vec3;
+use ssb_tables::{Hot, Kind, Pod, Table, TableId};
 
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::fighter::{Fighter, FighterKind};
 use crate::status::AnyStatus;
 
-pub use scripts::{COMMON_STATUS_MOTION, SPECIAL_STATUS_START};
+/// `FTKind`s: every fighter has scripts, attributes and demo scripts.
+const KINDS: usize = 27;
+
+/// `nFTCommonStatusSpecialStart`.
+pub const SPECIAL_STATUS_START: u16 = 220;
+
+/// `dFTCommonActionStatusDescs[..].mflags.motion_id`, indexed by status id
+/// (`-1`/`-2`: no motion). Read in place from the pack's `TABLES` section
+/// (RE-589).
+pub static COMMON_STATUS_MOTION: Table<[i16; SPECIAL_STATUS_START as usize]> =
+    Table::new(TableId::CommonStatusMotion);
+
+/// `FTCommonMoveset` (relocData 201): the item-swing, damage and star
+/// scripts fighter scripts call as subroutines. A script index with
+/// [`COMMON_BIT`] set points here.
+static COMMON_MOVESET: Table<[u32; TableId::CommonMovesetWords.size() / 4]> =
+    Table::new(TableId::CommonMovesetWords);
+
+/// Every `MainMotion` blob back to back (`ssb-tablegen`'s `motion`): the
+/// words [`FighterScripts::words`] slices.
+static MOTION_WORDS: Table<[u32; TableId::MotionWords.size() / 4]> =
+    Table::new(TableId::MotionWords);
+/// Every fighter's [`MotionDesc`]s back to back, read in place.
+static MOTION_DESCS: Table<[MotionDesc; TableId::MotionDescs.size() / 16]> =
+    Table::new(TableId::MotionDescs);
+/// Every base fighter's special statuses' motion ids.
+static MOTION_SPECIAL: Table<[i16; TableId::MotionSpecial.size() / 2]> =
+    Table::new(TableId::MotionSpecial);
+/// Per `FTKind`: start and count in [`MOTION_WORDS`], [`MOTION_DESCS`],
+/// [`MOTION_SPECIAL`] and [`DEMO_WORDS`].
+static MOTION_INDEX: Table<[[u32; 8]; KINDS]> = Table::new(TableId::MotionIndex);
+/// The `END_BLOCKS` pool: per run, a `u8` count, then the payloads
+/// ([`end_blocks`]).
+static END_BLOCKS: Table<[u8; TableId::MotionEndBlocks.size()]> =
+    Table::new(TableId::MotionEndBlocks);
+/// Per `FTKind`: the `FTAttributes` words [`CombatAttrs`] decodes.
+static ATTR_WORDS: Table<[[u32; 41]; KINDS]> = Table::new(TableId::CombatAttrs);
+/// Every fighter's demo blob back to back.
+static DEMO_WORDS: Table<[u32; TableId::DemoWords.size() / 4]> = Table::new(TableId::DemoWords);
+/// Per `FTKind`: each demo row's script word, or [`NO_SCRIPT`].
+static DEMO_ROWS: Table<[[u32; 24]; KINDS]> = Table::new(TableId::DemoRows);
+
+/// `table[at..at + len]`, empty when the run is outside it (the stub).
+fn span<T>(table: &'static [T], at: u32, len: u32) -> &'static [T] {
+    let (at, len) = (at as usize, len as usize);
+    table.get(at..at.saturating_add(len)).unwrap_or(&[])
+}
+
+/// Every fighter's [`FighterScripts`], by `FTKind`: slices of the store.
+/// Read every fighter tick, so a [`Hot`] (RE-589).
+static FIGHTER_SCRIPTS: Hot<[FighterScripts; KINDS]> =
+    Hot::new([FighterScripts::EMPTY; KINDS], || {
+        let index = MOTION_INDEX.get();
+        core::array::from_fn(|k| {
+            let i = &index[k];
+            FighterScripts {
+                words: span(MOTION_WORDS.get(), i[0], i[1]),
+                motions: span(MOTION_DESCS.get(), i[2], i[3]),
+                special_status_motion: span(MOTION_SPECIAL.get(), i[4], i[5]),
+            }
+        })
+    });
+
+/// Every fighter's [`DemoScripts`], by `FTKind`.
+static DEMO_SCRIPTS: Hot<[DemoScripts; KINDS]> = Hot::new([DemoScripts::EMPTY; KINDS], || {
+    let (index, rows) = (MOTION_INDEX.get(), DEMO_ROWS.get());
+    core::array::from_fn(|k| DemoScripts {
+        words: span(DEMO_WORDS.get(), index[k][6], index[k][7]),
+        rows: rows[k],
+    })
+});
+
+/// Every fighter's [`CombatAttrs`], by `FTKind`, decoded once.
+static COMBAT_ATTRS: Hot<[CombatAttrs; KINDS]> = Hot::new([CombatAttrs::EMPTY; KINDS], || {
+    let words = ATTR_WORDS.get();
+    core::array::from_fn(|k| CombatAttrs::decode(&words[k]))
+});
+
+/// Decodes the motion tables' [`Hot`] values ([`crate::tables::fill`]).
+///
+/// # Safety
+///
+/// [`Hot::fill`]'s contract.
+pub(crate) unsafe fn fill() {
+    // SAFETY: the caller's contract.
+    unsafe {
+        FIGHTER_SCRIPTS.fill();
+        DEMO_SCRIPTS.fill();
+        COMBAT_ATTRS.fill();
+    }
+}
 
 /// A motion without a script (`0x80000000` in `FTMotionDesc::offset`), or a
 /// pointer outside the fighter's own file (common item movesets).
 pub const NO_SCRIPT: u32 = u32::MAX;
 
 /// A script index with this bit set reads `FTCommonMoveset`
-/// (`scripts::COMMON_MOVESET_WORDS`) instead of the fighter's own words.
+/// ([`COMMON_MOVESET`]) instead of the fighter's own words.
 pub const COMMON_BIT: u32 = 0x4000_0000;
 
-/// `FTMotionDesc`, reduced to its script and its figatree's length.
+/// `FTMotionDesc`, reduced to its script and its figatree's length: a
+/// `MotionDescs` record of the pack's `TABLES` section, read in place
+/// (four little-endian words: script, `anim_desc`, length and clip, the
+/// `END_BLOCKS` run).
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MotionDesc {
     /// Word index into [`FighterScripts::words`], or [`NO_SCRIPT`].
     pub script: u32,
+    /// `FTMotionDesc.anim_desc` (`FTANIM_FLAG_*`).
+    pub anim_flags: u32,
     /// Frames the figatree runs for; `0` without one, `0xFFFF` when it
     /// loops.
     pub anim_length: u16,
@@ -65,11 +153,17 @@ pub struct MotionDesc {
     /// `Loop` command, with [`CLIP_LOOPS`] set when it loops, or
     /// [`CLIP_UNKNOWN`] without a figatree the generator could walk.
     pub clip: u16,
-    /// `FTMotionDesc.anim_desc` (`FTANIM_FLAG_*`).
-    pub anim_flags: u32,
     /// Index of the figatree's run in `END_BLOCKS` (see [`end_blocks`]), or
     /// [`NO_END_BLOCKS`].
     pub end_blocks: u16,
+    /// The record's last half-word: 0.
+    pub pad: u16,
+}
+
+// SAFETY: `repr(C)`, four `u32`-sized words of integers (16 bytes, 4-byte
+// aligned, no padding): every bit pattern is a value.
+unsafe impl Pod for MotionDesc {
+    const KIND: Kind = Kind::U32;
 }
 
 /// [`MotionDesc::end_blocks`] for a figatree without a run: it loops, its
@@ -141,6 +235,15 @@ pub struct FighterScripts {
     pub special_status_motion: &'static [i16],
 }
 
+impl FighterScripts {
+    /// No scripts (the stub's).
+    const EMPTY: Self = Self {
+        words: &[],
+        motions: &[],
+        special_status_motion: &[],
+    };
+}
+
 /// A script index with this bit set reads the fighter's demo scripts
 /// ([`DemoScripts::words`]): a demo fighter's threads ([`start_demo`]) and
 /// the part-event walk.
@@ -156,37 +259,17 @@ pub struct DemoScripts {
     pub rows: [u32; 24],
 }
 
+impl DemoScripts {
+    /// No scripts (the stub's).
+    const EMPTY: Self = Self {
+        words: &[],
+        rows: [0; 24],
+    };
+}
+
 /// The fighter's [`DemoScripts`] (every kind has one).
 pub fn demo_scripts(kind: FighterKind) -> Option<&'static DemoScripts> {
-    Some(match kind {
-        FighterKind::Mario => &scripts::MARIO_DEMO,
-        FighterKind::Fox => &scripts::FOX_DEMO,
-        FighterKind::Donkey => &scripts::DONKEY_DEMO,
-        FighterKind::Samus => &scripts::SAMUS_DEMO,
-        FighterKind::Luigi => &scripts::LUIGI_DEMO,
-        FighterKind::Link => &scripts::LINK_DEMO,
-        FighterKind::Yoshi => &scripts::YOSHI_DEMO,
-        FighterKind::Captain => &scripts::CAPTAIN_DEMO,
-        FighterKind::Kirby => &scripts::KIRBY_DEMO,
-        FighterKind::Pikachu => &scripts::PIKACHU_DEMO,
-        FighterKind::Purin => &scripts::PURIN_DEMO,
-        FighterKind::Ness => &scripts::NESS_DEMO,
-        FighterKind::Boss => &scripts::BOSS_DEMO,
-        FighterKind::MetalMario => &scripts::MMARIO_DEMO,
-        FighterKind::PolyMario => &scripts::NMARIO_DEMO,
-        FighterKind::PolyFox => &scripts::NFOX_DEMO,
-        FighterKind::PolyDonkey => &scripts::NDONKEY_DEMO,
-        FighterKind::PolySamus => &scripts::NSAMUS_DEMO,
-        FighterKind::PolyLuigi => &scripts::NLUIGI_DEMO,
-        FighterKind::PolyLink => &scripts::NLINK_DEMO,
-        FighterKind::PolyYoshi => &scripts::NYOSHI_DEMO,
-        FighterKind::PolyCaptain => &scripts::NCAPTAIN_DEMO,
-        FighterKind::PolyKirby => &scripts::NKIRBY_DEMO,
-        FighterKind::PolyPikachu => &scripts::NPIKACHU_DEMO,
-        FighterKind::PolyPurin => &scripts::NPURIN_DEMO,
-        FighterKind::PolyNess => &scripts::NNESS_DEMO,
-        FighterKind::GiantDonkey => &scripts::GDONKEY_DEMO,
-    })
+    DEMO_SCRIPTS.get().get(kind as usize)
 }
 
 /// `FTAttributes` fields the hit pipeline reads (generated from the
@@ -248,42 +331,81 @@ pub struct CombatAttrs {
     pub throw_walk_anim_lengths: [f32; 3],
 }
 
+impl CombatAttrs {
+    /// Zeros (the stub's).
+    const EMPTY: Self = Self {
+        size: 0.0,
+        rebound_anim_length: 0.0,
+        shield_size: 0.0,
+        shield_break_vel_y: 0.0,
+        jostle_width: 0.0,
+        jostle_x: 0.0,
+        hit_detect_range: [0.0; 3],
+        effect_joint_ids: [0; 5],
+        joint_itemlight_id: 0,
+        dead_fgm_ids: [0; 2],
+        deadup_sfx: 0,
+        damage_sfx: 0,
+        smash_sfx: [0; 3],
+        heavyget_sfx: 0,
+        is_have_voice: false,
+        is_have_tilts: [false; 3],
+        foot_joint_ids: [0; 2],
+        foot_rotates: [0.0; 2],
+        foot_reach: 0.0,
+        foot_slope_angle: 0.0,
+        item_pickup: [0.0; 8],
+        throw_walk_anim_lengths: [0.0; 3],
+    };
+
+    /// One `CombatAttrs` row of the pack's `TABLES` section (41 words, in
+    /// the order `ssb-tablegen`'s `motion::attr_words` writes them).
+    fn decode(w: &[u32; 41]) -> Self {
+        let f = |i: usize| f32::from_bits(w[i]);
+        // `joint_itemlight_id`: Master Hand's -1, no item-light joint.
+        let light = w[14] as i32;
+        // `is_have_attack11..is_have_voice`, MSB first: `is_have_voice` is
+        // the 22nd field, `is_have_attacks3`..`is_have_attacklw3` the 4th
+        // to 6th.
+        let have = |bit: u32| w[23] & (1 << (31 - bit)) != 0;
+        // `joint_rfoot_id`, `joint_lfoot_id`: -1 for none.
+        let foot = |i: usize| (w[i] as i32).clamp(-1, 254) as u8;
+        Self {
+            size: f(0),
+            rebound_anim_length: f(1),
+            shield_size: f(2),
+            shield_break_vel_y: f(3),
+            jostle_width: f(4),
+            jostle_x: f(5),
+            hit_detect_range: [f(6), f(7), f(8)],
+            effect_joint_ids: core::array::from_fn(|i| w[9 + i] as u8),
+            joint_itemlight_id: if light < 0 { u8::MAX } else { light as u8 },
+            dead_fgm_ids: [w[15] as u16, w[16] as u16],
+            deadup_sfx: w[17] as u16,
+            damage_sfx: w[18] as u16,
+            smash_sfx: [w[19] as u16, w[20] as u16, w[21] as u16],
+            heavyget_sfx: w[22] as u16,
+            is_have_voice: have(21),
+            is_have_tilts: [have(3), have(4), have(5)],
+            foot_joint_ids: [foot(24), foot(25)],
+            foot_rotates: [f(26), f(27)],
+            foot_reach: f(28),
+            foot_slope_angle: f(29),
+            item_pickup: core::array::from_fn(|i| f(30 + i)),
+            throw_walk_anim_lengths: [f(38), f(39), f(40)],
+        }
+    }
+}
+
 /// `attr->is_have_voice`.
 fn has_voice(f: &Fighter) -> bool {
     combat_attrs(f.kind).is_some_and(|a| a.is_have_voice)
 }
 
 /// The fighter's [`CombatAttrs`] (every kind has them).
+#[inline(never)]
 pub fn combat_attrs(kind: FighterKind) -> Option<&'static CombatAttrs> {
-    Some(match kind {
-        FighterKind::Mario => &scripts::MARIO_ATTRS,
-        FighterKind::Fox => &scripts::FOX_ATTRS,
-        FighterKind::Donkey => &scripts::DONKEY_ATTRS,
-        FighterKind::Samus => &scripts::SAMUS_ATTRS,
-        FighterKind::Luigi => &scripts::LUIGI_ATTRS,
-        FighterKind::Link => &scripts::LINK_ATTRS,
-        FighterKind::Yoshi => &scripts::YOSHI_ATTRS,
-        FighterKind::Captain => &scripts::CAPTAIN_ATTRS,
-        FighterKind::Kirby => &scripts::KIRBY_ATTRS,
-        FighterKind::Pikachu => &scripts::PIKACHU_ATTRS,
-        FighterKind::Purin => &scripts::PURIN_ATTRS,
-        FighterKind::Ness => &scripts::NESS_ATTRS,
-        FighterKind::Boss => &scripts::BOSS_ATTRS,
-        FighterKind::MetalMario => &scripts::MMARIO_ATTRS,
-        FighterKind::PolyMario => &scripts::NMARIO_ATTRS,
-        FighterKind::PolyFox => &scripts::NFOX_ATTRS,
-        FighterKind::PolyDonkey => &scripts::NDONKEY_ATTRS,
-        FighterKind::PolySamus => &scripts::NSAMUS_ATTRS,
-        FighterKind::PolyLuigi => &scripts::NLUIGI_ATTRS,
-        FighterKind::PolyLink => &scripts::NLINK_ATTRS,
-        FighterKind::PolyYoshi => &scripts::NYOSHI_ATTRS,
-        FighterKind::PolyCaptain => &scripts::NCAPTAIN_ATTRS,
-        FighterKind::PolyKirby => &scripts::NKIRBY_ATTRS,
-        FighterKind::PolyPikachu => &scripts::NPIKACHU_ATTRS,
-        FighterKind::PolyPurin => &scripts::NPURIN_ATTRS,
-        FighterKind::PolyNess => &scripts::NNESS_ATTRS,
-        FighterKind::GiantDonkey => &scripts::GDONKEY_ATTRS,
-    })
+    COMBAT_ATTRS.get().get(kind as usize)
 }
 
 /// `FTMotionEvent`.
@@ -409,43 +531,21 @@ enum Pass {
 }
 
 /// The fighter's script table (every kind has one).
+///
+/// This and the other motion lookups stay out of line: inlined, their
+/// store reads grew hot callers off their `.text` pins on the PSP (+0.15 ms
+/// busy, RE-589 item 8).
+#[inline(never)]
 pub fn fighter_scripts(kind: FighterKind) -> Option<&'static FighterScripts> {
-    Some(match kind {
-        FighterKind::Mario => &scripts::MARIO,
-        FighterKind::Fox => &scripts::FOX,
-        FighterKind::Donkey => &scripts::DONKEY,
-        FighterKind::Samus => &scripts::SAMUS,
-        FighterKind::Luigi => &scripts::LUIGI,
-        FighterKind::Link => &scripts::LINK,
-        FighterKind::Yoshi => &scripts::YOSHI,
-        FighterKind::Captain => &scripts::CAPTAIN,
-        FighterKind::Kirby => &scripts::KIRBY,
-        FighterKind::Pikachu => &scripts::PIKACHU,
-        FighterKind::Purin => &scripts::PURIN,
-        FighterKind::Ness => &scripts::NESS,
-        FighterKind::Boss => &scripts::BOSS,
-        FighterKind::MetalMario => &scripts::MMARIO,
-        FighterKind::PolyMario => &scripts::NMARIO,
-        FighterKind::PolyFox => &scripts::NFOX,
-        FighterKind::PolyDonkey => &scripts::NDONKEY,
-        FighterKind::PolySamus => &scripts::NSAMUS,
-        FighterKind::PolyLuigi => &scripts::NLUIGI,
-        FighterKind::PolyLink => &scripts::NLINK,
-        FighterKind::PolyYoshi => &scripts::NYOSHI,
-        FighterKind::PolyCaptain => &scripts::NCAPTAIN,
-        FighterKind::PolyKirby => &scripts::NKIRBY,
-        FighterKind::PolyPikachu => &scripts::NPIKACHU,
-        FighterKind::PolyPurin => &scripts::NPURIN,
-        FighterKind::PolyNess => &scripts::NNESS,
-        FighterKind::GiantDonkey => &scripts::GDONKEY,
-    })
+    FIGHTER_SCRIPTS.get().get(kind as usize)
 }
 
 /// `status_desc->mflags.motion_id`, or `None` for `-1`/`-2` (no new motion).
+#[inline(never)]
 pub fn motion_id(kind: FighterKind, status: AnyStatus) -> Option<usize> {
     let id = status.id();
     let motion = if id < SPECIAL_STATUS_START {
-        *COMMON_STATUS_MOTION.get(usize::from(id))?
+        *COMMON_STATUS_MOTION.get().get(usize::from(id))?
     } else {
         *fighter_scripts(kind)?
             .special_status_motion
@@ -455,6 +555,7 @@ pub fn motion_id(kind: FighterKind, status: AnyStatus) -> Option<usize> {
 }
 
 /// The motion desc a status plays.
+#[inline(never)]
 pub fn motion_desc(kind: FighterKind, status: AnyStatus) -> Option<MotionDesc> {
     let table = fighter_scripts(kind)?;
     table.motions.get(motion_id(kind, status)?).copied()
@@ -465,13 +566,14 @@ pub fn motion_desc(kind: FighterKind, status: AnyStatus) -> Option<MotionDesc> {
 /// Whether `ftMainSetStatus` sets a motion (`motion_id` neither -1 nor
 /// -2), and with it runs `ftMainPlayAnim`, which resets every part's
 /// `transform_update_mode` (RE-509).
+#[inline(never)]
 pub fn sets_motion(kind: FighterKind, status: AnyStatus) -> bool {
     let Some(table) = fighter_scripts(kind) else {
         return true;
     };
     let id = status.id();
     let motion = if id < SPECIAL_STATUS_START {
-        COMMON_STATUS_MOTION.get(usize::from(id)).copied()
+        COMMON_STATUS_MOTION.get().get(usize::from(id)).copied()
     } else {
         table
             .special_status_motion
@@ -481,6 +583,7 @@ pub fn sets_motion(kind: FighterKind, status: AnyStatus) -> bool {
     motion.is_none_or(|m| m >= 0)
 }
 
+#[inline(never)]
 pub fn clip_on_set_status(kind: FighterKind, status: AnyStatus) -> crate::status::ClipStart {
     use crate::status::{Clip, ClipStart};
     let Some(table) = fighter_scripts(kind) else {
@@ -488,7 +591,7 @@ pub fn clip_on_set_status(kind: FighterKind, status: AnyStatus) -> crate::status
     };
     let id = status.id();
     let motion = if id < SPECIAL_STATUS_START {
-        COMMON_STATUS_MOTION.get(usize::from(id)).copied()
+        COMMON_STATUS_MOTION.get().get(usize::from(id)).copied()
     } else {
         table
             .special_status_motion
@@ -517,15 +620,18 @@ pub fn clip_on_set_status(kind: FighterKind, status: AnyStatus) -> crate::status
 /// (`ftAnimParseDObjFigatree`, `ftanim.c:82-121`; `ftParamUpdateAnimKeys`
 /// parses `fp->joints` in order, so that joint writes it last). `None`
 /// without a figatree that ends after [`anim_length`] frames.
+#[inline(never)]
 pub fn end_blocks(kind: FighterKind, status: AnyStatus) -> Option<&'static [u8]> {
     let at = usize::from(motion_desc(kind, status)?.end_blocks);
-    let len = usize::from(*scripts::END_BLOCKS.get(at)?);
-    scripts::END_BLOCKS.get(at + 1..at + 1 + len)
+    let pool = END_BLOCKS.get();
+    let len = usize::from(*pool.get(at)?);
+    pool.get(at + 1..at + 1 + len)
 }
 
 /// The status's figatree length in frames, for statuses that end with their
 /// animation (`ftAnimEndCheckSetStatus`). `None` without a figatree, for a
 /// looping one, or for an unported fighter.
+#[inline(never)]
 pub fn anim_length(kind: FighterKind, status: AnyStatus) -> Option<f32> {
     match motion_desc(kind, status)?.anim_length {
         0 | 0xFFFF => None,
@@ -659,7 +765,7 @@ fn run(f: &mut Fighter, thread: usize, pass: Pass) {
         let (words, base) = if t.pc == NO_SCRIPT {
             (words, 0)
         } else if t.pc & COMMON_BIT != 0 {
-            (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+            (&COMMON_MOVESET.get()[..], COMMON_BIT)
         } else if t.pc & DEMO_BIT != 0 {
             // A demo status's script ([`start_demo`]).
             (demo_scripts(f.kind).map_or(&[][..], |d| d.words), DEMO_BIT)
@@ -977,7 +1083,7 @@ fn execute(
                             return None;
                         }
                         let (data, table_base) = if table & COMMON_BIT != 0 {
-                            (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+                            (&COMMON_MOVESET.get()[..], COMMON_BIT)
                         } else {
                             (fighter_scripts(f.kind)?.words, 0)
                         };
@@ -1136,7 +1242,7 @@ fn part_events(kind: FighterKind, wanted: u32) -> alloc::collections::BTreeSet<(
             let (words, base) = if pc & DEMO_BIT != 0 {
                 (demo_scripts(kind).map_or(&[][..], |d| d.words), DEMO_BIT)
             } else if pc & COMMON_BIT != 0 {
-                (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+                (&COMMON_MOVESET.get()[..], COMMON_BIT)
             } else {
                 (table.words, 0)
             };
@@ -1232,7 +1338,7 @@ pub fn script_attack_colls(
             break;
         }
         let (words, base) = if pc & COMMON_BIT != 0 {
-            (&scripts::COMMON_MOVESET_WORDS[..], COMMON_BIT)
+            (&COMMON_MOVESET.get()[..], COMMON_BIT)
         } else {
             (table.words, 0)
         };

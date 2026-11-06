@@ -36,6 +36,7 @@ crates/ssb-game/src/hud_tests.rs	SIZES	test fixture
 crates/ssb-game/src/item/mmonster_tests.rs	N64	test fixture: N64 measurements or expected ROM values
 crates/ssb-game/src/item_throw.rs	THROW_DESCS	layout: decodes the pack's ItemThrowDescs table (ssb_tablegen::battle_data); its literals are the row shape and a flag test
 crates/ssb-game/src/matchtick/tests.rs	PROCESSES	fixture: decomp process priorities, links and file:line the order test checks; no ROM data
+crates/ssb-game/src/motion/mod.rs	EMPTY	layout: the empty (stub) CombatAttrs until the pack's CombatAttrs table (ssb_tablegen::motion) is decoded
 crates/ssb-game/src/opening/clash.rs	CORNERS	link-time labels: the corners' ll*DL and ll*AnimJoint offsets (file 0x48) that mvOpeningClash passes as immediates
 crates/ssb-game/src/opening/fighters.rs	JUNGLE_CAMERA_SLOT	layout: llMVOpeningJungleFileID and the camera's offset, packed into a pack slot key
 crates/ssb-game/src/opening/fighters.rs	KEY_AT	layout: where each key script starts in the pack's OpeningKeys table (the scripts' halfword counts, ssb_tablegen::opening_data)

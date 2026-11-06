@@ -12,8 +12,8 @@ ssb-rom = { workspace = true }
 ssb-engine = { workspace = true }
 ssb-game = { workspace = true }
 ssb-tables = { workspace = true }
-# The `TABLES` section reader only: its generators need `std` and run at
-# build time (the workspace entry keeps its default `std`).
+# The `TABLES` section's readers, `no_std`: the PSP builds the same section
+# as the host (the workspace entry keeps its default `std`).
 ssb-tablegen = { path = "../ssb-tablegen", default-features = false }
 # `f64` square root without `std` (correctly rounded, as `std`'s).
 libm = "0.2"

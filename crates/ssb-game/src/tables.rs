@@ -18,5 +18,6 @@ pub unsafe fn fill() {
         crate::colanim::DESCS.fill();
         crate::computer::scripts::INPUT_SCRIPTS.fill();
         crate::computer::scripts::ATTACKS.fill();
+        crate::motion::fill();
     }
 }

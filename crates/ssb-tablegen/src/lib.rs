@@ -43,7 +43,6 @@ pub mod vpk0;
 // file offset (`ifcommon`).
 #[path = "../../ssb-rom/src/sprite_offsets.rs"]
 #[allow(dead_code)]
-#[cfg(feature = "std")]
 pub mod sprite_offsets;
 // `ssb-rom`'s animation player, for a table gameplay keeps as the values a
 // fixed `AObjEvent32` script produces (`monster_weapons`).
@@ -73,8 +72,23 @@ pub mod matanim;
 // `sqrt.s`).
 extern crate self as ssb_engine;
 mod math {
+    // Host tests: the `no_std` (PSP) square root on request, and a count
+    // of the calls (`tables::tests`).
+    #[cfg(all(test, feature = "std"))]
+    std::thread_local! {
+        pub static LIBM: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+        pub static CALLS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+    }
+
     /// `ssb_engine::math::sqrt_exact`.
     pub fn sqrt_exact(v: f32) -> f32 {
+        #[cfg(all(test, feature = "std"))]
+        {
+            CALLS.with(|c| c.set(c.get() + 1));
+            if LIBM.with(|l| l.get()) {
+                return libm::sqrtf(v);
+            }
+        }
         #[cfg(feature = "std")]
         {
             v.sqrt()
@@ -88,9 +102,7 @@ mod math {
 
 pub use error::{Error, Result};
 
-#[cfg(feature = "std")]
 mod anim_length;
-#[cfg(feature = "std")]
 mod anim_table;
 mod battle_data;
 mod capture_captain;
@@ -101,13 +113,10 @@ mod effect_life;
 #[cfg(feature = "std")]
 mod emit;
 mod ending_data;
-// Its motion-data fields are read by the `std`-only `motion` generator.
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
 mod fighters;
 mod ground;
 mod ground_effect;
 mod hurtbox;
-#[cfg(feature = "std")]
 mod ifcommon;
 mod item_attributes;
 mod item_sounds;
@@ -116,11 +125,9 @@ mod kirby_copy;
 mod menu_data;
 mod model_parts;
 mod monster_weapons;
-#[cfg(feature = "std")]
 mod motion;
 mod opening_data;
 mod physics;
-#[cfg(feature = "std")]
 mod rom_layout;
 mod sc1p_data;
 mod sin_table;
@@ -182,18 +189,14 @@ pub struct Generated {
     pub text: String,
 }
 
-/// Generates `krate`'s tables from `rom`, or their stubs when `rom` is
-/// `None`.
+/// Generates `krate`'s layout files. Every value is in the pack's `TABLES`
+/// section now: `rom` is not read.
 #[cfg(feature = "std")]
-pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
+pub fn generate(krate: Crate, _rom: Option<&Source>) -> Result<Vec<Generated>> {
     Ok(match krate {
         Crate::Game => {
+            // Layout only: the values are in the pack's `TABLES` section.
             let mut files = vec![
-                Generated {
-                    name: "motion_scripts.rs",
-                    text: motion::generate(rom)?,
-                },
-                // Layout only: the values are in the pack's `TABLES` section.
                 Generated {
                     name: "colanim_layout.rs",
                     text: colanim::layout_rs(),

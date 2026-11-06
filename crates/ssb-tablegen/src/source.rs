@@ -1,8 +1,6 @@
 //! The verified ROM image the tables are read from.
 
 use alloc::vec::Vec;
-#[cfg(not(feature = "std"))]
-use core::cell::RefCell;
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 #[cfg(feature = "std")]
@@ -19,9 +17,6 @@ pub struct Source {
     rom: Vec<u8>,
     #[cfg(feature = "std")]
     files: Mutex<HashMap<u32, File>>,
-    /// Without `std` (the portable packer): single-threaded.
-    #[cfg(not(feature = "std"))]
-    files: RefCell<alloc::collections::BTreeMap<u32, File>>,
 }
 
 impl Source {
@@ -37,6 +32,7 @@ impl Source {
         rom::identify(&rom)?;
         Ok(Self {
             rom,
+            #[cfg(feature = "std")]
             files: Default::default(),
         })
     }
@@ -66,17 +62,28 @@ impl Source {
     /// Archive file `id`, decompressed, with its relocation records.
     /// Intern pointer slots hold file-relative byte offsets; extern slots
     /// are zero (`archive::Archive::load`).
+    ///
+    /// The host (`std`) caches every file it decodes. Without `std` (the
+    /// packer on the PSP) each call decodes again: a cache held 1,899 files
+    /// (6 MB) through the tables phase, and their freed blocks stranded
+    /// 7.4 MB of small-heap chunks, so the PSP-2000's pack build ran out of
+    /// memory (RE-588). A recent-files cache does not help: a 256-file one
+    /// misses 5,500 of 7,400 reads.
+    #[cfg(feature = "std")]
     pub fn file(&self, id: u32) -> Result<File> {
-        #[cfg(feature = "std")]
         let mut files = self.files.lock().expect("file cache");
-        #[cfg(not(feature = "std"))]
-        let mut files = self.files.borrow_mut();
         if let Some(file) = files.get(&id) {
             return Ok(file.clone());
         }
         let file = Archive::open(&self.rom, Region::Us)?.load(id)?;
         files.insert(id, file.clone());
         Ok(file)
+    }
+
+    /// See the `std` [`Source::file`]: no cache.
+    #[cfg(not(feature = "std"))]
+    pub fn file(&self, id: u32) -> Result<File> {
+        Archive::open(&self.rom, Region::Us)?.load(id)
     }
 }
 

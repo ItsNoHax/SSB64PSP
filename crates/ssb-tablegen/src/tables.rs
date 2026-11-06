@@ -92,15 +92,14 @@ pub enum Len {
 pub type Reader = fn(&Ctx) -> Result<Vec<u8>>;
 
 /// One table: its `TableId` variant, element kind, what it is and its
-/// reader (the table's little-endian bytes). `read` is `None` for a table
-/// whose reader needs `std` in a build without it: the section then lacks
-/// the table (it reads as zeros).
+/// reader (the table's little-endian bytes; `no_std`, so the PSP builds the
+/// same section as the host).
 pub struct TableDesc {
     pub name: &'static str,
     pub kind: Kind,
     pub len: Len,
     pub doc: &'static str,
-    pub read: Option<Reader>,
+    pub read: Reader,
 }
 
 impl TableDesc {
@@ -118,30 +117,21 @@ impl TableDesc {
 /// intermediate results more than one table is read from, made once.
 pub struct Ctx<'a> {
     pub rom: &'a Source,
-    #[cfg(feature = "std")]
     pub(crate) anim: core::cell::OnceCell<crate::anim_table::Rows>,
+    pub(crate) motion: core::cell::OnceCell<crate::motion::Tables>,
+    /// The figatree lengths `anim_table` and `motion` both read.
+    pub(crate) lengths: crate::anim_length::Lengths,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(rom: &'a Source) -> Self {
         Self {
             rom,
-            #[cfg(feature = "std")]
             anim: core::cell::OnceCell::new(),
+            motion: core::cell::OnceCell::new(),
+            lengths: Default::default(),
         }
     }
-}
-
-/// `Some(reader)` with `std`; `None` without (the generator needs `std`
-/// today).
-macro_rules! std_reader {
-    ($f:path) => {{
-        #[cfg(feature = "std")]
-        let r: Option<Reader> = Some($f);
-        #[cfg(not(feature = "std"))]
-        let r: Option<Reader> = None;
-        r
-    }};
 }
 
 /// Every table, in id order (`TableId` is the index).
@@ -151,59 +141,59 @@ pub const IDS: &[TableDesc] = &[
         kind: Kind::U16,
         len: Len::Exact(2048),
         doc: "`gSYSinTable` (`sys/sintable.c`): `u16[2048]`.",
-        read: Some(|c| Ok(le_bytes(&sin_table::values(Some(c.rom))?, u16::to_le_bytes))),
+        read: |c| Ok(le_bytes(&sin_table::values(Some(c.rom))?, u16::to_le_bytes)),
     },
     TableDesc {
         name: "LbCommonSinLookup",
         kind: Kind::F32,
         len: Len::Exact(1024),
         doc: "`dLBCommonSinLookup` (`lb/lbcommon.c`): `f32[1024]`.",
-        read: Some(|c| {
+        read: |c| {
             let words = d_arrays::engine_words("LB_COMMON_SIN_LOOKUP", Some(c.rom))?;
             Ok(le_bytes(&words, u32::to_le_bytes))
-        }),
+        },
     },
     TableDesc {
         name: "DArrU8",
         kind: Kind::U8,
         len: Len::Exact(d_arrays::group_bytes(d_arrays::Group::U8)),
         doc: "The `u8` `d*` arrays of `ssb-game` and `ssb-rom` (`d_arrays`), each 4-byte aligned.",
-        read: Some(|c| d_arrays::group(d_arrays::Group::U8, c.rom)),
+        read: |c| d_arrays::group(d_arrays::Group::U8, c.rom),
     },
     TableDesc {
         name: "DArrU16",
         kind: Kind::U16,
         len: Len::Exact(d_arrays::group_bytes(d_arrays::Group::U16) / 2),
         doc: "The `u16` `d*` arrays (`d_arrays`), each 4-byte aligned.",
-        read: Some(|c| d_arrays::group(d_arrays::Group::U16, c.rom)),
+        read: |c| d_arrays::group(d_arrays::Group::U16, c.rom),
     },
     TableDesc {
         name: "DArrU32",
         kind: Kind::U32,
         len: Len::Exact(d_arrays::group_bytes(d_arrays::Group::U32) / 4),
         doc: "The `u32` `d*` arrays (`d_arrays`), and each string array's offsets in `DArrStr`.",
-        read: Some(|c| d_arrays::group(d_arrays::Group::U32, c.rom)),
+        read: |c| d_arrays::group(d_arrays::Group::U32, c.rom),
     },
     TableDesc {
         name: "DArrI32",
         kind: Kind::I32,
         len: Len::Exact(d_arrays::group_bytes(d_arrays::Group::I32) / 4),
         doc: "The `s32` `d*` arrays (`d_arrays`).",
-        read: Some(|c| d_arrays::group(d_arrays::Group::I32, c.rom)),
+        read: |c| d_arrays::group(d_arrays::Group::I32, c.rom),
     },
     TableDesc {
         name: "DArrF32",
         kind: Kind::F32,
         len: Len::Exact(d_arrays::group_bytes(d_arrays::Group::F32) / 4),
         doc: "The `f32` `d*` arrays (`d_arrays`).",
-        read: Some(|c| d_arrays::group(d_arrays::Group::F32, c.rom)),
+        read: |c| d_arrays::group(d_arrays::Group::F32, c.rom),
     },
     TableDesc {
         name: "DArrStr",
         kind: Kind::U8,
         len: Len::Var,
         doc: "The `char *` `d*` arrays' strings, NUL-terminated, after one NUL (a `NULL`).",
-        read: Some(|c| d_arrays::strings(c.rom)),
+        read: |c| d_arrays::strings(c.rom),
     },
     TableDesc {
         name: "FighterFiles",
@@ -211,14 +201,14 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(27 * 7),
         doc: "`dFTManagerDataFiles` by `FTKind`: `file_main_id`, `o_attributes`, \
               `file_special1_id`..`4`, and bit `k` set when special file `k` is loaded.",
-        read: std_reader!(crate::rom_layout::fighter_files_bytes),
+        read: crate::rom_layout::fighter_files_bytes,
     },
     TableDesc {
         name: "TransitionDescs",
         kind: Kind::U32,
         len: Len::Exact(11 * 3),
         doc: "`dLBTransitionDescs`: `file_id`, `o_dobjdesc`, `o_anim_joint`.",
-        read: std_reader!(crate::rom_layout::transitions_bytes),
+        read: crate::rom_layout::transitions_bytes,
     },
     TableDesc {
         name: "ManagerEffects",
@@ -226,7 +216,7 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(46 * 6),
         doc: "`dEFManager*EffectDesc` by slot: file, `o_dobjdesc`, `o_anim_joint`, \
               `o_matanim_joint`, `dl_link`, `proc_display`.",
-        read: std_reader!(crate::rom_layout::effects_bytes),
+        read: crate::rom_layout::effects_bytes,
     },
     TableDesc {
         name: "WeaponDescs",
@@ -234,119 +224,119 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(35 * 6),
         doc: "Each weapon's attributes file and offset, `WPDesc.flags`, and where \
               `WPAttributes.data` relocates to (present, file, offset).",
-        read: std_reader!(crate::rom_layout::weapons_bytes),
+        read: crate::rom_layout::weapons_bytes,
     },
     TableDesc {
         name: "Bonus1Courses",
         kind: Kind::U32,
         len: Len::Exact(12 * 3),
         doc: "`dSC1PBonusStageTargetDescs`: `start`, `dobjdesc`, `anim_joint`.",
-        read: Some(crate::sc1p_data::courses_bytes),
+        read: crate::sc1p_data::courses_bytes,
     },
     TableDesc {
         name: "Bonus2Trees",
         kind: Kind::U32,
         len: Len::Exact(6 * 4),
         doc: "`dSC1PBonusStagePlatformDescs`, then `dSC1PBonusStageBoardedPlatformDescs` (two words and two zeros).",
-        read: Some(crate::sc1p_data::trees_bytes),
+        read: crate::sc1p_data::trees_bytes,
     },
     TableDesc {
         name: "Bonus2Bumpers",
         kind: Kind::U32,
         len: Len::Exact(12 * 2),
         doc: "`dSC1PBonusStageBumperDescs`: `dobjdesc`, `anim_joint` (0, 0: none).",
-        read: Some(crate::sc1p_data::bumpers_bytes),
+        read: crate::sc1p_data::bumpers_bytes,
     },
     TableDesc {
         name: "CampaignBonusLabels",
         kind: Kind::U32,
         len: Len::Exact(58),
         doc: "`dSC1PStageClearBonusData`'s `offset`s.",
-        read: Some(crate::sc1p_data::bonus_labels_bytes),
+        read: crate::sc1p_data::bonus_labels_bytes,
     },
     TableDesc {
         name: "CampaignAllyCameras",
         kind: Kind::F32,
         len: Len::Exact(12 * 6 * 6),
         doc: "`sc1PIntroGetFighterCObjDesc`'s `cobj_descs` eye and at points.",
-        read: Some(crate::sc1p_data::ally_cameras_bytes),
+        read: crate::sc1p_data::ally_cameras_bytes,
     },
     TableDesc {
         name: "EndingCongra",
         kind: Kind::U32,
         len: Len::Exact(12 * 4),
         doc: "`dMNCongraPictures`: bottom file and offset, top file and offset.",
-        read: Some(crate::ending_data::congra_bytes),
+        read: crate::ending_data::congra_bytes,
     },
     TableDesc {
         name: "StaffrollNameImages",
         kind: Kind::U32,
         len: Len::Exact(56),
         doc: "`dSCStaffrollNameAndJobSpriteInfo`'s `offset`s.",
-        read: Some(crate::ending_data::name_images_bytes),
+        read: crate::ending_data::name_images_bytes,
     },
     TableDesc {
         name: "StaffrollTextSprites",
         kind: Kind::U32,
         len: Len::Exact(74),
         doc: "`dSCStaffrollTextBoxSpriteInfo`'s `offset`s.",
-        read: Some(crate::ending_data::text_sprites_bytes),
+        read: crate::ending_data::text_sprites_bytes,
     },
     TableDesc {
         name: "AnimFiles",
         kind: Kind::U16,
         len: Len::Exact(27 * ANIM_SLOTS),
         doc: "Each fighter's animation file per slot (`ssb_rom::anim`).",
-        read: std_reader!(crate::anim_table::files_bytes),
+        read: crate::anim_table::files_bytes,
     },
     TableDesc {
         name: "AnimRuntimeBits",
         kind: Kind::U32,
         len: Len::Exact(27 * ANIM_SLOTS),
         doc: "Each fighter's `FTAnimDesc` word per slot: hidden-part bits 31..5, leading runtime joint 31..29.",
-        read: std_reader!(crate::anim_table::runtime_bytes),
+        read: crate::anim_table::runtime_bytes,
     },
     TableDesc {
         name: "AnimExpectedFrames",
         kind: Kind::U16,
         len: Len::Exact(27 * ANIM_SLOTS),
         doc: "Each fighter's figatree length per slot (0: none, a loop, an `AnimJoint` clip).",
-        read: std_reader!(crate::anim_table::frames_bytes),
+        read: crate::anim_table::frames_bytes,
     },
     TableDesc {
         name: "AnimBossJoint",
         kind: Kind::U8,
         len: Len::Exact(30),
         doc: "Master Hand's slots holding a 32-bit `AnimJoint` clip (1).",
-        read: std_reader!(crate::anim_table::boss_joint_bytes),
+        read: crate::anim_table::boss_joint_bytes,
     },
     TableDesc {
         name: "IfTrafficSprites",
         kind: Kind::U8,
         len: Len::Exact(9),
         doc: "`dIFCommonTrafficSpriteOffsets` as file 82 manifest indices, by colour id.",
-        read: std_reader!(crate::ifcommon::traffic_sprites_bytes),
+        read: crate::ifcommon::traffic_sprites_bytes,
     },
     TableDesc {
         name: "IfTrafficColors",
         kind: Kind::U8,
         len: Len::Exact(3 * 9),
         doc: "`dIFCommonTrafficSpriteColorsR`, `G`, `B`.",
-        read: std_reader!(crate::ifcommon::traffic_colors_bytes),
+        read: crate::ifcommon::traffic_colors_bytes,
     },
     TableDesc {
         name: "IfGoColors",
         kind: Kind::U8,
         len: Len::Exact(2 * 2 * 3),
         doc: "`dIFCommonTrafficGoBacklight{R,G,B}`, `...GoShadow{R,G,B}`: by state, channel.",
-        read: std_reader!(crate::ifcommon::go_colors_bytes),
+        read: crate::ifcommon::go_colors_bytes,
     },
     TableDesc {
         name: "IfTraffic",
         kind: Kind::I16,
         len: Len::Exact(15 * 3),
         doc: "`dIFCommonTrafficSpriteData`: `x`, `y`, `color_id`.",
-        read: std_reader!(crate::ifcommon::traffic_bytes),
+        read: crate::ifcommon::traffic_bytes,
     },
     TableDesc {
         name: "IfAnnounce",
@@ -354,7 +344,7 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(IF_ANNOUNCE_ROWS * 3),
         doc: "`dIFCommonAnnounce{Go,SuddenDeath,TimeUp,Complete,GameSet,Failure}SpriteData`: \
               `x`, `y`, sprite (a manifest index).",
-        read: std_reader!(crate::ifcommon::announce_bytes),
+        read: crate::ifcommon::announce_bytes,
     },
     TableDesc {
         name: "IfPauseDecals",
@@ -362,35 +352,35 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(14 * 9),
         doc: "`dIFCommonBattlePauseDecalsSpriteData`: sprite (file 197 manifest index), `x`, `y`, \
               `prim[3]`, `env[3]`.",
-        read: std_reader!(crate::ifcommon::pause_decals_bytes),
+        read: crate::ifcommon::pause_decals_bytes,
     },
     TableDesc {
         name: "IfPauseBorder",
         kind: Kind::I16,
         len: Len::Exact(5 * 4),
         doc: "`dIFCommonBattlePauseBorderRectangle`: `ulx`, `uly`, `lrx`, `lry`.",
-        read: std_reader!(crate::ifcommon::pause_border_bytes),
+        read: crate::ifcommon::pause_border_bytes,
     },
     TableDesc {
         name: "TitleFire",
         kind: Kind::U32,
         len: Len::Exact(30),
         doc: "`dMNTitleFireSpriteOffsets`.",
-        read: Some(crate::menu_data::title_fire_bytes),
+        read: crate::menu_data::title_fire_bytes,
     },
     TableDesc {
         name: "TitleFireColors",
         kind: Kind::U8,
         len: Len::Exact(7 * 3),
         doc: "`dMNTitleFireColors{R,G,B}`: by colour, channel.",
-        read: Some(crate::menu_data::title_fire_colors_bytes),
+        read: crate::menu_data::title_fire_colors_bytes,
     },
     TableDesc {
         name: "TitleSprites",
         kind: Kind::I32,
         len: Len::Exact(10 * 3),
         doc: "`dMNTitleCommonSpriteDescs` (US): `x`, `y`, `offset`.",
-        read: Some(crate::menu_data::title_sprites_bytes),
+        read: crate::menu_data::title_sprites_bytes,
     },
     TableDesc {
         name: "CharactersSpecial",
@@ -398,63 +388,63 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(12 * 3 * 8 * 3),
         doc: "`dMNCharactersSpecialMotion*` by `FTKind`, motion, track: `status_id`, \
               `anim_length`, `flags`.",
-        read: Some(crate::menu_data::characters_special_bytes),
+        read: crate::menu_data::characters_special_bytes,
     },
     TableDesc {
         name: "CharactersCommon",
         kind: Kind::U32,
         len: Len::Exact(39 * 8 * 3),
         doc: "`dMNCharactersCommonMotionDescs` by motion kind, track.",
-        read: Some(crate::menu_data::characters_common_bytes),
+        read: crate::menu_data::characters_common_bytes,
     },
     TableDesc {
         name: "CharactersAttack1",
         kind: Kind::U32,
         len: Len::Exact(12 * 8 * 3),
         doc: "`dMNCharactersAttack1MotionDescs` by `FTKind`, track.",
-        read: Some(crate::menu_data::characters_attack1_bytes),
+        read: crate::menu_data::characters_attack1_bytes,
     },
     TableDesc {
         name: "CharactersAerial",
         kind: Kind::U32,
         len: Len::Exact(2 * 9 * 3),
         doc: "`dMNCharactersKirbyJumpAerialMotionDescs` and `...KirbyFallMotionDesc`, then Purin's.",
-        read: Some(crate::menu_data::characters_aerial_bytes),
+        read: crate::menu_data::characters_aerial_bytes,
     },
     TableDesc {
         name: "PlayersDarkDigitWidths",
         kind: Kind::F32,
         len: Len::Exact(10),
         doc: "`llMNPlayersCommon0DarkSprite` to `...9DarkSprite`'s `width`.",
-        read: Some(crate::menu_data::dark_digit_widths_bytes),
+        read: crate::menu_data::dark_digit_widths_bytes,
     },
     TableDesc {
         name: "StageClearPoints",
         kind: Kind::I32,
         len: Len::Exact(58),
         doc: "`dSC1PStageClearBonusData`'s `points`.",
-        read: Some(crate::sc1p_data::bonus_points_bytes),
+        read: crate::sc1p_data::bonus_points_bytes,
     },
     TableDesc {
         name: "SC1PComputers",
         kind: Kind::U8,
         len: Len::Exact(18 * 22),
         doc: "`dSC1PGameComputerDesc`: each `SC1PGameComputer`'s 22 bytes.",
-        read: Some(crate::sc1p_data::computers_bytes),
+        read: crate::sc1p_data::computers_bytes,
     },
     TableDesc {
         name: "SC1PStages",
         kind: Kind::U8,
         len: Len::Exact(18 * 8),
         doc: "`dSC1PGameStageDesc` without `item_toggles` (`sc1p_data::STAGE_ROW`).",
-        read: Some(crate::sc1p_data::stages_bytes),
+        read: crate::sc1p_data::stages_bytes,
     },
     TableDesc {
         name: "BossCometColors",
         kind: Kind::U8,
         len: Len::Exact(7 * 3),
         doc: "`dSC1PGameBossCometEnvColor{R,G,B}`: by colour, channel.",
-        read: Some(crate::sc1p_data::boss_comet_colors_bytes),
+        read: crate::sc1p_data::boss_comet_colors_bytes,
     },
     TableDesc {
         name: "BossWallpapers",
@@ -462,28 +452,28 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(4 * 35),
         doc: "`dSC1PGameBossWallpapers` and their effects, animations and plans \
               (`sc1p_data::BOSS_ROW`).",
-        read: Some(crate::sc1p_data::boss_wallpapers_bytes),
+        read: crate::sc1p_data::boss_wallpapers_bytes,
     },
     TableDesc {
         name: "StaffrollNameGlyphs",
         kind: Kind::U8,
         len: Len::Exact(56 * 2),
         doc: "`dSCStaffrollNameAndJobSpriteInfo`'s `width`, `height`.",
-        read: Some(crate::ending_data::name_glyphs_bytes),
+        read: crate::ending_data::name_glyphs_bytes,
     },
     TableDesc {
         name: "StaffrollTextGlyphs",
         kind: Kind::U8,
         len: Len::Exact(74 * 2),
         doc: "`dSCStaffrollTextBoxSpriteInfo`'s `width`, `height`.",
-        read: Some(crate::ending_data::text_glyphs_bytes),
+        read: crate::ending_data::text_glyphs_bytes,
     },
     TableDesc {
         name: "OpeningCameras",
         kind: Kind::F32,
         len: Len::Exact(8 * 2 * 7),
         doc: "`dMVOpening*CObjDescStart` and `...End` of the eight fighter scenes: eye, at, `up.x`.",
-        read: Some(crate::opening_data::cameras_bytes),
+        read: crate::opening_data::cameras_bytes,
     },
     TableDesc {
         name: "OpeningKeys",
@@ -491,315 +481,385 @@ pub const IDS: &[TableDesc] = &[
         len: Len::Exact(crate::opening_data::KEY_HALFWORDS),
         doc: "`dMVOpening*KeyEvents` of the eight fighter scenes, then \
               `dMVOpeningJungle{Donkey,Samus}KeyEvents`.",
-        read: Some(crate::opening_data::keys_bytes),
+        read: crate::opening_data::keys_bytes,
     },
     TableDesc {
         name: "ItemAttributes",
         kind: Kind::I32,
         len: Len::Exact(crate::item_sounds::ITEMS.len() * crate::item_attributes::WORDS),
         doc: "Each `ll*ItemAttributes` record (`item_sounds::ITEMS`) as `item_attributes::WORDS` field words, sounds and `spin_speed` included.",
-        read: Some(crate::item_attributes::attributes_bytes),
+        read: crate::item_attributes::attributes_bytes,
     },
     TableDesc {
         name: "ItemAttackEvents",
         kind: Kind::I32,
         len: Len::Exact(8 * 4 * 4),
         doc: "`item_attributes::ATTACK_EVENTS`' four `ITAttackEvent`s each: `timer, angle, damage, size`.",
-        read: Some(crate::item_attributes::attack_events_bytes),
+        read: crate::item_attributes::attack_events_bytes,
     },
     TableDesc {
         name: "ContainerVelocitiesY",
         kind: Kind::F32,
         len: Len::Exact(20),
         doc: "`llITCommonDataContainerVelocitiesY`.",
-        read: Some(crate::item_attributes::container_velocities_bytes),
+        read: crate::item_attributes::container_velocities_bytes,
     },
     TableDesc {
         name: "LinkBombBloatScales",
         kind: Kind::F32,
         len: Len::Exact(6),
         doc: "`llLinkMainBombBloatScales`.",
-        read: Some(crate::item_attributes::bloat_scales_bytes),
+        read: crate::item_attributes::bloat_scales_bytes,
     },
     TableDesc {
         name: "WeaponSounds",
         kind: Kind::U16,
         len: Len::Exact(crate::item_sounds::WEAPONS.len()),
         doc: "`WPAttributes::sfx` per `item_sounds::WEAPONS` record.",
-        read: Some(crate::item_sounds::weapon_sounds_bytes),
+        read: crate::item_sounds::weapon_sounds_bytes,
     },
     TableDesc {
         name: "MonsterEventSounds",
         kind: Kind::U16,
         len: Len::Exact(2 * 2),
         doc: "`ITMonsterEvent::fgm_id` of both events per `item_sounds::MONSTER_EVENTS` table.",
-        read: Some(crate::item_sounds::monster_event_sounds_bytes),
+        read: crate::item_sounds::monster_event_sounds_bytes,
     },
     TableDesc {
         name: "WeaponAttributes",
         kind: Kind::I32,
         len: Len::Exact(crate::item_sounds::WEAPONS.len() * crate::monster_weapons::WORDS),
         doc: "Each `ll*WeaponAttributes` record (`item_sounds::WEAPONS`) as `monster_weapons::WORDS` field words.",
-        read: Some(crate::monster_weapons::attributes_bytes),
+        read: crate::monster_weapons::attributes_bytes,
     },
     TableDesc {
         name: "SmogScale",
         kind: Kind::F32,
         len: Len::Exact(crate::monster_weapons::SMOG_PLAYS),
         doc: "The Smog's child `DObj` X scale after each play.",
-        read: Some(crate::monster_weapons::smog_scale_bytes),
+        read: crate::monster_weapons::smog_scale_bytes,
     },
     TableDesc {
         name: "ThrowDescs",
         kind: Kind::I32,
         len: Len::Exact(40 * 2 * 7),
         doc: "`throw_descs::DESCS`' two `FTThrowHitDesc`s each: `status` index, `damage, angle, kb_scale, kb_weight, kb_base, element`.",
-        read: Some(crate::throw_descs::descs_bytes),
+        read: crate::throw_descs::descs_bytes,
     },
     TableDesc {
         name: "SpecialColls",
         kind: Kind::U32,
         len: Len::Exact(3 * 9),
         doc: "`throw_descs::SPECIAL_COLLS`: `kind, joint`, `offset`, `size` (f32 bits), `damage_resist`.",
-        read: Some(crate::throw_descs::special_colls_bytes),
+        read: crate::throw_descs::special_colls_bytes,
     },
     TableDesc {
         name: "ItemThrowDescs",
         kind: Kind::U32,
         len: Len::Exact(22 * 4),
         doc: "`dFTCommonDataItemThrowDescs`: `is_smash`, `velocity` (f32 bits), `angle`, `damage_scale` (f32 bits).",
-        read: Some(crate::battle_data::item_throws_bytes),
+        read: crate::battle_data::item_throws_bytes,
     },
     TableDesc {
         name: "GroundHitAttacks",
         kind: Kind::I32,
         len: Len::Exact(6 * 7),
         doc: "`dFTMainGroundHitCollisionAttributes`: `kind, damage, angle, kb_scale, kb_weight, kb_base, element`.",
-        read: Some(crate::battle_data::ground_hits_bytes),
+        read: crate::battle_data::ground_hits_bytes,
     },
     TableDesc {
         name: "ChargeShot",
         kind: Kind::U32,
         len: Len::Exact(8 * 6),
         doc: "`dWPSamusChargeShotWeaponAttributes`: `gfx_size, vel_x, damage, attack_size, coll_size` (floats as bits), `priority`.",
-        read: Some(crate::battle_data::charge_shot_bytes),
+        read: crate::battle_data::charge_shot_bytes,
     },
     TableDesc {
         name: "KirbyCopy",
         kind: Kind::U32,
         len: Len::Exact(27 * 4),
         doc: "`FTKirbyCopy` per swallowed `FTKind`: `copy_id, copy_modelpart_id, star_damage`, `effect_scale` (f32 bits).",
-        read: Some(crate::kirby_copy::copy_bytes),
+        read: crate::kirby_copy::copy_bytes,
     },
     TableDesc {
         name: "KirbyAttack100",
         kind: Kind::F32,
         len: Len::Exact(6 * 6),
         doc: "`ftKirbyAttack100Effect[6]`: `offset[3], rotate, vel, add`.",
-        read: Some(crate::kirby_attack100::effect_bytes),
+        read: crate::kirby_attack100::effect_bytes,
     },
     TableDesc {
         name: "YoshiEgg",
         kind: Kind::F32,
         len: Len::Exact(27 * 7),
         doc: "`dFTCommonYoshiEggDamageCollDescs`: `effect_size, offset[3], size[3]` per `FTKind`.",
-        read: Some(crate::battle_data::yoshi_egg_bytes),
+        read: crate::battle_data::yoshi_egg_bytes,
     },
     TableDesc {
         name: "CaptureCaptain",
         kind: Kind::I16,
         len: Len::Exact(27 * 2),
         doc: "`dCaptainMainMotion_0x0000`: `(x, y)` per victim `FTKind`.",
-        read: Some(crate::capture_captain::offsets_bytes),
+        read: crate::capture_captain::offsets_bytes,
     },
     TableDesc {
         name: "CostumeRoyal",
         kind: Kind::U8,
         len: Len::Exact(12 * 4),
         doc: "`FTCostume::royal` of the playable `FTKind`s.",
-        read: Some(crate::battle_data::costume_royal_bytes),
+        read: crate::battle_data::costume_royal_bytes,
     },
     TableDesc {
         name: "CostumeTeam",
         kind: Kind::U8,
         len: Len::Exact(12 * 3),
         doc: "`FTCostume::team` of the playable `FTKind`s.",
-        read: Some(crate::battle_data::costume_team_bytes),
+        read: crate::battle_data::costume_team_bytes,
     },
     TableDesc {
         name: "Handicap",
         kind: Kind::F32,
         len: Len::Exact(40 * 2),
         doc: "`dFTCommonDataHandicapTable`.",
-        read: Some(crate::battle_data::handicap_bytes),
+        read: crate::battle_data::handicap_bytes,
     },
     TableDesc {
         name: "ShieldColors",
         kind: Kind::U8,
         len: Len::Exact(5 * 6),
         doc: "`dEFManagerShieldColors`: `prim[3], env[3]`.",
-        read: Some(crate::battle_data::shield_colors_bytes),
+        read: crate::battle_data::shield_colors_bytes,
     },
     TableDesc {
         name: "BossWait",
         kind: Kind::U8,
         len: Len::Exact(0x50),
         doc: "`ftbosswait.o`'s `.data` and the 16 bytes after it.",
-        read: Some(crate::battle_data::boss_wait_bytes),
+        read: crate::battle_data::boss_wait_bytes,
     },
     TableDesc {
         name: "EffectLife",
         kind: Kind::U16,
         len: Len::Exact(4 + 3),
         doc: "The quakes' and the Thunder Shock spark's animation lives.",
-        read: Some(crate::effect_life::lives_bytes),
+        read: crate::effect_life::lives_bytes,
     },
     TableDesc {
         name: "ZebesAcid",
         kind: Kind::U32,
         len: Len::Exact(16 * 4),
         doc: "`dGRZebesAcidAttributes`: `wait_base, random_min, random_max, level` (f32 bits).",
-        read: Some(crate::battle_data::zebes_acid_bytes),
+        read: crate::battle_data::zebes_acid_bytes,
     },
     TableDesc {
         name: "SectorMapX",
         kind: Kind::I16,
         len: Len::Exact(3),
         doc: "`dGRSectorArwingMapPositionsX`.",
-        read: Some(crate::battle_data::sector_map_x_bytes),
+        read: crate::battle_data::sector_map_x_bytes,
     },
     TableDesc {
         name: "SectorLasers",
         kind: Kind::U8,
         len: Len::Exact(8),
         doc: "`dGRSectorArwingLaserCounts`.",
-        read: Some(crate::battle_data::sector_lasers_bytes),
+        read: crate::battle_data::sector_lasers_bytes,
     },
     TableDesc {
         name: "SectorPilots",
         kind: Kind::U8,
         len: Len::Exact(56),
         doc: "`dGRSectorArwingPilotIDs`.",
-        read: Some(crate::battle_data::sector_pilots_bytes),
+        read: crate::battle_data::sector_pilots_bytes,
     },
     TableDesc {
         name: "SectorPilotWindows",
         kind: Kind::U8,
         len: Len::Exact(6 * 2),
         doc: "`dGRSectorArwingPilotWaitTimers`: `(first, count)` pairs.",
-        read: Some(crate::battle_data::sector_windows_bytes),
+        read: crate::battle_data::sector_windows_bytes,
     },
     TableDesc {
         name: "AltWarning",
         kind: Kind::I16,
         len: Len::Exact(41),
         doc: "`MPGroundData::alt_warning` by `GRKind`.",
-        read: Some(crate::ground::alt_warning_bytes),
+        read: crate::ground::alt_warning_bytes,
     },
     TableDesc {
         name: "GroundEffectLife",
         kind: Kind::U16,
         len: Len::Exact(24),
         doc: "Each `EFGroundDesc`'s child `DObj` script's end play.",
-        read: Some(crate::ground_effect::life_bytes),
+        read: crate::ground_effect::life_bytes,
     },
     TableDesc {
         name: "GroundEffectEnd",
         kind: Kind::F32,
         len: Len::Exact(24 * 2 * 2),
         doc: "Each `EFGroundDesc`'s child `translate.x, .y` at that play: first, later cycles.",
-        read: Some(crate::ground_effect::end_bytes),
+        read: crate::ground_effect::end_bytes,
     },
     TableDesc {
         name: "StatFlags",
         kind: Kind::U16,
         len: Len::Exact(crate::stat_flags::FLAG_COUNT),
         doc: "`FTStatusDesc::sflags`: the common statuses, then each playable fighter's specials.",
-        read: Some(crate::stat_flags::flags_bytes),
+        read: crate::stat_flags::flags_bytes,
     },
     TableDesc {
         name: "DamageColls",
         kind: Kind::U32,
         len: Len::Exact(27 * crate::hurtbox::FIGHTER_WORDS),
         doc: "Per `FTKind`: `FTAttributes::damage_coll_descs`' used-row count, then 11 rows of `joint, placement, is_grabbable, offset[3], size[3]` (`f32` bits, full size).",
-        read: Some(crate::hurtbox::bytes),
+        read: crate::hurtbox::bytes,
     },
     TableDesc {
         name: "JointMasks",
         kind: Kind::U32,
         len: Len::Exact(27 * crate::model_parts::JOINT_MASK_WORDS),
         doc: "Per `FTKind`: `setup_parts`, `setup_parts & has a display list`, `animlock`, each as (low, high) words of a 64-bit joint mask.",
-        read: Some(crate::model_parts::joint_masks_bytes),
+        read: crate::model_parts::joint_masks_bytes,
     },
     TableDesc {
         name: "HiddenParts",
         kind: Kind::U8,
         len: Len::Exact(27 * crate::model_parts::HIDDEN_PART_BYTES),
         doc: "Per `FTKind`: the count, then `(index, root joint, has a display list)` per `hiddenparts` entry rooted at joint 4 or later.",
-        read: Some(crate::model_parts::hidden_parts_bytes),
+        read: crate::model_parts::hidden_parts_bytes,
     },
     TableDesc {
         name: "TextureParts",
         kind: Kind::U8,
         len: Len::Exact(27 * crate::model_parts::TEXTURE_PART_BYTES),
         doc: "Per `FTKind`: present, then `(joint, high MObj, low MObj)` per `textureparts` entry, pad.",
-        read: Some(crate::model_parts::texture_parts_bytes),
+        read: crate::model_parts::texture_parts_bytes,
     },
     TableDesc {
         name: "TexturePartMade",
         kind: Kind::U8,
         len: Len::Exact(27 * crate::model_parts::TEXTURE_PART_MADE_BYTES),
         doc: "Per `FTKind` and texture part: the made `TextureIDCurrent` at high and low detail (`i8`), has an `FTModelPartDesc`; pad.",
-        read: Some(crate::model_parts::texture_part_made_bytes),
+        read: crate::model_parts::texture_part_made_bytes,
     },
     TableDesc {
         name: "MarioPhysics",
         kind: Kind::U32,
         len: Len::Exact(crate::physics::WORDS),
         doc: "Mario's `FTAttributes` physics head in `physics::FIELDS` order (`f32` bits; `jumps_max` an `s32`), then `map_coll`.",
-        read: Some(crate::physics::bytes),
+        read: crate::physics::bytes,
     },
     TableDesc {
         name: "ColAnimEvents",
         kind: Kind::U32,
         len: Len::Exact(crate::colanim::EVENTS * crate::colanim::EVENT_WORDS),
         doc: "Every colour-animation event: its ROM words (a script pointer as the script's index), padded to 4.",
-        read: Some(crate::colanim::events_bytes),
+        read: crate::colanim::events_bytes,
     },
     TableDesc {
         name: "ColAnimScripts",
         kind: Kind::U16,
         len: Len::Exact(crate::colanim::SCRIPTS.len() + 1),
         doc: "Each colour-animation script's first event in `ColAnimEvents`, then the event count.",
-        read: Some(crate::colanim::scripts_bytes),
+        read: crate::colanim::scripts_bytes,
     },
     TableDesc {
         name: "ColAnimDescs",
         kind: Kind::U8,
         len: Len::Exact(crate::colanim::DESCS.1 * crate::colanim::DESC_BYTES),
         doc: "`dGMColScriptsDescs`: script index + 1 (0 for none), `priority`, `is_unlocked`, pad.",
-        read: Some(crate::colanim::descs_bytes),
+        read: crate::colanim::descs_bytes,
     },
     TableDesc {
         name: "InputScripts",
         kind: Kind::U8,
         len: Len::Exact(crate::computer::INPUT_SCRIPT_BYTES),
         doc: "`dFTComputerPlayerInputScripts`' scripts back to back, in pointer-table order.",
-        read: Some(crate::computer::input_scripts_bytes),
+        read: crate::computer::input_scripts_bytes,
     },
     TableDesc {
         name: "InputScriptOffsets",
         kind: Kind::U16,
         len: Len::Exact(crate::computer::INPUT_SCRIPT_TABLE.1 + 1),
         doc: "Each input script's first byte in `InputScripts`, then the byte count.",
-        read: Some(crate::computer::input_script_offsets_bytes),
+        read: crate::computer::input_script_offsets_bytes,
     },
     TableDesc {
         name: "ComputerAttacks",
         kind: Kind::U32,
         len: Len::Exact(12 * crate::computer::FIGHTER_ATTACK_WORDS),
         doc: "Per playable `FTKind`: the grounded and aerial row counts, then 11 grounded and 7 aerial `FTComputerAttack` rows (7 ROM words each).",
-        read: Some(crate::computer::attacks_bytes),
+        read: crate::computer::attacks_bytes,
+    },
+    TableDesc {
+        name: "MotionWords",
+        kind: Kind::U32,
+        len: Len::Exact(crate::motion::MOTION_WORDS),
+        doc: "Every `MainMotion` blob back to back, pointers as word indexes (`ssb-tablegen` `motion`).",
+        read: crate::motion::words_bytes,
+    },
+    TableDesc {
+        name: "MotionDescs",
+        kind: Kind::U32,
+        len: Len::Exact(crate::motion::MOTION_COUNT * 4),
+        doc: "Each fighter's `dFT<Name>MotionDescs`: script word, `anim_desc`, length + (clip << 16), `MotionEndBlocks` run.",
+        read: crate::motion::descs_bytes,
+    },
+    TableDesc {
+        name: "MotionSpecial",
+        kind: Kind::I16,
+        len: Len::Exact(crate::motion::SPECIAL_COUNT),
+        doc: "Each base fighter's special statuses' motion ids.",
+        read: crate::motion::special_bytes,
+    },
+    TableDesc {
+        name: "MotionIndex",
+        kind: Kind::U32,
+        len: Len::Exact(crate::fighters::FIGHTERS.len() * crate::motion::INDEX_WORDS),
+        doc: "Per `FTKind`: start and count in `MotionWords`, `MotionDescs`, `MotionSpecial`, `DemoWords`.",
+        read: crate::motion::index_bytes,
+    },
+    TableDesc {
+        name: "CommonStatusMotion",
+        kind: Kind::I16,
+        len: Len::Exact(crate::motion::COMMON_STATUS_COUNT),
+        doc: "`dFTCommonActionStatusDescs[..].mflags.motion_id` by common status.",
+        read: crate::motion::common_status_bytes,
+    },
+    TableDesc {
+        name: "CommonMovesetWords",
+        kind: Kind::U32,
+        len: Len::Exact(crate::fighters::COMMON_MOVESET.words as usize),
+        doc: "`FTCommonMoveset` (relocData 201), pointers as word indexes.",
+        read: crate::motion::common_words_bytes,
+    },
+    TableDesc {
+        name: "MotionEndBlocks",
+        kind: Kind::U8,
+        len: Len::Exact(crate::motion::END_BLOCK_BYTES),
+        doc: "The deciding joints' figatree block runs (`u8` length, then `u16` payloads).",
+        read: crate::motion::end_blocks_bytes,
+    },
+    TableDesc {
+        name: "CombatAttrs",
+        kind: Kind::U32,
+        len: Len::Exact(crate::fighters::FIGHTERS.len() * crate::motion::ATTR_WORDS),
+        doc: "Per `FTKind`: the combat words of `FTAttributes`.",
+        read: crate::motion::attrs_bytes,
+    },
+    TableDesc {
+        name: "DemoWords",
+        kind: Kind::U32,
+        len: Len::Exact(crate::motion::DEMO_WORDS),
+        doc: "Each fighter's demo script blob back to back.",
+        read: crate::motion::demo_words_bytes,
+    },
+    TableDesc {
+        name: "DemoRows",
+        kind: Kind::U32,
+        len: Len::Exact(crate::fighters::FIGHTERS.len() * crate::motion::DEMO_ROWS),
+        doc: "Per `FTKind`: each demo status's script word in `DemoWords`, all ones for none.",
+        read: crate::motion::demo_rows_bytes,
     },
 ];
 
@@ -810,7 +870,6 @@ pub const IF_ANNOUNCE_ROWS: usize = 44;
 pub const ANIM_SLOTS: usize = 667;
 
 // The counts above are the generators' layout.
-#[cfg(feature = "std")]
 const _: () = {
     assert!(crate::anim_table::SLOT_COUNT == ANIM_SLOTS);
     assert!(crate::rom_layout::FIGHTER_DATA_FILES.1 == 27);
@@ -963,9 +1022,8 @@ pub fn section(rom: Option<&Source>) -> Result<Vec<u8>> {
             let ctx = Ctx::new(rom);
             IDS.iter()
                 .enumerate()
-                .filter_map(|(i, t)| Some((i, t, t.read?)))
-                .map(|(i, t, read)| {
-                    let bytes = read(&ctx)?;
+                .map(|(i, t)| {
+                    let bytes = (t.read)(&ctx)?;
                     // The layout's size: a mismatch is a reader bug, not a
                     // ROM's.
                     match t.len {
@@ -1022,5 +1080,25 @@ mod tests {
             assert!(text.contains(&format!("    {} = ", t.name)), "{}", t.name);
         }
         assert!(text.contains("pub const MAGIC: u32 = 0x534C4254;"));
+    }
+
+    /// The `no_std` build (`ssb-pack` on the PSP) differs from the host's
+    /// in its values only through `sqrt_exact` (`libm::sqrtf` for
+    /// `f32::sqrt`; the host's file cache does not reach them). With
+    /// the PSP's square root the section is the same bytes. Today no table
+    /// takes one (`CALLS` stays 0), so the two builds run the same code.
+    #[test]
+    fn the_no_std_square_root_builds_the_same_section() {
+        let Some(path) = crate::test_rom(env!("CARGO_MANIFEST_DIR")) else {
+            return;
+        };
+        let rom = Source::open(&path).unwrap();
+        crate::math::CALLS.with(|c| c.set(0));
+        let host = section(Some(&rom)).unwrap();
+        let calls = crate::math::CALLS.with(|c| c.get());
+        crate::math::LIBM.with(|l| l.set(true));
+        let psp = section(Some(&rom));
+        crate::math::LIBM.with(|l| l.set(false));
+        assert!(host == psp.unwrap(), "{calls} square roots");
     }
 }
