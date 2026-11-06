@@ -658,11 +658,14 @@ fn check_resolvers(
     // Static: the packed tables follow the ROM's arrays. Equal sprite
     // pointers must share a packed texture and distinct ones must not;
     // palettes must hold the ROM's RGBA5551 entries.
-    // A NULL entry the draw never reads (`sprite_table`) constrains nothing.
+    // A NULL entry the draw never reads (`sprite_table`) constrains nothing,
+    // nor does a slot left unpacked (`NO_ANIM`: a two-tile blend's tile-0
+    // slot past the replay's highest `TextureIDCurrent`, RE-364).
     let same_shape = |ptrs: &[Option<ssb_rom::mobj::Ptr>], packed: &[u32]| {
+        let packed = |k: usize| Some(packed[k]).filter(|&t| t != TextureDesc::NO_ANIM);
         (0..ptrs.len()).all(|x| {
-            (0..ptrs.len()).all(|y| match (ptrs[x], ptrs[y]) {
-                (Some(px), Some(py)) => (px == py) == (packed[x] == packed[y]),
+            (0..ptrs.len()).all(|y| match (ptrs[x], ptrs[y], packed(x), packed(y)) {
+                (Some(px), Some(py), Some(tx), Some(ty)) => (px == py) == (tx == ty),
                 _ => true,
             })
         })
@@ -771,7 +774,9 @@ fn check_resolvers(
         bound.extend(statics.iter().map(|&t| ("static".to_string(), t, 0)));
     }
     for (k, &t) in a.textures[..a.texture_count as usize].iter().enumerate() {
-        bound.push((format!("textures[{k}]"), t, k));
+        if t != TextureDesc::NO_ANIM {
+            bound.push((format!("textures[{k}]"), t, k));
+        }
     }
     if let Some(l) = lod {
         for (k, &t) in l.next_textures[..l.next_count as usize].iter().enumerate() {

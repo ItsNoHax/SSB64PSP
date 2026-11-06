@@ -1015,6 +1015,12 @@ struct MatAnimData {
     /// replay (0 when the track never moves: `gcAddMObjForDObj` zeroes it).
     /// `sprites` also covers `TextureIDNext`, which only tile 1 samples.
     max_current: usize,
+    /// The replay of every script on this `MObj` ended or entered its
+    /// cycle, so `max_current` bounds every `TextureIDCurrent` they write:
+    /// a two-tile blend's `sprites` past it are tile-1 images only, and
+    /// their tile-0 slots are left [`ssb_rom::pack::TextureDesc::NO_ANIM`]
+    /// (RE-364).
+    current_closed: bool,
     /// RE-424: the highest `PRIM_LOD_FRAC` byte the replay reaches, from the
     /// `SetLFrac` track or its rest value.
     max_lod_frac: u8,
@@ -1805,6 +1811,24 @@ fn pack_mesh(
                             .iter()
                             .enumerate()
                             .filter_map(|(slot, p)| {
+                                // RE-364: tile 0 never selects a slot past
+                                // the replay's highest `TextureIDCurrent`,
+                                // and tile 1 owns its own images
+                                // (`lod_blend_desc`), so a two-tile blend's
+                                // later slots are not converted at all.
+                                if anim_data.drives_lod
+                                    && anim_data.current_closed
+                                    && slot > anim_data.max_current
+                                {
+                                    eprintln!(
+                                        "mat-anim file {} script 0x{:X} MObjSub 0x{:X}: tile-0 slot {slot} past TextureIDCurrent {} not packed",
+                                        anim.source_file,
+                                        anim.script,
+                                        anim_data.source_offset,
+                                        anim_data.max_current
+                                    );
+                                    return Some(ssb_rom::pack::TextureDesc::NO_ANIM);
+                                }
                                 let states = reachable_palettes(src, anim, anim_data, Some(slot));
                                 residuals::discard_conversion();
                                 convert_mat_anim_sprite(
@@ -3479,6 +3503,11 @@ fn resolve_one_mat_anim(
     let mut max_current = 0.0f32;
     let lfrac_rest = f32::from_bits(base_tracks[ssb_rom::matanim::TRACK_SET_LFRAC]);
     let mut max_lod_frac = ssb_rom::lod_blend::prim_lod_frac(lfrac_rest);
+    // `current_closed`: a parse that stops at a command the replay already
+    // stopped at has run the whole cycle (jumps are unconditional).
+    let mut stops = BTreeSet::from([j.pc()]);
+    let mut last_stop = j.pc();
+    let mut cycled = false;
     loop {
         // A decoder error means this script is not something this resolver
         // can trust the replay of -- decline it outright rather than attach
@@ -3511,10 +3540,15 @@ fn resolve_one_mat_anim(
                 uv_replay_holds &= v == uv_rest[k];
             }
         }
-        if j.ended() || j.looped() || frames >= MAT_ANIM_REPLAY_FRAMES {
+        if j.pc() != last_stop {
+            last_stop = j.pc();
+            cycled |= !stops.insert(last_stop);
+        }
+        if j.ended() || j.looped() || cycled || frames >= MAT_ANIM_REPLAY_FRAMES {
             break;
         }
     }
+    let current_closed = j.ended() || j.looped() || cycled;
 
     // `gcDrawMObjForDObj` draws `palettes[(s32)palette_id]` whatever kind
     // wrote it (RE-325), so neither gate requires a step and both indices
@@ -3607,6 +3641,7 @@ fn resolve_one_mat_anim(
             drives_lod,
             // `texture_id_curr` is a `u16`: the live float truncates.
             max_current: max_current.max(0.0) as usize,
+            current_closed,
             max_lod_frac,
             extra_scripts: Vec::new(),
         },
@@ -3840,6 +3875,7 @@ fn resolve_ground_mat_anims(
             let mut declined = false;
             for &s in &scripts[1..] {
                 let Some((_, other)) = resolve(s) else {
+                    data.current_closed = false;
                     continue;
                 };
                 if !data.palettes.is_empty() || !other.palettes.is_empty() {
@@ -3851,6 +3887,7 @@ fn resolve_ground_mat_anims(
                 }
                 data.drives_lod |= other.drives_lod;
                 data.max_current = data.max_current.max(other.max_current);
+                data.current_closed &= other.current_closed;
                 data.max_lod_frac = data.max_lod_frac.max(other.max_lod_frac);
                 data.uv_static &= other.uv_static;
             }
@@ -3922,8 +3959,10 @@ fn resolve_boss_mat_anims(
                 )
             };
             let mut base: Option<(ssb_rom::mesh::MatAnimRef, MatAnimData)> = None;
+            let mut unresolved = false;
             for &s in &own {
                 let Some((r, other)) = resolve(s) else {
+                    unresolved = true;
                     continue;
                 };
                 let Some((_, data)) = base.as_mut() else {
@@ -3938,6 +3977,7 @@ fn resolve_boss_mat_anims(
                 }
                 data.drives_lod |= other.drives_lod;
                 data.max_current = data.max_current.max(other.max_current);
+                data.current_closed &= other.current_closed;
                 data.max_lod_frac = data.max_lod_frac.max(other.max_lod_frac);
                 data.uv_static &= other.uv_static;
                 data.extra_scripts.push(s);
@@ -3947,6 +3987,7 @@ fn resolve_boss_mat_anims(
             };
             refs[node][m] = Some(r);
             data.uv_half = material.mat_anim_uv_half;
+            data.current_closed &= !unresolved;
             mat_anim_data.entry(r).or_insert(data);
         }
     }
@@ -5131,6 +5172,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 uv_static: d.uv_static,
                 drives_lod: d.drives_lod,
                 max_current: d.max_current,
+                current_closed: d.current_closed,
                 max_lod_frac: d.max_lod_frac,
                 extra_scripts: d.extra_scripts.clone(),
             });
@@ -7850,8 +7892,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .ok_or_else(|| format!("wallpaper file {file} missing"))?;
         let s = ssb_rom::sprite::decode(f, at)
             .map_err(|e| format!("wallpaper {file}+{at:#x}: {e:?}"))?;
-        let tex =
-            ssb_rom::psp_texture::pack_rgba(&s.image, ssb_rom::psp_texture::Psm::Psm5551, swizzle);
+        let tex = ssb_rom::psp_texture::pack_rgba_trimmed(
+            &s.image,
+            ssb_rom::psp_texture::Psm::Psm5551,
+            swizzle,
+        );
         let texture = writer.add_texture(&tex, true, true);
         writer.add_sprite(sprite_desc(file, at, &s, texture, 0, role, gkind));
         Ok(())
@@ -7901,7 +7946,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 .ok_or_else(|| format!("wallpaper file {file} missing"))?;
             let s = ssb_rom::sprite::decode(f, at)
                 .map_err(|e| format!("wallpaper {file}+{at:#x}: {e:?}"))?;
-            let tex = ssb_rom::psp_texture::pack_rgba(
+            let tex = ssb_rom::psp_texture::pack_rgba_trimmed(
                 &s.image,
                 ssb_rom::psp_texture::Psm::Psm5551,
                 swizzle,

@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v140 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v141 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 286 of 286 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -18,10 +18,10 @@
 
 ## Current work
 
+- Landed (batch 164): pack -2.31 MB (49.29 to 46.98 MB): wallpapers at a 304-texel stride (RE-419), Zebes acid and two more two-tile blends' unreachable tile-0 slots unpacked (RE-364); runtime code unchanged; PSP-2000 frame hashes equal, no window slower (r12 -0.12 ms, one round).
 - Landed (batch 162): sprite lookups memoized (`SpriteIndex.memo`): r12 -0.12 (16.59, under 16.7), battle -0.35, vs4 -0.10 ms; no window slower; free memory -8 KiB, fighter select -256 KiB more (RE-585 item 52).
 - Landed (batch 161): map surfaces bucketed by kind (`SurfaceTable`): r12 -0.14, r18 -0.17, battle -0.10, Fall -0.11 ms; no window slower; free memory +8 KiB (RE-585 item 51).
 - Landed (batch 160): own kernel module `psp-kcall` starts the ME (written to `ssb64_kcall.prx`, file-loaded; buffer load refused 0x80020149); `kcall.prx` dropped; XMB-equivalent launch passes; r12 -0.07, intro -0.21 ms; PRX layout guards (RE-479).
-- Landed (batch 159): audio DSP on the Media Engine (`kcall.prx` bring-up, SC fallback): every window faster, Comets -2.46, Fall -2.22, r12 -1.85, vs4 -1.04 ms; audio-thread SC busy -83%; free memory -88.5 KiB (RE-479).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Rejected (batch 155): cross-fighter staged draw, r18 -0.16 ms only (RE-585 item 50).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
@@ -29,6 +29,7 @@
 ## Next
 
 1. Electric `vs4@2170` (r12 16.59, r18 15.57 ms; target 16.7 met; budget headroom next). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
+2. ROM-free release (PLAN): on-PSP pack build, owner hard limit 10 min on a real PSP; first a PSP timing probe of the texture-compensation stages (98% of host `romtool pack` time).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -39,7 +40,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 162 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 164 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

@@ -127,3 +127,98 @@ fn a_new_ground_restarts_the_acid_material_clock() {
     }
     assert!(flips > 0, "the acid animates within 120 updates");
 }
+
+/// RE-364: tile 0 only ever samples `sprites[0]` (the script never moves
+/// `TextureIDCurrent`), and tile 1 has its own images, so the acid's
+/// tile-0 slots 1-3 are not packed: `NO_ANIM`, while `next_textures`
+/// keeps all four.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn the_acid_packs_only_the_tile_0_image_it_samples() {
+    use ssb_rom::pack::{Pack, TextureDesc};
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let acid = (0..pack.mat_anim_count())
+        .find(|&i| {
+            pack.mat_anim(i)
+                .is_some_and(|a| (a.source_file, a.source_offset) == (ZEBES, ACID_MOBJ_SUB))
+        })
+        .expect("the acid's MatAnimDesc");
+    let a = pack.mat_anim(acid).unwrap();
+    assert_eq!(a.texture_count, 4);
+    assert!(pack.texture(a.textures[0]).is_some());
+    assert_eq!(a.textures[1..4], [TextureDesc::NO_ANIM; 3]);
+    let lod = pack.lod_blend(acid).expect("the acid's two-tile blend");
+    assert_eq!(lod.next_count, 4);
+    for &t in &lod.next_textures[..4] {
+        assert!(pack.texture(t).is_some(), "next texture {t}");
+    }
+}
+
+/// Every unpacked tile-0 slot (`NO_ANIM` in `MatAnimDesc::textures`)
+/// belongs to a two-tile blend whose `TextureIDCurrent` never reaches it
+/// over 4,000 ticks of the pack's material clock, and whose tile-1 images
+/// are all packed.
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn unpacked_tile_0_slots_are_never_selected() {
+    use ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT;
+    use ssb_rom::pack::{Pack, TextureDesc};
+    use ssb_rom::skeleton::MaterialAnimator;
+    if ssb_tablegen::test_rom(env!("CARGO_MANIFEST_DIR")).is_none() {
+        return;
+    }
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/generated/ssb64.pak");
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let pack = Pack::open(&bytes).unwrap();
+    let sparse: Vec<u32> = (0..pack.mat_anim_count())
+        .filter(|&i| {
+            let a = pack.mat_anim(i).unwrap();
+            a.textures[..a.texture_count as usize].contains(&TextureDesc::NO_ANIM)
+        })
+        .collect();
+    assert!(!sparse.is_empty(), "the acid has unpacked slots");
+    for &i in &sparse {
+        let a = pack.mat_anim(i).unwrap();
+        assert_ne!(a.textures[0], TextureDesc::NO_ANIM, "MatAnimDesc {i}");
+        let lod = pack.lod_blend(i).expect("a two-tile blend");
+        for &t in &lod.next_textures[..lod.next_count as usize] {
+            assert!(
+                pack.texture(t).is_some(),
+                "MatAnimDesc {i}: next texture {t}"
+            );
+        }
+    }
+    let mut clock = MaterialAnimator::new();
+    clock.start(&pack);
+    for tick in 0..4000 {
+        clock.tick(&pack);
+        for &i in &sparse {
+            let a = pack.mat_anim(i).unwrap();
+            let Some(v) = clock
+                .joint(i)
+                .and_then(|j| j.track_value(TRACK_TEXTURE_ID_CURRENT))
+            else {
+                continue;
+            };
+            let slot = (v.max(0.0) as u32).min(a.texture_count - 1);
+            assert_ne!(
+                a.textures[slot as usize],
+                TextureDesc::NO_ANIM,
+                "MatAnimDesc {i} (file {} 0x{:X}) tick {tick}: slot {slot}",
+                a.source_file,
+                a.source_offset
+            );
+        }
+    }
+}

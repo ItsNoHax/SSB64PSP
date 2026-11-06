@@ -60,8 +60,8 @@ impl Psm {
 pub struct PspTexture {
     pub width: u32,
     pub height: u32,
-    /// Row stride in texels. The GE requires a power of two, so this may exceed
-    /// `width` (see [`pad_to_power_of_two`]).
+    /// Row stride in texels: [`ge_buffer_stride`], or [`trimmed_stride`] for
+    /// a [`pack_rgba_trimmed`] texture. May exceed `width`.
     pub stride: u32,
     pub format: Psm,
     /// Texel data, swizzled if `swizzled` is set.
@@ -120,7 +120,9 @@ pub const GE_MIN_BUFFER_ROW_BYTES: u32 = 16;
 /// the power of two the GE addresses, widened so a row is at least
 /// [`GE_MIN_BUFFER_ROW_BYTES`] (32 texels for `PsmT4`, 16 for `PsmT8`).
 /// The extra columns are padding the GE never samples, because
-/// [`ge_texture_dims`] still declares the unwidened width.
+/// [`ge_texture_dims`] still declares the unwidened width. The power of two
+/// is this pack's convention, not a GE rule: the GE's `tbw` unit is 16
+/// bytes, which [`trimmed_stride`] uses for the wallpapers (RE-419).
 pub fn ge_buffer_stride(width: u32, bits_per_texel: usize) -> u32 {
     pad_to_power_of_two(width).max(GE_MIN_BUFFER_ROW_BYTES * 8 / bits_per_texel as u32)
 }
@@ -511,8 +513,54 @@ pub fn choose_psm(format: Format, size: BitSize) -> Psm {
 /// Non-paletted path. Pads to power-of-two dimensions and swizzles.
 pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
     let stride = ge_buffer_stride(img.width, format.bits());
-    let padded_h = pad_to_power_of_two(img.height);
+    pack_rgba_at(
+        img,
+        format,
+        swizzle_it,
+        stride,
+        pad_to_power_of_two(img.height),
+    )
+}
 
+/// The buffer stride, in texels, of a [`pack_rgba_trimmed`] texture: the
+/// width plus the one column a bilinear tap reaches past the clamped edge,
+/// rounded up to whole 16-byte rows ([`GE_MIN_BUFFER_ROW_BYTES`], the GE's
+/// `tbw` unit and the swizzle block width), never wider than
+/// [`ge_buffer_stride`].
+pub fn trimmed_stride(width: u32, bits_per_texel: usize) -> u32 {
+    let unit = GE_MIN_BUFFER_ROW_BYTES * 8 / bits_per_texel as u32;
+    (width + 1)
+        .next_multiple_of(unit)
+        .min(ge_buffer_stride(width, bits_per_texel))
+}
+
+/// [`pack_rgba`] for a clamped texture the GE never samples past its last
+/// texel plus one: stored at [`trimmed_stride`] instead of the power-of-two
+/// stride, over the power-of-two rows. The declared GE size is unchanged
+/// ([`ge_texture_dims`] of `width`/`height`), so every texel coordinate and
+/// `sceGuTexScale` stay as they are; only the never-read padding is gone.
+/// The rows stay a power of two, so the runtime's texture size and VRAM
+/// copy (`texture_image`, `vram_resident`) read them unchanged. The
+/// wallpapers (RE-419): 300 x 220 stores 304 x 256, not 512 x 256.
+pub fn pack_rgba_trimmed(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
+    let stride = trimmed_stride(img.width, format.bits());
+    pack_rgba_at(
+        img,
+        format,
+        swizzle_it,
+        stride,
+        pad_to_power_of_two(img.height),
+    )
+}
+
+/// [`pack_rgba`] at a given buffer stride and stored row count.
+fn pack_rgba_at(
+    img: &Rgba8,
+    format: Psm,
+    swizzle_it: bool,
+    stride: u32,
+    padded_h: u32,
+) -> PspTexture {
     let mut data: Vec<u8> = match format {
         Psm::Psm8888 => {
             let mut d = alloc::vec![0u8; (stride * padded_h * 4) as usize];
@@ -606,7 +654,9 @@ fn expand_5551(v: u16) -> u32 {
 /// texel up in the CLUT before it filters (RE-491).
 ///
 /// Only level 0 is kept: the GE is never given another (RE-127). Returns
-/// `None` for a paletted or 4444/5650 texture, or one with more colours.
+/// `None` for a paletted or 4444/5650 texture, or one with more colours. A
+/// [`pack_rgba_trimmed`] texture stays trimmed: [`trimmed_stride`] for the
+/// new format.
 pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
     let bytes_per_texel = match tex.format {
         Psm::Psm8888 => 4,
@@ -615,6 +665,7 @@ pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
     };
     let rows = pad_to_power_of_two(tex.height) as usize;
     let stride_bytes = tex.stride as usize * bytes_per_texel;
+    let trimmed = tex.stride < ge_buffer_stride(tex.width, tex.format.bits());
     let raw = tex.data.get(..stride_bytes * rows)?;
     let linear = if tex.swizzled {
         unswizzle(raw, stride_bytes, rows)
@@ -644,7 +695,11 @@ pub fn palettize_lossless(tex: &PspTexture) -> Option<PspTexture> {
         _ => return None,
     };
     let bits = format.bits();
-    let stride = ge_buffer_stride(tex.width, bits);
+    let stride = if trimmed {
+        trimmed_stride(tex.width, bits)
+    } else {
+        ge_buffer_stride(tex.width, bits)
+    };
     let new_stride_bytes = stride as usize * bits / 8;
     if tex.swizzled && !can_swizzle(new_stride_bytes, rows) {
         return None;
@@ -1513,6 +1568,117 @@ mod tests {
         assert_eq!(sw.len(), src.len(), "swizzle must preserve size");
         assert_ne!(sw, src, "swizzle should actually reorder");
         assert_eq!(unswizzle(&sw, stride, height), src, "must round-trip");
+    }
+
+    /// A `w` x `h` image whose every texel differs from its neighbours.
+    fn noise_image(w: u32, h: u32) -> crate::texture::Rgba8 {
+        let mut img = crate::texture::Rgba8::new(w, h);
+        for (i, p) in img.pixels.iter_mut().enumerate() {
+            *p = (i.wrapping_mul(2_654_435_761) >> 7) as u8;
+        }
+        img
+    }
+
+    /// Level 0 of `t` unswizzled to row-major bytes, over the rows its data
+    /// holds.
+    fn linear_level0(t: &PspTexture) -> (Vec<u8>, usize) {
+        let sb = (t.stride as usize * t.format.bits()).div_ceil(8);
+        let rows = pad_to_power_of_two(t.height) as usize;
+        let raw = &t.data[..sb * rows];
+        let lin = if t.swizzled {
+            unswizzle(raw, sb, rows)
+        } else {
+            raw.to_vec()
+        };
+        (lin, sb)
+    }
+
+    /// RE-419: a trimmed wallpaper stores 304 x 256 5551 texels, and every
+    /// one of them, padding included, is the texel the padded 512 x 256
+    /// layout holds at the same position.
+    #[test]
+    fn a_trimmed_wallpaper_keeps_the_padded_layouts_texels() {
+        let img = noise_image(300, 220);
+        let padded = pack_rgba(&img, Psm::Psm5551, true);
+        let trimmed = pack_rgba_trimmed(&img, Psm::Psm5551, true);
+        assert_eq!((padded.stride, padded.data.len()), (512, 262_144));
+        assert_eq!((trimmed.stride, trimmed.data.len()), (304, 155_648));
+        assert!(trimmed.swizzled);
+        let (p, psb) = linear_level0(&padded);
+        let (t, tsb) = linear_level0(&trimmed);
+        assert_eq!(t.len() / tsb, 256);
+        for y in 0..256 {
+            assert_eq!(t[y * tsb..][..tsb], p[y * psb..][..tsb], "row {y}");
+        }
+    }
+
+    /// For any size, the trimmed layout is whole 16-byte rows over the
+    /// power-of-two rows, holds the bilinear tap one past the last texel
+    /// whenever the padded layout does, and agrees with it texel for texel.
+    #[test]
+    fn trimmed_layouts_hold_the_edge_tap_and_the_padded_texels() {
+        for format in [Psm::Psm5551, Psm::Psm8888] {
+            for (w, h) in [
+                (300, 220),
+                (8, 8),
+                (7, 5),
+                (15, 9),
+                (16, 16),
+                (33, 17),
+                (64, 63),
+                (100, 1),
+            ] {
+                let img = noise_image(w, h);
+                let padded = pack_rgba(&img, format, true);
+                let trimmed = pack_rgba_trimmed(&img, format, true);
+                let (p, psb) = linear_level0(&padded);
+                let (t, tsb) = linear_level0(&trimmed);
+                let rows = t.len() / tsb;
+                assert_eq!(tsb % 16, 0, "{w}x{h}: row bytes");
+                assert_eq!(trimmed.swizzled, can_swizzle(tsb, rows), "{w}x{h}");
+                assert!(trimmed.stride <= padded.stride && rows == p.len() / psb);
+                let tap_x = (w + 1).min(padded.stride);
+                assert!(trimmed.stride >= tap_x, "{w}x{h}: column tap");
+                for y in 0..rows {
+                    assert_eq!(t[y * tsb..][..tsb], p[y * psb..][..tsb], "{w}x{h} row {y}");
+                }
+            }
+        }
+    }
+
+    /// A trimmed texture of few colours palettizes into the trimmed layout
+    /// at the CLUT format's stride, with the padded palettization's colours
+    /// at every position both hold.
+    #[test]
+    fn a_trimmed_texture_palettizes_trimmed() {
+        for colours in [12usize, 200] {
+            let mut img = crate::texture::Rgba8::new(300, 220);
+            for (i, p) in img.pixels.chunks_mut(4).enumerate() {
+                let c = (i * 7 + i / 300) % colours;
+                p.copy_from_slice(&[(c * 8) as u8, (c * 3) as u8, 0xF8, 0xFF]);
+            }
+            let padded = palettize_lossless(&pack_rgba(&img, Psm::Psm5551, true)).unwrap();
+            let trimmed = palettize_lossless(&pack_rgba_trimmed(&img, Psm::Psm5551, true)).unwrap();
+            assert_eq!(trimmed.format, padded.format);
+            let bits = trimmed.format.bits();
+            assert_eq!(trimmed.stride, trimmed_stride(300, bits));
+            assert_eq!(trimmed.data.len(), trimmed.stride as usize * bits / 8 * 256);
+            assert!(trimmed.swizzled);
+            let p = colours_of(&padded);
+            let tsb = trimmed.stride as usize * bits / 8;
+            let t = unswizzle(&trimmed.data, tsb, 256);
+            for y in 0..220 {
+                for x in 0..trimmed.stride as usize {
+                    let i = if bits == 4 {
+                        (t[y * tsb + x / 2] >> ((x & 1) * 4)) & 0xF
+                    } else {
+                        t[y * tsb + x]
+                    };
+                    let want = p[y * 300 + x.min(299)];
+                    assert_eq!(trimmed.palette[i as usize], want, "({x}, {y})");
+                }
+            }
+        }
     }
 
     /// Level 0 of `t`, unswizzled, as ABGR colours over `stride` x rows.

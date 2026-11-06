@@ -505,7 +505,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 140: `objanim`-baked frames (cameras, title) divide linear rates as
 // objanim.c:397/2616 do; 1-ulp value changes in the bakes owned by files
 // 56, 69, 167 and 250. No table layout change.
-pub const VERSION: u32 = 140;
+// 141 trims the wallpapers' stride to one texel past the image, in whole
+// 16-byte rows, over the power-of-two rows (300 x 220 stores 304 x 256,
+// `psp_texture::pack_rgba_trimmed`, RE-419); a two-tile blend's
+// `MatAnimDesc::textures` past the replay's highest `TextureIDCurrent` are
+// `NO_ANIM` (Zebes' acid, RE-364). No table layout change.
+pub const VERSION: u32 = 141;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1060,8 +1065,11 @@ pub struct TextureDesc {
     pub height: u16,
     /// Row stride in texels (`sceGuTexImage`'s buffer width); a power of
     /// two, may exceed `width`, and at least 16 bytes of row
-    /// (`psp_texture::ge_buffer_stride`, RE-319). The declared GE size comes
-    /// from `width`/`height` (`psp_texture::ge_texture_dims`), not from this.
+    /// (`psp_texture::ge_buffer_stride`, RE-319), except a wallpaper's:
+    /// whole 16-byte rows past `width` (`psp_texture::trimmed_stride`,
+    /// RE-419). The declared GE size comes from `width`/`height`
+    /// (`psp_texture::ge_texture_dims`), not from this. Rows stored: the
+    /// power of two of `height`.
     pub stride: u16,
     /// `Psm` discriminant.
     pub psm: u8,
@@ -1507,7 +1515,10 @@ pub struct MatAnimDesc {
     /// Archive file/offset of the driving `MObjSub`, for debugging.
     pub source_file: u32,
     pub source_offset: u32,
-    /// Runtime-selectable sprites indexed by `TextureIDCurrent`.
+    /// Runtime-selectable sprites indexed by `TextureIDCurrent`. For a
+    /// script that drives a two-tile blend ([`LodBlendDesc`]), slots past
+    /// the replay's highest `TextureIDCurrent` are [`TextureDesc::NO_ANIM`]:
+    /// tile 0 never reads them and tile 1 has its own images (RE-364).
     pub texture_count: u32,
     pub textures: [u32; Self::MAX_TEXTURES],
     /// Initial material-track values, preserved as raw `f32` bits.  A live
