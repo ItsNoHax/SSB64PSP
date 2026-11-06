@@ -8,7 +8,7 @@
 use ssb_engine::math::Vec3;
 
 use super::normal::CommonItems;
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{map, HitProc, Item, ItemKind, ItemStatus};
 use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 
@@ -20,7 +20,7 @@ pub const MAP_REBOUND_COMMON: f32 = 0.2;
 pub const MAP_REBOUND_GROUND: f32 = 0.2;
 
 /// File 251, `llITCommonDataMBallItemAttributes` (0x6E4).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::MBALL;
+pub use super::attributes::MBALL as ATTRIBUTES;
 
 /// `itMBallStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

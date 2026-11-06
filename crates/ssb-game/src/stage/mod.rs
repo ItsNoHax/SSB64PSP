@@ -41,9 +41,9 @@ use crate::map::MapGroup;
 use crate::weapon::MapSurface;
 use ssb_engine::math::Vec3;
 
-mod ground_tables {
-    include!(concat!(env!("OUT_DIR"), "/ground_tables.rs"));
-}
+/// `MPGroundData::alt_warning` by `GRKind` (`TableId::AltWarning`).
+pub(crate) static GROUND_ALT_WARNING: ssb_tables::Table<[i16; 41]> =
+    ssb_tables::Table::new(ssb_tables::TableId::AltWarning);
 
 game_static! {
     /// `gMPCollisionGroundData->alt_warning` of the loaded ground, set by
@@ -55,7 +55,8 @@ game_static! {
 /// ground data the battle's checks read. Only `alt_warning` is kept here;
 /// the rest reaches the game through the pack's stage.
 pub fn set_ground_kind(gkind: u8) {
-    let alt = ground_tables::ALT_WARNING
+    let alt = GROUND_ALT_WARNING
+        .get()
         .get(gkind as usize)
         .copied()
         .unwrap_or(i16::MIN);

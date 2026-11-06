@@ -505,17 +505,46 @@ pub struct SpecialColl {
     pub damage_resist: i32,
 }
 
-/// The `ll*FTSpecialColl` records, generated from the `*MainMotion` files:
+/// The `ll*FTSpecialColl` records of the `*MainMotion` files
+/// (`TableId::SpecialColls`):
 /// `FOX_REFLECTOR` (`dFoxMainMotion_LwReflectorFTSpecialColl`),
 /// `NESS_BAT_REFLECTOR` (`dNessMainMotion_AttackS4ReflectorFTSpecialColl`)
 /// and `NESS_ABSORB` (`dNessMainMotion_LwAbsorbFTSpecialColl`; the US size
 /// differs from the JP one).
-mod special_colls {
-    use super::{SpecialColl, SpecialCollKind};
-    use ssb_engine::math::Vec3;
-    include!(concat!(env!("OUT_DIR"), "/special_colls.rs"));
+pub static FOX_REFLECTOR: ssb_tables::Decoded<SpecialColl> =
+    ssb_tables::Decoded::new(|| special_coll(0));
+/// See [`FOX_REFLECTOR`].
+pub static NESS_BAT_REFLECTOR: ssb_tables::Decoded<SpecialColl> =
+    ssb_tables::Decoded::new(|| special_coll(1));
+/// See [`FOX_REFLECTOR`].
+pub static NESS_ABSORB: ssb_tables::Decoded<SpecialColl> =
+    ssb_tables::Decoded::new(|| special_coll(2));
+
+/// Record `i` of `TableId::SpecialColls`: `kind, joint, offset, size,
+/// damage_resist`.
+fn special_coll(i: usize) -> SpecialColl {
+    static WORDS: ssb_tables::Table<[[u32; 9]; 3]> =
+        ssb_tables::Table::new(ssb_tables::TableId::SpecialColls);
+    let w = WORDS[i];
+    let v = |at: usize| {
+        Vec3::new(
+            f32::from_bits(w[at]),
+            f32::from_bits(w[at + 1]),
+            f32::from_bits(w[at + 2]),
+        )
+    };
+    SpecialColl {
+        kind: [
+            SpecialCollKind::FoxReflector,
+            SpecialCollKind::NessAbsorb,
+            SpecialCollKind::NessReflector,
+        ][w[0] as usize],
+        joint: w[1] as u8,
+        offset: v(2),
+        size: v(5),
+        damage_resist: w[8] as i32,
+    }
 }
-pub use special_colls::{FOX_REFLECTOR, NESS_ABSORB, NESS_BAT_REFLECTOR};
 
 /// `is_reflect` with its `special_coll`: Fox's reflector statuses
 /// (`ftFoxSpecialLw{Loop,Turn,Hit}` set it) and Ness's forward smash while
@@ -531,11 +560,11 @@ pub fn reflector(f: &Fighter) -> Option<SpecialColl> {
             | Fx::SpecialAirLwLoop
             | Fx::SpecialAirLwTurn
             | Fx::SpecialAirLwHit,
-        ) => Some(FOX_REFLECTOR),
+        ) => Some(*FOX_REFLECTOR),
         AnyStatus::Common(Status::AttackS4)
             if base_kind(f.kind) == FighterKind::Ness && f.motion_script.flags[1] != 0 =>
         {
-            Some(NESS_BAT_REFLECTOR)
+            Some(*NESS_BAT_REFLECTOR)
         }
         _ => None,
     }
@@ -543,7 +572,7 @@ pub fn reflector(f: &Fighter) -> Option<SpecialColl> {
 
 /// `is_absorb` with its `special_coll`: PSI Magnet's hold and hit statuses.
 pub fn absorber(f: &Fighter) -> Option<SpecialColl> {
-    crate::ness::absorbing(f).then_some(NESS_ABSORB)
+    crate::ness::absorbing(f).then_some(*NESS_ABSORB)
 }
 
 fn base_kind(kind: FighterKind) -> FighterKind {
@@ -895,14 +924,15 @@ pub fn shield_transform(f: &Fighter) -> JointTransform {
     }
 }
 
-mod shield_colors {
-    include!(concat!(env!("OUT_DIR"), "/shield_colors.rs"));
-}
 /// `dEFManagerShieldColors`: `(PRIM, ENV)` RGB per player, and the
 /// damaged-shield pair last. `efManagerShieldProcDisplay` sets both with
-/// alpha 0xC0. Generated at build time from the user's ROM by
-/// `crates/ssb-tablegen` (never committed).
-pub use shield_colors::SHIELD_COLORS;
+/// alpha 0xC0. From the user's ROM (`TableId::ShieldColors`).
+pub static SHIELD_COLORS: ssb_tables::Decoded<[([u8; 3], [u8; 3]); 5]> =
+    ssb_tables::Decoded::new(|| {
+        static ROWS: ssb_tables::Table<[[u8; 6]; 5]> =
+            ssb_tables::Table::new(ssb_tables::TableId::ShieldColors);
+        ROWS.map(|r| ([r[0], r[1], r[2]], [r[3], r[4], r[5]]))
+    });
 
 /// `dEFManagerShieldColors`' damage row: `ftCommonGuardSetOffSetStatus`'s
 /// `is_damage_shield` selects it.

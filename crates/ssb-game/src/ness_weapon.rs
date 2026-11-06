@@ -8,12 +8,14 @@ use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 /// `llNessSpecial1PKFireWeaponAttributes`, `llNessMainPKThunderWeaponAttributes`
 /// and `llNessMainPKThunderTrailWeaponAttributes` (the trail with its first
 /// attack offset), generated from the ROM at build time.
-pub const SPARK_HIT: Hitbox = crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.hitbox();
-pub const HEAD_HIT: Hitbox = crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER.hitbox();
-pub const TRAIL_HIT: Hitbox = Hitbox {
+pub static SPARK_HIT: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.hitbox());
+pub static HEAD_HIT: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER.hitbox());
+pub static TRAIL_HIT: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| Hitbox {
     offset: crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.attack_offset(0),
     ..crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.hitbox()
-};
+});
 /// `dWPDisplayPKThunderEnvColors`: the trail's ENV, as
 /// [`PK_THUNDER_TRAIL_PRIM`].
 pub use crate::d_arrays::WP_DISPLAY_PK_THUNDER_ENV_COLORS as PK_THUNDER_TRAIL_ENV;
@@ -21,7 +23,8 @@ pub use crate::d_arrays::WP_DISPLAY_PK_THUNDER_ENV_COLORS as PK_THUNDER_TRAIL_EN
 /// sets for a trail by its `trail_id` (alpha 0xFF), generated from the ROM.
 pub use crate::d_arrays::WP_DISPLAY_PK_THUNDER_PRIM_COLORS as PK_THUNDER_TRAIL_PRIM;
 /// The spark's `WPAttributes` map collision box.
-const SPARK_MAP_COLL: BodyColl = crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.map_coll;
+static SPARK_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.map_coll);
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PKFire {
     pub owner_port: u8,
@@ -103,7 +106,7 @@ impl PKFire {
             team,
             pos: self.position + self.velocity.normalized() * 160.0,
             weapon_pos: self.position,
-            weapon_coll: SPARK_MAP_COLL,
+            weapon_coll: *SPARK_MAP_COLL,
             stale,
         }
     }

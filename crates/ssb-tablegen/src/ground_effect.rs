@@ -17,10 +17,11 @@
 //! `ssb_rom::objanim` plays the same scripts; this is a second, deliberately
 //! minimal reading (`crates/ssb-rom/tests/ground_effects.rs` compares them).
 
-use std::fmt::Write;
+use alloc::vec;
+use alloc::vec::Vec;
 
-use crate::emit;
 use crate::source::{be_u32, OverlayData, OVL2};
+use crate::tables::{le_bytes, Ctx};
 use crate::{Error, Result, Source};
 
 /// `dEFGroundCastleEffectDescs`, the first `EFGroundDesc`; the seven
@@ -388,37 +389,21 @@ pub fn cycles(rom: &Source) -> Result<Vec<Cycle>> {
         .collect()
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let cycles = match rom {
-        Some(rom) => cycles(rom)?,
-        None => vec![
-            Cycle {
-                life: 0,
-                end: [[0.0; 2]; 2],
-            };
-            DESC_COUNT
-        ],
-    };
-    let mut w = emit::header("the stage ambient effects' flight cycles");
-    let _ = writeln!(
-        w,
-        "/// The `gcPlayAnimAll` call, counting the add's as 1, on which each\n\
-         /// `EFGroundDesc`'s child `DObj` ends its script.\n\
-         pub const LIFE: [u16; {DESC_COUNT}] = {:?};",
-        cycles.iter().map(|c| c.life).collect::<Vec<_>>()
-    );
-    let _ = writeln!(
-        w,
-        "/// The child's `translate.x`, `.y` at that play: `[first cycle, later\n\
-         /// cycles]`.\n\
-         pub const END: [[[f32; 2]; 2]; {DESC_COUNT}] = ["
-    );
-    for c in &cycles {
-        let pair = |e: [f32; 2]| format!("[{}, {}]", emit::f32_lit(e[0]), emit::f32_lit(e[1]));
-        let _ = writeln!(w, "    [{}, {}],", pair(c.end[0]), pair(c.end[1]));
-    }
-    let _ = writeln!(w, "];");
-    Ok(w)
+/// `TableId::GroundEffectLife`: the `gcPlayAnimAll` call, counting the
+/// add's as 1, on which each `EFGroundDesc`'s child `DObj` ends its script.
+pub fn life_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let v: Vec<u16> = cycles(c.rom)?.iter().map(|c| c.life).collect();
+    Ok(le_bytes(&v, u16::to_le_bytes))
+}
+
+/// `TableId::GroundEffectEnd`: the child's `translate.x`, `.y` at that
+/// play, `[first cycle, later cycles]`, per desc.
+pub fn end_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let v: Vec<f32> = cycles(c.rom)?
+        .iter()
+        .flat_map(|c| c.end.into_iter().flatten())
+        .collect();
+    Ok(le_bytes(&v, f32::to_le_bytes))
 }
 
 #[cfg(test)]
@@ -431,12 +416,6 @@ mod tests {
 
     fn bytes(words: &[u32]) -> Vec<u8> {
         words.iter().flat_map(|w| w.to_be_bytes()).collect()
-    }
-
-    #[test]
-    fn stub_cycles_are_zero() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("pub const LIFE: [u16; 24] = [0, 0,"));
     }
 
     /// `SetVal` TraX to 0 then a 10-frame linear block to -100: `End` is

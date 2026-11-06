@@ -10,10 +10,10 @@
 //! deliberately minimal reading (`ssb-rom/tests/display_effects.rs`
 //! compares the two).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit;
 use crate::source::be_u32;
+use crate::tables::{le_bytes, Ctx};
 use crate::{Error, Result, Source};
 
 /// `gEFManagerFiles[0]` (`EFCommonEffects1`).
@@ -197,21 +197,13 @@ fn lives(rom: &Source) -> Result<([u16; 4], [u16; 3])> {
     Ok((quake, shock))
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let (quake, shock) = match rom {
-        Some(rom) => lives(rom)?,
-        None => ([0; 4], [0; 3]),
-    };
-    let mut w = emit::header("the quakes' and the Thunder Shock spark's animation lives");
-    let _ = writeln!(
-        w,
-        "/// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag3...`.\n\
-         pub const QUAKE: [u16; 4] = {quake:?};\n\
-         /// `llPikachuSpecial2ThunderShock{{0,1,2}}AnimJoint`, each counting the\n\
-         /// default animation's play at the make.\n\
-         pub const THUNDER_SHOCK: [u16; 3] = {shock:?};"
-    );
-    Ok(w)
+/// `TableId::EffectLife`: `llEFCommonEffects1QuakeMag{0..3}AnimJoint`, then
+/// `llPikachuSpecial2ThunderShock{0,1,2}AnimJoint`, each counting the
+/// default animation's play at the make.
+pub fn lives_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let (quake, shock) = lives(c.rom)?;
+    let v: Vec<u16> = quake.into_iter().chain(shock).collect();
+    Ok(le_bytes(&v, u16::to_le_bytes))
 }
 
 #[cfg(test)]
@@ -224,13 +216,6 @@ mod tests {
 
     fn bytes(words: &[u32]) -> Vec<u8> {
         words.iter().flat_map(|w| w.to_be_bytes()).collect()
-    }
-
-    #[test]
-    fn stub_lives_are_zero() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("pub const QUAKE: [u16; 4] = [0, 0, 0, 0];"));
-        assert!(text.contains("pub const THUNDER_SHOCK: [u16; 3] = [0, 0, 0];"));
     }
 
     /// A block of 18 frames then `End`: `End` runs on play 19 and writes

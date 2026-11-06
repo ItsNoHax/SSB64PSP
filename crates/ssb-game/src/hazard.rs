@@ -102,13 +102,13 @@ impl HazardThrow {
     }
 }
 
-/// `dFTMainGroundHitCollisionAttributes`, generated at build time from the
-/// ROM by `crates/ssb-tablegen` (`battle_data.rs`).
-pub use generated::DAMAGE_FLOORS;
-mod generated {
-    use super::GroundAttack;
-    include!(concat!(env!("OUT_DIR"), "/ground_hit_attacks.rs"));
-}
+/// `dFTMainGroundHitCollisionAttributes`, from the ROM
+/// (`TableId::GroundHitAttacks`).
+pub static DAMAGE_FLOORS: ssb_tables::Decoded<[GroundAttack; 6]> = ssb_tables::Decoded::new(|| {
+    static WORDS: ssb_tables::Table<[[i32; 7]; 6]> =
+        ssb_tables::Table::new(ssb_tables::TableId::GroundHitAttacks);
+    WORDS.map(GroundAttack::from_words)
+});
 
 /// `nMPMaterial*` values that `ftMainGetGroundHitObstacle` tests.
 pub mod material {

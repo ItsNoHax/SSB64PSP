@@ -96,20 +96,128 @@ pub mod utility;
 #[cfg(test)]
 mod utility_tests;
 
-/// Every item's `ITAttributes` ([`attributes`]) and `spin_speed`
-/// ([`spin`]), named after its `ll*ItemAttributes` symbol, the
-/// `ll*AttackEvents` tables ([`attack_events`]) and two `f32` arrays: ROM data,
-/// generated at build time from the user's ROM by `crates/ssb-tablegen`
-/// (never committed; zeros in a stub build).
-#[allow(clippy::all)]
-mod generated {
-    use super::{ItemAttributes, ItemType, ItemWeight};
-    use crate::combat::{Element, HitStatus};
-    use crate::ground::BodyColl;
-    use ssb_engine::math::Vec3;
-    include!(concat!(env!("OUT_DIR"), "/item_attributes.rs"));
+/// `TableId::ItemAttributes`: every item's `ITAttributes` as
+/// `ssb_tablegen::item_attributes::WORDS` words, in `ITEMS` order (ROM data
+/// from the pack; zeros in a stub build).
+static ATTRIBUTE_WORDS: ssb_tables::Table<[[i32; 43]; 45]> =
+    ssb_tables::Table::new(ssb_tables::TableId::ItemAttributes);
+
+/// Record `i` of [`ATTRIBUTE_WORDS`], decoded. Run once per static
+/// ([`ssb_tables::Decoded`]); items keep a `&'static` to the result.
+fn decode_attributes(i: usize) -> ItemAttributes {
+    let w = &ATTRIBUTE_WORDS[i];
+    let f = |at: usize| w[at] as f32;
+    let v = |at: usize| Vec3::new(f(at), f(at + 1), f(at + 2));
+    const TYPES: [ItemType; 7] = [
+        ItemType::Damage,
+        ItemType::Swing,
+        ItemType::Shoot,
+        ItemType::Throw,
+        ItemType::Touch,
+        ItemType::Consume,
+        ItemType::Fighter,
+    ];
+    ItemAttributes {
+        is_give_hitlag: w[0] != 0,
+        is_display_colanim: w[1] != 0,
+        weight: if w[2] != 0 {
+            ItemWeight::Light
+        } else {
+            ItemWeight::Heavy
+        },
+        attack_offsets: [v(3), v(6)],
+        damage_coll_offset: v(9),
+        damage_coll_size: v(12),
+        map_coll: BodyColl {
+            top: f(15),
+            center: f(16),
+            bottom: f(17),
+            width: f(18),
+        },
+        size: f(19),
+        angle: w[20],
+        kb_scale: w[21],
+        damage: w[22],
+        element: Element::from_raw(w[23] as u32),
+        kb_weight: w[24],
+        shield_damage: w[25],
+        attack_count: w[26] as usize,
+        can_setoff: w[27] != 0,
+        priority: w[28],
+        can_rehit_item: w[29] != 0,
+        can_rehit_fighter: w[30] != 0,
+        can_hop: w[31] != 0,
+        can_reflect: w[32] != 0,
+        can_shield: w[33] != 0,
+        kb_base: w[34],
+        ty: TYPES[w[35] as usize % TYPES.len()],
+        hitstatus: HitStatus::from_raw(w[36] as u32),
+        vel_scale: w[37] as u16,
+        sounds: crate::item_sounds::ItemSounds {
+            hit: w[38] as u16,
+            drop: w[39] as u16,
+            throw: w[40] as u16,
+            smash: w[41] as u16,
+        },
+    }
 }
-pub use generated::{attack_events, attributes, spin};
+
+macro_rules! item_tables {
+    ($($i:literal $name:ident),* $(,)?) => {
+        /// Each item's `ITAttributes`, named after its `ll*ItemAttributes`
+        /// symbol; decoded once from [`ATTRIBUTE_WORDS`].
+        pub mod attributes {
+            use super::{decode_attributes, ItemAttributes};
+            use ssb_tables::Decoded;
+            $(pub static $name: Decoded<ItemAttributes> = Decoded::new(|| decode_attributes($i));)*
+        }
+        /// Each item's `ITAttributes::spin_speed`, percent: word 42 of its
+        /// [`ATTRIBUTE_WORDS`] record.
+        pub mod spin {
+            use ssb_tables::{DArr, TableId};
+            $(pub static $name: DArr<i32> = DArr::new(TableId::ItemAttributes, ($i * 43 + 42) * 4);)*
+        }
+        /// Each item's record index in [`ATTRIBUTE_WORDS`].
+        #[allow(dead_code)]
+        pub(crate) mod index {
+            $(pub const $name: usize = $i;)*
+        }
+        const _: () = assert!([$($i),*].len() == 45);
+    };
+}
+item_tables!(
+    0 CAPSULE, 1 TOMATO, 2 HEART, 3 STAR, 4 SWORD, 5 BAT, 6 HARISEN, 7 LGUN, 8 FFLOWER,
+    9 HAMMER, 10 MSBOMB, 11 BOMBHEI, 12 STARROD, 13 GSHELL, 14 RSHELL, 15 BOX, 16 TARU,
+    17 NBUMPER, 18 MBALL, 19 WARK, 20 KABIGON, 21 TOSAKINTO, 22 MEW, 23 NYARS, 24 LIZARDON,
+    25 SPEAR, 26 KAMEX, 27 MLUCKY, 28 EGG, 29 STARMIE, 30 SAWAMURA, 31 DOGAS, 32 PIPPI,
+    33 GBUMPER, 34 LINK_BOMB, 35 PK_FIRE, 36 PAKKUN, 37 POWER_BLOCK, 38 GLUCKY, 39 MARUMINE,
+    40 PORYGON, 41 HITOKAGE, 42 FUSHIGIBANA, 43 TARUBOMB, 44 TARGET,
+);
+
+/// The [`index`] records `ids`, decoded: for the per-kind arrays, which
+/// decode once through a [`ssb_tables::Decoded`].
+pub(crate) fn decode_attribute_list<const N: usize>(ids: [usize; N]) -> [ItemAttributes; N] {
+    ids.map(decode_attributes)
+}
+
+/// Each `ll*AttackEvents` table: `(timer, angle, damage, size)` per
+/// `ITAttackEvent` (`TableId::ItemAttackEvents`), decoded once.
+pub mod attack_events {
+    use ssb_tables::{Decoded, Table, TableId};
+    type Events = [(u16, i32, i32, f32); 4];
+    static WORDS: Table<[[[i32; 4]; 4]; 8]> = Table::new(TableId::ItemAttackEvents);
+    fn decode(i: usize) -> Events {
+        WORDS[i].map(|[timer, angle, damage, size]| (timer as u16, angle, damage, size as f32))
+    }
+    pub static CAPSULE: Decoded<Events> = Decoded::new(|| decode(0));
+    pub static MSBOMB: Decoded<Events> = Decoded::new(|| decode(1));
+    pub static BOMBHEI: Decoded<Events> = Decoded::new(|| decode(2));
+    pub static BOX: Decoded<Events> = Decoded::new(|| decode(3));
+    pub static TARU: Decoded<Events> = Decoded::new(|| decode(4));
+    pub static EGG: Decoded<Events> = Decoded::new(|| decode(5));
+    pub static LINK_BOMB: Decoded<Events> = Decoded::new(|| decode(6));
+    pub static TARUBOMB: Decoded<Events> = Decoded::new(|| decode(7));
+}
 
 /// `ITEM_ALLOC_MAX`.
 pub const ITEM_ALLOC_MAX: usize = 16;
@@ -219,13 +327,13 @@ impl ItemKind {
             Self::Container(k) => Some(k.spin_speed()),
             Self::Utility(k) => Some(k.spin_speed()),
             Self::Equipment(k) => Some(k.spin_speed()),
-            Self::MSBomb => Some(f32::from(spin::MSBOMB) * 0.01),
-            Self::NBumper => Some(f32::from(spin::NBUMPER) * 0.01),
-            Self::MBall => Some(f32::from(spin::MBALL) * 0.01),
-            Self::BombHei => Some(f32::from(spin::BOMBHEI) * 0.01),
-            Self::Shell(shell::Kind::Green) => Some(f32::from(spin::GSHELL) * 0.01),
-            Self::Shell(shell::Kind::Red) => Some(f32::from(spin::RSHELL) * 0.01),
-            Self::TaruBomb => Some(f32::from(spin::TARUBOMB) * 0.01),
+            Self::MSBomb => Some(*spin::MSBOMB as f32 * 0.01),
+            Self::NBumper => Some(*spin::NBUMPER as f32 * 0.01),
+            Self::MBall => Some(*spin::MBALL as f32 * 0.01),
+            Self::BombHei => Some(*spin::BOMBHEI as f32 * 0.01),
+            Self::Shell(shell::Kind::Green) => Some(*spin::GSHELL as f32 * 0.01),
+            Self::Shell(shell::Kind::Red) => Some(*spin::RSHELL as f32 * 0.01),
+            Self::TaruBomb => Some(*spin::TARUBOMB as f32 * 0.01),
             _ => None,
         }
     }
@@ -2948,7 +3056,8 @@ where
 }
 
 /// `llITCommonDataContainerVelocitiesY` (file 251 + 0), by `ITKind`.
-const CONTAINER_VEL_Y: [f32; 20] = generated::CONTAINER_VELOCITIES_Y;
+static CONTAINER_VEL_Y: ssb_tables::Table<[f32; 20]> =
+    ssb_tables::Table::new(ssb_tables::TableId::ContainerVelocitiesY);
 /// `dITBoxItemSpawnVelocities`: one item, two, then three.
 static BOX_SPAWN_VELOCITIES: ssb_tables::Decoded<[(f32, f32); 6]> =
     ssb_tables::Decoded::new(|| {

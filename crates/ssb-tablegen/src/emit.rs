@@ -22,14 +22,6 @@ pub fn hex_rows_u32(out: &mut String, words: &[u32]) {
     }
 }
 
-/// `halves` as `0x%04X` rows of `per_row`.
-pub fn hex_rows_u16(out: &mut String, halves: &[u16], per_row: usize) {
-    for row in halves.chunks(per_row) {
-        let cells: Vec<String> = row.iter().map(|h| format!("0x{h:04X}")).collect();
-        let _ = writeln!(out, "    {},", cells.join(", "));
-    }
-}
-
 /// The generated header every table file starts with.
 pub fn header(what: &str) -> String {
     format!(

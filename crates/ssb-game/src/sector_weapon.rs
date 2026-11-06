@@ -28,16 +28,16 @@ pub const EXPLODE_RADIUS: f32 = 200.0;
 
 /// `llGRSectorMapArwingLaser2DWeaponAttributes`; `wpManagerMakeWeapon`
 /// halves the size.
-pub const LASER_2D_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::ARWING_LASER_2D.hitbox();
-pub const LASER_2D_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::ARWING_LASER_2D.map_coll;
+pub static LASER_2D_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::ARWING_LASER_2D.hitbox());
+pub static LASER_2D_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::ARWING_LASER_2D.map_coll);
 
 /// `llGRSectorMapArwingLaser3DWeaponAttributes`.
-pub const LASER_3D_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::ARWING_LASER_3D.hitbox();
-pub const LASER_3D_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::ARWING_LASER_3D.map_coll;
+pub static LASER_3D_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::ARWING_LASER_3D.hitbox());
+pub static LASER_3D_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::ARWING_LASER_3D.map_coll);
 
 /// `grSectorArwingWeaponLaser3DProcMap` tests the map only this close to
 /// the stage plane.
@@ -87,9 +87,9 @@ impl ArwingLaser {
 
     pub fn hitbox(&self) -> Hitbox {
         let base = if self.three_d {
-            LASER_3D_HITBOX
+            *LASER_3D_HITBOX
         } else {
-            LASER_2D_HITBOX
+            *LASER_2D_HITBOX
         };
         Hitbox {
             damage: self.damage,

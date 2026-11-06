@@ -184,8 +184,8 @@ impl WeaponKind {
 /// Luigi's `WPAttributes` damage (`222_LuigiSpecial1.c`): his row of
 /// `dWPMarioFireballWeaponAttributes` ([`FIREBALL_ATTRIBUTES`]) differs from
 /// Mario's in gravity, speed and life, his `WPAttributes` only in damage.
-pub const LUIGI_FIREBALL_DAMAGE: i32 =
-    crate::monster_weapon::weapon_attributes::LUIGI_FIREBALL.damage;
+pub static LUIGI_FIREBALL_DAMAGE: ssb_tables::Decoded<i32> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::LUIGI_FIREBALL.damage);
 
 /// The per-kind values `wpMarioFireball*` read through
 /// `weapon_vars.fireball.index`. Both rows use the same angle on the ground
@@ -213,7 +213,7 @@ pub static FIREBALL_ATTRIBUTES: ssb_tables::Decoded<[FireballAttributes; 2]> =
     ssb_tables::Decoded::new(|| {
         [
             fireball_attributes(0, MARIO_FIREBALL_HITBOX.damage),
-            fireball_attributes(1, LUIGI_FIREBALL_DAMAGE),
+            fireball_attributes(1, *LUIGI_FIREBALL_DAMAGE),
         ]
     });
 
@@ -245,20 +245,20 @@ fn fireball_attributes(row: usize, damage: i32) -> FireballAttributes {
 
 /// `WPAttributes.map_coll` from Mario Special1: the projectile's collision
 /// diamond is deliberately larger than its rendered sprite.
-pub const MARIO_FIREBALL_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::MARIO_FIREBALL.map_coll;
+pub static MARIO_FIREBALL_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::MARIO_FIREBALL.map_coll);
 
 /// The source `WPAttributes` hitbox, stored in the Mario Special1 reloc file
 /// (`llMarioSpecial1FireballWeaponAttributes`).
-pub const MARIO_FIREBALL_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::MARIO_FIREBALL.hitbox();
+pub static MARIO_FIREBALL_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::MARIO_FIREBALL.hitbox());
 
 /// Fox Special1's US `WPAttributes` and `WPBLASTER_VEL_X`.
 pub const FOX_BLASTER_SPEED: f32 = 160.0;
-pub const FOX_BLASTER_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::FOX_BLASTER.hitbox();
-pub const FOX_BLASTER_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::FOX_BLASTER.map_coll;
+pub static FOX_BLASTER_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::FOX_BLASTER.hitbox());
+pub static FOX_BLASTER_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::FOX_BLASTER.map_coll);
 
 /// Source `wpFoxBlaster`: horizontal velocity and a display scale that grows
 /// by `16/3` per tick to `160/3` (the scale is presentation data only).
@@ -302,10 +302,12 @@ impl FoxBlaster {
 
 /// `llBossMainMotionBulletNormalWeaponAttributes` and `...Hard...` in
 /// `249_BossMainMotion.c`, which are identical.
-pub const BOSS_BULLET_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.hitbox();
-pub const BOSS_BULLET_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.map_coll;
+pub static BOSS_BULLET_HITBOX: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.hitbox()
+});
+pub static BOSS_BULLET_MAP_COLL: ssb_tables::Decoded<BodyColl> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::BOSS_BULLET_NORMAL.map_coll
+});
 /// Source `wpBossBullet`: a straight shot (`vel = { 160 * lr, -25 }`, no
 /// `proc_update`). Its `proc_map` and `proc_hit` both end it: the blast
 /// `wpBossBulletExplodeInitVars` sets up never runs, since
@@ -358,7 +360,7 @@ impl BossBullet {
     pub fn hitbox(&self) -> Hitbox {
         Hitbox {
             damage: self.damage,
-            ..BOSS_BULLET_HITBOX
+            ..*BOSS_BULLET_HITBOX
         }
     }
 
@@ -388,24 +390,38 @@ impl BossBullet {
 /// (`crates/ssb-rom/tests/weapon_attributes.rs`).
 pub const WEAPON_PRIORITY: i32 = 1;
 
+/// One `SAMUS_CHARGE_SHOT_LEVELS` row: `(gfx size, X velocity, damage,
+/// attack size, map-collision size)`.
+pub type ChargeShotLevel = (f32, f32, i32, f32, f32);
+
 /// `dWPSamusChargeShotWeaponAttributes` (US), generated at build time from
 /// the ROM by `crates/ssb-tablegen` (`battle_data.rs`):
 /// `SAMUS_CHARGE_SHOT_PRIORITIES`, the `priority` `wpSamusChargeShotLaunch`
 /// writes (only the full charge outranks), and `SAMUS_CHARGE_SHOT_LEVELS`,
 /// `(gfx size, X velocity, damage, attack size, map-collision size)` per
 /// charge level.
-pub use charge_shot::{SAMUS_CHARGE_SHOT_LEVELS, SAMUS_CHARGE_SHOT_PRIORITIES};
-mod charge_shot {
-    include!(concat!(env!("OUT_DIR"), "/charge_shot.rs"));
-}
+pub static SAMUS_CHARGE_SHOT_LEVELS: ssb_tables::Decoded<[ChargeShotLevel; 8]> =
+    ssb_tables::Decoded::new(|| {
+        CHARGE_SHOT_WORDS.map(|w| {
+            let f = f32::from_bits;
+            (f(w[0]), f(w[1]), w[2] as i32, f(w[3]), f(w[4]))
+        })
+    });
+/// See [`SAMUS_CHARGE_SHOT_LEVELS`].
+pub static SAMUS_CHARGE_SHOT_PRIORITIES: ssb_tables::Decoded<[i32; 8]> =
+    ssb_tables::Decoded::new(|| CHARGE_SHOT_WORDS.map(|w| w[5] as i32));
+/// `TableId::ChargeShot`.
+static CHARGE_SHOT_WORDS: ssb_tables::Table<[[u32; 6]; 8]> =
+    ssb_tables::Table::new(ssb_tables::TableId::ChargeShot);
 
 /// `WPCHARGESHOT_GFX_SIZE_DIV`.
 pub const SAMUS_CHARGE_SHOT_GFX_SIZE_DIV: f32 = 30.0;
 
 /// `dSamusSpecial1_ChargeShot_WeaponAttributes`: the knockback that
 /// `wpSamusChargeShotLaunch` keeps while it replaces damage and size.
-pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::SAMUS_CHARGE_SHOT.hitbox();
+pub static SAMUS_CHARGE_SHOT_HITBOX: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::SAMUS_CHARGE_SHOT.hitbox()
+});
 
 /// `dWPSamusChargeShotWeaponAttributes`' sound IDs, a charge level each.
 fn samus_charge_shot_fgms() -> [(u16, u16, u16); 8] {
@@ -469,7 +485,7 @@ impl SamusChargeShot {
         Hitbox {
             damage: self.damage,
             radius: level.3 * 0.5,
-            ..SAMUS_CHARGE_SHOT_HITBOX
+            ..*SAMUS_CHARGE_SHOT_HITBOX
         }
     }
 
@@ -518,9 +534,10 @@ pub const SAMUS_BOMB_WAIT_ROTATE_SPEED_GROUND: f32 = 10.0 * core::f32::consts::P
 
 /// `llSamusMainBombWeaponAttributes` in `217_SamusMain.c` (the words at file
 /// offset 0x0C onward).
-pub const SAMUS_BOMB_HITBOX: Hitbox = crate::monster_weapon::weapon_attributes::SAMUS_BOMB.hitbox();
-pub const SAMUS_BOMB_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::SAMUS_BOMB.map_coll;
+pub static SAMUS_BOMB_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::SAMUS_BOMB.hitbox());
+pub static SAMUS_BOMB_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::SAMUS_BOMB.map_coll);
 
 /// Source `wpSamusBomb`. It bounces, settles and explodes after 100 frames
 /// or on its first registered hit; the explosion lives six more frames and
@@ -574,7 +591,7 @@ impl SamusBomb {
             } else {
                 SAMUS_BOMB_HITBOX.radius
             },
-            ..SAMUS_BOMB_HITBOX
+            ..*SAMUS_BOMB_HITBOX
         }
     }
 
@@ -720,10 +737,10 @@ pub const BOOMERANG_HOMING_DELAY: u8 = 130;
 pub const BOOMERANG_CATCH_DIST: f32 = 180.0;
 
 /// `llLinkSpecial1BoomerangWeaponAttributes` (`226_LinkSpecial1.c`, US).
-pub const LINK_BOOMERANG_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::LINK_BOOMERANG.hitbox();
-pub const LINK_BOOMERANG_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::LINK_BOOMERANG.map_coll;
+pub static LINK_BOOMERANG_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::LINK_BOOMERANG.hitbox());
+pub static LINK_BOOMERANG_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::LINK_BOOMERANG.map_coll);
 
 const DEG_30: f32 = core::f32::consts::PI / 6.0;
 const DEG_90: f32 = core::f32::consts::FRAC_PI_2;
@@ -1092,7 +1109,7 @@ impl LinkBoomerang {
     pub fn hitbox(&self) -> Hitbox {
         Hitbox {
             damage: self.damage,
-            ..LINK_BOOMERANG_HITBOX
+            ..*LINK_BOOMERANG_HITBOX
         }
     }
 }
@@ -1117,10 +1134,10 @@ pub const EGGTHROW_ANGLE_ADD: f32 = -1.5;
 
 /// `llYoshiMainEggThrowWeaponAttributes` (the words at offset 0x0C of
 /// `247_YoshiMain.c`, US).
-pub const YOSHI_EGG_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::YOSHI_EGG_THROW.hitbox();
-pub const YOSHI_EGG_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::YOSHI_EGG_THROW.map_coll;
+pub static YOSHI_EGG_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::YOSHI_EGG_THROW.hitbox());
+pub static YOSHI_EGG_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::YOSHI_EGG_THROW.map_coll);
 
 /// Source `wpYoshiEggThrow` from its throw. It arcs, and explodes on any map
 /// contact, on its first registered hit or after 50 frames. The explosion
@@ -1200,7 +1217,7 @@ impl YoshiEgg {
             } else {
                 YOSHI_EGG_HITBOX.radius
             },
-            ..YOSHI_EGG_HITBOX
+            ..*YOSHI_EGG_HITBOX
         }
     }
 
@@ -1284,7 +1301,8 @@ pub const YOSHISTAR_ROTATE_SPEED: f32 = 0.24;
 
 /// `llYoshiMainStarWeaponAttributes` (offset 0x40 of `247_YoshiMain.c`,
 /// US).
-pub const YOSHI_STAR_HITBOX: Hitbox = crate::monster_weapon::weapon_attributes::YOSHI_STAR.hitbox();
+pub static YOSHI_STAR_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::YOSHI_STAR.hitbox());
 
 /// Source `wpYoshiStar`: it slows down and is gone after 16 frames or on a
 /// hit. Its map callback does nothing.
@@ -1358,7 +1376,7 @@ impl YoshiStar {
     pub fn hitbox(&self) -> Hitbox {
         Hitbox {
             damage: self.damage,
-            ..YOSHI_STAR_HITBOX
+            ..*YOSHI_STAR_HITBOX
         }
     }
 }
@@ -1367,10 +1385,10 @@ impl YoshiStar {
 pub const KIRBY_CUTTER_LIFETIME: u16 = 20;
 pub const KIRBY_CUTTER_VEL: f32 = 100.0;
 /// `llKirbyMainCutterWeaponAttributes` in `229_KirbyMain.c` (US).
-pub const KIRBY_CUTTER_HITBOX: Hitbox =
-    crate::monster_weapon::weapon_attributes::KIRBY_CUTTER.hitbox();
-pub const KIRBY_CUTTER_MAP_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::KIRBY_CUTTER.map_coll;
+pub static KIRBY_CUTTER_HITBOX: ssb_tables::Decoded<Hitbox> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::KIRBY_CUTTER.hitbox());
+pub static KIRBY_CUTTER_MAP_COLL: ssb_tables::Decoded<BodyColl> =
+    ssb_tables::Decoded::new(|| crate::monster_weapon::weapon_attributes::KIRBY_CUTTER.map_coll);
 
 /// Source `wpKirbyCutter`: the Final Cutter wave. It rides the floor line it
 /// was made on, flies straight once off an edge, dies against a wall or
@@ -1903,42 +1921,42 @@ impl Weapon {
         use crate::item_sounds::weapon as wp;
         use crate::monster_weapon::ShotKind as K;
         match self {
-            Weapon::Fireball(f) if f.index == 0 => wp::MARIO_FIREBALL,
-            Weapon::Fireball(_) => wp::LUIGI_FIREBALL,
-            Weapon::Blaster(_) => wp::FOX_BLASTER,
+            Weapon::Fireball(f) if f.index == 0 => *wp::MARIO_FIREBALL,
+            Weapon::Fireball(_) => *wp::LUIGI_FIREBALL,
+            Weapon::Blaster(_) => *wp::FOX_BLASTER,
             // `wpSamusChargeShotLaunch` replaces the attributes' sound.
             Weapon::ChargeShot(c) => SAMUS_CHARGE_SHOT_FGMS[usize::from(c.charge)].2,
-            Weapon::Bomb(_) => wp::SAMUS_BOMB,
-            Weapon::Boomerang(_) => wp::LINK_BOOMERANG,
-            Weapon::Egg(_) => wp::YOSHI_EGG_THROW,
-            Weapon::Star(_) => wp::YOSHI_STAR,
-            Weapon::Cutter(_) => wp::KIRBY_CUTTER,
-            Weapon::Jolt(j) if j.grounded() => wp::PIKACHU_THUNDER_JOLT_GROUND,
-            Weapon::Jolt(_) => wp::PIKACHU_THUNDER_JOLT_AIR,
-            Weapon::Thunder(_) => wp::PIKACHU_THUNDER_HEAD,
-            Weapon::Trail(_) => wp::PIKACHU_THUNDER_TRAIL,
-            Weapon::PKFire(_) => wp::NESS_PK_FIRE,
-            Weapon::PKThunder(_) => wp::NESS_PK_THUNDER,
-            Weapon::PKTrail(_) => wp::NESS_PK_THUNDER_TRAIL,
-            Weapon::Laser(l) if l.three_d => wp::ARWING_LASER_3D,
-            Weapon::Laser(_) => wp::ARWING_LASER_2D,
-            Weapon::BossBullet(b) if b.hard => wp::BOSS_BULLET_HARD,
-            Weapon::BossBullet(_) => wp::BOSS_BULLET_NORMAL,
+            Weapon::Bomb(_) => *wp::SAMUS_BOMB,
+            Weapon::Boomerang(_) => *wp::LINK_BOOMERANG,
+            Weapon::Egg(_) => *wp::YOSHI_EGG_THROW,
+            Weapon::Star(_) => *wp::YOSHI_STAR,
+            Weapon::Cutter(_) => *wp::KIRBY_CUTTER,
+            Weapon::Jolt(j) if j.grounded() => *wp::PIKACHU_THUNDER_JOLT_GROUND,
+            Weapon::Jolt(_) => *wp::PIKACHU_THUNDER_JOLT_AIR,
+            Weapon::Thunder(_) => *wp::PIKACHU_THUNDER_HEAD,
+            Weapon::Trail(_) => *wp::PIKACHU_THUNDER_TRAIL,
+            Weapon::PKFire(_) => *wp::NESS_PK_FIRE,
+            Weapon::PKThunder(_) => *wp::NESS_PK_THUNDER,
+            Weapon::PKTrail(_) => *wp::NESS_PK_THUNDER_TRAIL,
+            Weapon::Laser(l) if l.three_d => *wp::ARWING_LASER_3D,
+            Weapon::Laser(_) => *wp::ARWING_LASER_2D,
+            Weapon::BossBullet(b) if b.hard => *wp::BOSS_BULLET_HARD,
+            Weapon::BossBullet(_) => *wp::BOSS_BULLET_NORMAL,
             Weapon::Monster(m) => match m.kind {
-                K::HitokageFlame => wp::HITOKAGE_FLAME,
-                K::FushigibanaRazor => wp::FUSHIGIBANA_RAZOR,
-                K::IwarkRock => wp::WARK_ROCK,
-                K::NyarsCoin => wp::NYARS_COIN,
-                K::LizardonFlame => wp::LIZARDON_FLAME,
-                K::SpearSwarm => wp::SPEAR_SWARM,
-                K::PippiSwarm => wp::PIPPI_SWARM,
-                K::KamexHydro => wp::KAMEX_HYDRO,
-                K::StarmieSwift => wp::STARMIE_SWIFT,
-                K::DogasSmog => wp::DOGAS_SMOG,
-                K::RayGun => wp::LGUN_AMMO,
-                K::StarRod if m.star_smash => wp::STARROD_SMASH,
-                K::StarRod => wp::STARROD,
-                K::FireFlower => wp::FFLOWER_FLAME,
+                K::HitokageFlame => *wp::HITOKAGE_FLAME,
+                K::FushigibanaRazor => *wp::FUSHIGIBANA_RAZOR,
+                K::IwarkRock => *wp::WARK_ROCK,
+                K::NyarsCoin => *wp::NYARS_COIN,
+                K::LizardonFlame => *wp::LIZARDON_FLAME,
+                K::SpearSwarm => *wp::SPEAR_SWARM,
+                K::PippiSwarm => *wp::PIPPI_SWARM,
+                K::KamexHydro => *wp::KAMEX_HYDRO,
+                K::StarmieSwift => *wp::STARMIE_SWIFT,
+                K::DogasSmog => *wp::DOGAS_SMOG,
+                K::RayGun => *wp::LGUN_AMMO,
+                K::StarRod if m.star_smash => *wp::STARROD_SMASH,
+                K::StarRod => *wp::STARROD,
+                K::FireFlower => *wp::FFLOWER_FLAME,
             },
         }
     }
@@ -2069,23 +2087,23 @@ impl Weapon {
         Some(match self {
             Weapon::Fireball(w) => {
                 let coll = if w.index == 0 {
-                    MARIO_FIREBALL_MAP_COLL
+                    *MARIO_FIREBALL_MAP_COLL
                 } else {
                     wa::LUIGI_FIREBALL.map_coll
                 };
                 (coll, &mut w.position, Some(&mut w.coll.floor))
             }
-            Weapon::Blaster(w) => (FOX_BLASTER_MAP_COLL, &mut w.position, None),
+            Weapon::Blaster(w) => (*FOX_BLASTER_MAP_COLL, &mut w.position, None),
             Weapon::ChargeShot(w) => (wa::SAMUS_CHARGE_SHOT.map_coll, &mut w.position, None),
             Weapon::Bomb(w) => (
-                SAMUS_BOMB_MAP_COLL,
+                *SAMUS_BOMB_MAP_COLL,
                 &mut w.position,
                 Some(&mut w.coll.floor),
             ),
-            Weapon::Egg(w) => (YOSHI_EGG_MAP_COLL, &mut w.position, None),
+            Weapon::Egg(w) => (*YOSHI_EGG_MAP_COLL, &mut w.position, None),
             Weapon::Star(w) => (wa::YOSHI_STAR.map_coll, &mut w.position, None),
             Weapon::Cutter(w) => (
-                KIRBY_CUTTER_MAP_COLL,
+                *KIRBY_CUTTER_MAP_COLL,
                 &mut w.position,
                 Some(&mut w.coll.floor),
             ),
@@ -3696,7 +3714,7 @@ impl WeaponPool {
                 f.owner_port,
                 Hitbox {
                     damage: f.damage,
-                    ..MARIO_FIREBALL_HITBOX
+                    ..*MARIO_FIREBALL_HITBOX
                 },
                 f.position,
                 f.velocity,
@@ -3705,7 +3723,7 @@ impl WeaponPool {
                 b.owner_port,
                 Hitbox {
                     damage: b.damage,
-                    ..FOX_BLASTER_HITBOX
+                    ..*FOX_BLASTER_HITBOX
                 },
                 b.position,
                 b.velocity,
@@ -3720,7 +3738,7 @@ impl WeaponPool {
                 c.owner_port,
                 Hitbox {
                     damage: c.damage,
-                    ..KIRBY_CUTTER_HITBOX
+                    ..*KIRBY_CUTTER_HITBOX
                 },
                 c.position,
                 c.velocity,
@@ -3729,7 +3747,7 @@ impl WeaponPool {
                 p.owner_port,
                 Hitbox {
                     damage: p.damage,
-                    ..ness::SPARK_HIT
+                    ..*ness::SPARK_HIT
                 },
                 p.position,
                 p.velocity,
@@ -3738,7 +3756,7 @@ impl WeaponPool {
                 h.owner_port,
                 Hitbox {
                     damage: h.damage,
-                    ..ness::HEAD_HIT
+                    ..*ness::HEAD_HIT
                 },
                 h.position,
                 h.velocity,
@@ -3763,7 +3781,7 @@ impl WeaponPool {
                 let pos = t.hit_position();
                 let hitbox = Hitbox {
                     damage: stale.damage(ness::TRAIL_HIT.damage),
-                    ..ness::TRAIL_HIT
+                    ..*ness::TRAIL_HIT
                 };
                 return Some((t.owner_port, hitbox, pos, t.velocity, pos));
             }
@@ -3776,7 +3794,7 @@ impl WeaponPool {
                 let pos = t.position + Vec3::new(0.0, 120.0, 0.0);
                 let hitbox = Hitbox {
                     damage: stale.damage(pikachu::TRAIL_HIT.damage),
-                    ..pikachu::TRAIL_HIT
+                    ..*pikachu::TRAIL_HIT
                 };
                 return Some((t.owner_port, hitbox, pos, Vec3::ZERO, pos));
             }
@@ -4372,7 +4390,7 @@ impl WeaponPool {
                         defender,
                         &mut self.landed[i],
                         t.owner_port,
-                        crate::item_sounds::weapon::PIKACHU_THUNDER_TRAIL,
+                        *crate::item_sounds::weapon::PIKACHU_THUNDER_TRAIL,
                     )
                     .registered()
                     {
@@ -4435,21 +4453,21 @@ impl WeaponPool {
                     let (hit, pos) = j.hit();
                     (j.owner_port, hit, pos, j.velocity)
                 }
-                Weapon::PKFire(s) => (s.owner_port, ness::SPARK_HIT, s.position, s.velocity),
-                Weapon::PKThunder(h) => (h.owner_port, ness::HEAD_HIT, h.position, h.velocity),
+                Weapon::PKFire(s) => (s.owner_port, *ness::SPARK_HIT, s.position, s.velocity),
+                Weapon::PKThunder(h) => (h.owner_port, *ness::HEAD_HIT, h.position, h.velocity),
                 Weapon::PKTrail(_) => unreachable!("searched by search_pk_trail"),
                 Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
                 Weapon::Fireball(f) => {
-                    (f.owner_port, MARIO_FIREBALL_HITBOX, f.position, f.velocity)
+                    (f.owner_port, *MARIO_FIREBALL_HITBOX, f.position, f.velocity)
                 }
-                Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position, b.velocity),
+                Weapon::Blaster(b) => (b.owner_port, *FOX_BLASTER_HITBOX, b.position, b.velocity),
                 Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity),
                 Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
                 Weapon::BossBullet(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
                 Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
                 Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
-                Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity),
+                Weapon::Cutter(c) => (c.owner_port, *KIRBY_CUTTER_HITBOX, c.position, c.velocity),
                 Weapon::Monster(_) | Weapon::Laser(_) => unreachable!("handled above"),
             };
             // `ftMainSearchHitWeapon`: not its owner, nor, with team attack
@@ -4664,7 +4682,7 @@ impl WeaponPool {
             &mut self.landed[i],
             t.owner_port,
             None,
-            crate::item_sounds::weapon::NESS_PK_THUNDER_TRAIL,
+            *crate::item_sounds::weapon::NESS_PK_THUNDER_TRAIL,
         );
         match contact {
             crate::combat::WeaponContact::Missed => return,
@@ -6680,7 +6698,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_clanked_rehit_swarm_does_not_hit_the_fighter_after_sixteen_updates() {
-        let attr = crate::monster_weapon::weapon_attributes::PIPPI_SWARM;
+        let attr = *crate::monster_weapon::weapon_attributes::PIPPI_SWARM;
         assert!(attr.can_rehit_fighter && attr.can_setoff);
         let at = Vec3::new(0.0, 100.0, 0.0);
         let mut weapons = WeaponPool::default();

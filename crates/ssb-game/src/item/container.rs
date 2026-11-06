@@ -1,5 +1,5 @@
 //! Normal containers: `itbox.c`, `ittaru.c`, `itegg.c`, `itcapsule.c`.
-use super::{map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{map, normal::CommonItems, HitProc, Item, ItemKind, ItemStatus};
 use crate::{
     combat::{AttackState, Element, HitStatus},
     weapon::MapSurface,
@@ -19,12 +19,13 @@ impl Kind {
     /// `ITAttributes::spin_speed` as a fraction.
     pub fn spin_speed(self) -> f32 {
         use super::spin;
-        f32::from(match self {
-            Self::Crate => spin::BOX,
-            Self::Barrel => spin::TARU,
-            Self::Capsule => spin::CAPSULE,
-            Self::Egg => spin::EGG,
-        }) * 0.01
+        (match self {
+            Self::Crate => *spin::BOX,
+            Self::Barrel => *spin::TARU,
+            Self::Capsule => *spin::CAPSULE,
+            Self::Egg => *spin::EGG,
+        }) as f32
+            * 0.01
     }
     pub fn heavy(self) -> bool {
         matches!(self, Self::Crate | Self::Barrel)
@@ -42,22 +43,22 @@ pub enum Status {
     Roll,
 }
 
-/// File 251, `llITCommonDataCapsuleItemAttributes` (0x50).
-pub static CAPSULE_ATTRIBUTES: ItemAttributes = super::attributes::CAPSULE;
-/// File 251, `llITCommonDataEggItemAttributes` (0xACC).
-pub static EGG_ATTRIBUTES: ItemAttributes = super::attributes::EGG;
-/// File 251, `llITCommonDataBoxItemAttributes` (0x5CC).
-pub static CRATE_ATTRIBUTES: ItemAttributes = super::attributes::BOX;
-/// File 251, `llITCommonDataTaruItemAttributes` (0x634).
-pub static BARREL_ATTRIBUTES: ItemAttributes = super::attributes::TARU;
 /// `llITCommonDataBoxAttackEvents` (0x614) and `...TaruAttackEvents` (0x67C).
-pub const BOX_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::BOX;
-pub const TARU_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::TARU;
+pub use super::attack_events::BOX as BOX_EVENTS;
 /// `llITCommonDataCapsuleAttackEvents` (0x98) and `...EggAttackEvents`
 /// (0xB14). The Egg intentionally initializes from the Capsule table, then
 /// uses its own table on updates, as the source does. These are full radii.
-pub const CAPSULE_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::CAPSULE;
-pub const EGG_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::EGG;
+pub use super::attack_events::CAPSULE as CAPSULE_EVENTS;
+pub use super::attack_events::EGG as EGG_EVENTS;
+pub use super::attack_events::TARU as TARU_EVENTS;
+/// File 251, `llITCommonDataBoxItemAttributes` (0x5CC).
+pub use super::attributes::BOX as CRATE_ATTRIBUTES;
+/// File 251, `llITCommonDataCapsuleItemAttributes` (0x50).
+pub use super::attributes::CAPSULE as CAPSULE_ATTRIBUTES;
+/// File 251, `llITCommonDataEggItemAttributes` (0xACC).
+pub use super::attributes::EGG as EGG_ATTRIBUTES;
+/// File 251, `llITCommonDataTaruItemAttributes` (0x634).
+pub use super::attributes::TARU as BARREL_ATTRIBUTES;
 
 /// The Box's or the Barrel's table (`itBoxCommon*` and `itTaruCommon*`).
 fn heavy_events(kind: Kind) -> &'static [(u16, i32, i32, f32); 4] {

@@ -1,7 +1,9 @@
 //! `FTStatusDesc.sflags` (`GMStatFlags`) of the common statuses and each
 //! playable fighter's special statuses, for `ssb_game::spgame::stat_flags`.
 
-use crate::emit;
+use alloc::vec::Vec;
+
+use crate::tables::{le_bytes, Ctx};
 use crate::{Result, Source};
 
 /// Bytes per `FTStatusDesc`: `mflags`, `sflags` and four callbacks.
@@ -42,26 +44,25 @@ pub fn sflags(rom: &Source, at: u32, count: usize) -> Result<Vec<u16>> {
         .collect()
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut out = emit::header("FTStatusDesc.sflags of the common and special statuses");
-    let tables = std::iter::once(("COMMON", COMMON_STATUS_DESCS.0, COMMON_STATUS_DESCS.1)).chain(
-        SPECIAL_STATUS_DESCS
-            .iter()
-            .copied()
-            .filter(|(n, _, _)| *n != "BOSS"),
-    );
-    for (name, at, count) in tables {
-        let flags = match rom {
-            Some(rom) => sflags(rom, at, count)?,
-            None => vec![0; count],
-        };
-        out.push_str(&format!(
-            "#[rustfmt::skip]\npub const {name}: [u16; {count}] = [\n"
-        ));
-        emit::hex_rows_u16(&mut out, &flags, 12);
-        out.push_str("];\n\n");
+/// `TableId::StatFlags`: [`COMMON_STATUS_DESCS`]' `sflags`, then each
+/// [`SPECIAL_STATUS_DESCS`] table's but Master Hand's, in that order.
+pub fn flags_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = sflags(c.rom, COMMON_STATUS_DESCS.0, COMMON_STATUS_DESCS.1)?;
+    for &(name, at, count) in &SPECIAL_STATUS_DESCS {
+        if name != "BOSS" {
+            out.extend(sflags(c.rom, at, count)?);
+        }
     }
-    out.truncate(out.trim_end().len());
-    out.push('\n');
-    Ok(out)
+    Ok(le_bytes(&out, u16::to_le_bytes))
 }
+
+/// `TableId::StatFlags`' halfwords.
+pub const FLAG_COUNT: usize = {
+    let mut n = COMMON_STATUS_DESCS.1;
+    let mut i = 0;
+    while i < SPECIAL_STATUS_DESCS.len() - 1 {
+        n += SPECIAL_STATUS_DESCS[i].2;
+        i += 1;
+    }
+    n
+};

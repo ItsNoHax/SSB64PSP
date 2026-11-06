@@ -34,10 +34,20 @@ pub mod session;
 pub mod setup;
 pub mod staffroll;
 pub mod stage_clear;
-/// `FTStatusDesc.sflags`, generated at build time from the user's ROM by
-/// `crates/ssb-tablegen` (never committed).
-mod stat_flags {
-    include!(concat!(env!("OUT_DIR"), "/stat_flags.rs"));
+/// `FTStatusDesc.sflags` from the user's ROM (`TableId::StatFlags`): the
+/// common statuses, then each playable fighter's special statuses.
+pub(crate) mod stat_flags {
+    macro_rules! tables {
+        ($at:expr;) => {};
+        ($at:expr; $name:ident $n:literal $(, $rest:ident $rn:literal)*) => {
+            pub static $name: ssb_tables::DArr<[u16; $n]> =
+                ssb_tables::DArr::new(ssb_tables::TableId::StatFlags, $at);
+            tables!($at + 2 * $n; $($rest $rn),*);
+        };
+    }
+    tables!(0; COMMON 220, MARIO 9, FOX 26, DONKEY 30, SAMUS 11, LUIGI 9, LINK 17,
+        YOSHI 14, CAPTAIN 19, KIRBY 83, PIKACHU 18, PURIN 16, NESS 25);
+    const _: () = assert!(ssb_tables::TableId::StatFlags.size() == 2 * 497);
 }
 pub mod wait;
 

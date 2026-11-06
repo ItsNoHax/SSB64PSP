@@ -84,7 +84,7 @@ pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
 /// TopN box `ftCommonYoshiEggSetDamageCollCollisions` leaves live while the
 /// fighter is inside an egg; the rest turn intangible.
 pub fn yoshi_egg_coll(kind: FighterKind) -> Option<DamageCollDesc> {
-    let &(_, offset, size) = crate::capture_yoshi::EGG_DESCS.get(kind as usize)?;
+    let &(_, offset, size) = crate::capture_yoshi::EGG_DESCS.get().get(kind as usize)?;
     // `ftCommonYoshiEggSetDamageCollCollisions` copies the egg's size
     // without halving it.
     Some(DamageCollDesc {

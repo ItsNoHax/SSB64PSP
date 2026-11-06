@@ -7,11 +7,11 @@
 //! `ll*WeaponAttributes` or `ll*HitParties` symbol in
 //! `include/reloc_data.us.h`; the file ids are its `ll*FileID` values.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit;
 use crate::source::be_u32;
-use crate::{Result, Source};
+use crate::tables::{le_bytes, Ctx};
+use crate::Result;
 
 /// `ITAttributes` records: constant name, archive file, offset.
 pub const ITEMS: [(&str, u32, u32); 45] = [
@@ -119,8 +119,8 @@ const MONSTER_EVENT_FGM: usize = 0x20;
 /// the unit after `knockback_weight`, `shield_damage`, `attack_count` and
 /// `can_setoff`), and the word holding `drop_sfx`, `throw_sfx` and
 /// `smash_sfx` (bits 0..9, 10..19, 20..29).
-const IT_HIT_WORD: usize = 0x38;
-const IT_SFX_WORD: usize = 0x40;
+pub const IT_HIT_WORD: usize = 0x38;
+pub const IT_SFX_WORD: usize = 0x40;
 /// `WPAttributes`: `sfx` is bits 11..20 of the word at 0x2C, after
 /// `shield_damage`, `attack_count` and `can_setoff`.
 const WP_SFX_WORD: usize = 0x2C;
@@ -145,52 +145,30 @@ pub fn weapon_sound(word: u32) -> u16 {
     field10(word, 11)
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut w = emit::header("the FGM ids of the items' and weapons' attributes");
-    w.push_str("pub mod item {\n    use super::ItemSounds;\n\n");
-    for (name, file, at) in ITEMS {
-        let [hit, drop, throw, smash] = match rom {
-            Some(rom) => {
-                let data = rom.file(file)?.data;
-                let at = at as usize;
-                item_sounds(
-                    be_u32(&data, at + IT_HIT_WORD)?,
-                    be_u32(&data, at + IT_SFX_WORD)?,
-                )
-            }
-            None => [0; 4],
-        };
-        let _ = writeln!(
-            w,
-            "    pub const {name}: ItemSounds = ItemSounds {{ hit: {hit}, drop: {drop}, throw: {throw}, smash: {smash} }};"
-        );
+/// `TableId::WeaponSounds`: `sfx` per [`WEAPONS`] record.
+pub fn weapon_sounds_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(WEAPONS.len());
+    for (_, file, at) in WEAPONS {
+        out.push(weapon_sound(be_u32(
+            &c.rom.file(file)?.data,
+            at as usize + WP_SFX_WORD,
+        )?));
     }
-    w.push_str("}\n\npub mod weapon {\n");
-    for (name, file, at) in WEAPONS {
-        let sfx = match rom {
-            Some(rom) => weapon_sound(be_u32(&rom.file(file)?.data, at as usize + WP_SFX_WORD)?),
-            None => 0,
-        };
-        let _ = writeln!(w, "    pub const {name}: u16 = {sfx};");
-    }
-    w.push_str("}\n\npub mod monster_event {\n");
-    for (name, file, at) in MONSTER_EVENTS {
-        let mut ids = [0u16; 2];
-        if let Some(rom) = rom {
-            let data = rom.file(file)?.data;
-            for (i, id) in ids.iter_mut().enumerate() {
-                let off = at as usize + i * MONSTER_EVENT_SIZE + MONSTER_EVENT_FGM;
-                *id = (be_u32(&data, off & !3)? >> 16) as u16;
-            }
+    Ok(le_bytes(&out, u16::to_le_bytes))
+}
+
+/// `TableId::MonsterEventSounds`: both events' `fgm_id` per
+/// [`MONSTER_EVENTS`] table.
+pub fn monster_event_sounds_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (_, file, at) in MONSTER_EVENTS {
+        let data = c.rom.file(file)?.data;
+        for i in 0..2 {
+            let off = at as usize + i * MONSTER_EVENT_SIZE + MONSTER_EVENT_FGM;
+            out.push((be_u32(&data, off & !3)? >> 16) as u16);
         }
-        let _ = writeln!(
-            w,
-            "    pub const {name}: [u16; 2] = [{}, {}];",
-            ids[0], ids[1]
-        );
     }
-    w.push_str("}\n");
-    Ok(w)
+    Ok(le_bytes(&out, u16::to_le_bytes))
 }
 
 #[cfg(test)]

@@ -112,11 +112,55 @@ const fn desc(
 /// `SetThrow` (`ftMotionCommandSetThrow`).
 pub(crate) mod throw_descs {
     use super::ThrowHitDesc;
-    #[allow(unused_imports)] // the stub tables are empty
     use crate::combat::Element;
-    #[allow(unused_imports)]
     use crate::status::Status;
-    include!(concat!(env!("OUT_DIR"), "/throw_descs.rs"));
+    use ssb_tables::{Decoded, Table, TableId};
+
+    /// `TableId::ThrowDescs`: `ssb_tablegen::throw_descs::DESCS`' pairs of
+    /// `[status index, damage, angle, kb_scale, kb_weight, kb_base,
+    /// element]` (ROM data from the pack; zeros in a stub build).
+    static WORDS: Table<[[[i32; 7]; 2]; 40]> = Table::new(TableId::ThrowDescs);
+
+    /// Pair `i` of [`WORDS`], decoded once per static.
+    fn decode(i: usize) -> [ThrowHitDesc; 2] {
+        const STATUSES: [Option<Status>; 4] = [
+            None,
+            Some(Status::DamageFlyN),
+            Some(Status::DamageFlyTop),
+            Some(Status::DamageFlyRoll),
+        ];
+        WORDS[i].map(
+            |[status, damage, angle, kb_scale, kb_weight, kb_base, element]| ThrowHitDesc {
+                status: STATUSES[status as usize % STATUSES.len()],
+                damage,
+                angle,
+                kb_scale,
+                kb_weight,
+                kb_base,
+                element: Element::from_raw(element as u32),
+            },
+        )
+    }
+
+    macro_rules! descs {
+        ($($i:literal $name:ident),* $(,)?) => {
+            $(
+                #[allow(dead_code)]
+                pub static $name: Decoded<[ThrowHitDesc; 2]> = Decoded::new(|| decode($i));
+            )*
+            const _: () = assert!([$($i),*].len() == 40);
+        };
+    }
+    descs!(
+        0 MARIO_CATCH, 1 MARIO_THROW_F, 2 MARIO_THROW_B, 3 FOX_CATCH, 4 FOX_THROW_F, 5 FOX_THROW_B,
+        6 DONKEY_CATCH, 7 DONKEY_THROW_FF, 8 DONKEY_THROW_B, 9 SAMUS_CATCH, 10 SAMUS_THROW_F,
+        11 SAMUS_THROW_B, 12 LUIGI_CATCH, 13 LUIGI_THROW_F, 14 LUIGI_THROW_B, 15 LINK_CATCH,
+        16 LINK_THROW_F, 17 LINK_THROW_B, 18 KIRBY_CATCH, 19 KIRBY_THROW_F, 20 KIRBY_THROW_B,
+        21 KIRBY_INHALE, 22 KIRBY_EGG_LAY, 23 PURIN_CATCH, 24 PURIN_THROW_F, 25 PURIN_THROW_B,
+        26 CAPTAIN_CATCH, 27 CAPTAIN_THROW_F, 28 CAPTAIN_THROW_B, 29 CAPTAIN_DIVE, 30 NESS_CATCH,
+        31 NESS_THROW_F, 32 NESS_THROW_B, 33 PIKACHU_CATCH, 34 PIKACHU_THROW_F, 35 PIKACHU_THROW_B,
+        36 YOSHI_CATCH, 37 YOSHI_THROW_F, 38 YOSHI_THROW_B, 39 YOSHI_EGG_LAY,
+    );
 }
 use throw_descs::{
     CAPTAIN_THROW_B, CAPTAIN_THROW_F, DONKEY_THROW_B, FOX_THROW_B, FOX_THROW_F, KIRBY_THROW_B,
@@ -158,7 +202,7 @@ struct ThrowScript {
 fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
     match (base_kind(kind), back) {
         (FighterKind::Mario, false) => ThrowScript {
-            desc: Some(MARIO_THROW_F),
+            desc: Some(*MARIO_THROW_F),
             flag1: None,
             flag2: Some((14.0, 1)),
             length: 28.0,
@@ -167,19 +211,19 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         // 46; the following WaitAsync(45) has already passed, so SetFlag2
         // fires on the same frame.
         (FighterKind::Mario, true) => ThrowScript {
-            desc: Some(MARIO_THROW_B),
+            desc: Some(*MARIO_THROW_B),
             flag1: Some(46.0),
             flag2: Some((46.0, 1)),
             length: 67.0,
         },
         (FighterKind::Fox, false) => ThrowScript {
-            desc: Some(FOX_THROW_F),
+            desc: Some(*FOX_THROW_F),
             flag1: None,
             flag2: Some((10.0, 1)),
             length: 35.0,
         },
         (FighterKind::Fox, true) => ThrowScript {
-            desc: Some(FOX_THROW_B),
+            desc: Some(*FOX_THROW_B),
             flag1: None,
             flag2: Some((19.0, 2)),
             length: 40.0,
@@ -192,58 +236,58 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             length: 20.0,
         },
         (FighterKind::Donkey, true) => ThrowScript {
-            desc: Some(DONKEY_THROW_B),
+            desc: Some(*DONKEY_THROW_B),
             flag1: Some(4.0),
             flag2: Some((9.0, 1)),
             length: 22.0,
         },
         // Luigi's throws play Mario's figatrees and keep Mario's event frames.
         (FighterKind::Luigi, false) => ThrowScript {
-            desc: Some(LUIGI_THROW_F),
+            desc: Some(*LUIGI_THROW_F),
             flag1: None,
             flag2: Some((14.0, 1)),
             length: 28.0,
         },
         (FighterKind::Luigi, true) => ThrowScript {
-            desc: Some(LUIGI_THROW_B),
+            desc: Some(*LUIGI_THROW_B),
             flag1: Some(46.0),
             flag2: Some((46.0, 1)),
             length: 67.0,
         },
         // WaitAsync(12), Wait(8): both throws release at frame 20.
         (FighterKind::Link, false) => ThrowScript {
-            desc: Some(LINK_THROW_F),
+            desc: Some(*LINK_THROW_F),
             flag1: None,
             flag2: Some((20.0, 1)),
             length: 40.0,
         },
         (FighterKind::Link, true) => ThrowScript {
-            desc: Some(LINK_THROW_B),
+            desc: Some(*LINK_THROW_B),
             flag1: None,
             flag2: Some((20.0, 2)),
             length: 40.0,
         },
         // WaitAsync(4), WaitAsync(19): both throws release at frame 19.
         (FighterKind::Yoshi, false) => ThrowScript {
-            desc: Some(YOSHI_THROW_F),
+            desc: Some(*YOSHI_THROW_F),
             flag1: None,
             flag2: Some((19.0, 1)),
             length: 39.0,
         },
         (FighterKind::Yoshi, true) => ThrowScript {
-            desc: Some(YOSHI_THROW_B),
+            desc: Some(*YOSHI_THROW_B),
             flag1: None,
             flag2: Some((19.0, 2)),
             length: 49.0,
         },
         (FighterKind::Captain, false) => ThrowScript {
-            desc: Some(CAPTAIN_THROW_F),
+            desc: Some(*CAPTAIN_THROW_F),
             flag1: None,
             flag2: Some((20.0, 1)),
             length: 44.0,
         },
         (FighterKind::Captain, true) => ThrowScript {
-            desc: Some(CAPTAIN_THROW_B),
+            desc: Some(*CAPTAIN_THROW_B),
             flag1: None,
             flag2: Some((20.0, 2)),
             length: 44.0,
@@ -251,19 +295,19 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         // The forward throw is Kirby's own `ThrowF` statuses; the release is
         // in `ThrowFLanding` (`crate::kirby`).
         (FighterKind::Pikachu, false) => ThrowScript {
-            desc: Some(PIKACHU_THROW_F),
+            desc: Some(*PIKACHU_THROW_F),
             flag1: None,
             flag2: Some((20.0, 1)),
             length: 30.0,
         },
         (FighterKind::Pikachu, true) => ThrowScript {
-            desc: Some(PIKACHU_THROW_B),
+            desc: Some(*PIKACHU_THROW_B),
             flag1: None,
             flag2: Some((34.0, 2)),
             length: 43.0,
         },
         (FighterKind::Ness, back) => ThrowScript {
-            desc: Some(if back { NESS_THROW_B } else { NESS_THROW_F }),
+            desc: Some(if back { *NESS_THROW_B } else { *NESS_THROW_F }),
             flag1: None,
             flag2: Some((27.0, if back { 2 } else { 1 })),
             length: 45.0,
@@ -271,39 +315,39 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         // `dPurinMainMotion_ThrowF`: `Wait(4)`, `WaitAsync(8)`, then
         // `SetFlag2(1)`; the forward throw launches into `DamageFlyRoll`.
         (FighterKind::Purin, false) => ThrowScript {
-            desc: Some(PURIN_THROW_F),
+            desc: Some(*PURIN_THROW_F),
             flag1: None,
             flag2: Some((8.0, 1)),
             length: 40.0,
         },
         // `dPurinMainMotion_ThrowB`: `SetFlag2(2)` at `WaitAsync(24)`.
         (FighterKind::Purin, true) => ThrowScript {
-            desc: Some(PURIN_THROW_B),
+            desc: Some(*PURIN_THROW_B),
             flag1: None,
             flag2: Some((24.0, 2)),
             length: 50.0,
         },
         (FighterKind::Kirby, false) => ThrowScript {
-            desc: Some(KIRBY_THROW_F),
+            desc: Some(*KIRBY_THROW_F),
             flag1: None,
             flag2: None,
             length: 45.0,
         },
         (FighterKind::Kirby, true) => ThrowScript {
-            desc: Some(KIRBY_THROW_B),
+            desc: Some(*KIRBY_THROW_B),
             flag1: None,
             flag2: Some((24.0, 1)),
             length: 50.0,
         },
         // Wait(4) then WaitAsync(9): both throws release at frame 9.
         (FighterKind::Samus, false) => ThrowScript {
-            desc: Some(SAMUS_THROW_F),
+            desc: Some(*SAMUS_THROW_F),
             flag1: None,
             flag2: Some((9.0, 1)),
             length: 42.0,
         },
         (FighterKind::Samus, true) => ThrowScript {
-            desc: Some(SAMUS_THROW_B),
+            desc: Some(*SAMUS_THROW_B),
             flag1: None,
             flag2: Some((9.0, 2)),
             length: 42.0,
@@ -806,18 +850,18 @@ fn tapped(f: &Fighter) -> N64Buttons {
 fn catch_desc(kind: FighterKind) -> [ThrowHitDesc; 2] {
     use throw_descs as t;
     match base_kind(kind) {
-        FighterKind::Fox => t::FOX_CATCH,
-        FighterKind::Donkey => t::DONKEY_CATCH,
-        FighterKind::Samus => t::SAMUS_CATCH,
-        FighterKind::Luigi => t::LUIGI_CATCH,
-        FighterKind::Link => t::LINK_CATCH,
-        FighterKind::Yoshi => t::YOSHI_CATCH,
-        FighterKind::Captain => t::CAPTAIN_CATCH,
-        FighterKind::Kirby => t::KIRBY_CATCH,
-        FighterKind::Pikachu => t::PIKACHU_CATCH,
-        FighterKind::Purin => t::PURIN_CATCH,
-        FighterKind::Ness => t::NESS_CATCH,
-        _ => t::MARIO_CATCH,
+        FighterKind::Fox => *t::FOX_CATCH,
+        FighterKind::Donkey => *t::DONKEY_CATCH,
+        FighterKind::Samus => *t::SAMUS_CATCH,
+        FighterKind::Luigi => *t::LUIGI_CATCH,
+        FighterKind::Link => *t::LINK_CATCH,
+        FighterKind::Yoshi => *t::YOSHI_CATCH,
+        FighterKind::Captain => *t::CAPTAIN_CATCH,
+        FighterKind::Kirby => *t::KIRBY_CATCH,
+        FighterKind::Pikachu => *t::PIKACHU_CATCH,
+        FighterKind::Purin => *t::PURIN_CATCH,
+        FighterKind::Ness => *t::NESS_CATCH,
+        _ => *t::MARIO_CATCH,
     }
 }
 
@@ -1173,16 +1217,14 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
 
 /// `dCaptainMainMotion_0x0000` (`llCaptainMainMotionSpecialHiVec2h`):
 /// offset from the victim's TopN to Falcon's heavy-item joint, per victim
-/// `FTKind`; generated from file 235 of the user's ROM by
-/// `crates/ssb-tablegen` (`capture_captain.rs`).
-#[allow(clippy::all)]
-mod capture_captain {
-    include!(concat!(env!("OUT_DIR"), "/capture_captain.rs"));
-}
+/// `FTKind`, `(x, y)`; from file 235 of the user's ROM
+/// (`TableId::CaptureCaptain`).
+pub(crate) static CAPTURE_OFFSETS: ssb_tables::Table<[[i16; 2]; 27]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CaptureCaptain);
 
-/// [`capture_captain::CAPTURE_OFFSETS`]' `(x, y)` for `kind`.
+/// [`CAPTURE_OFFSETS`]' `(x, y)` for `kind`.
 fn captain_offset_xy(kind: FighterKind) -> (f32, f32) {
-    let (x, y) = capture_captain::CAPTURE_OFFSETS[kind as usize];
+    let [x, y] = CAPTURE_OFFSETS[kind as usize];
     (f32::from(x), f32::from(y))
 }
 
@@ -1658,7 +1700,7 @@ fn set_donkey_throwff(f: &mut Fighter, is_turn: bool) {
     }
     // The setter plays the first frame before the turn (RE-474).
     status::play_anim_events(f);
-    f.grab.throw_desc = Some(throw_descs::DONKEY_THROW_FF);
+    f.grab.throw_desc = Some(*throw_descs::DONKEY_THROW_FF);
     f.grab.capture_immune_mask = catch_kind::ALL;
     f.grab.throwff_turn_tics = 0;
     if is_turn {
@@ -4862,7 +4904,7 @@ mod tests {
             damage,
             kb_base: 120,
             kb_scale: 100,
-            ..crate::weapon::MARIO_FIREBALL_HITBOX
+            ..*crate::weapon::MARIO_FIREBALL_HITBOX
         }
     }
 

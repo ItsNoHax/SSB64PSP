@@ -90,42 +90,32 @@ pub use error::{Error, Result};
 mod anim_length;
 #[cfg(feature = "std")]
 mod anim_table;
-#[cfg(feature = "std")]
 mod battle_data;
-#[cfg(feature = "std")]
 mod capture_captain;
 #[cfg(feature = "std")]
 mod colanim;
 #[cfg(feature = "std")]
 mod computer;
 mod d_arrays;
-#[cfg(feature = "std")]
 mod effect_life;
 #[cfg(feature = "std")]
 mod emit;
 mod ending_data;
 #[cfg(feature = "std")]
 mod fighters;
-#[cfg(feature = "std")]
 mod ground;
-#[cfg(feature = "std")]
 mod ground_effect;
 #[cfg(feature = "std")]
 mod hurtbox;
 #[cfg(feature = "std")]
 mod ifcommon;
-#[cfg(feature = "std")]
 mod item_attributes;
-#[cfg(feature = "std")]
 mod item_sounds;
-#[cfg(feature = "std")]
 mod kirby_attack100;
-#[cfg(feature = "std")]
 mod kirby_copy;
 mod menu_data;
 #[cfg(feature = "std")]
 mod model_parts;
-#[cfg(feature = "std")]
 mod monster_weapons;
 #[cfg(feature = "std")]
 mod motion;
@@ -139,10 +129,8 @@ mod sin_table;
 // Every code overlay is listed; the generators use some of them.
 #[allow(dead_code)]
 mod source;
-#[cfg(feature = "std")]
 mod stat_flags;
 pub mod tables;
-#[cfg(feature = "std")]
 mod throw_descs;
 
 pub use source::Source;
@@ -216,67 +204,18 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
                     text: computer::generate(rom)?,
                 },
                 Generated {
-                    name: "stat_flags.rs",
-                    text: stat_flags::generate(rom)?,
-                },
-                Generated {
-                    name: "ground_tables.rs",
-                    text: ground::generate(rom)?,
-                },
-                Generated {
-                    name: "item_sounds.rs",
-                    text: item_sounds::generate(rom)?,
-                },
-                Generated {
                     name: "joint_masks.rs",
                     text: model_parts::generate(rom)?,
-                },
-                Generated {
-                    name: "kirby_attack100.rs",
-                    text: kirby_attack100::generate(rom)?,
-                },
-                Generated {
-                    name: "effect_life.rs",
-                    text: effect_life::generate(rom)?,
-                },
-                Generated {
-                    name: "ground_effects.rs",
-                    text: ground_effect::generate(rom)?,
                 },
                 Generated {
                     name: "hurtboxes.rs",
                     text: hurtbox::generate(rom)?,
                 },
                 Generated {
-                    name: "capture_captain.rs",
-                    text: capture_captain::generate(rom)?,
-                },
-                Generated {
-                    name: "item_attributes.rs",
-                    text: item_attributes::generate(rom)?,
-                },
-                Generated {
-                    name: "monster_weapons.rs",
-                    text: monster_weapons::generate(rom)?,
-                },
-                Generated {
                     name: "mario_physics.rs",
                     text: physics::generate(rom)?,
                 },
-                Generated {
-                    name: "kirby_copy.rs",
-                    text: kirby_copy::generate(rom)?,
-                },
-                Generated {
-                    name: "throw_descs.rs",
-                    text: throw_descs::generate(rom)?,
-                },
-                Generated {
-                    name: "special_colls.rs",
-                    text: throw_descs::generate_special_colls(rom)?,
-                },
             ];
-            files.extend(battle_data::generate(rom)?);
             files.push(d_arrays::generate_game());
             files
         }

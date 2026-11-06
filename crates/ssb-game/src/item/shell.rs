@@ -11,7 +11,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
+use super::{map, HitProc, Item, ItemKind, ItemStatus, OwnerView};
 use crate::combat::{AttackState, HitStatus};
 use crate::map::{MASK_CEIL, MASK_LWALL, MASK_RWALL};
 use crate::weapon::MapSurface;
@@ -62,9 +62,9 @@ pub const R_MAP_REBOUND_COMMON: f32 = 0.25;
 pub const R_MAP_REBOUND_GROUND: f32 = 0.5;
 
 /// File 251, `llITCommonDataGShellItemAttributes` (0x53C).
-pub static GREEN_ATTRIBUTES: ItemAttributes = super::attributes::GSHELL;
+pub use super::attributes::GSHELL as GREEN_ATTRIBUTES;
 /// File 251, `llITCommonDataRShellItemAttributes` (0x584).
-pub static RED_ATTRIBUTES: ItemAttributes = super::attributes::RSHELL;
+pub use super::attributes::RSHELL as RED_ATTRIBUTES;
 
 /// `itGShellStatus` / `itRShellStatus`, with the descriptor's procs as
 /// `Init`.

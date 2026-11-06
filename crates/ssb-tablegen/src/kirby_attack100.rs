@@ -6,11 +6,11 @@
 //! (`include/reloc_data.us.h`) in file 228 (`KirbyMainMotion`): six rows of
 //! `{ Vec3f offset; f32 rotate; f32 vel; f32 add; }`, big-endian `f32`s.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit;
 use crate::source::be_u32;
-use crate::{Result, Source};
+use crate::tables::{le_bytes, Ctx};
+use crate::Result;
 
 /// Archive file holding the table (`KirbyMainMotion`).
 pub const FILE: u32 = 228;
@@ -21,37 +21,11 @@ pub const ROWS: usize = 6;
 /// `f32`s per row: offset x, y, z, rotate, vel, add.
 pub const COLS: usize = 6;
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut rows = [[0f32; COLS]; ROWS];
-    if let Some(rom) = rom {
-        let data = rom.file(FILE)?.data;
-        for (r, row) in rows.iter_mut().enumerate() {
-            for (c, v) in row.iter_mut().enumerate() {
-                *v = f32::from_bits(be_u32(&data, OFFSET + 4 * (r * COLS + c))?);
-            }
-        }
-    }
-    let mut w = emit::header("Kirby's rapid-jab effect rows (`ftKirbyAttack100Effect[6]`)");
-    let _ = writeln!(w, "pub const ATTACK100_EFFECT: [[f32; {COLS}]; {ROWS}] = [");
-    for row in rows {
-        let cells: Vec<String> = row.iter().map(|&v| emit::f32_lit(v)).collect();
-        let _ = writeln!(w, "    [{}],", cells.join(", "));
-    }
-    w.push_str("];\n");
-    Ok(w)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stub_rows_are_zero() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("pub const ATTACK100_EFFECT: [[f32; 6]; 6]"));
-        assert_eq!(
-            text.matches("[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],").count(),
-            ROWS
-        );
-    }
+/// `TableId::KirbyAttack100`: the rows' `f32`s.
+pub fn effect_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let data = c.rom.file(FILE)?.data;
+    let v: Vec<f32> = (0..ROWS * COLS)
+        .map(|i| be_u32(&data, OFFSET + 4 * i).map(f32::from_bits))
+        .collect::<Result<_>>()?;
+    Ok(le_bytes(&v, f32::to_le_bytes))
 }

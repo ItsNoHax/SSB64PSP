@@ -51,10 +51,10 @@ pub const WPSPINATTACK_ANGLE: f32 = 0.174_532_94; // 10 degrees
 /// `llLinkMainSpinAttackWeaponAttributes` (file 225 + 0x0C, US), generated
 /// from the ROM at build time. Its size is replaced by the motion script's
 /// flag-2 sizes.
-pub const SPIN_ATTACK_HITBOX: Hitbox = Hitbox {
+pub static SPIN_ATTACK_HITBOX: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| Hitbox {
     radius: 0.0,
     ..crate::monster_weapon::weapon_attributes::LINK_SPIN_ATTACK.hitbox()
-};
+});
 
 /// Figatree lengths (`ssb_rom::anim::EXPECTED_FRAMES`).
 const ATTACK100_START_LENGTH: f32 = 8.0;
@@ -839,7 +839,7 @@ pub fn apply_spin_attack_hits(
     let hitbox = Hitbox {
         radius,
         damage: stale.damage(SPIN_ATTACK_HITBOX.damage),
-        ..SPIN_ATTACK_HITBOX
+        ..*SPIN_ATTACK_HITBOX
     };
     for position in spin.hit_positions().into_iter().flatten() {
         // Registered in the defender's hit log; the damage lands in its
@@ -857,7 +857,7 @@ pub fn apply_spin_attack_hits(
                 can_shield: true,
                 owner: Some(attacker.port),
                 is_hitlag_victim: None,
-                fgm_id: Some(crate::item_sounds::weapon::LINK_SPIN_ATTACK),
+                fgm_id: Some(*crate::item_sounds::weapon::LINK_SPIN_ATTACK),
             },
         ));
         if outcome.registered() {

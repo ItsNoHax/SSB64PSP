@@ -7,15 +7,16 @@
 //! big-endian `s32`s: `status_id`, `damage`, `angle`, `knockback_scale`,
 //! `knockback_weight`, `knockback_base`, `element`.
 //!
-//! [`generate_special_colls`] emits the `FTSpecialColl` records the
+//! [`special_colls_bytes`] reads the `FTSpecialColl` records the
 //! reflector and absorber statuses attach, from the same files: `kind`,
 //! `joint_id` (`s32`), `offset`, `size` (`Vec3f`), `damage_resist` (`s32`).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
 use crate::item_attributes::{name, ELEMENTS};
 use crate::source::be_u32;
-use crate::{emit, Error, Result, Source};
+use crate::tables::{le_bytes, le_words, Ctx};
+use crate::{Error, Result};
 
 /// `(name, file, offset)`: the `ssb_game::grab::throw_descs` name, the
 /// `*MainMotion` file and the table's offset in it.
@@ -69,51 +70,43 @@ pub const DESCS: [(&str, u32, usize); 40] = [
 
 const DESC_SIZE: usize = 7 * 4;
 
-/// `status_id` as an `Option<Status>` expression. The tables only force
-/// these damage statuses (`nFTCommonStatus*`).
-fn status(id: i32, file: u32, at: usize) -> Result<&'static str> {
+/// `status_id` as an index: `None`, then `nFTCommonStatus{DamageFlyN,
+/// DamageFlyTop, DamageFlyRoll}`, the only statuses the tables force.
+fn status(id: i32, file: u32, at: usize) -> Result<i32> {
     Ok(match id {
-        -1 => "None",
-        52 => "Some(Status::DamageFlyN)",
-        54 => "Some(Status::DamageFlyTop)",
-        55 => "Some(Status::DamageFlyRoll)",
+        -1 => 0,
+        52 => 1,
+        54 => 2,
+        55 => 3,
         _ => return Err(Error::BadRelocation { file, offset: at }),
     })
 }
 
-fn desc(data: &[u8], file: u32, at: usize) -> Result<String> {
+/// One descriptor: `status` ([`status`] index), `damage, angle, kb_scale,
+/// kb_weight, kb_base`, `element` ([`ELEMENTS`] index).
+fn desc(data: &[u8], file: u32, at: usize) -> Result<[i32; 7]> {
     let word = |i: usize| be_u32(data, at + 4 * i).map(|v| v as i32);
-    let element = name(&ELEMENTS, word(6)? as u32, file, at + 24)?;
-    Ok(format!(
-        "ThrowHitDesc {{ status: {}, damage: {}, angle: {}, kb_scale: {}, kb_weight: {}, kb_base: {}, element: Element::{element} }}",
+    let element = name(&ELEMENTS, word(6)? as u32, file, at + 24)? as i32;
+    Ok([
         status(word(0)?, file, at)?,
         word(1)?,
         word(2)?,
         word(3)?,
         word(4)?,
         word(5)?,
-    ))
+        element,
+    ])
 }
 
-const STUB: &str = "ThrowHitDesc { status: None, damage: 0, angle: 0, kb_scale: 0, kb_weight: 0, kb_base: 0, element: Element::Normal }";
-
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut w = emit::header("the fighters' throw descriptors (`FTThrowHitDesc`)");
-    for (name, file, at) in DESCS {
-        let pair = match rom {
-            Some(rom) => {
-                let data = rom.file(file)?.data;
-                [desc(&data, file, at)?, desc(&data, file, at + DESC_SIZE)?]
-            }
-            None => [STUB.to_string(), STUB.to_string()],
-        };
-        let _ = writeln!(
-            w,
-            "/// File {file} + {at:#X}.\npub const {name}: [ThrowHitDesc; 2] = [\n    {},\n    {},\n];",
-            pair[0], pair[1]
-        );
+/// `TableId::ThrowDescs`: both descriptors of each [`DESCS`] table.
+pub fn descs_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(DESCS.len() * 14);
+    for (_, file, at) in DESCS {
+        let data = c.rom.file(file)?.data;
+        out.extend(desc(&data, file, at)?);
+        out.extend(desc(&data, file, at + DESC_SIZE)?);
     }
-    Ok(w)
+    Ok(le_bytes(&out, i32::to_le_bytes))
 }
 
 /// `(name, file, offset)` of each `ll*FTSpecialColl` (`reloc_data.us.h`).
@@ -127,41 +120,33 @@ pub const SPECIAL_COLLS: [(&str, u32, usize); 3] = [
 ];
 
 /// `nFTSpecialCollKind*`, as `ssb_game::combat::SpecialCollKind` names them.
-const SPECIAL_COLL_KINDS: [&str; 3] = ["FoxReflector", "NessAbsorb", "NessReflector"];
+pub const SPECIAL_COLL_KINDS: [&str; 3] = ["FoxReflector", "NessAbsorb", "NessReflector"];
 
-fn special_coll(data: &[u8], file: u32, at: usize) -> Result<String> {
+/// One `FTSpecialColl`: `kind` ([`SPECIAL_COLL_KINDS`] index), `joint`,
+/// `offset`, `size` (f32 bits), `damage_resist`.
+fn special_coll(data: &[u8], file: u32, at: usize) -> Result<[u32; 9]> {
     let word = |i: usize| be_u32(data, at + 4 * i);
-    let f = |i: usize| word(i).map(|v| emit::f32_lit(f32::from_bits(v)));
     let kind = name(&SPECIAL_COLL_KINDS, word(0)?, file, at)?;
     let joint = u8::try_from(word(1)?).map_err(|_| Error::BadRelocation {
         file,
         offset: at + 4,
     })?;
-    Ok(format!(
-        "SpecialColl {{ kind: SpecialCollKind::{kind}, joint: {joint}, offset: Vec3::new({}, {}, {}), size: Vec3::new({}, {}, {}), damage_resist: {} }}",
-        f(2)?,
-        f(3)?,
-        f(4)?,
-        f(5)?,
-        f(6)?,
-        f(7)?,
-        word(8)? as i32,
-    ))
-}
-
-pub fn generate_special_colls(rom: Option<&Source>) -> Result<String> {
-    let mut w = emit::header("the reflector and absorber colliders (`FTSpecialColl`)");
-    for (name, file, at) in SPECIAL_COLLS {
-        let body = match rom {
-            Some(rom) => special_coll(&rom.file(file)?.data, file, at)?,
-            None => "SpecialColl { kind: SpecialCollKind::FoxReflector, joint: 0, offset: Vec3::ZERO, size: Vec3::ZERO, damage_resist: 0 }".to_string(),
-        };
-        let _ = writeln!(
-            w,
-            "/// File {file} + {at:#X}.\npub const {name}: SpecialColl = {body};"
-        );
+    let mut w = [0; 9];
+    w[0] = kind;
+    w[1] = joint.into();
+    for (i, v) in w.iter_mut().enumerate().skip(2) {
+        *v = word(i)?;
     }
     Ok(w)
+}
+
+/// `TableId::SpecialColls`: each [`SPECIAL_COLLS`] record.
+pub fn special_colls_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (_, file, at) in SPECIAL_COLLS {
+        out.extend(special_coll(&c.rom.file(file)?.data, file, at)?);
+    }
+    Ok(le_words(&out))
 }
 
 #[cfg(test)]
@@ -169,24 +154,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stub_covers_every_table() {
-        let text = generate(None).unwrap();
-        assert_eq!(text.matches(": [ThrowHitDesc; 2]").count(), DESCS.len());
-    }
-
-    #[test]
     fn descriptor_decodes_signed_words() {
         let mut data = vec![0u8; DESC_SIZE];
         for (i, v) in [52i32, 18, 45, 80, 0, 60, 2].into_iter().enumerate() {
             data[4 * i..4 * i + 4].copy_from_slice(&v.to_be_bytes());
         }
-        let d = desc(&data, 242, 0).unwrap();
-        assert!(d.contains("Some(Status::DamageFlyN)"), "{d}");
-        assert!(
-            d.contains("damage: 18,") && d.contains("kb_base: 60,"),
-            "{d}"
-        );
-        assert!(d.ends_with("element: Element::Electric }"), "{d}");
+        assert_eq!(desc(&data, 242, 0).unwrap(), [1, 18, 45, 80, 0, 60, 2]);
         data[..4].copy_from_slice(&53i32.to_be_bytes());
         assert!(desc(&data, 242, 0).is_err());
     }
@@ -198,18 +171,11 @@ mod tests {
         data[12..16].copy_from_slice(&150.0f32.to_bits().to_be_bytes());
         data[32..36].copy_from_slice(&1000i32.to_be_bytes());
         let c = special_coll(&data, 238, 0).unwrap();
-        assert!(
-            c.contains("SpecialCollKind::NessReflector, joint: 0,"),
-            "{c}"
-        );
-        assert!(c.contains("Vec3::new(0.0, 150.0, 0.0)"), "{c}");
-        assert!(c.ends_with("damage_resist: 1000 }"), "{c}");
-        assert_eq!(
-            generate_special_colls(None)
-                .unwrap()
-                .matches(": SpecialColl =")
-                .count(),
-            3
-        );
+        assert_eq!(c[..2], [2, 0]);
+        assert_eq!(f32::from_bits(c[3]), 150.0);
+        assert_eq!(c[8] as i32, 1000);
+        data[7] = 1;
+        data[6] = 1;
+        assert!(special_coll(&data, 238, 0).is_err());
     }
 }

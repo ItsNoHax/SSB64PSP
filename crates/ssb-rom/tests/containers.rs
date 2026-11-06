@@ -57,19 +57,19 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
     let archive = Archive::open(&rom, ssb_rom::rom::identify(&rom).unwrap().region).unwrap();
     let file = archive.load(251).unwrap();
     for (offset, attr, spin) in [
-        (0x50, &CAPSULE_ATTRIBUTES, 120),
-        (0xACC, &EGG_ATTRIBUTES, 100),
-        (0x5CC, &CRATE_ATTRIBUTES, 40),
-        (0x634, &BARREL_ATTRIBUTES, 0),
-        (0xB8, &TOMATO_ATTRIBUTES, 100),
-        (0x100, &HEART_ATTRIBUTES, 0),
-        (0x148, &STAR_ATTRIBUTES, 0),
-        (0x3BC, &msbomb::ATTRIBUTES, 120),
-        (0x424, &bombhei::ATTRIBUTES, 0),
-        (0x53C, &shell::GREEN_ATTRIBUTES, 0),
-        (0x584, &shell::RED_ATTRIBUTES, 0),
-        (0x69C, &nbumper::ATTRIBUTES, 70),
-        (0x6E4, &mball::ATTRIBUTES, 20),
+        (0x50, &*CAPSULE_ATTRIBUTES, 120),
+        (0xACC, &*EGG_ATTRIBUTES, 100),
+        (0x5CC, &*CRATE_ATTRIBUTES, 40),
+        (0x634, &*BARREL_ATTRIBUTES, 0),
+        (0xB8, &*TOMATO_ATTRIBUTES, 100),
+        (0x100, &*HEART_ATTRIBUTES, 0),
+        (0x148, &*STAR_ATTRIBUTES, 0),
+        (0x3BC, &*msbomb::ATTRIBUTES, 120),
+        (0x424, &*bombhei::ATTRIBUTES, 0),
+        (0x53C, &*shell::GREEN_ATTRIBUTES, 0),
+        (0x584, &*shell::RED_ATTRIBUTES, 0),
+        (0x69C, &*nbumper::ATTRIBUTES, 70),
+        (0x6E4, &*mball::ATTRIBUTES, 20),
         (0x190, &ssb_game::item::equipment::ATTRIBUTES[0], 100),
         (0x1D8, &ssb_game::item::equipment::ATTRIBUTES[1], 100),
         (0x220, &ssb_game::item::equipment::ATTRIBUTES[2], 50),
@@ -160,8 +160,8 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         assert_eq!(kind.spin_speed(), Some(spin as f32 * 0.01));
     }
     for (offset, events) in [
-        (0x404, msbomb::ATTACK_EVENTS),
-        (0x46C, bombhei::ATTACK_EVENTS),
+        (0x404, *msbomb::ATTACK_EVENTS),
+        (0x46C, *bombhei::ATTACK_EVENTS),
     ] {
         for (i, e) in events.into_iter().enumerate() {
             let d = &file.data[offset + i * 8..];
@@ -178,10 +178,10 @@ fn container_attributes_and_explosion_tables_match_the_rom() {
         }
     }
     for (offset, events) in [
-        (0x98, CAPSULE_EVENTS),
-        (0xB14, EGG_EVENTS),
-        (0x614, BOX_EVENTS),
-        (0x67C, TARU_EVENTS),
+        (0x98, *CAPSULE_EVENTS),
+        (0xB14, *EGG_EVENTS),
+        (0x614, *BOX_EVENTS),
+        (0x67C, *TARU_EVENTS),
     ] {
         for (i, e) in events.into_iter().enumerate() {
             let d = &file.data[offset + i * 8..];

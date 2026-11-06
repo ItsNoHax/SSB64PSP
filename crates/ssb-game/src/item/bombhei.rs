@@ -6,7 +6,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
+use super::{map, HitProc, Item, ItemKind, ItemStatus, OwnerView};
 use crate::colanim::ColAnimId;
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::map::{MASK_FLOOR, MASK_LWALL, MASK_RWALL};
@@ -30,11 +30,11 @@ pub const EXPLODE_SCALE: f32 = 1.4;
 pub const EXPLODE_COLANIM_DURATION: i32 = 90;
 
 /// File 251, `llITCommonDataBombHeiItemAttributes` (0x424).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::BOMBHEI;
+pub use super::attributes::BOMBHEI as ATTRIBUTES;
 
 /// File 251, `llITCommonDataBombHeiAttackEvents` (0x46C): timer, angle,
 /// damage, size.
-pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::BOMBHEI;
+pub use super::attack_events::BOMBHEI as ATTACK_EVENTS;
 
 /// `itBombHeiStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

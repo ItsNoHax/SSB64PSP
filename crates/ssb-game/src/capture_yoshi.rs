@@ -67,17 +67,20 @@ pub const EGG_ANIM_THROW: u8 = 2;
 /// (`crates/ssb-rom/tests/display_effects.rs`).
 pub const EGG_THROW_PLAYS: u16 = 17;
 
-/// `dFTCommonYoshiEggDamageCollDescs` by `FTKind`: `(effect_size, offset,
-/// size)`, generated at build time from the ROM by `crates/ssb-tablegen`
-/// (`battle_data.rs`). `effect_size` is the egg's X and Y scale.
-pub use generated::EGG_DESCS;
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/yoshi_egg.rs"));
-}
+/// One `dFTCommonYoshiEggDamageCollDescs` row: `(effect_size, offset, size)`.
+pub type EggDesc = (f32, [f32; 3], [f32; 3]);
+
+/// `dFTCommonYoshiEggDamageCollDescs` by `FTKind`: [`EggDesc`] rows, from
+/// the ROM (`TableId::YoshiEgg`). `effect_size` is the egg's X and Y scale.
+pub static EGG_DESCS: ssb_tables::Decoded<[EggDesc; 27]> = ssb_tables::Decoded::new(|| {
+    static ROWS: ssb_tables::Table<[[f32; 7]; 27]> =
+        ssb_tables::Table::new(ssb_tables::TableId::YoshiEgg);
+    ROWS.map(|r| (r[0], [r[1], r[2], r[3]], [r[4], r[5], r[6]]))
+});
 
 /// `dFTCommonYoshiEggDamageCollDescs[fkind].effect_size`.
 pub fn egg_effect_size(kind: crate::fighter::FighterKind) -> Option<f32> {
-    EGG_DESCS.get(kind as usize).map(|d| d.0)
+    EGG_DESCS.get().get(kind as usize).map(|d| d.0)
 }
 
 /// `efManagerYoshiEggLayMakeEffect`'s egg, as its process and the egg

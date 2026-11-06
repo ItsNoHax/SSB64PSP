@@ -493,6 +493,230 @@ pub const IDS: &[TableDesc] = &[
               `dMVOpeningJungle{Donkey,Samus}KeyEvents`.",
         read: Some(crate::opening_data::keys_bytes),
     },
+    TableDesc {
+        name: "ItemAttributes",
+        kind: Kind::I32,
+        len: Len::Exact(crate::item_sounds::ITEMS.len() * crate::item_attributes::WORDS),
+        doc: "Each `ll*ItemAttributes` record (`item_sounds::ITEMS`) as `item_attributes::WORDS` field words, sounds and `spin_speed` included.",
+        read: Some(crate::item_attributes::attributes_bytes),
+    },
+    TableDesc {
+        name: "ItemAttackEvents",
+        kind: Kind::I32,
+        len: Len::Exact(8 * 4 * 4),
+        doc: "`item_attributes::ATTACK_EVENTS`' four `ITAttackEvent`s each: `timer, angle, damage, size`.",
+        read: Some(crate::item_attributes::attack_events_bytes),
+    },
+    TableDesc {
+        name: "ContainerVelocitiesY",
+        kind: Kind::F32,
+        len: Len::Exact(20),
+        doc: "`llITCommonDataContainerVelocitiesY`.",
+        read: Some(crate::item_attributes::container_velocities_bytes),
+    },
+    TableDesc {
+        name: "LinkBombBloatScales",
+        kind: Kind::F32,
+        len: Len::Exact(6),
+        doc: "`llLinkMainBombBloatScales`.",
+        read: Some(crate::item_attributes::bloat_scales_bytes),
+    },
+    TableDesc {
+        name: "WeaponSounds",
+        kind: Kind::U16,
+        len: Len::Exact(crate::item_sounds::WEAPONS.len()),
+        doc: "`WPAttributes::sfx` per `item_sounds::WEAPONS` record.",
+        read: Some(crate::item_sounds::weapon_sounds_bytes),
+    },
+    TableDesc {
+        name: "MonsterEventSounds",
+        kind: Kind::U16,
+        len: Len::Exact(2 * 2),
+        doc: "`ITMonsterEvent::fgm_id` of both events per `item_sounds::MONSTER_EVENTS` table.",
+        read: Some(crate::item_sounds::monster_event_sounds_bytes),
+    },
+    TableDesc {
+        name: "WeaponAttributes",
+        kind: Kind::I32,
+        len: Len::Exact(crate::item_sounds::WEAPONS.len() * crate::monster_weapons::WORDS),
+        doc: "Each `ll*WeaponAttributes` record (`item_sounds::WEAPONS`) as `monster_weapons::WORDS` field words.",
+        read: Some(crate::monster_weapons::attributes_bytes),
+    },
+    TableDesc {
+        name: "SmogScale",
+        kind: Kind::F32,
+        len: Len::Exact(crate::monster_weapons::SMOG_PLAYS),
+        doc: "The Smog's child `DObj` X scale after each play.",
+        read: std_reader!(crate::monster_weapons::smog_scale_bytes),
+    },
+    TableDesc {
+        name: "ThrowDescs",
+        kind: Kind::I32,
+        len: Len::Exact(40 * 2 * 7),
+        doc: "`throw_descs::DESCS`' two `FTThrowHitDesc`s each: `status` index, `damage, angle, kb_scale, kb_weight, kb_base, element`.",
+        read: Some(crate::throw_descs::descs_bytes),
+    },
+    TableDesc {
+        name: "SpecialColls",
+        kind: Kind::U32,
+        len: Len::Exact(3 * 9),
+        doc: "`throw_descs::SPECIAL_COLLS`: `kind, joint`, `offset`, `size` (f32 bits), `damage_resist`.",
+        read: Some(crate::throw_descs::special_colls_bytes),
+    },
+    TableDesc {
+        name: "ItemThrowDescs",
+        kind: Kind::U32,
+        len: Len::Exact(22 * 4),
+        doc: "`dFTCommonDataItemThrowDescs`: `is_smash`, `velocity` (f32 bits), `angle`, `damage_scale` (f32 bits).",
+        read: Some(crate::battle_data::item_throws_bytes),
+    },
+    TableDesc {
+        name: "GroundHitAttacks",
+        kind: Kind::I32,
+        len: Len::Exact(6 * 7),
+        doc: "`dFTMainGroundHitCollisionAttributes`: `kind, damage, angle, kb_scale, kb_weight, kb_base, element`.",
+        read: Some(crate::battle_data::ground_hits_bytes),
+    },
+    TableDesc {
+        name: "ChargeShot",
+        kind: Kind::U32,
+        len: Len::Exact(8 * 6),
+        doc: "`dWPSamusChargeShotWeaponAttributes`: `gfx_size, vel_x, damage, attack_size, coll_size` (floats as bits), `priority`.",
+        read: Some(crate::battle_data::charge_shot_bytes),
+    },
+    TableDesc {
+        name: "KirbyCopy",
+        kind: Kind::U32,
+        len: Len::Exact(27 * 4),
+        doc: "`FTKirbyCopy` per swallowed `FTKind`: `copy_id, copy_modelpart_id, star_damage`, `effect_scale` (f32 bits).",
+        read: Some(crate::kirby_copy::copy_bytes),
+    },
+    TableDesc {
+        name: "KirbyAttack100",
+        kind: Kind::F32,
+        len: Len::Exact(6 * 6),
+        doc: "`ftKirbyAttack100Effect[6]`: `offset[3], rotate, vel, add`.",
+        read: Some(crate::kirby_attack100::effect_bytes),
+    },
+    TableDesc {
+        name: "YoshiEgg",
+        kind: Kind::F32,
+        len: Len::Exact(27 * 7),
+        doc: "`dFTCommonYoshiEggDamageCollDescs`: `effect_size, offset[3], size[3]` per `FTKind`.",
+        read: Some(crate::battle_data::yoshi_egg_bytes),
+    },
+    TableDesc {
+        name: "CaptureCaptain",
+        kind: Kind::I16,
+        len: Len::Exact(27 * 2),
+        doc: "`dCaptainMainMotion_0x0000`: `(x, y)` per victim `FTKind`.",
+        read: Some(crate::capture_captain::offsets_bytes),
+    },
+    TableDesc {
+        name: "CostumeRoyal",
+        kind: Kind::U8,
+        len: Len::Exact(12 * 4),
+        doc: "`FTCostume::royal` of the playable `FTKind`s.",
+        read: Some(crate::battle_data::costume_royal_bytes),
+    },
+    TableDesc {
+        name: "CostumeTeam",
+        kind: Kind::U8,
+        len: Len::Exact(12 * 3),
+        doc: "`FTCostume::team` of the playable `FTKind`s.",
+        read: Some(crate::battle_data::costume_team_bytes),
+    },
+    TableDesc {
+        name: "Handicap",
+        kind: Kind::F32,
+        len: Len::Exact(40 * 2),
+        doc: "`dFTCommonDataHandicapTable`.",
+        read: Some(crate::battle_data::handicap_bytes),
+    },
+    TableDesc {
+        name: "ShieldColors",
+        kind: Kind::U8,
+        len: Len::Exact(5 * 6),
+        doc: "`dEFManagerShieldColors`: `prim[3], env[3]`.",
+        read: Some(crate::battle_data::shield_colors_bytes),
+    },
+    TableDesc {
+        name: "BossWait",
+        kind: Kind::U8,
+        len: Len::Exact(0x50),
+        doc: "`ftbosswait.o`'s `.data` and the 16 bytes after it.",
+        read: Some(crate::battle_data::boss_wait_bytes),
+    },
+    TableDesc {
+        name: "EffectLife",
+        kind: Kind::U16,
+        len: Len::Exact(4 + 3),
+        doc: "The quakes' and the Thunder Shock spark's animation lives.",
+        read: Some(crate::effect_life::lives_bytes),
+    },
+    TableDesc {
+        name: "ZebesAcid",
+        kind: Kind::U32,
+        len: Len::Exact(16 * 4),
+        doc: "`dGRZebesAcidAttributes`: `wait_base, random_min, random_max, level` (f32 bits).",
+        read: Some(crate::battle_data::zebes_acid_bytes),
+    },
+    TableDesc {
+        name: "SectorMapX",
+        kind: Kind::I16,
+        len: Len::Exact(3),
+        doc: "`dGRSectorArwingMapPositionsX`.",
+        read: Some(crate::battle_data::sector_map_x_bytes),
+    },
+    TableDesc {
+        name: "SectorLasers",
+        kind: Kind::U8,
+        len: Len::Exact(8),
+        doc: "`dGRSectorArwingLaserCounts`.",
+        read: Some(crate::battle_data::sector_lasers_bytes),
+    },
+    TableDesc {
+        name: "SectorPilots",
+        kind: Kind::U8,
+        len: Len::Exact(56),
+        doc: "`dGRSectorArwingPilotIDs`.",
+        read: Some(crate::battle_data::sector_pilots_bytes),
+    },
+    TableDesc {
+        name: "SectorPilotWindows",
+        kind: Kind::U8,
+        len: Len::Exact(6 * 2),
+        doc: "`dGRSectorArwingPilotWaitTimers`: `(first, count)` pairs.",
+        read: Some(crate::battle_data::sector_windows_bytes),
+    },
+    TableDesc {
+        name: "AltWarning",
+        kind: Kind::I16,
+        len: Len::Exact(41),
+        doc: "`MPGroundData::alt_warning` by `GRKind`.",
+        read: Some(crate::ground::alt_warning_bytes),
+    },
+    TableDesc {
+        name: "GroundEffectLife",
+        kind: Kind::U16,
+        len: Len::Exact(24),
+        doc: "Each `EFGroundDesc`'s child `DObj` script's end play.",
+        read: Some(crate::ground_effect::life_bytes),
+    },
+    TableDesc {
+        name: "GroundEffectEnd",
+        kind: Kind::F32,
+        len: Len::Exact(24 * 2 * 2),
+        doc: "Each `EFGroundDesc`'s child `translate.x, .y` at that play: first, later cycles.",
+        read: Some(crate::ground_effect::end_bytes),
+    },
+    TableDesc {
+        name: "StatFlags",
+        kind: Kind::U16,
+        len: Len::Exact(crate::stat_flags::FLAG_COUNT),
+        doc: "`FTStatusDesc::sflags`: the common statuses, then each playable fighter's specials.",
+        read: Some(crate::stat_flags::flags_bytes),
+    },
 ];
 
 /// `ifcommon::ANNOUNCE_ROWS` (layout).
@@ -538,6 +762,24 @@ const _: () = {
     assert!(s::BOSS_WALLPAPERS.1 == 4 && s::BOSS_ROW == 35);
     assert!(e::NAME_AND_JOB.1 == 56 && e::TEXT_BOX.1 == 74);
     assert!(o::SCENES.len() == 8);
+    use crate::{battle_data as b, item_attributes as ia, item_sounds as is};
+    assert!(ia::ATTACK_EVENTS.len() == 8 && ia::ATTACK_EVENT_COUNT == 4);
+    assert!(ia::CONTAINER_VELOCITIES_Y.2 == 20 && ia::LINK_BOMB_BLOAT_SCALES.2 == 6);
+    assert!(is::MONSTER_EVENTS.len() == 2);
+    assert!(crate::throw_descs::DESCS.len() == 40 && crate::throw_descs::SPECIAL_COLLS.len() == 3);
+    assert!(b::ITEM_THROW_DESCS.1 == 22 && b::GROUND_HIT_ATTACKS.1 == 6);
+    assert!(b::CHARGE_SHOT_ATTRIBUTES.1 == 8 && b::YOSHI_EGG_DESCS.1 == 27);
+    assert!(crate::kirby_copy::ROWS == 27 && crate::kirby_copy::PLAYABLE == 12);
+    assert!(crate::kirby_attack100::ROWS == 6 && crate::kirby_attack100::COLS == 6);
+    assert!(crate::capture_captain::ROWS == 27 && b::COSTUME_IDS.1 == 12);
+    assert!(b::HANDICAP_TABLE.1 == 40 && b::SHIELD_COLORS.1 == 5 && b::BOSS_WAIT_DATA.1 == 0x50);
+    assert!(
+        crate::effect_life::QUAKE_TABLES.len() == 4 && crate::effect_life::SHOCK_TABLES.len() == 3
+    );
+    assert!(b::ZEBES_ACID.1 == 16 && b::SECTOR_MAP_POSITIONS_X.1 == 3);
+    assert!(b::SECTOR_LASER_COUNTS.1 == 8 && b::SECTOR_PILOT_IDS.1 == 56);
+    assert!(b::SECTOR_PILOT_WINDOWS.1 == 6 && crate::ground::GROUND_FILE_INFOS.len() == 41);
+    assert!(crate::ground_effect::DESC_COUNT == 24);
 };
 
 /// The `ssb-tables` build script's `table_ids.rs`: the ids, kinds and

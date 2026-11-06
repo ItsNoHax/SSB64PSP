@@ -1396,9 +1396,16 @@ impl QuakeSlot {
 /// end and its `proc_update` ejects it (`anim_frame <= 0`), counting the
 /// one `efManagerMakeEffect` makes. Replayed from the ROM's scripts
 /// (`crates/ssb-rom/tests/display_effects.rs`, RE-415). `QUAKE` and
-/// `THUNDER_SHOCK` are generated from the ROM (D-048); zeros in a stub build.
+/// `THUNDER_SHOCK` are from the ROM (`TableId::EffectLife`); zeros in a stub
+/// build.
 pub mod life {
-    include!(concat!(env!("OUT_DIR"), "/effect_life.rs"));
+    /// `llEFCommonEffects1QuakeMag0AnimJoint` to `...Mag3...`.
+    pub static QUAKE: ssb_tables::DArr<[u16; 4]> =
+        ssb_tables::DArr::new(ssb_tables::TableId::EffectLife, 0);
+    /// `llPikachuSpecial2ThunderShock{0,1,2}AnimJoint`, each counting the
+    /// default animation's play at the make.
+    pub static THUNDER_SHOCK: ssb_tables::DArr<[u16; 3]> =
+        ssb_tables::DArr::new(ssb_tables::TableId::EffectLife, 8);
 
     /// `llEFCommonEffects2ShockSmallMatAnimJoint` (the material's clock,
     /// which its `SetAnim` loop zeroes).
@@ -1479,7 +1486,7 @@ impl DisplayKind {
             DisplayKind::ImpactWave => life::IMPACT_WAVE,
             // `efManagerQuakeMakeEffect` adds no animation past magnitude
             // 3 (its `switch` default); every maker passes 0 to 3.
-            DisplayKind::Quake { magnitude } => *life::QUAKE.get(usize::from(magnitude))?,
+            DisplayKind::Quake { magnitude } => *life::QUAKE.get().get(usize::from(magnitude))?,
             DisplayKind::FireSpark => life::FIRE_SPARK,
             DisplayKind::MBallRays => life::MBALL_RAYS,
             DisplayKind::ThunderShock { gfx } => life::THUNDER_SHOCK[usize::from(gfx.min(2))],

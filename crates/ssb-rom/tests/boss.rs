@@ -85,7 +85,7 @@ fn the_anim_joint_lengths_match_the_rom() {
 fn the_attack_choice_bytes_match_the_rom() {
     let Some(bytes) = rom_bytes() else { return };
     let at = 0x0AC540 + (0x8018_8DC0 - 0x8013_1B00);
-    assert_eq!(&bytes[at..at + boss::WAIT_DATA.len()], &boss::WAIT_DATA);
+    assert_eq!(&bytes[at..at + boss::WAIT_DATA.len()], &boss::WAIT_DATA[..]);
 }
 
 fn last_file(bytes: &[u8]) -> ssb_rom::archive::File {

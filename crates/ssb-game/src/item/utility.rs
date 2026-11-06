@@ -2,7 +2,7 @@
 //! `ittomato.c`, `itheart.c` (consumed at the end of `LightGet`,
 //! `ftCommonLightGetProcDamage`) and `itstar.c` (touched,
 //! `ftMainUpdateDamageStatItem`).
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{map, HitProc, Item, ItemKind, ItemStatus};
 use crate::{
     combat::AttackState,
     map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL},
@@ -31,11 +31,12 @@ impl Kind {
     /// `ITAttributes::spin_speed` as a fraction.
     pub fn spin_speed(self) -> f32 {
         use super::spin;
-        f32::from(match self {
-            Self::Tomato => spin::TOMATO,
-            Self::Heart => spin::HEART,
-            Self::Star => spin::STAR,
-        }) * 0.01
+        (match self {
+            Self::Tomato => *spin::TOMATO,
+            Self::Heart => *spin::HEART,
+            Self::Star => *spin::STAR,
+        }) as f32
+            * 0.01
     }
 }
 
@@ -60,12 +61,12 @@ const STAR_MAP_REBOUND_COMMON: f32 = 1.0;
 const STAR_VEL_X: f32 = 8.0;
 const STAR_BOUNCE_Y: f32 = 50.0;
 
-/// File 251, `llITCommonDataTomatoItemAttributes` (0xB8).
-pub static TOMATO_ATTRIBUTES: ItemAttributes = super::attributes::TOMATO;
 /// File 251, `llITCommonDataHeartItemAttributes` (0x100).
-pub static HEART_ATTRIBUTES: ItemAttributes = super::attributes::HEART;
+pub use super::attributes::HEART as HEART_ATTRIBUTES;
 /// File 251, `llITCommonDataStarItemAttributes` (0x148).
-pub static STAR_ATTRIBUTES: ItemAttributes = super::attributes::STAR;
+pub use super::attributes::STAR as STAR_ATTRIBUTES;
+/// File 251, `llITCommonDataTomatoItemAttributes` (0xB8).
+pub use super::attributes::TOMATO as TOMATO_ATTRIBUTES;
 
 /// `it{Tomato,Heart,Star}MakeItem`. `camera_at_x` is the battle camera's
 /// look-at X, which turns the Star towards the middle of the screen.

@@ -10,7 +10,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{map, HitProc, Item, ItemKind, ItemStatus};
 use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 
@@ -32,7 +32,7 @@ pub const MAP_REBOUND_COMMON: f32 = 0.8;
 pub const MAP_REBOUND_GROUND: f32 = 0.8;
 
 /// File 251, `llITCommonDataNBumperItemAttributes` (0x69C).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::NBUMPER;
+pub use super::attributes::NBUMPER as ATTRIBUTES;
 
 /// `itNBumperStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,16 +12,16 @@ use crate::fighter::FighterKind;
 /// the `nFTKind` order: the costume each select button (C-Up, C-Right,
 /// C-Down, C-Left) picks in free-for-all, and the one a fighter wears on
 /// the red, blue and green team. Kinds past Ness have one costume.
-/// Generated at build time from the ROM by `crates/ssb-tablegen`
-/// (`battle_data.rs`).
-use generated::{ROYAL, TEAM};
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/costume_ids.rs"));
-}
+/// From the ROM (`TableId::CostumeRoyal`, `TableId::CostumeTeam`).
+pub(crate) static ROYAL: ssb_tables::Table<[[u8; 4]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CostumeRoyal);
+pub(crate) static TEAM: ssb_tables::Table<[[u8; 3]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::CostumeTeam);
 
 /// `ftParamGetCostumeTeamID(fkind, team)`.
 pub fn costume_team_id(kind: FighterKind, team: u8) -> u8 {
-    TEAM.get(kind as usize)
+    TEAM.get()
+        .get(kind as usize)
         .map(|row| row[usize::from(team).min(2)])
         .unwrap_or(0)
 }
@@ -29,6 +29,7 @@ pub fn costume_team_id(kind: FighterKind, team: u8) -> u8 {
 /// `ftParamGetCostumeCommonID(fkind, color)`.
 pub fn costume_common_id(kind: FighterKind, color: usize) -> u8 {
     ROYAL
+        .get()
         .get(kind as usize)
         .map(|row| row[color.min(3)])
         .unwrap_or(0)

@@ -30,15 +30,16 @@ impl Kind {
     /// `ITAttributes::spin_speed` as a fraction.
     pub fn spin_speed(self) -> f32 {
         use super::spin;
-        f32::from(match self {
-            Self::Sword => spin::SWORD,
-            Self::Bat => spin::BAT,
-            Self::Fan => spin::HARISEN,
-            Self::StarRod => spin::STARROD,
-            Self::RayGun => spin::LGUN,
-            Self::FireFlower => spin::FFLOWER,
-            Self::Hammer => spin::HAMMER,
-        }) * 0.01
+        (match self {
+            Self::Sword => *spin::SWORD,
+            Self::Bat => *spin::BAT,
+            Self::Fan => *spin::HARISEN,
+            Self::StarRod => *spin::STARROD,
+            Self::RayGun => *spin::LGUN,
+            Self::FireFlower => *spin::FFLOWER,
+            Self::Hammer => *spin::HAMMER,
+        }) as f32
+            * 0.01
     }
     fn physics(self) -> (f32, f32, f32, f32) {
         match self {
@@ -53,15 +54,17 @@ impl Kind {
 }
 /// Per [`Kind`]: file 251's `ll*ItemAttributes` at 0x190, 0x1D8, 0x220,
 /// 0x48C, 0x268, 0x2E4 and 0x374.
-pub static ATTRIBUTES: [ItemAttributes; 7] = [
-    super::attributes::SWORD,
-    super::attributes::BAT,
-    super::attributes::HARISEN,
-    super::attributes::STARROD,
-    super::attributes::LGUN,
-    super::attributes::FFLOWER,
-    super::attributes::HAMMER,
-];
+pub static ATTRIBUTES: ssb_tables::Decoded<[ItemAttributes; 7]> = ssb_tables::Decoded::new(|| {
+    super::decode_attribute_list([
+        super::index::SWORD,
+        super::index::BAT,
+        super::index::HARISEN,
+        super::index::STARROD,
+        super::index::LGUN,
+        super::index::FFLOWER,
+        super::index::HAMMER,
+    ])
+});
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Init,

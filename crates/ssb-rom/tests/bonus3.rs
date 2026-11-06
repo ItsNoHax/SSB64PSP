@@ -208,7 +208,7 @@ fn bonus3_ground_data_matches_the_rom() {
     assert_eq!(half(d, 70), 0);
 
     // `llGRBonus3MapTaruBombAttackEvents`.
-    for (i, e) in tarubomb::ATTACK_EVENTS.into_iter().enumerate() {
+    for (i, e) in tarubomb::ATTACK_EVENTS.iter().copied().enumerate() {
         let d = &map.data[0xF0 + i * 8..];
         let w = word(d, 0);
         assert_eq!(

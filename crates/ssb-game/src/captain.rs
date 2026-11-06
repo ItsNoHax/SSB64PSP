@@ -6,7 +6,7 @@ use ssb_engine::math::{sin_cos, sy_arc_tan2, Vec2, Vec3};
 
 use crate::fighter::Fighter;
 use crate::fteffect;
-use crate::grab::{GrabEvent, ThrowHitDesc};
+use crate::grab::GrabEvent;
 use crate::physics;
 use crate::status::{self, AnyStatus, CaptainStatus, StatusTiming};
 
@@ -20,7 +20,7 @@ const DIVE_TURN_STICK_MIN: i32 = 18;
 
 /// `dCaptainMainMotion_0x1C54`: the Falcon Dive victim knockback and the
 /// damage-release descriptor if Captain is hit while holding.
-pub const DIVE_THROW: [ThrowHitDesc; 2] = crate::grab::throw_descs::CAPTAIN_DIVE;
+pub use crate::grab::throw_descs::CAPTAIN_DIVE as DIVE_THROW;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CaptainState {
@@ -282,7 +282,7 @@ fn init_special_hi(f: &mut Fighter) {
     f.captain.dive_target_pos = None;
     f.captain.dive_target_kind = None;
     f.grab.is_catchstatus = true;
-    f.grab.throw_desc = Some(DIVE_THROW);
+    f.grab.throw_desc = Some(*DIVE_THROW);
 }
 
 /// `ftCaptainSpecialHiProcMap` (`ftcaptainspecialhi.c:107-116`): falling

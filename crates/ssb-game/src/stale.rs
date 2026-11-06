@@ -121,11 +121,9 @@ pub fn damage_ratio() -> u8 {
 
 /// `dFTCommonDataHandicapTable`, indexed by `handicap - 1`: `[0]` scales
 /// knockback dealt, `[1]` knockback received. Generated at build time from
-/// the ROM by `crates/ssb-tablegen` (`battle_data.rs`).
-pub use generated::HANDICAP_TABLE;
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/handicap.rs"));
-}
+/// the ROM (`TableId::Handicap`).
+pub static HANDICAP_TABLE: ssb_tables::Table<[[f32; 2]; 40]> =
+    ssb_tables::Table::new(ssb_tables::TableId::Handicap);
 
 /// `ftParamGetCommonKnockback`'s trailing factors:
 /// `* (damage_ratio * 0.01F) * table[attack - 1][0]`, then

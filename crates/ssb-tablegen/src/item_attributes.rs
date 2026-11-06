@@ -19,13 +19,14 @@
 //! | 0x40 | `drop_sfx:10`, `throw_sfx:10`, `smash_sfx:10` |
 //! | 0x44 | `vel_scale:9`; `spin_speed`: `u16` at 0x46 |
 //!
-//! The emitted records take their sounds from `crate::item_sounds::item`.
+//! Each record also carries its sounds ([`item_sounds`]).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::item_sounds::ITEMS;
+use crate::item_sounds::{item_sounds, ITEMS, IT_HIT_WORD, IT_SFX_WORD};
 use crate::source::{be_u16, be_u32};
-use crate::{emit, Error, Result, Source};
+use crate::tables::{le_bytes, Ctx};
+use crate::{Error, Result};
 
 /// `ITAttackEvent[4]` tables (`ll*AttackEvents`, `reloc_data.us.h`): the
 /// constant's name, file and offset.
@@ -40,42 +41,15 @@ pub const ATTACK_EVENTS: [(&str, u32, u32); 8] = [
     ("TARUBOMB", 0x127, 0xF0),
 ];
 /// Events per table.
-const ATTACK_EVENT_COUNT: usize = 4;
+pub const ATTACK_EVENT_COUNT: usize = 4;
 /// `sizeof(ITAttackEvent)`: `timer:8`, `angle:10` (signed), `damage:8` in
 /// the first word, MSB first; `size` the next halfword.
 const ATTACK_EVENT_SIZE: usize = 8;
-/// `f32` arrays: the constant's name, its symbol, file, offset and count.
-/// `llITCommonDataContainerVelocitiesY` has one per `ITKind` up to the
-/// containers'.
-const FLOAT_TABLES: [(&str, &str, u32, usize, usize); 2] = [
-    (
-        "CONTAINER_VELOCITIES_Y",
-        "llITCommonDataContainerVelocitiesY",
-        251,
-        0x0,
-        20,
-    ),
-    (
-        "LINK_BOMB_BLOAT_SCALES",
-        "llLinkMainBombBloatScales",
-        225,
-        0xA8,
-        6,
-    ),
-];
-
-/// One `ITAttackEvent` as `(timer, angle, damage, size)`.
-fn attack_event(data: &[u8], at: usize) -> Result<String> {
-    let w = be_u32(data, at)?;
-    let size = be_u16(data, at + 4)?;
-    let angle = ((w << 8) as i32) >> 22;
-    Ok(format!(
-        "({}, {angle}, {}, {})",
-        w >> 24,
-        (w >> 6) & 0xFF,
-        emit::f32_lit(f32::from(size))
-    ))
-}
+/// `llITCommonDataContainerVelocitiesY` (one per `ITKind` up to the
+/// containers'): file, offset, count.
+pub const CONTAINER_VELOCITIES_Y: (u32, usize, usize) = (251, 0x0, 20);
+/// `llLinkMainBombBloatScales`: file, offset, count.
+pub const LINK_BOMB_BLOAT_SCALES: (u32, usize, usize) = (225, 0xA8, 6);
 
 /// `sizeof(ITAttributes)`.
 pub const SIZE: usize = 0x48;
@@ -96,209 +70,145 @@ pub const ELEMENTS: [&str; 7] = [
     "Normal", "Fire", "Electric", "Slash", "Coin", "Freezing", "Sleep",
 ];
 /// `nITType*`, as `ssb_game::item::ItemType` names them.
-const ITEM_TYPES: [&str; 7] = [
+pub const ITEM_TYPES: [&str; 7] = [
     "Damage", "Swing", "Shoot", "Throw", "Touch", "Consume", "Fighter",
 ];
 /// `nGMHitStatus*`, as `ssb_game::combat::HitStatus` names them.
-const HIT_STATUSES: [&str; 4] = ["None", "Normal", "Invincible", "Intangible"];
+pub const HIT_STATUSES: [&str; 4] = ["None", "Normal", "Invincible", "Intangible"];
 
-/// A field's name in `names`, or an error naming the record.
-pub fn name(names: &[&'static str], v: u32, file: u32, at: usize) -> Result<&'static str> {
-    names
-        .get(v as usize)
-        .copied()
-        .ok_or(Error::BadRelocation { file, offset: at })
+/// A field's index in `names`, or an error naming the record.
+pub fn name(names: &[&'static str], v: u32, file: u32, at: usize) -> Result<u32> {
+    if (v as usize) < names.len() {
+        Ok(v)
+    } else {
+        Err(Error::BadRelocation { file, offset: at })
+    }
 }
 
-/// `count` big-endian `s16`s from `at` as `f32` literals.
-fn halves(data: &[u8], at: usize, count: usize) -> Result<Vec<String>> {
-    (0..count)
-        .map(|i| Ok(emit::f32_lit(f32::from(be_u16(data, at + 2 * i)? as i16))))
-        .collect()
-}
+/// `TableId::ItemAttributes`' words per item, in this order:
+///
+/// | Word | Field |
+/// |---|---|
+/// | 0, 1, 2 | `is_give_hitlag`, `is_display_colanim`, `weight` is light |
+/// | 3..9 | `attack_offsets` (two `Vec3`, integers) |
+/// | 9..12, 12..15 | `damage_coll_offset`, `damage_coll_size` |
+/// | 15..19 | `map_coll` `top, center, bottom, width` |
+/// | 19..23 | `size`, `angle`, `kb_scale`, `damage` |
+/// | 23 | `element` ([`ELEMENTS`] index) |
+/// | 24..28 | `kb_weight`, `shield_damage`, `attack_count`, `can_setoff` |
+/// | 28..34 | `priority`, `can_rehit_item`, `can_rehit_fighter`, `can_hop`, `can_reflect`, `can_shield` |
+/// | 34, 35, 36 | `kb_base`, `ty` ([`ITEM_TYPES`] index), `hitstatus` ([`HIT_STATUSES`] index) |
+/// | 37 | `vel_scale` |
+/// | 38..42 | sounds: `hit, drop, throw, smash` |
+/// | 42 | `spin_speed` |
+pub const WORDS: usize = 43;
 
-fn vec3(c: &[String]) -> String {
-    format!("Vec3::new({}, {}, {})", c[0], c[1], c[2])
-}
-
-/// One record's `ItemAttributes` literal (without `sounds`) and its
-/// `spin_speed`.
-fn record(data: &[u8], file: u32, base: usize) -> Result<(String, u16)> {
+/// One record's [`WORDS`].
+fn record(data: &[u8], file: u32, base: usize) -> Result<[i32; WORDS]> {
     if base + SIZE > data.len() {
         return Err(Error::BadRelocation { file, offset: base });
     }
     let word = |at: usize| be_u32(data, base + at);
-    let bit = |w: u32, b: u32| w & (1 << b) != 0;
+    let half = |at: usize| be_u16(data, base + at).map(|h| i32::from(h as i16));
+    let bit = |w: u32, b: u32| i32::from(w & (1 << b) != 0);
     let flags = word(FLAGS)?;
-    let attack = halves(data, base + ATTACK_OFFSETS, 6)?;
-    let offset = halves(data, base + DAMAGE_COLL_OFFSET, 3)?;
-    let size = halves(data, base + DAMAGE_COLL_SIZE, 3)?;
-    let map = halves(data, base + MAP_COLL, 4)?;
-    let hit_size = be_u16(data, base + HIT_SIZE)?;
     let a = word(ATTACK_WORD)?;
     let k = word(KNOCKBACK_WORD)?;
     let f = word(FLAGS_WORD)?;
-    let vel_scale = word(VEL_SCALE_WORD)? >> 23;
-    let spin = be_u16(data, base + SPIN_SPEED)?;
-    let mut w = String::new();
-    let _ = writeln!(w, "ItemAttributes {{");
-    let _ = writeln!(w, "        is_give_hitlag: {},", bit(flags, 28));
-    let _ = writeln!(w, "        is_display_colanim: {},", bit(flags, 29));
-    let weight = if bit(flags, 27) { "Light" } else { "Heavy" };
-    let _ = writeln!(w, "        weight: ItemWeight::{weight},");
-    let _ = writeln!(
-        w,
-        "        attack_offsets: [{}, {}],",
-        vec3(&attack[..3]),
-        vec3(&attack[3..])
-    );
-    let _ = writeln!(w, "        damage_coll_offset: {},", vec3(&offset));
-    let _ = writeln!(w, "        damage_coll_size: {},", vec3(&size));
-    let _ = writeln!(
-        w,
-        "        map_coll: BodyColl {{ top: {}, center: {}, bottom: {}, width: {} }},",
-        map[0], map[1], map[2], map[3]
-    );
-    let _ = writeln!(w, "        size: {},", emit::f32_lit(f32::from(hit_size)));
-    let _ = writeln!(w, "        angle: {},", (a as i32) >> 22);
-    let _ = writeln!(w, "        kb_scale: {},", (a >> 12) & 0x3FF);
-    let _ = writeln!(w, "        damage: {},", (a >> 4) & 0xFF);
-    let element = name(&ELEMENTS, a & 0xF, file, base + ATTACK_WORD)?;
-    let _ = writeln!(w, "        element: Element::{element},");
-    let _ = writeln!(w, "        kb_weight: {},", k >> 22);
-    let _ = writeln!(w, "        shield_damage: {},", ((k << 10) as i32) >> 24);
-    let _ = writeln!(w, "        attack_count: {},", (k >> 12) & 3);
-    let _ = writeln!(w, "        can_setoff: {},", bit(k, 11));
-    let _ = writeln!(w, "        priority: {},", f >> 29);
-    let _ = writeln!(w, "        can_rehit_item: {},", bit(f, 28));
-    let _ = writeln!(w, "        can_rehit_fighter: {},", bit(f, 27));
-    let _ = writeln!(w, "        can_hop: {},", bit(f, 26));
-    let _ = writeln!(w, "        can_reflect: {},", bit(f, 25));
-    let _ = writeln!(w, "        can_shield: {},", bit(f, 24));
-    let _ = writeln!(w, "        kb_base: {},", (f >> 14) & 0x3FF);
-    let ty = name(&ITEM_TYPES, (f >> 10) & 0xF, file, base + FLAGS_WORD)?;
-    let _ = writeln!(w, "        ty: ItemType::{ty},");
-    let hitstatus = name(&HIT_STATUSES, (f >> 6) & 0xF, file, base + FLAGS_WORD)?;
-    let _ = writeln!(w, "        hitstatus: HitStatus::{hitstatus},");
-    let _ = writeln!(w, "        vel_scale: {vel_scale},");
-    Ok((w, spin))
-}
-
-/// The literal a stub build gets: every field zero or its first variant.
-fn stub() -> String {
-    let zero = "Vec3::new(0.0, 0.0, 0.0)";
-    format!(
-        "ItemAttributes {{\n\
-         \x20       is_give_hitlag: false,\n\
-         \x20       is_display_colanim: false,\n\
-         \x20       weight: ItemWeight::Heavy,\n\
-         \x20       attack_offsets: [{zero}, {zero}],\n\
-         \x20       damage_coll_offset: {zero},\n\
-         \x20       damage_coll_size: {zero},\n\
-         \x20       map_coll: BodyColl {{ top: 0.0, center: 0.0, bottom: 0.0, width: 0.0 }},\n\
-         \x20       size: 0.0,\n\
-         \x20       angle: 0,\n\
-         \x20       kb_scale: 0,\n\
-         \x20       damage: 0,\n\
-         \x20       element: Element::Normal,\n\
-         \x20       kb_weight: 0,\n\
-         \x20       shield_damage: 0,\n\
-         \x20       attack_count: 0,\n\
-         \x20       can_setoff: false,\n\
-         \x20       priority: 0,\n\
-         \x20       can_rehit_item: false,\n\
-         \x20       can_rehit_fighter: false,\n\
-         \x20       can_hop: false,\n\
-         \x20       can_reflect: false,\n\
-         \x20       can_shield: false,\n\
-         \x20       kb_base: 0,\n\
-         \x20       ty: ItemType::Damage,\n\
-         \x20       hitstatus: HitStatus::None,\n\
-         \x20       vel_scale: 0,\n"
-    )
-}
-
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut w = emit::header("the items' attributes (`ITAttributes`)");
-    let mut spins = Vec::new();
-    w.push_str(
-        "/// Each item's `ITAttributes`, named after its `ll*ItemAttributes` symbol.\n\
-         #[rustfmt::skip]\n\
-         pub mod attributes {\n    use super::*;\n\n",
-    );
-    for (name, file, at) in ITEMS {
-        let (body, spin) = match rom {
-            Some(rom) => record(&rom.file(file)?.data, file, at as usize)?,
-            None => (stub(), 0),
-        };
-        let _ = write!(
-            w,
-            "    pub const {name}: ItemAttributes = {body}        sounds: crate::item_sounds::item::{name},\n    }};\n"
-        );
-        spins.push((name, spin));
+    let mut w = [0i32; WORDS];
+    w[0] = bit(flags, 28);
+    w[1] = bit(flags, 29);
+    w[2] = bit(flags, 27);
+    for i in 0..6 {
+        w[3 + i] = half(ATTACK_OFFSETS + 2 * i)?;
     }
-    w.push_str(
-        "}\n\n/// Each item's `ITAttributes::spin_speed`, percent.\n\
-         pub mod spin {\n",
-    );
-    for (name, spin) in spins {
-        let _ = writeln!(w, "    pub const {name}: u16 = {spin};");
+    for i in 0..3 {
+        w[9 + i] = half(DAMAGE_COLL_OFFSET + 2 * i)?;
+        w[12 + i] = half(DAMAGE_COLL_SIZE + 2 * i)?;
     }
-    w.push_str(
-        "}\n\n/// Each `ll*AttackEvents` table: `(timer, angle, damage, size)` per\n\
-         /// `ITAttackEvent`.\n\
-         #[rustfmt::skip]\n\
-         pub mod attack_events {\n",
-    );
-    for (name, file, at) in ATTACK_EVENTS {
-        let rows: Vec<String> = match rom {
-            Some(rom) => {
-                let data = rom.file(file)?.data;
-                (0..ATTACK_EVENT_COUNT)
-                    .map(|i| attack_event(&data, at as usize + i * ATTACK_EVENT_SIZE))
-                    .collect::<Result<_>>()?
-            }
-            None => vec!["(0, 0, 0, 0.0)".to_string(); ATTACK_EVENT_COUNT],
-        };
-        let _ = writeln!(
-            w,
-            "    pub const {name}: [(u16, i32, i32, f32); {ATTACK_EVENT_COUNT}] = [{}];",
-            rows.join(", ")
-        );
+    for i in 0..4 {
+        w[15 + i] = half(MAP_COLL + 2 * i)?;
     }
-    w.push_str("}\n");
-    for (name, symbol, file, at, count) in FLOAT_TABLES {
-        let cells: Vec<String> = match rom {
-            Some(rom) => {
-                let data = rom.file(file)?.data;
-                (0..count)
-                    .map(|i| Ok(emit::f32_lit(f32::from_bits(be_u32(&data, at + 4 * i)?))))
-                    .collect::<Result<_>>()?
-            }
-            None => vec!["0.0".to_string(); count],
-        };
-        let _ = writeln!(
-            w,
-            "\n/// `{symbol}`.\npub const {name}: [f32; {count}] = [{}];",
-            cells.join(", ")
-        );
+    w[19] = be_u16(data, base + HIT_SIZE)?.into();
+    w[20] = (a as i32) >> 22;
+    w[21] = ((a >> 12) & 0x3FF) as i32;
+    w[22] = ((a >> 4) & 0xFF) as i32;
+    w[23] = name(&ELEMENTS, a & 0xF, file, base + ATTACK_WORD)? as i32;
+    w[24] = (k >> 22) as i32;
+    w[25] = ((k << 10) as i32) >> 24;
+    w[26] = ((k >> 12) & 3) as i32;
+    w[27] = bit(k, 11);
+    w[28] = (f >> 29) as i32;
+    for (i, b) in [28, 27, 26, 25, 24].into_iter().enumerate() {
+        w[29 + i] = bit(f, b);
     }
+    w[34] = ((f >> 14) & 0x3FF) as i32;
+    w[35] = name(&ITEM_TYPES, (f >> 10) & 0xF, file, base + FLAGS_WORD)? as i32;
+    w[36] = name(&HIT_STATUSES, (f >> 6) & 0xF, file, base + FLAGS_WORD)? as i32;
+    w[37] = (word(VEL_SCALE_WORD)? >> 23) as i32;
+    let sounds = item_sounds(word(IT_HIT_WORD)?, word(IT_SFX_WORD)?);
+    for (i, s) in sounds.into_iter().enumerate() {
+        w[38 + i] = s.into();
+    }
+    w[42] = be_u16(data, base + SPIN_SPEED)?.into();
     Ok(w)
+}
+
+/// `TableId::ItemAttributes`: [`WORDS`] per [`ITEMS`] record.
+pub fn attributes_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(ITEMS.len() * WORDS);
+    for (_, file, at) in ITEMS {
+        out.extend(record(&c.rom.file(file)?.data, file, at as usize)?);
+    }
+    Ok(le_bytes(&out, i32::to_le_bytes))
+}
+
+/// One `ITAttackEvent` as `[timer, angle, damage, size]`.
+fn attack_event(data: &[u8], at: usize) -> Result<[i32; 4]> {
+    let w = be_u32(data, at)?;
+    let size = be_u16(data, at + 4)?;
+    Ok([
+        (w >> 24) as i32,
+        ((w << 8) as i32) >> 22,
+        ((w >> 6) & 0xFF) as i32,
+        size.into(),
+    ])
+}
+
+/// `TableId::ItemAttackEvents`: [`ATTACK_EVENTS`]' events, `[timer, angle,
+/// damage, size]` each.
+pub fn attack_events_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (_, file, at) in ATTACK_EVENTS {
+        let data = c.rom.file(file)?.data;
+        for i in 0..ATTACK_EVENT_COUNT {
+            out.extend(attack_event(&data, at as usize + i * ATTACK_EVENT_SIZE)?);
+        }
+    }
+    Ok(le_bytes(&out, i32::to_le_bytes))
+}
+
+fn floats(c: &Ctx, (file, at, count): (u32, usize, usize)) -> Result<Vec<u8>> {
+    let data = c.rom.file(file)?.data;
+    let f: Vec<f32> = (0..count)
+        .map(|i| be_u32(&data, at + 4 * i).map(f32::from_bits))
+        .collect::<Result<_>>()?;
+    Ok(le_bytes(&f, f32::to_le_bytes))
+}
+
+/// `TableId::ContainerVelocitiesY`.
+pub fn container_velocities_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    floats(c, CONTAINER_VELOCITIES_Y)
+}
+
+/// `TableId::LinkBombBloatScales`.
+pub fn bloat_scales_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    floats(c, LINK_BOMB_BLOAT_SCALES)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stub_records_cover_every_item() {
-        let text = generate(None).unwrap();
-        assert_eq!(
-            text.matches(": ItemAttributes = ItemAttributes {").count(),
-            ITEMS.len()
-        );
-        assert_eq!(text.matches(": u16 = 0;").count(), ITEMS.len());
-    }
 
     #[test]
     fn attack_events_decode_msb_first() {
@@ -307,14 +217,7 @@ mod tests {
         let mut d = w.to_be_bytes().to_vec();
         d.extend_from_slice(&150u16.to_be_bytes());
         d.extend_from_slice(&[0, 0]);
-        assert_eq!(attack_event(&d, 0).unwrap(), "(4, -30, 20, 150.0)");
-        let text = generate(None).unwrap();
-        assert_eq!(
-            text.matches("; 4] = [(0, 0, 0, 0.0)").count(),
-            ATTACK_EVENTS.len()
-        );
-        assert!(text.contains("pub const CONTAINER_VELOCITIES_Y: [f32; 20]"));
-        assert!(text.contains("pub const LINK_BOMB_BLOAT_SCALES: [f32; 6]"));
+        assert_eq!(attack_event(&d, 0).unwrap(), [4, -30, 20, 150]);
     }
 
     #[test]
@@ -336,33 +239,21 @@ mod tests {
         let f: u32 = (1 << 29) | (1 << 28) | (1 << 24) | (60 << 14) | (5 << 10) | (1 << 6);
         d[FLAGS_WORD..FLAGS_WORD + 4].copy_from_slice(&f.to_be_bytes());
         d[VEL_SCALE_WORD..VEL_SCALE_WORD + 4].copy_from_slice(&(110u32 << 23 | 120).to_be_bytes());
-        let (text, spin) = record(&d, 0, 0).unwrap();
-        assert_eq!(spin, 120);
-        for want in [
-            "is_give_hitlag: true",
-            "is_display_colanim: true",
-            "weight: ItemWeight::Light",
-            "attack_offsets: [Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 350.0, 0.0)]",
-            "damage_coll_offset: Vec3::new(0.0, 200.0, 0.0)",
-            "size: 300.0",
-            "angle: 361",
-            "kb_scale: 80",
-            "damage: 10",
-            "element: Element::Slash",
-            "kb_weight: 400",
-            "shield_damage: -8",
-            "attack_count: 2",
-            "can_setoff: true",
-            "priority: 1",
-            "can_rehit_item: true",
-            "can_rehit_fighter: false",
-            "can_shield: true",
-            "kb_base: 60",
-            "ty: ItemType::Consume",
-            "hitstatus: HitStatus::Normal",
-            "vel_scale: 110",
-        ] {
-            assert!(text.contains(want), "{want} in\n{text}");
-        }
+        let w = record(&d, 0, 0).unwrap();
+        assert_eq!(w[..3], [1, 1, 1]);
+        assert_eq!(w[3..9], [0, 0, 0, 0, 350, 0]);
+        assert_eq!(w[9..12], [0, 200, 0]);
+        assert_eq!(w[19..24], [300, 361, 80, 10, 3]);
+        assert_eq!(w[24..28], [400, -8, 2, 1]);
+        assert_eq!(w[28..34], [1, 1, 0, 0, 0, 1]);
+        assert_eq!(w[34..38], [60, 5, 1, 110]);
+        assert_eq!(w[42], 120);
+    }
+
+    #[test]
+    fn out_of_range_names_are_errors() {
+        let mut d = vec![0u8; SIZE];
+        d[ATTACK_WORD + 3] = 7;
+        assert!(record(&d, 0, 0).is_err());
     }
 }

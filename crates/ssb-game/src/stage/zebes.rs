@@ -13,13 +13,17 @@ pub struct AcidStep {
     pub level: f32,
 }
 
-/// `dGRZebesAcidAttributes`, generated at build time from the ROM by
-/// `crates/ssb-tablegen` (`battle_data.rs`).
-pub use generated::ACID_STEPS;
-mod generated {
-    use super::AcidStep;
-    include!(concat!(env!("OUT_DIR"), "/zebes_acid.rs"));
-}
+/// `dGRZebesAcidAttributes`, from the ROM (`TableId::ZebesAcid`).
+pub static ACID_STEPS: ssb_tables::Decoded<[AcidStep; 16]> = ssb_tables::Decoded::new(|| {
+    static WORDS: ssb_tables::Table<[[u32; 4]; 16]> =
+        ssb_tables::Table::new(ssb_tables::TableId::ZebesAcid);
+    WORDS.map(|[wait_base, random_min, random_max, level]| AcidStep {
+        wait_base: wait_base as u16,
+        random_min: random_min as u16,
+        random_max: random_max as u16,
+        level: f32::from_bits(level),
+    })
+});
 
 /// `grZebesStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

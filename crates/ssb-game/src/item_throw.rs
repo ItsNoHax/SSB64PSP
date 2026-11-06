@@ -110,13 +110,18 @@ pub struct ThrowDesc {
     pub damage_scale: f32,
 }
 
-/// `dFTCommonDataItemThrowDescs`, indexed from `LightThrowDrop`, generated
-/// at build time from the ROM by `crates/ssb-tablegen` (`battle_data.rs`).
-pub use generated::THROW_DESCS;
-mod generated {
-    use super::ThrowDesc;
-    include!(concat!(env!("OUT_DIR"), "/item_throw_descs.rs"));
-}
+/// `dFTCommonDataItemThrowDescs`, indexed from `LightThrowDrop`, from the
+/// ROM (`TableId::ItemThrowDescs`).
+pub static THROW_DESCS: ssb_tables::Decoded<[ThrowDesc; 22]> = ssb_tables::Decoded::new(|| {
+    static WORDS: ssb_tables::Table<[[u32; 4]; 22]> =
+        ssb_tables::Table::new(ssb_tables::TableId::ItemThrowDescs);
+    WORDS.map(|[smash, velocity, angle, damage_scale]| ThrowDesc {
+        is_smash: smash != 0,
+        velocity: f32::from_bits(velocity),
+        angle: angle as i32,
+        damage_scale: f32::from_bits(damage_scale),
+    })
+});
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThrowState {

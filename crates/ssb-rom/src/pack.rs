@@ -521,7 +521,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 144 adds `TABLES` entries: `ssb-game`'s menu, 1P Game, staff roll, opening
 // and interface tables (`ssb_tablegen::{menu_data, sc1p_data, ending_data,
 // opening_data, ifcommon}`). Everything outside the section is unchanged.
-pub const VERSION: u32 = 144;
+// 145 adds `TABLES` entries: `ssb-game`'s item, weapon, throw, Kirby copy,
+// costume, handicap, shield, boss, effect, stage and 1P stat-flag tables
+// (`ssb_tablegen::{item_attributes, item_sounds, monster_weapons,
+// throw_descs, battle_data, kirby_copy, ...}`). Everything outside the
+// section is unchanged.
+pub const VERSION: u32 = 145;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

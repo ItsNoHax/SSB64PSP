@@ -442,7 +442,7 @@ fn a_thunder_shock_spark_pauses_with_its_fighter_and_stops_on_its_status_change(
     rt.effects.stop_attached(0);
     assert!(ticks(rt.effects, 0).is_none());
     assert!(ticks(rt.effects, 1).is_some());
-    assert_eq!(life::THUNDER_SHOCK, [7, 7, 7]);
+    assert_eq!(*life::THUNDER_SHOCK, [7, 7, 7]);
 }
 
 /// RE-513 trace k1, puffs 7 (`lr` 1) and 12 (`lr` -1), both from row 2

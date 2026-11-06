@@ -1,8 +1,11 @@
 //! `MPGroundData::alt_warning` of every ground, for
 //! `ssb_game::stage::alt_warning`.
 
+use alloc::vec::Vec;
+
 use crate::source::be_u16;
-use crate::{emit, Result, Source};
+use crate::tables::{le_bytes, Ctx};
+use crate::Result;
 
 /// `dMPCollisionGroundFileInfos` (`mp/mpcollision.c`), in `GRKind` order:
 /// each ground's `ll*MapFileID` and `ll*MapMapHeader`
@@ -31,24 +34,12 @@ pub const GROUND_FILE_INFOS: [(u32, u32); 41] = [
 /// `map_nodes` and `item_weights`.
 pub const ALT_WARNING_OFFSET: usize = 0x88;
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut out = emit::header("MPGroundData.alt_warning by GRKind");
+/// `TableId::AltWarning`: `MPGroundData::alt_warning` by `GRKind`.
+pub fn alt_warning_bytes(c: &Ctx) -> Result<Vec<u8>> {
     let mut alts = Vec::with_capacity(GROUND_FILE_INFOS.len());
     for (file, header) in GROUND_FILE_INFOS {
-        alts.push(match rom {
-            Some(rom) => {
-                let f = rom.file(file)?;
-                be_u16(&f.data, header as usize + ALT_WARNING_OFFSET)? as i16
-            }
-            // Stub tables: a height no fighter crosses.
-            None => i16::MIN,
-        });
+        let f = c.rom.file(file)?;
+        alts.push(be_u16(&f.data, header as usize + ALT_WARNING_OFFSET)? as i16);
     }
-    let rows: Vec<String> = alts.iter().map(i16::to_string).collect();
-    out.push_str(&format!(
-        "#[rustfmt::skip]\npub static ALT_WARNING: [i16; {}] = [{}];\n",
-        alts.len(),
-        rows.join(", ")
-    ));
-    Ok(out)
+    Ok(le_bytes(&alts, i16::to_le_bytes))
 }

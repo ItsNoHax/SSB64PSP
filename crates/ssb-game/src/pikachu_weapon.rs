@@ -11,18 +11,25 @@ use ssb_engine::math::{
 // at build time. `wpManagerMakeWeapon` copies each record's damage and map
 // collision into the weapon it makes; the ground record's offset is applied
 // by [`ThunderJolt::hit`].
-const JOLT_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.map_coll;
+static JOLT_COLL: ssb_tables::Decoded<BodyColl> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.map_coll
+});
 /// The ground weapon's own `coll_data.map_coll` (its ROM record's box).
-const JOLT_GROUND_COLL: BodyColl =
-    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_GROUND.map_coll;
-const HEAD_COLL: BodyColl = crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_HEAD.map_coll;
-const JOLT_AIR: Hitbox =
-    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.hitbox();
-const JOLT_GROUND: Hitbox =
-    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_GROUND.hitbox();
-pub(super) const TRAIL_HIT: Hitbox =
-    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_TRAIL.hitbox();
+static JOLT_GROUND_COLL: ssb_tables::Decoded<BodyColl> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_GROUND.map_coll
+});
+static HEAD_COLL: ssb_tables::Decoded<BodyColl> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_HEAD.map_coll
+});
+static JOLT_AIR: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_AIR.hitbox()
+});
+static JOLT_GROUND: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_JOLT_GROUND.hitbox()
+});
+pub(super) static TRAIL_HIT: ssb_tables::Decoded<Hitbox> = ssb_tables::Decoded::new(|| {
+    crate::monster_weapon::weapon_attributes::PIKACHU_THUNDER_TRAIL.hitbox()
+});
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThunderJolt {
@@ -88,7 +95,7 @@ impl ThunderJolt {
     /// The air weapon's `WEAPON_FLAG_COLLPROJECT` target: its own box, its
     /// translate and its `coll_data` floor.
     pub(super) fn collproject(&mut self) -> (BodyColl, &mut Vec3, &mut FloorState) {
-        (JOLT_COLL, &mut self.position, &mut self.coll.floor)
+        (*JOLT_COLL, &mut self.position, &mut self.coll.floor)
     }
 
     pub(super) fn new(s: WeaponSpawn) -> Self {
@@ -142,11 +149,11 @@ impl ThunderJolt {
             // `rotate.z`.
             let (sin, cos) = sin_cos(self.rotate_z);
             (
-                JOLT_GROUND,
+                *JOLT_GROUND,
                 self.position + Vec3::new(-sin * 100.0, cos * 100.0, 0.0),
             )
         } else {
-            (JOLT_AIR, self.position)
+            (*JOLT_AIR, self.position)
         }
     }
     pub(super) fn reflect(&mut self, f: &Reflector) {

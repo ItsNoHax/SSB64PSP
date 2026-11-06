@@ -8,7 +8,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus};
+use super::{HitProc, Item, ItemAnim, ItemAnims, ItemKind, ItemStatus};
 use crate::combat::{AttackState, HitStatus};
 use crate::fighter::Fighter;
 
@@ -28,7 +28,7 @@ pub const TVEL: f32 = 100.0;
 const DEG_180: f32 = core::f32::consts::PI;
 
 /// `llGRInishieMapPakkunItemAttributes` (file 260, 0x120).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::PAKKUN;
+pub use super::attributes::PAKKUN as ATTRIBUTES;
 
 /// `itPakkunStatus`. The descriptor's procs are the Wait ones, so a new
 /// plant starts in `Wait`.

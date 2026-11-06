@@ -7,11 +7,11 @@
 //! `refs/ssb-decomp-re/symbols/symbols_us.txt`; the overlay is the one the
 //! defining file's `.data` sits in (`smashbrothers.us.yaml`).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit::{self, f32_lit};
 use crate::source::{OverlayData, OVL2, OVL3};
-use crate::{Generated, Result, Source};
+use crate::tables::{le_bytes, le_words, Ctx};
+use crate::Result;
 
 /// `dFTCommonDataHandicapTable` (`ft/ftcommondata.c`): `f32[40][2]`.
 pub const HANDICAP_TABLE: (u32, usize) = (0x8012_C830, 40);
@@ -46,87 +46,37 @@ pub const CHARGE_SHOT_ATTRIBUTES: (u32, usize) = (0x8018_8F10, 8);
 /// the 16 bytes after it, which `ftBossWaitDecideStatusComputer` can read.
 pub const BOSS_WAIT_DATA: (u32, u32) = (0x8018_8DC0, 0x50);
 
-pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let ovl2 = OverlayData::new(rom, OVL2);
-    let ovl3 = OverlayData::new(rom, OVL3);
-    Ok(vec![
-        Generated {
-            name: "handicap.rs",
-            text: handicap(ovl2)?,
-        },
-        Generated {
-            name: "costume_ids.rs",
-            text: costumes(ovl2)?,
-        },
-        Generated {
-            name: "item_throw_descs.rs",
-            text: item_throws(ovl2)?,
-        },
-        Generated {
-            name: "ground_hit_attacks.rs",
-            text: ground_hits(ovl2)?,
-        },
-        Generated {
-            name: "zebes_acid.rs",
-            text: zebes_acid(ovl2)?,
-        },
-        Generated {
-            name: "sector_arwing.rs",
-            text: sector(ovl2)?,
-        },
-        Generated {
-            name: "shield_colors.rs",
-            text: shield_colors(ovl2)?,
-        },
-        Generated {
-            name: "yoshi_egg.rs",
-            text: yoshi_egg(ovl3)?,
-        },
-        Generated {
-            name: "charge_shot.rs",
-            text: charge_shot(ovl3)?,
-        },
-        Generated {
-            name: "boss_wait.rs",
-            text: boss_wait(ovl3)?,
-        },
-    ])
-}
-
-fn handicap(d: OverlayData) -> Result<String> {
+/// `TableId::Handicap`: `[knockback dealt, received]` by `handicap - 1`.
+pub fn handicap_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL2);
     let (at, n) = HANDICAP_TABLE;
-    let mut w = emit::header("`dFTCommonDataHandicapTable`");
-    w.push_str(
-        "/// Indexed by `handicap - 1`: `[0]` scales knockback dealt, `[1]`\n\
-         /// knockback received.\n",
-    );
-    let _ = writeln!(w, "pub const HANDICAP_TABLE: [[f32; 2]; {n}] = [");
-    for i in 0..n as u32 {
-        let (a, b) = (d.f32(at + i * 8)?, d.f32(at + i * 8 + 4)?);
-        let _ = writeln!(w, "    [{}, {}],", f32_lit(a), f32_lit(b));
+    let mut out = Vec::with_capacity(n * 2);
+    for i in 0..2 * n as u32 {
+        out.push(d.f32(at + i * 4)?);
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(le_bytes(&out, f32::to_le_bytes))
 }
 
-fn costumes(d: OverlayData) -> Result<String> {
+/// `TableId::CostumeRoyal` (`[u8; 4]` rows) or `CostumeTeam` (`[u8; 3]`).
+fn costume_bytes(c: &Ctx, team: bool) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL2);
     let (at, n) = COSTUME_IDS;
-    let mut w = emit::header("`dFTParamCostumeIDs` (`FTCostume::royal`, `::team`)");
-    let mut royal = String::new();
-    let mut team = String::new();
+    let mut out = Vec::new();
     for i in 0..n as u32 {
         let b = d.bytes(at + i * 8, 7)?;
-        let _ = writeln!(royal, "    [{}, {}, {}, {}],", b[0], b[1], b[2], b[3]);
-        let _ = writeln!(team, "    [{}, {}, {}],", b[4], b[5], b[6]);
+        out.extend_from_slice(if team { &b[4..7] } else { &b[0..4] });
     }
-    let _ = write!(
-        w,
-        "/// `FTCostume::royal` by `nFTKind`, C-Up, C-Right, C-Down, C-Left.\n\
-         pub const ROYAL: [[u8; 4]; {n}] = [\n{royal}];\n\n\
-         /// `FTCostume::team` by `nFTKind`: red, blue, green.\n\
-         pub const TEAM: [[u8; 3]; {n}] = [\n{team}];\n"
-    );
-    Ok(w)
+    Ok(out)
+}
+
+/// `TableId::CostumeRoyal`.
+pub fn costume_royal_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    costume_bytes(c, false)
+}
+
+/// `TableId::CostumeTeam`.
+pub fn costume_team_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    costume_bytes(c, true)
 }
 
 /// A signed `bits`-wide field at `shift` of `word`.
@@ -134,181 +84,124 @@ fn sbits(word: u32, shift: u32, bits: u32) -> i32 {
     ((word << (32 - shift - bits)) as i32) >> (32 - bits)
 }
 
-fn item_throws(d: OverlayData) -> Result<String> {
+/// `TableId::ItemThrowDescs`: `is_smash`, `velocity` (f32 bits), `angle`
+/// (i32), `damage_scale` (f32 bits) per desc.
+pub fn item_throws_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL2);
     let (at, n) = ITEM_THROW_DESCS;
-    let mut w = emit::header("`dFTCommonDataItemThrowDescs`");
-    let _ = writeln!(w, "pub const THROW_DESCS: [ThrowDesc; {n}] = [");
+    let mut out = Vec::with_capacity(n * 4);
     for i in 0..n as u32 {
         // Big-endian bitfields fill from the top: is_smash_throw:1,
         // vel_scale:10, angle:11, damage_scale:10 (unsigned).
         let v = d.u32(at + i * 4)?;
-        let _ = writeln!(
-            w,
-            "    ThrowDesc {{ is_smash: {}, velocity: {}, angle: {}, damage_scale: {} }},",
-            v >> 31 != 0,
-            f32_lit(sbits(v, 21, 10) as f32),
-            sbits(v, 10, 11),
-            f32_lit((v & 0x3FF) as f32),
-        );
+        out.extend([
+            v >> 31,
+            (sbits(v, 21, 10) as f32).to_bits(),
+            sbits(v, 10, 11) as u32,
+            ((v & 0x3FF) as f32).to_bits(),
+        ]);
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(le_words(&out))
 }
 
-fn ground_hits(d: OverlayData) -> Result<String> {
+/// `TableId::GroundHitAttacks`: `kind, damage, angle, kb_scale, kb_weight,
+/// kb_base, element` per floor.
+pub fn ground_hits_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL2);
     let (at, n) = GROUND_HIT_ATTACKS;
-    let mut w = emit::header("`dFTMainGroundHitCollisionAttributes`");
-    let _ = writeln!(w, "pub const DAMAGE_FLOORS: [GroundAttack; {n}] = [");
-    for i in 0..n as u32 {
-        let f = |k: u32| d.i32(at + i * 28 + k * 4);
-        let _ = writeln!(
-            w,
-            "    GroundAttack {{ kind: {}, damage: {}, angle: {}, kb_scale: {}, kb_weight: {}, kb_base: {}, element: {} }},",
-            f(0)?, f(1)?, f(2)?, f(3)?, f(4)?, f(5)?, f(6)?
-        );
+    let mut out = Vec::with_capacity(n * 7);
+    for i in 0..7 * n as u32 {
+        out.push(d.i32(at + i * 4)?);
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(le_bytes(&out, i32::to_le_bytes))
 }
 
-fn zebes_acid(d: OverlayData) -> Result<String> {
+/// `TableId::ZebesAcid`: `wait_base, random_min, random_max, level` (f32
+/// bits) per step.
+pub fn zebes_acid_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL2);
     let (at, n) = ZEBES_ACID;
-    let mut w = emit::header("`dGRZebesAcidAttributes`");
-    let _ = writeln!(w, "pub const ACID_STEPS: [AcidStep; {n}] = [");
+    let mut out = Vec::with_capacity(n * 4);
     for i in 0..n as u32 {
         let r = at + i * 12;
-        let _ = writeln!(
-            w,
-            "    AcidStep {{ wait_base: {}, random_min: {}, random_max: {}, level: {} }},",
-            d.u16(r)?,
-            d.u16(r + 2)?,
-            d.u16(r + 4)?,
-            f32_lit(d.f32(r + 8)?)
-        );
+        out.extend([
+            d.u16(r)?.into(),
+            d.u16(r + 2)?.into(),
+            d.u16(r + 4)?.into(),
+            d.f32(r + 8)?.to_bits(),
+        ]);
     }
-    w.push_str("];\n");
-    Ok(w)
+    Ok(le_words(&out))
 }
 
-fn shield_colors(d: OverlayData) -> Result<String> {
+/// `TableId::ShieldColors`: `prim[3], env[3]` per colour.
+pub fn shield_colors_bytes(c: &Ctx) -> Result<Vec<u8>> {
     let (at, n) = SHIELD_COLORS;
-    let mut w = emit::header("`dEFManagerShieldColors`");
-    let _ = writeln!(w, "pub const SHIELD_COLORS: [([u8; 3], [u8; 3]); {n}] = [");
-    for i in 0..n as u32 {
-        let b = d.bytes(at + i * 6, 6)?;
-        let _ = writeln!(
-            w,
-            "    ([0x{:02X}, 0x{:02X}, 0x{:02X}], [0x{:02X}, 0x{:02X}, 0x{:02X}]),",
-            b[0], b[1], b[2], b[3], b[4], b[5]
-        );
-    }
-    w.push_str("];\n");
-    Ok(w)
+    OverlayData::new(Some(c.rom), OVL2).bytes(at, 6 * n as u32)
 }
 
-fn sector(d: OverlayData) -> Result<String> {
-    let mut w = emit::header("the Sector Z Arwing's `dGRSectorArwing*` tables");
+/// `TableId::SectorMapX`.
+pub fn sector_map_x_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL2);
     let (at, n) = SECTOR_MAP_POSITIONS_X;
-    let xs: Vec<String> = (0..n as u32)
-        .map(|i| d.i16(at + i * 2).map(|x| x.to_string()))
+    let xs: Vec<i16> = (0..n as u32)
+        .map(|i| d.i16(at + i * 2))
         .collect::<Result<_>>()?;
-    let _ = writeln!(
-        w,
-        "/// `dGRSectorArwingMapPositionsX`.\npub const MAP_POSITIONS_X: [i16; {n}] = [{}];\n",
-        xs.join(", ")
-    );
-    for (name, sym, (at, n)) in [
-        ("LASER_COUNTS", "LaserCounts", SECTOR_LASER_COUNTS),
-        ("PILOT_IDS", "PilotIDs", SECTOR_PILOT_IDS),
-    ] {
-        let b = d.bytes(at, n as u32)?;
-        let cells: Vec<String> = b.iter().map(u8::to_string).collect();
-        let _ = writeln!(
-            w,
-            "/// `dGRSectorArwing{sym}`.\n#[rustfmt::skip]\npub const {name}: [u8; {n}] = [{}];\n",
-            cells.join(", ")
-        );
-    }
+    Ok(le_bytes(&xs, i16::to_le_bytes))
+}
+
+/// `TableId::SectorLasers`.
+pub fn sector_lasers_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let (at, n) = SECTOR_LASER_COUNTS;
+    OverlayData::new(Some(c.rom), OVL2).bytes(at, n as u32)
+}
+
+/// `TableId::SectorPilots`.
+pub fn sector_pilots_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let (at, n) = SECTOR_PILOT_IDS;
+    OverlayData::new(Some(c.rom), OVL2).bytes(at, n as u32)
+}
+
+/// `TableId::SectorPilotWindows`: `(first, count)` pairs.
+pub fn sector_windows_bytes(c: &Ctx) -> Result<Vec<u8>> {
     let (at, n) = SECTOR_PILOT_WINDOWS;
-    let b = d.bytes(at, 2 * n as u32)?;
-    let cells: Vec<String> = b
-        .chunks(2)
-        .map(|p| format!("({}, {})", p[0], p[1]))
-        .collect();
-    let _ = writeln!(
-        w,
-        "/// `dGRSectorArwingPilotWaitTimers`: `(first, count)` windows into\n\
-         /// [`PILOT_IDS`].\npub const PILOT_WINDOWS: [(u8, u8); {n}] = [{}];",
-        cells.join(", ")
-    );
-    Ok(w)
+    OverlayData::new(Some(c.rom), OVL2).bytes(at, 2 * n as u32)
 }
 
-fn yoshi_egg(d: OverlayData) -> Result<String> {
+/// `TableId::YoshiEgg`: `effect_size, offset[3], size[3]` per `FTKind`.
+pub fn yoshi_egg_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL3);
     let (at, n) = YOSHI_EGG_DESCS;
-    let mut w = emit::header("`dFTCommonYoshiEggDamageCollDescs`");
-    w.push_str("/// By `FTKind`: `(effect_size, offset, size)`.\n");
-    let _ = writeln!(
-        w,
-        "pub const EGG_DESCS: [(f32, [f32; 3], [f32; 3]); {n}] = ["
-    );
-    for i in 0..n as u32 {
-        let f: Vec<String> = (0..7)
-            .map(|k| d.f32(at + i * 28 + k * 4).map(f32_lit))
-            .collect::<Result<_>>()?;
-        let _ = writeln!(
-            w,
-            "    ({}, [{}, {}, {}], [{}, {}, {}]),",
-            f[0], f[1], f[2], f[3], f[4], f[5], f[6]
-        );
-    }
-    w.push_str("];\n");
-    Ok(w)
+    let f: Vec<f32> = (0..7 * n as u32)
+        .map(|k| d.f32(at + k * 4))
+        .collect::<Result<_>>()?;
+    Ok(le_bytes(&f, f32::to_le_bytes))
 }
 
-fn charge_shot(d: OverlayData) -> Result<String> {
+/// `TableId::ChargeShot`: `gfx_size, vel_x` (f32 bits), `damage`,
+/// `attack_size, coll_size` (f32 bits of the `s32`s), `priority` per level.
+pub fn charge_shot_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL3);
     let (at, n) = CHARGE_SHOT_ATTRIBUTES;
-    let mut w = emit::header("`dWPSamusChargeShotWeaponAttributes`");
-    let mut levels = String::new();
-    let mut priorities = Vec::new();
+    let mut out = Vec::with_capacity(n * 6);
     for i in 0..n as u32 {
         let r = at + i * 36;
-        let _ = writeln!(
-            levels,
-            "    ({}, {}, {}, {}, {}),",
-            f32_lit(d.f32(r)?),
-            f32_lit(d.f32(r + 4)?),
-            d.i32(r + 8)?,
-            f32_lit(d.i32(r + 12)? as f32),
-            f32_lit(d.i32(r + 16)? as f32),
-        );
-        priorities.push(d.i32(r + 32)?.to_string());
+        out.extend([
+            d.f32(r)?.to_bits(),
+            d.f32(r + 4)?.to_bits(),
+            d.i32(r + 8)? as u32,
+            (d.i32(r + 12)? as f32).to_bits(),
+            (d.i32(r + 16)? as f32).to_bits(),
+            d.i32(r + 32)? as u32,
+        ]);
     }
-    let _ = write!(
-        w,
-        "/// `(gfx_size, vel_x, damage, attack_size, coll_size)` per charge level.\n\
-         pub const SAMUS_CHARGE_SHOT_LEVELS: [(f32, f32, i32, f32, f32); {n}] = [\n{levels}];\n\n\
-         /// `priority` per charge level.\n\
-         pub const SAMUS_CHARGE_SHOT_PRIORITIES: [i32; {n}] = [{}];\n",
-        priorities.join(", ")
-    );
-    Ok(w)
+    Ok(le_words(&out))
 }
 
-fn boss_wait(d: OverlayData) -> Result<String> {
+/// `TableId::BossWait`: `ftbosswait.o`'s `.data` and the 16 bytes after it.
+pub fn boss_wait_bytes(c: &Ctx) -> Result<Vec<u8>> {
     let (at, n) = BOSS_WAIT_DATA;
-    let mut w = emit::header("`ftbosswait.o`'s `.data` and the 16 bytes after it");
-    let b = d.bytes(at, n)?;
-    let _ = writeln!(
-        w,
-        "#[rustfmt::skip]\npub const WAIT_DATA: [u8; 0x{n:X}] = ["
-    );
-    for row in b.chunks(16) {
-        let cells: Vec<String> = row.iter().map(|x| format!("0x{x:02X}")).collect();
-        let _ = writeln!(w, "    {},", cells.join(", "));
-    }
-    w.push_str("];\n");
-    Ok(w)
+    OverlayData::new(Some(c.rom), OVL3).bytes(at, n)
 }
 
 #[cfg(test)]
@@ -329,13 +222,5 @@ mod tests {
             (v >> 31, sbits(v, 21, 10), sbits(v, 10, 11), v & 0x3FF),
             (1, 110, -70, 100)
         );
-    }
-
-    #[test]
-    fn stubs_have_every_row() {
-        let files = generate(None).unwrap();
-        assert_eq!(files.len(), 10);
-        let text = &files[0].text;
-        assert_eq!(text.matches("    [0.0, 0.0],").count(), HANDICAP_TABLE.1);
     }
 }

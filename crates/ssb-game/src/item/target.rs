@@ -4,7 +4,7 @@ use super::*;
 
 /// `dITTargetItemDesc`'s attributes: offset 0 of file 253
 /// (`ITBonus1ObjectHeader`).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::TARGET;
+pub use super::attributes::TARGET as ATTRIBUTES;
 
 pub(super) fn make(counts: &crate::manager_counts::ManagerCounts, pos: Vec3, instance: u8) -> Item {
     let mut item = Item::new(

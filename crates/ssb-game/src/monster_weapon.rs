@@ -8,7 +8,7 @@
 //! Hydro Pump's attack offset and the Smog's size follow their own `DObj`
 //! animations; both scripts are fixed. The Hydro Pump's per-play offset is
 //! [`hydro_offset_x`] (a ROM test replays it); [`SMOG_SCALE`] is replayed
-//! from the ROM at build time by `ssb-tablegen`.
+//! from the ROM by `ssb-tablegen` into the pack.
 
 use crate::attack::Hitbox;
 use crate::combat::Element;
@@ -86,25 +86,95 @@ impl ShotAttributes {
     }
 }
 
-#[allow(clippy::all)]
-mod generated {
-    use super::ShotAttributes;
-    use crate::combat::Element;
-    use crate::ground::BodyColl;
-    include!(concat!(env!("OUT_DIR"), "/monster_weapons.rs"));
+/// `TableId::WeaponAttributes`: every `ll*WeaponAttributes` record as
+/// `ssb_tablegen::monster_weapons::WORDS` words, in `item_sounds::WEAPONS`
+/// order (ROM data from the pack; zeros in a stub build).
+static ATTRIBUTE_WORDS: ssb_tables::Table<[[i32; 25]; 35]> =
+    ssb_tables::Table::new(ssb_tables::TableId::WeaponAttributes);
+
+/// Record `i` of [`ATTRIBUTE_WORDS`], decoded. Run once per static
+/// ([`ssb_tables::Decoded`]).
+fn decode_attributes(i: usize) -> ShotAttributes {
+    let w = &ATTRIBUTE_WORDS[i];
+    let f = |at: usize| w[at] as f32;
+    ShotAttributes {
+        attack_offsets: [[f(0), f(1), f(2)], [f(3), f(4), f(5)]],
+        map_coll: BodyColl {
+            top: f(6),
+            center: f(7),
+            bottom: f(8),
+            width: f(9),
+        },
+        size: f(10),
+        angle: w[11],
+        kb_scale: w[12],
+        damage: w[13],
+        element: Element::from_raw(w[14] as u32),
+        kb_weight: w[15],
+        shield_damage: w[16],
+        can_setoff: w[17] != 0,
+        can_rehit_fighter: w[18] != 0,
+        can_rehit_item: w[19] != 0,
+        can_hop: w[20] != 0,
+        can_reflect: w[21] != 0,
+        can_absorb: w[22] != 0,
+        can_shield: w[23] != 0,
+        kb_base: w[24],
+    }
 }
+
+macro_rules! weapon_attributes {
+    ($($i:literal $name:ident),* $(,)?) => {
+        /// Every `ll*WeaponAttributes` record, the fighters', the boss's and
+        /// the stages' weapons too, named as `ssb-tablegen`'s
+        /// `item_sounds::WEAPONS` lists them; decoded once from
+        /// [`ATTRIBUTE_WORDS`].
+        pub mod weapon_attributes {
+            use super::{decode_attributes, ShotAttributes};
+            use ssb_tables::Decoded;
+            $(pub static $name: Decoded<ShotAttributes> = Decoded::new(|| decode_attributes($i));)*
+        }
+        /// Each record's index in [`ATTRIBUTE_WORDS`].
+        #[allow(dead_code)]
+        mod index {
+            $(pub const $name: usize = $i;)*
+        }
+        const _: () = assert!([$($i),*].len() == 35);
+    };
+}
+weapon_attributes!(
+    0 MARIO_FIREBALL, 1 LUIGI_FIREBALL, 2 FOX_BLASTER, 3 SAMUS_BOMB, 4 SAMUS_CHARGE_SHOT,
+    5 LINK_SPIN_ATTACK, 6 LINK_BOOMERANG, 7 KIRBY_CUTTER, 8 NESS_PK_THUNDER,
+    9 NESS_PK_THUNDER_TRAIL, 10 NESS_PK_FIRE, 11 PIKACHU_THUNDER_HEAD, 12 PIKACHU_THUNDER_TRAIL,
+    13 PIKACHU_THUNDER_JOLT_AIR, 14 PIKACHU_THUNDER_JOLT_GROUND, 15 YOSHI_EGG_THROW,
+    16 YOSHI_STAR, 17 BOSS_BULLET_NORMAL, 18 BOSS_BULLET_HARD, 19 LGUN_AMMO, 20 FFLOWER_FLAME,
+    21 STARROD, 22 STARROD_SMASH, 23 WARK_ROCK, 24 NYARS_COIN, 25 LIZARDON_FLAME,
+    26 SPEAR_SWARM, 27 KAMEX_HYDRO, 28 STARMIE_SWIFT, 29 DOGAS_SMOG, 30 PIPPI_SWARM,
+    31 ARWING_LASER_2D, 32 ARWING_LASER_3D, 33 HITOKAGE_FLAME, 34 FUSHIGIBANA_RAZOR,
+);
 
 /// Per [`ShotKind`]: file 264 + 0x244 and 0x308 (Saffron); file 251 +
 /// 0x774, 0x8C8, 0x944, 0x9D4, 0xCBC, 0xA50, 0xB7C and 0xC40
-/// (`reloc_data.us.h`). ROM data generated at build time by
-/// `ssb-tablegen`, never committed; zeros in stub builds.
-pub use generated::SHOT_ATTRIBUTES as ATTRIBUTES;
-
-/// Every `ll*WeaponAttributes` record, the fighters', the boss's and the
-/// stages' weapons too, named as `ssb-tablegen`'s `item_sounds::WEAPONS`
-/// lists them. ROM data generated at build time, never committed; zeros in
-/// stub builds.
-pub use generated::weapon as weapon_attributes;
+/// (`reloc_data.us.h`): the [`weapon_attributes`] records, decoded once.
+pub static ATTRIBUTES: ssb_tables::Decoded<[ShotAttributes; 13]> = ssb_tables::Decoded::new(|| {
+    use index::*;
+    [
+        HITOKAGE_FLAME,
+        FUSHIGIBANA_RAZOR,
+        WARK_ROCK,
+        NYARS_COIN,
+        LIZARDON_FLAME,
+        SPEAR_SWARM,
+        PIPPI_SWARM,
+        KAMEX_HYDRO,
+        STARMIE_SWIFT,
+        DOGAS_SMOG,
+        LGUN_AMMO,
+        STARROD,
+        FFLOWER_FLAME,
+    ]
+    .map(decode_attributes)
+});
 
 /// `ITKAMEX_HYDRO_LIFETIME`, `ITSTARMIE_SWIFT_LIFETIME`,
 /// `ITDOGAS_SMOG_LIFETIME`, `ITLIZARDON_FLAME_LIFETIME`,
@@ -138,9 +208,10 @@ pub fn hydro_offset_x(play: u16) -> f32 {
 
 /// The Smog's child `DObj` X scale over its 30 plays (file 86 + 0x13198);
 /// its attack radius is this times `WPAttributes::size` (50). Replayed from
-/// the ROM at build time by `ssb-tablegen`, never committed; zeros in stub
-/// builds.
-pub use generated::SMOG_SCALE;
+/// the ROM by `ssb-tablegen` into the pack (`TableId::SmogScale`); zeros in
+/// stub builds.
+pub static SMOG_SCALE: ssb_tables::Table<[f32; 30]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SmogScale);
 
 /// The item a weapon is made from: `wpManagerMakeWeapon`'s
 /// `WEAPON_FLAG_PARENT_ITEM` copies.

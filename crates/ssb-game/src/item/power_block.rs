@@ -6,14 +6,12 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{
-    HitProc, Item, ItemAnim, ItemAnims, ItemAttributes, ItemKind, ItemStatus, StageItemEvent,
-};
+use super::{HitProc, Item, ItemAnim, ItemAnims, ItemKind, ItemStatus, StageItemEvent};
 use crate::combat::{AttackState, HitStatus};
 use crate::wpeffect::{Emit, WeaponEffect as Fx};
 
 /// `llGRInishieMapPowerBlockItemAttributes` (file 260, 0xD8).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::POWER_BLOCK;
+pub use super::attributes::POWER_BLOCK as ATTRIBUTES;
 
 /// `itPowerBlockStatus`, with the descriptor's own procs as `Init` and
 /// `itPowerBlockWaitProcDamage`'s swapped `proc_update` as `Damaged`.

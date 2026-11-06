@@ -6,7 +6,7 @@
 
 use ssb_engine::math::{Vec2, Vec3};
 
-use super::{map, normal::CommonItems, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{map, normal::CommonItems, HitProc, Item, ItemKind, ItemStatus};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::effect::SmashPiece;
 use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
@@ -24,11 +24,11 @@ pub const TVEL: f32 = 90.0;
 pub const MAP_REBOUND_COMMON: f32 = 0.5;
 
 /// `llGRBonus3MapTaruBombItemAttributes` (file 0x127, 0xA8).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::TARUBOMB;
+pub use super::attributes::TARUBOMB as ATTRIBUTES;
 
 /// `llGRBonus3MapTaruBombAttackEvents` (0xF0 of file 0x127): timer,
 /// angle, damage, size.
-pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::TARUBOMB;
+pub use super::attack_events::TARUBOMB as ATTACK_EVENTS;
 
 /// `itTaruBombStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

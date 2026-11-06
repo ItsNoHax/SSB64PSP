@@ -8,7 +8,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{map, Effects, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
+use super::{map, Effects, HitProc, Item, ItemKind, ItemStatus, OwnerView};
 use crate::colanim::ColAnimId;
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::weapon::MapSurface;
@@ -41,7 +41,7 @@ const THROWN_REBOUND_GROUND: f32 = 0.3;
 const DROP_UPDATE_WAIT: u16 = 10;
 
 /// `llLinkMainBombItemAttributes` (file 225, 0x40).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::LINK_BOMB;
+pub use super::attributes::LINK_BOMB as ATTRIBUTES;
 
 /// `ITAttackEvent`: from `timer` on, the explosion's angle, damage and
 /// radius.
@@ -55,31 +55,19 @@ pub struct AttackEvent {
 
 /// `llLinkMainBombAttackEvents` (offset 0x88 of file 225, US). The fourth
 /// entry is never reached: the explosion ends at six frames.
-pub const ATTACK_EVENTS: [AttackEvent; 4] = {
-    let e = super::attack_events::LINK_BOMB;
-    let mut out = [AttackEvent {
-        timer: 0,
-        angle: 0,
-        damage: 0,
-        size: 0,
-    }; 4];
-    let mut i = 0;
-    while i < out.len() {
-        let (timer, angle, damage, size) = e[i];
-        out[i] = AttackEvent {
-            timer,
-            angle,
-            damage,
-            size: size as i32,
-        };
-        i += 1;
-    }
-    out
-};
+pub static ATTACK_EVENTS: ssb_tables::Decoded<[AttackEvent; 4]> = ssb_tables::Decoded::new(|| {
+    super::attack_events::LINK_BOMB.map(|(timer, angle, damage, size)| AttackEvent {
+        timer,
+        angle,
+        damage,
+        size: size as i32,
+    })
+});
 
 /// `llLinkMainBombBloatScales` (offset 0xA8 of file 225): the index runs up
 /// to 5 and back down.
-pub const BLOAT_SCALES: [f32; 6] = super::generated::LINK_BOMB_BLOAT_SCALES;
+pub static BLOAT_SCALES: ssb_tables::Table<[f32; 6]> =
+    ssb_tables::Table::new(ssb_tables::TableId::LinkBombBloatScales);
 
 /// `itLinkBombStatus`, with the descriptor's own procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

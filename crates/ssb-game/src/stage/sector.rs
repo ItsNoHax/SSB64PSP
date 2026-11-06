@@ -25,16 +25,23 @@ use ssb_engine::math::{sin_cos, Vec3};
 /// The wing's collision group (`mpCollisionSetYakumono*ID(1)`).
 pub const WING_GROUP: u8 = 1;
 
-/// The Arwing's `dGRSectorArwing*` tables, generated at build time from the
-/// ROM by `crates/ssb-tablegen` (`battle_data.rs`): `MAP_POSITIONS_X`,
+/// The Arwing's `dGRSectorArwing*` tables, from the ROM
+/// (`TableId::Sector*`): `MAP_POSITIONS_X`,
 /// where a fifth of the plane patterns pass instead of the centre;
 /// `LASER_COUNTS`, 2 for the plane patterns and 0 for the background ones;
 /// `PILOT_IDS`; and `PILOT_WINDOWS` (`...PilotWaitTimers`), each previous
 /// pilot's `(first, count)` window into `PILOT_IDS`.
-pub use generated::{LASER_COUNTS, MAP_POSITIONS_X, PILOT_IDS, PILOT_WINDOWS};
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/sector_arwing.rs"));
-}
+pub static MAP_POSITIONS_X: ssb_tables::Table<[i16; 3]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SectorMapX);
+/// See [`MAP_POSITIONS_X`].
+pub static LASER_COUNTS: ssb_tables::Table<[u8; 8]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SectorLasers);
+/// See [`MAP_POSITIONS_X`].
+pub static PILOT_IDS: ssb_tables::Table<[u8; 56]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SectorPilots);
+/// See [`MAP_POSITIONS_X`].
+pub static PILOT_WINDOWS: ssb_tables::Table<[[u8; 2]; 6]> =
+    ssb_tables::Table::new(ssb_tables::TableId::SectorPilotWindows);
 
 /// `DOBJ_FLAG_HIDDEN`.
 pub const DOBJ_HIDDEN: u16 = 1 << 1;
@@ -318,7 +325,7 @@ impl Sector {
         } else {
             self.state_timer = self.state_timer.wrapping_sub(1);
             if self.state_timer == 0 {
-                let (first, count) = PILOT_WINDOWS[usize::from(self.pilot_prev)];
+                let [first, count] = PILOT_WINDOWS[usize::from(self.pilot_prev)];
                 let pick = usize::from(first) + rng::rand_int_range(i32::from(count)) as usize;
                 let pilot = PILOT_IDS[pick];
                 if pilot != 0 {

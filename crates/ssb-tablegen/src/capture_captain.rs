@@ -4,10 +4,11 @@
 //! `ssb_game::grab`: one `Vec2h` (two big-endian `s16`s) per `FTKind` at
 //! the start of file 235 (`CaptainMainMotion`).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
 use crate::source::be_u16;
-use crate::{emit, Result, Source};
+use crate::tables::{le_bytes, Ctx};
+use crate::Result;
 
 /// Archive file holding the table (`llCaptainMainMotionFileID`).
 pub const FILE: u32 = 235;
@@ -16,37 +17,11 @@ pub const OFFSET: usize = 0x0;
 /// `nFTKindEnumCount`.
 pub const ROWS: usize = 27;
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut rows = [[0i16; 2]; ROWS];
-    if let Some(rom) = rom {
-        let data = rom.file(FILE)?.data;
-        for (r, row) in rows.iter_mut().enumerate() {
-            for (c, v) in row.iter_mut().enumerate() {
-                *v = be_u16(&data, OFFSET + 4 * r + 2 * c)? as i16;
-            }
-        }
-    }
-    let mut w =
-        emit::header("Falcon Dive's per-victim capture offsets (`dCaptainMainMotion_0x0000`)");
-    w.push_str(
-        "/// Per victim `FTKind`: the offset from its TopN to the Captain's joint, `(x, y)`.\n",
-    );
-    let _ = writeln!(w, "pub const CAPTURE_OFFSETS: [(i16, i16); {ROWS}] = [");
-    for [x, y] in rows {
-        let _ = writeln!(w, "    ({x}, {y}),");
-    }
-    w.push_str("];\n");
-    Ok(w)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stub_rows_are_zero() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("pub const CAPTURE_OFFSETS: [(i16, i16); 27]"));
-        assert_eq!(text.matches("    (0, 0),").count(), ROWS);
-    }
+/// `TableId::CaptureCaptain`: `(x, y)` per victim `FTKind`.
+pub fn offsets_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let data = c.rom.file(FILE)?.data;
+    let v: Vec<i16> = (0..2 * ROWS)
+        .map(|i| be_u16(&data, OFFSET + 2 * i).map(|h| h as i16))
+        .collect::<Result<_>>()?;
+    Ok(le_bytes(&v, i16::to_le_bytes))
 }

@@ -6,7 +6,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{HitProc, Item, ItemKind, ItemStatus};
 use crate::combat::AttackState;
 
 /// `ITBUMPER_CASTLE_KNOCKBACK`, `ITBUMPER_CASTLE_ANGLE`.
@@ -17,7 +17,7 @@ pub const HIT_SCALE: u16 = 10;
 pub const HIT_ANIM_LENGTH: u16 = 3;
 
 /// `llITCommonDataGBumperItemAttributes` (file 251, 0xCF0).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::GBUMPER;
+pub use super::attributes::GBUMPER as ATTRIBUTES;
 
 /// The Bumper has no statuses: its descriptor's procs run throughout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

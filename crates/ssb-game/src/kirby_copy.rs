@@ -309,13 +309,17 @@ pub const COPY_MODELPARTS_JOINT: u8 = 6;
 /// `dKirbyMainMotion_0x0000[kind].copy_modelpart_id`
 /// (`llKirbyMainMotionSpecialNFTKirbyCopy`, `228_KirbyMainMotion.c`) for the
 /// twelve playable kinds: joint 6's part while Kirby holds that copy
-/// (RE-417). Kirby's own row is 0, his bare head. ROM data generated at
-/// build time by `ssb-tablegen`, never committed; zeros in stub builds.
-pub use crate::kirby::generated_copy::COPY_MODELPART_IDS;
+/// (RE-417). Kirby's own row is 0, his bare head. From the ROM
+/// (`TableId::KirbyCopy`); zeros in stub builds.
+pub static COPY_MODELPART_IDS: ssb_tables::Decoded<[u8; 12]> = ssb_tables::Decoded::new(|| {
+    let w = &crate::kirby::COPY_WORDS;
+    core::array::from_fn(|i| w[i][1] as u8)
+});
 
 /// `copy[copy_id].copy_modelpart_id` (0 outside the twelve).
 pub fn copy_modelpart_id(copy_id: FighterKind) -> i8 {
     COPY_MODELPART_IDS
+        .get()
         .get(copy_id as usize)
         .map_or(0, |&part| part as i8)
 }
@@ -329,6 +333,7 @@ pub fn copy_hat(f: &Fighter) -> Option<u8> {
         return None;
     }
     COPY_MODELPART_IDS
+        .get()
         .get(f.kirby.copy_id as usize)
         .copied()
         .filter(|&part| part != 0)
@@ -933,7 +938,7 @@ fn falcon_punch_air_physics(f: &mut Fighter) {
 /// fighter's `ftCommonCaptureYoshiProcCapture`.
 fn set_egg_lay_catch_params(f: &mut Fighter) {
     f.grab.is_catchstatus = true;
-    f.grab.throw_desc = Some(crate::grab::throw_descs::KIRBY_EGG_LAY);
+    f.grab.throw_desc = Some(*crate::grab::throw_descs::KIRBY_EGG_LAY);
 }
 
 /// Whether Egg Lay's catch box is out.

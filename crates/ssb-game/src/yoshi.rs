@@ -21,7 +21,7 @@ use ssb_engine::input::N64Buttons;
 use ssb_engine::math::Vec3;
 
 use crate::fighter::{Fighter, FighterKind, Situation};
-use crate::grab::{GrabEvent, ThrowHitDesc};
+use crate::grab::GrabEvent;
 use crate::physics;
 use crate::status::{self, AnyStatus, StatusTiming, YoshiStatus};
 use crate::weapon::{WeaponKind, WeaponSpawn};
@@ -65,7 +65,7 @@ const EGG_LAY_LAY_FRAME: f32 = 20.0;
 
 /// `dYoshiMainMotion_0x16F8`, the Egg Lay script's `SetThrow`. Only `[1]`
 /// is read: the release when Yoshi is hit while holding.
-pub const EGG_LAY_THROW_DESC: [ThrowHitDesc; 2] = crate::grab::throw_descs::YOSHI_EGG_LAY;
+pub use crate::grab::throw_descs::YOSHI_EGG_LAY as EGG_LAY_THROW_DESC;
 
 /// Yoshi's status vars and the aerial jump's turn.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -167,7 +167,7 @@ pub fn update_jump_aerial_turn(f: &mut Fighter) {
 /// `ftYoshiSpecialNSetCatchParams`: this status searches for a fighter.
 fn set_catch_params(f: &mut Fighter) {
     f.grab.is_catchstatus = true;
-    f.grab.throw_desc = Some(EGG_LAY_THROW_DESC);
+    f.grab.throw_desc = Some(*EGG_LAY_THROW_DESC);
 }
 
 /// `ftYoshiSpecialNSetStatus`.

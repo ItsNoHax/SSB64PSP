@@ -41,13 +41,15 @@ pub enum Status {
 
 /// Per [`Kind`]: file 264's `ll*ItemAttributes` at 0xBC, 0x104, 0x1FC, 0x278
 /// and 0x16C.
-pub static ATTRIBUTES: [ItemAttributes; 5] = [
-    super::attributes::GLUCKY,
-    super::attributes::MARUMINE,
-    super::attributes::HITOKAGE,
-    super::attributes::FUSHIGIBANA,
-    super::attributes::PORYGON,
-];
+pub static ATTRIBUTES: ssb_tables::Decoded<[ItemAttributes; 5]> = ssb_tables::Decoded::new(|| {
+    super::decode_attribute_list([
+        super::index::GLUCKY,
+        super::index::MARUMINE,
+        super::index::HITOKAGE,
+        super::index::FUSHIGIBANA,
+        super::index::PORYGON,
+    ])
+});
 
 /// The shared `dGRYamabukiMonsterAttackKind` anti-repeat rule. Draw only
 /// after allocation succeeds, as the two source makers do.
@@ -116,8 +118,8 @@ fn monster_event(item: &mut Item, k: Kind) {
         a.can_setoff = false;
         a.shield_damage = 0;
         a.fgm_id = match k {
-            Kind::Porygon => crate::item_sounds::monster_event::PORYGON_HIT_PARTIES,
-            _ => crate::item_sounds::monster_event::FUSHIGIBANA_HIT_PARTIES,
+            Kind::Porygon => *crate::item_sounds::monster_event::PORYGON_HIT_PARTIES,
+            _ => *crate::item_sounds::monster_event::FUSHIGIBANA_HIT_PARTIES,
         }[usize::from(!first)];
         (a.angle, a.damage, a.kb_scale, a.kb_weight, a.kb_base) = match (k, first) {
             (Kind::Porygon, true) => (40, 18, 40, 0, 70),

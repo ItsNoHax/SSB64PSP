@@ -345,21 +345,27 @@ pub fn lose_copy(f: &mut Fighter) {
 /// `FTKirbyCopy[27]` (file 228 + 0x0, `llKirbyMainMotionSpecialNFTKirbyCopy`):
 /// `(copy_id, star_damage)` per swallowed `FTKind`. The model-part column is
 /// [`crate::kirby_copy::COPY_MODELPART_IDS`] (RE-417); the scale column is
-/// [`EFFECT_SCALE`]. ROM data generated at build time by `ssb-tablegen`, never
-/// committed; zeros in stub builds.
-pub use generated_copy::COPY;
+/// [`EFFECT_SCALE`]. From the ROM (`TableId::KirbyCopy`); zeros in stub
+/// builds.
+pub static COPY: ssb_tables::Decoded<[(u8, i32); 27]> =
+    ssb_tables::Decoded::new(|| COPY_WORDS.map(|w| (w[0] as u8, w[2] as i32)));
 /// `FTKirbyCopy::effect_scale` per swallowed `FTKind`: the captured star's
-/// size and its sparks' scatter (`efManagerCaptureKirbyStar*`). ROM data
-/// generated at build time; zeros in stub builds.
-pub use generated_copy::EFFECT_SCALE;
+/// size and its sparks' scatter (`efManagerCaptureKirbyStar*`). From the
+/// ROM; zeros in stub builds.
+pub static EFFECT_SCALE: ssb_tables::Decoded<[f32; 27]> =
+    ssb_tables::Decoded::new(|| COPY_WORDS.map(|w| f32::from_bits(w[3])));
+/// `FTKirbyCopy` per swallowed `FTKind`: `copy_id, copy_modelpart_id,
+/// star_damage, effect_scale` (`TableId::KirbyCopy`).
+pub(crate) static COPY_WORDS: ssb_tables::Table<[[u32; 4]; 27]> =
+    ssb_tables::Table::new(ssb_tables::TableId::KirbyCopy);
 
 /// [`EFFECT_SCALE`] for `kind`'s `FTKind` (0 past the table).
 pub fn effect_scale(kind: FighterKind) -> f32 {
-    EFFECT_SCALE.get(kind as usize).copied().unwrap_or(0.0)
-}
-#[allow(clippy::all)]
-pub(crate) mod generated_copy {
-    include!(concat!(env!("OUT_DIR"), "/kirby_copy.rs"));
+    EFFECT_SCALE
+        .get()
+        .get(kind as usize)
+        .copied()
+        .unwrap_or(0.0)
 }
 
 /// `FTKirbyCopy::star_damage` for a swallowed fighter kind.
@@ -381,15 +387,14 @@ pub struct Attack100Effect {
     pub add: f32,
 }
 
-#[allow(clippy::all)]
-mod attack100_table {
-    include!(concat!(env!("OUT_DIR"), "/kirby_attack100.rs"));
-}
+/// `llKirbyMainMotionftKirbyAttack100Effect` (`TableId::KirbyAttack100`).
+pub(crate) static ATTACK100_EFFECT: ssb_tables::Table<[[f32; 6]; 6]> =
+    ssb_tables::Table::new(ssb_tables::TableId::KirbyAttack100);
 
 /// Row `index` of `llKirbyMainMotionftKirbyAttack100Effect` (file 228),
 /// generated from the ROM (D-048); zeros in a stub build.
 pub fn attack100_effect(index: usize) -> Attack100Effect {
-    let [x, y, z, rotate, vel, add] = attack100_table::ATTACK100_EFFECT[index];
+    let [x, y, z, rotate, vel, add] = ATTACK100_EFFECT[index];
     Attack100Effect {
         offset: Vec3::new(x, y, z),
         rotate,
@@ -958,7 +963,7 @@ pub fn set_special_n(f: &mut Fighter) {
 /// `ftKirbySpecialNSetCatchParams`.
 fn set_catch_params(f: &mut Fighter) {
     f.grab.is_catchstatus = true;
-    f.grab.throw_desc = Some(crate::grab::KIRBY_INHALE);
+    f.grab.throw_desc = Some(*crate::grab::KIRBY_INHALE);
 }
 
 /// The Inhale statuses' setters. `FTSTATUS_PRESERVE_LOOPSFX` keeps the
@@ -2273,7 +2278,7 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialLwHold));
         // `ftMainCheckGetUpdateDamage`: 30 of the 34 health is soaked, then a
         // 12-damage hit passes its 4 overflow on.
-        let mut hit = crate::weapon::MARIO_FIREBALL_HITBOX;
+        let mut hit = *crate::weapon::MARIO_FIREBALL_HITBOX;
         hit.damage = 30;
         let at = f.pos + ssb_engine::math::Vec3::new(0.0, 100.0, 0.0);
         crate::attack::apply_hitbox_at(&hit, at, crate::stale::HANDICAP_DEFAULT, &mut f);

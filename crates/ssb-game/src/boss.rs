@@ -102,11 +102,9 @@ pub const BULLET_JOINT_FOLLOW: u8 = 19;
 /// `ftBossWaitDecideStatusComputer` indexes past the tables: its first roll
 /// reads `ArrayLookup[-3..-1]` (the initial `status_id` is -1), which can
 /// pick group 10, whose rows lie in the following bytes. The port reads the
-/// same bytes.
-pub use generated::WAIT_DATA;
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/boss_wait.rs"));
-}
+/// same bytes (`TableId::BossWait`).
+pub static WAIT_DATA: ssb_tables::Table<[u8; 0x50]> =
+    ssb_tables::Table::new(ssb_tables::TableId::BossWait);
 const STATUS_IDS: i32 = 0x00;
 const STATUS_LOOKUP: i32 = 0x0C;
 const RANDOM_GROUND: i32 = 0x1C;
@@ -132,7 +130,7 @@ const ATTACKS: [B; 11] = [
 fn wait_byte(offset: i32) -> u8 {
     usize::try_from(offset)
         .ok()
-        .and_then(|i| WAIT_DATA.get(i).copied())
+        .and_then(|i| WAIT_DATA.get().get(i).copied())
         .unwrap_or(0)
 }
 

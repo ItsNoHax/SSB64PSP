@@ -242,21 +242,23 @@ const fn coll(top: f32, bottom: f32, width: f32) -> BodyColl {
 /// Per [`Kind`]: file 251's `ll*ItemAttributes` at 0x72C, 0x7A8, 0x7F0,
 /// 0x880, 0x8FC, 0x98C, 0xA08, 0xA84, 0xB34, 0xBB0, 0xBF8, 0xC74 and 0x838
 /// (`reloc_data.us.h`).
-pub static ATTRIBUTES: [ItemAttributes; 13] = [
-    super::attributes::WARK,
-    super::attributes::KABIGON,
-    super::attributes::TOSAKINTO,
-    super::attributes::NYARS,
-    super::attributes::LIZARDON,
-    super::attributes::SPEAR,
-    super::attributes::KAMEX,
-    super::attributes::MLUCKY,
-    super::attributes::STARMIE,
-    super::attributes::SAWAMURA,
-    super::attributes::DOGAS,
-    super::attributes::PIPPI,
-    super::attributes::MEW,
-];
+pub static ATTRIBUTES: ssb_tables::Decoded<[ItemAttributes; 13]> = ssb_tables::Decoded::new(|| {
+    super::decode_attribute_list([
+        super::index::WARK,
+        super::index::KABIGON,
+        super::index::TOSAKINTO,
+        super::index::NYARS,
+        super::index::LIZARDON,
+        super::index::SPEAR,
+        super::index::KAMEX,
+        super::index::MLUCKY,
+        super::index::STARMIE,
+        super::index::SAWAMURA,
+        super::index::DOGAS,
+        super::index::PIPPI,
+        super::index::MEW,
+    ])
+});
 
 /// `ITStruct::item_vars` for the Pokémon (a union in the source; Clefairy
 /// uses the part of whichever status it took), and what the runtime draws.

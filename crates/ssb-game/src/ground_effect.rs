@@ -20,14 +20,17 @@ pub use crate::d_arrays::{
 use crate::effect::HitEffectSink;
 use crate::rng;
 
-/// Each desc's flight cycle, generated from the ROM's scripts by
-/// `crates/ssb-tablegen` (`ground_effect.rs`; D-048, zeros in a stub
-/// build): `LIFE`, the `gcPlayAnimAll` call (the add's counted as 1) on
+/// Each desc's flight cycle, replayed from the ROM's scripts
+/// (`TableId::GroundEffectLife`, `TableId::GroundEffectEnd`; zeros in a
+/// stub build): `LIFE`, the `gcPlayAnimAll` call (the add's counted as 1) on
 /// which the root's child ends its script, and `END`, the child's
 /// `translate.x`, `.y` there on the first cycle and on later ones (its
 /// `AObj`s outlive the re-add).
 pub mod cycle {
-    include!(concat!(env!("OUT_DIR"), "/ground_effects.rs"));
+    pub static LIFE: ssb_tables::Table<[u16; 24]> =
+        ssb_tables::Table::new(ssb_tables::TableId::GroundEffectLife);
+    pub static END: ssb_tables::Table<[[[f32; 2]; 2]; 24]> =
+        ssb_tables::Table::new(ssb_tables::TableId::GroundEffectEnd);
 }
 
 /// `dEFGroundCastleEffectDescs`, the first `EFGroundDesc` (64 bytes each).

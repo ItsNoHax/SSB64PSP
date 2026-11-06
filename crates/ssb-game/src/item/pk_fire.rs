@@ -92,7 +92,7 @@ mod stat_tests {
     }
 }
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus};
+use super::{map, HitProc, Item, ItemKind, ItemStatus};
 use crate::combat::AttackState;
 use crate::weapon::MapSurface;
 use crate::wpeffect::{Emit, WeaponEffect};
@@ -106,7 +106,7 @@ pub const MAP_REBOUND_COMMON: f32 = 0.2;
 pub const MAP_REBOUND_GROUND: f32 = 0.5;
 
 /// `llNessSpecial1PKFireItemAttributes` (file 240, 0x34).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::PK_FIRE;
+pub use super::attributes::PK_FIRE as ATTRIBUTES;
 
 /// `ITNessPKFireStatus`, with the descriptor's own procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

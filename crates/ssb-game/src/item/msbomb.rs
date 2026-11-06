@@ -6,7 +6,7 @@
 
 use ssb_engine::math::Vec3;
 
-use super::{map, HitProc, Item, ItemAttributes, ItemKind, ItemStatus, OwnerView};
+use super::{map, HitProc, Item, ItemKind, ItemStatus, OwnerView};
 use crate::combat::{AttackState, Element, HitStatus};
 use crate::ground::BodyColl;
 use crate::map::{MASK_CEIL, MASK_FLOOR, MASK_LWALL, MASK_RWALL};
@@ -26,11 +26,11 @@ pub const COLL_SIZE: f32 = 30.0;
 pub const EXPLODE_SCALE: f32 = 1.2;
 
 /// File 251, `llITCommonDataMSBombItemAttributes` (0x3BC).
-pub static ATTRIBUTES: ItemAttributes = super::attributes::MSBOMB;
+pub use super::attributes::MSBOMB as ATTRIBUTES;
 
 /// File 251, `llITCommonDataMSBombAttackEvents` (0x404): timer, angle,
 /// damage, size.
-pub const ATTACK_EVENTS: [(u16, i32, i32, f32); 4] = super::attack_events::MSBOMB;
+pub use super::attack_events::MSBOMB as ATTACK_EVENTS;
 
 /// `itMSBombStatus`, with the descriptor's procs as `Init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

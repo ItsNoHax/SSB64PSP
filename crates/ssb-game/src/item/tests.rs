@@ -359,7 +359,7 @@ fn fox_reflects_bomb_and_damage_growth_caps_at_one_hundred() {
         0.0,
         StatusTiming::unknown(),
     );
-    let r = crate::combat::FOX_REFLECTOR;
+    let r = &*crate::combat::FOX_REFLECTOR;
     let bomb = pool.get_mut(slot).unwrap();
     bomb.pos = fox.joint_world(r.joint, r.offset);
     bomb.update_attack_positions();
