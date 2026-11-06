@@ -135,8 +135,8 @@ fn make_emblem(
     p: &Pack<'_>,
     e: &results_emblem::Emblem,
 ) -> Option<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)> {
-    let series = ssb_rom::effect::EMBLEM_BY_FIGHTER.get(e.fighter as usize)?;
-    let desc = ssb_rom::effect::EMBLEMS.get(usize::from(*series))?;
+    let series = (*ssb_rom::effect::EMBLEM_BY_FIGHTER).get(e.fighter as usize)?;
+    let desc = (*ssb_rom::effect::EMBLEMS).get(usize::from(*series))?;
     let object = ssb_psp_runtime::scene::object_keyed(p, (ssb_rom::effect::EMBLEM_FILE, desc.dobjdesc))?;
     let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::new();
     let prims = (0..object.node_count)
@@ -173,7 +173,7 @@ pub fn tick(pack: Option<&Pack<'_>>, r: &Results, f: &mut Fighters, entrants: [O
     // `func_run`s, made after it (RE-420).
     f.world.with(p, |rt| {
         if results_emblem::confetti_due(r) {
-            for (pos, is_genlink_mask) in results_emblem::CONFETTI {
+            for (pos, is_genlink_mask) in *results_emblem::CONFETTI {
                 rt.effects.confetti(rt.particles, rt.banks, pos, is_genlink_mask);
             }
         }

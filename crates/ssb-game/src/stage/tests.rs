@@ -1224,5 +1224,5 @@ fn the_twisters_effect_is_made_moved_subsided_and_ejected() {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_render_layers_draw_on_links_4_6_13_and_17() {
-    assert_eq!(super::LAYER_DL_LINKS, [4, 6, 13, 17]);
+    assert_eq!(*super::LAYER_DL_LINKS, [4, 6, 13, 17]);
 }

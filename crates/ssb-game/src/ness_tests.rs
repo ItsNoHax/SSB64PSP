@@ -1117,7 +1117,7 @@ fn reflected_thunder_swaps_the_trail_effect_for_the_reflect_trail() {
 fn pk_trails_take_prim_and_env_by_trail_id() {
     use crate::weapon::{PK_THUNDER_TRAIL_ENV, PK_THUNDER_TRAIL_PRIM};
     assert_eq!(
-        PK_THUNDER_TRAIL_PRIM,
+        *PK_THUNDER_TRAIL_PRIM,
         [
             [0x5E, 0xA3, 0xFF],
             [0x98, 0xBD, 0xFF],
@@ -1126,7 +1126,7 @@ fn pk_trails_take_prim_and_env_by_trail_id() {
         ]
     );
     assert_eq!(
-        PK_THUNDER_TRAIL_ENV,
+        *PK_THUNDER_TRAIL_ENV,
         [
             [0x3A, 0x00, 0x83],
             [0x5B, 0x00, 0xB2],

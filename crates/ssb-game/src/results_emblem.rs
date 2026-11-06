@@ -49,7 +49,7 @@ impl Emblem {
         let winner = r.winner.unwrap_or(0);
         let color = if r.is_team_battle {
             crate::results_layer::team_color(
-                crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_COLORS,
+                *crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_COLORS,
                 r,
                 winner,
             )
@@ -83,21 +83,23 @@ impl Emblem {
 /// `mnVSResultsMakeEmblemCamera`: priority 60 (between `WallpaperTint2`
 /// and `WallpaperTint`), DL link 33, and the same eye, target and
 /// `dGCPerspDefault` projection as the fighters' camera.
-pub const CAMERA: crate::results_scene::Camera = crate::results_scene::CAMERA;
+pub use crate::results_scene::CAMERA;
 
 /// `mnVSResultsMakeConfetti`, on `sMNVSResultsMakeResultsTic` after a
 /// contest: `pos0` with `is_genlink_mask` false (the bank ORed with
 /// `LBPARTICLE_MASK_GENLINK(3)`, list 4), then `pos1` with it true (list 0).
-pub const CONFETTI: [(Vec3, bool); 2] = [
-    (
-        vec3(crate::d_arrays::MN_VS_RESULTS_MAKE_CONFETTI_POS_0),
-        false,
-    ),
-    (
-        vec3(crate::d_arrays::MN_VS_RESULTS_MAKE_CONFETTI_POS_1),
-        true,
-    ),
-];
+pub static CONFETTI: ssb_tables::Decoded<[(Vec3, bool); 2]> = ssb_tables::Decoded::new(|| {
+    [
+        (
+            vec3(*crate::d_arrays::MN_VS_RESULTS_MAKE_CONFETTI_POS_0),
+            false,
+        ),
+        (
+            vec3(*crate::d_arrays::MN_VS_RESULTS_MAKE_CONFETTI_POS_1),
+            true,
+        ),
+    ]
+});
 
 const fn vec3([x, y, z]: [f32; 3]) -> Vec3 {
     Vec3::new(x, y, z)

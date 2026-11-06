@@ -20,15 +20,15 @@ pub const HIT_POINTS: u8 = 0xB;
 /// Master Hand's hit points (`ifCommonPlayerDamageUpdateDigits`).
 pub const BOSS_HIT_POINTS: i32 = 300;
 
-/// `dIFCommonPlayerDamageDigitWidths`: each glyph's advance.
-pub const DIGIT_WIDTHS: [i32; 12] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_WIDTHS;
+use crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_B as COLORS_B;
+use crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_G as COLORS_G;
 /// `dIFCommonPlayerDamageDigitColors{R,G,B}`; index 4 is the flash.
-const COLORS_R: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_R;
-const COLORS_G: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_G;
-const COLORS_B: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_B;
+use crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_COLORS_R as COLORS_R;
+/// `dIFCommonPlayerDamageDigitWidths`: each glyph's advance.
+pub use crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_DIGIT_WIDTHS as DIGIT_WIDTHS;
 /// `dIFCommonPlayerDamagePositionOffsetsX`; the Y is
 /// `ifCommonPlayerDamageSetDigitPositions`'s `player_pos_y`.
-pub const POSITION_X: [i32; 4] = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_POSITION_OFFSETS_X;
+pub use crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_POSITION_OFFSETS_X as POSITION_X;
 pub const POSITION_Y: i32 = 210;
 
 /// `ifCommonPlayerStockMakeStockSnap`: where a lost stock's burst starts,
@@ -209,7 +209,7 @@ pub fn steal_effect_position(pos_x: i32) -> (f32, f32) {
 
 /// [`steal_effect_position`] at interface height `pos_y`.
 pub fn steal_effect_position_at(pos_x: i32, pos_y: i32) -> (f32, f32) {
-    ((pos_x + STOCK_ICON_X) as f32, (pos_y - 20) as f32)
+    ((pos_x + *STOCK_ICON_X) as f32, (pos_y - 20) as f32)
 }
 
 impl StockSteal {
@@ -231,9 +231,9 @@ impl StockSteal {
     ) -> StockSteal {
         let half_w = (f32::from(w) * 0.5) as i32;
         let half_h = (f32::from(h) * 0.5) as i32;
-        let steal_pos_x = (stolen_pos_x + STOCK_ICON_X - half_w) as u16;
+        let steal_pos_x = (stolen_pos_x + *STOCK_ICON_X - half_w) as u16;
         let steal_pos_y = (pos_y - half_h - 20) as u16;
-        let target_pos_x = (thief_pos_x + STOCK_ICON_X - half_w) as u16;
+        let target_pos_x = (thief_pos_x + *STOCK_ICON_X - half_w) as u16;
         StockSteal {
             stolen,
             anim_frames: STOCK_STEAL_FRAMES,
@@ -281,19 +281,22 @@ pub fn emblem_origin(pos_x: i32, w: u16, h: u16) -> (f32, f32) {
 
 /// [`emblem_origin`] at interface height `pos_y`.
 pub fn emblem_origin_at(pos_x: i32, pos_y: i32, w: u16, h: u16) -> (f32, f32) {
-    let x = (pos_x as f32 - f32::from(w) * 0.5) + EMBLEM_OFFSET_X as f32;
-    let y = (pos_y as f32 - f32::from(h) * 0.5) + EMBLEM_OFFSET_Y as f32;
+    let x = (pos_x as f32 - f32::from(w) * 0.5) + *EMBLEM_OFFSET_X as f32;
+    let y = (pos_y as f32 - f32::from(h) * 0.5) + *EMBLEM_OFFSET_Y as f32;
     (x as i32 as f32, y as i32 as f32)
 }
 
 /// `dIFCommonPlayerStocksIconOffsetsX`: the same for every player, which is
 /// why the port's stock-icon functions take no player.
-const STOCK_ICON_X: i32 = crate::d_arrays::IF_COMMON_PLAYER_STOCKS_ICON_OFFSETS_X[0];
+static STOCK_ICON_X: ssb_tables::DArr<i32> =
+    crate::d_arrays::IF_COMMON_PLAYER_STOCKS_ICON_OFFSETS_X.at(0);
 
 /// `dIFCommonPlayerDamageEmblemOffsetsX` and `...Y`: the same for every
 /// player, which is why [`emblem_origin_at`] takes no player.
-const EMBLEM_OFFSET_X: i32 = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_EMBLEM_OFFSETS_X[0];
-const EMBLEM_OFFSET_Y: i32 = crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_EMBLEM_OFFSETS_Y[0];
+static EMBLEM_OFFSET_X: ssb_tables::DArr<i32> =
+    crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_EMBLEM_OFFSETS_X.at(0);
+static EMBLEM_OFFSET_Y: ssb_tables::DArr<i32> =
+    crate::d_arrays::IF_COMMON_PLAYER_DAMAGE_EMBLEM_OFFSETS_Y.at(0);
 
 /// Where a fighter's stock icons sit (`ifCommonPlayerStock*`), top-left
 /// corners of `w` by `h` icons. A time battle's single icon
@@ -335,7 +338,7 @@ pub fn stock_icons_at(
     w: u16,
     h: u16,
 ) -> impl Iterator<Item = (f32, f32)> {
-    let base_x = pos_x + STOCK_ICON_X;
+    let base_x = pos_x + *STOCK_ICON_X;
     let y = ((pos_y - (f32::from(h) * 0.5) as i32) - 20) as f32;
     let count = if stocks < 0 {
         0
@@ -356,10 +359,10 @@ pub fn stock_icons_at(
 
 /// `dIFCommonTimerDigitsSpritePositionsX`: the centres of `M M : S S`'s
 /// digits, and the colon's (`ifCommonTimerMakeDigits`).
-pub const TIMER_X: [f32; 4] = {
-    let x = crate::d_arrays::IF_COMMON_TIMER_DIGITS_SPRITE_POSITIONS_X;
+pub static TIMER_X: ssb_tables::Decoded<[f32; 4]> = ssb_tables::Decoded::new(|| {
+    let x = *crate::d_arrays::IF_COMMON_TIMER_DIGITS_SPRITE_POSITIONS_X;
     [x[0] as f32, x[1] as f32, x[2] as f32, x[3] as f32]
-};
+});
 pub const TIMER_COLON_X: f32 = 260.0;
 /// Every timer glyph is centred on y 30.
 pub const TIMER_Y: f32 = 30.0;

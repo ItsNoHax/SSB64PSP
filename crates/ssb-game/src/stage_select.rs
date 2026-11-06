@@ -34,8 +34,8 @@ pub const RANDOM_SLOT: usize = 9;
 
 /// `mnMapsGetGroundKind`'s `gkinds`: two rows of five slots, the random
 /// slot (`0xDE`) last.
-const SLOT_GKINDS: [u8; 10] = {
-    let gkinds = crate::d_arrays::MN_MAPS_GET_GROUND_KIND_GKINDS;
+static SLOT_GKINDS: ssb_tables::Decoded<[u8; 10]> = ssb_tables::Decoded::new(|| {
+    let gkinds = *crate::d_arrays::MN_MAPS_GET_GROUND_KIND_GKINDS;
     let mut out = [0; 10];
     let mut i = 0;
     while i < 10 {
@@ -44,7 +44,7 @@ const SLOT_GKINDS: [u8; 10] = {
         i += 1;
     }
     out
-};
+});
 
 /// `I_MIN_TO_TICS(5)`: idle ticks before the screen returns to the title.
 const RETURN_TICS: u32 = 5 * 60 * 60;

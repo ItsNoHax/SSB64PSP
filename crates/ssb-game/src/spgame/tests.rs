@@ -7,9 +7,9 @@ use manager::{Manager, Scene};
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn intro_and_continue_cameras_keep_the_default_aspect() {
-    assert_eq!(intro::CAMERA_PROJECTION, (4.0 / 3.0, 128.0, 16384.0));
+    assert_eq!(*intro::CAMERA_PROJECTION, (4.0 / 3.0, 128.0, 16384.0));
     assert_eq!(
-        continue_scene::CAMERA_PROJECTION,
+        *continue_scene::CAMERA_PROJECTION,
         (4.0 / 3.0, 100.0, 15000.0)
     );
 }
@@ -22,7 +22,7 @@ fn intro_and_continue_cameras_keep_the_default_aspect() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn intro_fighters_take_the_scene_light_first() {
     use intro::FighterLight::{Reflect, Scene};
-    let b = crate::d_arrays::SC_1P_INTRO_LIGHTS1;
+    let b = *crate::d_arrays::SC_1P_INTRO_LIGHTS1;
     assert_eq!(b[0..3], b[4..7], "ambient colc");
     assert_eq!(b[8..11], b[12..15], "light colc");
     assert_eq!([b[3], b[7], b[11], b[15], b[19]], [0; 5], "pads");

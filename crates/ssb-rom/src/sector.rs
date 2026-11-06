@@ -51,11 +51,11 @@ pub const NODES: usize = 12;
 pub const SLOT_FLIGHT: u32 = 0;
 pub const SLOT_ARWING: u32 = 1;
 
-/// `dGRSectorArwingSectorDescs`, in [`FLIGHT_FILE`].
-pub const SECTOR_DESCS: [u32; 8] = crate::d_arrays::GR_SECTOR_ARWING_SECTOR_DESCS;
 /// `dGRSectorArwingAnimJoints`, in [`FLIGHT_FILE`]. Entry 0 is never
 /// played: pilot 0 means no manoeuvre.
-pub const PILOT_ANIMS: [u32; 6] = crate::d_arrays::GR_SECTOR_ARWING_ANIM_JOINTS;
+pub use crate::d_arrays::GR_SECTOR_ARWING_ANIM_JOINTS as PILOT_ANIMS;
+/// `dGRSectorArwingSectorDescs`, in [`FLIGHT_FILE`].
+pub use crate::d_arrays::GR_SECTOR_ARWING_SECTOR_DESCS as SECTOR_DESCS;
 /// The `GRSectorDesc` fields `func_ovl2_80107D50` starts, with their nodes.
 pub const DESC_FIELDS: [(u32, usize); 4] = [(0x0, 0), (0x1C, 7), (0x24, 9), (0x2C, 11)];
 
@@ -83,7 +83,7 @@ impl Script {
     fn locate(self, flight: &[u8]) -> Option<(usize, u32)> {
         Some(match self {
             Script::Flight { pattern, field } => {
-                let desc = *SECTOR_DESCS.get(pattern as usize)?;
+                let desc = *(*SECTOR_DESCS).get(pattern as usize)?;
                 let (at, _) = *DESC_FIELDS.get(field as usize)?;
                 let at = (desc + at) as usize;
                 let ptr = u32::from_be_bytes(flight.get(at..at + 4)?.try_into().ok()?);
@@ -92,7 +92,7 @@ impl Script {
                 }
                 (0, ptr)
             }
-            Script::Pilot(id) => (0, *PILOT_ANIMS.get(id as usize).filter(|&&s| s != 0)?),
+            Script::Pilot(id) => (0, *(*PILOT_ANIMS).get(id as usize).filter(|&&s| s != 0)?),
             Script::LaserCharge => (0, 0x1B84),
             Script::LaserFire => (0, 0x1B34),
             Script::Flare => (1, 0x2EB4),

@@ -27,15 +27,17 @@ use ssb_rom::skeleton::Skeleton;
 
 /// `mnPlayersVSMakeFighterCamera`: eye (0, 0, 5000) on the origin, with
 /// every camera's default projection (`Camera::persp_default`, RE-409).
-const CAMERA: Camera = Camera::persp_default(
-    Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: 5000.0,
-    },
-    Vec3::ZERO,
-    layer::VIEWPORT,
-);
+fn camera() -> Camera {
+    Camera::persp_default(
+        Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 5000.0,
+        },
+        Vec3::ZERO,
+        layer::VIEWPORT,
+    )
+}
 
 /// `mnPlayersVSFuncStart`'s `scSubsysFighterSetLightParams(45.0F, 45.0F,
 /// ...)`.
@@ -492,7 +494,7 @@ unsafe fn draw_fighters(
     spots: &[Option<SpotlightDraw>; 4],
     f: &Fighters,
 ) {
-    let cam = &CAMERA;
+    let cam = &camera();
     gpu.set_viewport_n64(cam.viewport);
     gpu.set_perspective(cam.fovy, cam.aspect, cam.near, cam.far);
     gpu.reset_modelview();
@@ -518,7 +520,7 @@ unsafe fn draw_fighters(
         let base = crate::topn_base(shown.position, fighter.rotate_y, fighter.scale(), m.skeleton.locks.flagged);
         draw_state.configure_fighter_light(LIGHT_ANGLE);
         if let Some(rgba) = shown.tint {
-            // The view looks down -z from `CAMERA.eye`.
+            // The view looks down -z from `camera().eye`.
             gpu.set_fog_prim_a(cam.eye.z - shown.position[2], rgba);
         }
         draw_state.fighter_fog = shown.tint.is_some();

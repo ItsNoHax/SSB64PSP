@@ -15,7 +15,8 @@ const fn widen<const N: usize>(tics: [u16; N]) -> [u32; N] {
     out
 }
 
-pub const COMMON_SLEEP_TICS: [u32; 3] = widen(crate::d_arrays::SC1P_GAME_STAGE_COMMON_SLEEP_TICS);
+pub static COMMON_SLEEP_TICS: ssb_tables::Decoded<[u32; 3]> =
+    ssb_tables::Decoded::new(|| widen(*crate::d_arrays::SC1P_GAME_STAGE_COMMON_SLEEP_TICS));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -141,9 +142,9 @@ impl Wait {
 /// (`dSC1PGameInterface{2,3,4}PlayersPositionsX`).
 pub fn interface_positions(player: u8, count: u8) -> [i32; PLAYERS_MAX] {
     let positions: &[i32] = match count {
-        2 => &crate::d_arrays::SC1P_GAME_INTERFACE_2_PLAYERS_POSITIONS_X,
-        3 => &crate::d_arrays::SC1P_GAME_INTERFACE_3_PLAYERS_POSITIONS_X,
-        4 => &crate::d_arrays::SC1P_GAME_INTERFACE_4_PLAYERS_POSITIONS_X,
+        2 => &*crate::d_arrays::SC1P_GAME_INTERFACE_2_PLAYERS_POSITIONS_X,
+        3 => &*crate::d_arrays::SC1P_GAME_INTERFACE_3_PLAYERS_POSITIONS_X,
+        4 => &*crate::d_arrays::SC1P_GAME_INTERFACE_4_PLAYERS_POSITIONS_X,
         _ => &[],
     };
     let mut out = [0; PLAYERS_MAX];

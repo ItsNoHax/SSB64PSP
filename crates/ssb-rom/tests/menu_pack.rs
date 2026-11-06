@@ -37,7 +37,7 @@ fn collect(out: &mut BTreeSet<Key>) -> impl FnMut(Draw) + '_ {
 /// What a scene's pack and the resident pack hold.
 fn available(scene: MenuScene) -> BTreeSet<Key> {
     let mut set = BTreeSet::new();
-    for f in scene.sprites().iter().chain(ssb_rom::sprite::FILES) {
+    for f in scene.sprites().iter().chain(ssb_rom::sprite::FILES.iter()) {
         for &at in f.offsets {
             set.insert((f.file, at, None));
         }
@@ -484,7 +484,7 @@ fn the_title_bakes_its_label_and_press_start_plays() {
     for (i, v) in last.iter().take(5).enumerate() {
         assert_eq!([v[0], v[1], v[2], v[3]], [pins[i][0], pins[i][1], 1.0, 1.0]);
     }
-    let c = title::PRESS_START_CENTRE;
+    let c = *title::PRESS_START_CENTRE;
     let n = 400;
     let press = title::bake(
         &file.data,

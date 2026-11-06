@@ -286,18 +286,17 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
             files.extend(sc1p_data::generate(rom)?);
             files.extend(ending_data::generate(rom)?);
             files.extend(opening_data::generate(rom)?);
-            files.push(d_arrays::generate_game(rom)?);
+            files.push(d_arrays::generate_game());
             files
         }
         Crate::Rom => {
+            // Layout only: the values are in the pack's `TABLES` section.
             let mut files = vec![Generated {
-                name: "anim_table.rs",
-                text: anim_table::generate(rom)?,
+                name: "anim_layout.rs",
+                text: anim_table::layout_rs(),
             }];
-            files.extend(sc1p_data::generate_rom(rom)?);
-            files.extend(ending_data::generate_rom(rom)?);
-            files.extend(rom_layout::generate_rom(rom)?);
-            files.push(d_arrays::generate_rom(rom)?);
+            files.extend(rom_layout::generate_rom());
+            files.push(d_arrays::generate_rom());
             files
         }
         // Its tables are in the pack's `TABLES` section ([`tables`]).

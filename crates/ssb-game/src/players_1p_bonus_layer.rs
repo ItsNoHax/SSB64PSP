@@ -76,12 +76,17 @@ pub const FIGHTER_POSITION: [f32; 3] = [-700.0, -850.0, 0.0];
 const RECORD_TEXT: [u8; 3] = [0x7E, 0x7C, 0x77];
 /// `mnPlayers1PBonusMakeBestTime`'s, `...MakeBestTaskCount`'s and
 /// `...MakeTotalTime`'s `colors2`: the digits' environment, then primitive.
-const BEST_TIME_DIGITS: ([u8; 3], [u8; 3]) =
-    rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_BEST_TIME_COLORS_2);
-const BEST_TASK_COUNT_DIGITS: ([u8; 3], [u8; 3]) =
-    rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_BEST_TASK_COUNT_COLORS_2);
-const TOTAL_TIME_DIGITS: ([u8; 3], [u8; 3]) =
-    rom::env_prim(crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_TOTAL_TIME_COLORS_2);
+static BEST_TIME_DIGITS: ssb_tables::Decoded<([u8; 3], [u8; 3])> = ssb_tables::Decoded::new(|| {
+    rom::env_prim(*crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_BEST_TIME_COLORS_2)
+});
+static BEST_TASK_COUNT_DIGITS: ssb_tables::Decoded<([u8; 3], [u8; 3])> =
+    ssb_tables::Decoded::new(|| {
+        rom::env_prim(*crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_BEST_TASK_COUNT_COLORS_2)
+    });
+static TOTAL_TIME_DIGITS: ssb_tables::Decoded<([u8; 3], [u8; 3])> =
+    ssb_tables::Decoded::new(|| {
+        rom::env_prim(*crate::d_arrays::MN_PLAYERS_1P_BONUS_MAKE_TOTAL_TIME_COLORS_2)
+    });
 
 /// `mnPlayers1PBonusMakeSpotlight`'s `translate`.
 pub const SPOTLIGHT_TRANSLATE: [f32; 3] = [-700.0, -850.0, 0.0];
@@ -116,7 +121,7 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         View {
-            portrait_x: vs::PORTRAIT_START_X,
+            portrait_x: *vs::PORTRAIT_START_X,
             ready_blink: 0,
             ready_banner: false,
             ready_press: false,
@@ -368,11 +373,11 @@ fn visit_hiscore(bonus: BonusKind, record: FighterRecord, f: &mut impl FnMut(Dra
     match record {
         FighterRecord::Time(t) => {
             f(label(records::BEST_TIME_TEXT, 177.0, 198.0));
-            digits(t.mins, 237.0, 195.0, 2, BEST_TIME_DIGITS, f);
+            digits(t.mins, 237.0, 195.0, 2, *BEST_TIME_DIGITS, f);
             f(label(records::SEC, 239.0, 195.0));
-            digits(t.secs, 259.0, 195.0, 2, BEST_TIME_DIGITS, f);
+            digits(t.secs, 259.0, 195.0, 2, *BEST_TIME_DIGITS, f);
             f(label(records::CSEC, 261.0, 195.0));
-            digits(t.csecs, 283.0, 195.0, 2, BEST_TIME_DIGITS, f);
+            digits(t.csecs, 283.0, 195.0, 2, *BEST_TIME_DIGITS, f);
         }
         FighterRecord::Tasks(count) => {
             let text = match bonus {
@@ -380,7 +385,14 @@ fn visit_hiscore(bonus: BonusKind, record: FighterRecord, f: &mut impl FnMut(Dra
                 BonusKind::Platforms => records::PLATFORMS_TEXT,
             };
             f(label(text, 235.0, 195.0));
-            digits(i32::from(count), 225.0, 194.0, 2, BEST_TASK_COUNT_DIGITS, f);
+            digits(
+                i32::from(count),
+                225.0,
+                194.0,
+                2,
+                *BEST_TASK_COUNT_DIGITS,
+                f,
+            );
         }
     }
 }
@@ -390,11 +402,11 @@ fn visit_hiscore(bonus: BonusKind, record: FighterRecord, f: &mut impl FnMut(Dra
 /// minutes.
 fn visit_total_time(t: &Time, f: &mut impl FnMut(Draw)) {
     f(label(records::TOTAL_BEST_TIME_TEXT, 142.0, 209.0));
-    digits(t.csecs, 283.0, 206.0, 2, TOTAL_TIME_DIGITS, f);
+    digits(t.csecs, 283.0, 206.0, 2, *TOTAL_TIME_DIGITS, f);
     f(label(records::CSEC, 261.0, 206.0));
-    digits(t.secs, 259.0, 206.0, 2, TOTAL_TIME_DIGITS, f);
+    digits(t.secs, 259.0, 206.0, 2, *TOTAL_TIME_DIGITS, f);
     f(label(records::SEC, 239.0, 206.0));
-    digits(t.mins, 237.0, 206.0, 3, TOTAL_TIME_DIGITS, f);
+    digits(t.mins, 237.0, 206.0, 3, *TOTAL_TIME_DIGITS, f);
 }
 
 /// Whether `(file, offset)` is one of the VS or 1P select's listed
@@ -407,8 +419,8 @@ pub(crate) fn is_listed(file: u32, offset: u32) -> bool {
         sprites.contains(&(file, offset))
             || lists.iter().any(|&(f, l)| f == file && l.contains(&offset))
     };
-    in_lists(vs::SPRITES, vs::SPRITE_LISTS)
-        || in_lists(one::SPRITES, one::SPRITE_LISTS)
+    in_lists(vs::SPRITES, &vs::SPRITE_LISTS)
+        || in_lists(one::SPRITES, &one::SPRITE_LISTS)
         || (file, offset) == (FILE_PLAYERS_1P_MODE, mode::RED_CARD)
         || (file == FILE_DIGITS && one::DIGITS.contains(&offset))
         || MENU_SPRITES.contains(&(file, offset))

@@ -46,7 +46,7 @@ pub const FIRE_DOBJDESC: u32 = 0x28EB0;
 pub const FIRE_ANIM_JOINT: u32 = 0x29010;
 /// `dMNTitleLogoAnimSprites`: `LogoAnimCutout`, `...StrikeV`,
 /// `...StrikeH`, `...Full`.
-pub const LOGO_ANIM_SPRITES: [u32; 4] = crate::d_arrays::MN_TITLE_LOGO_ANIM_SPRITES;
+pub use crate::d_arrays::MN_TITLE_LOGO_ANIM_SPRITES as LOGO_ANIM_SPRITES;
 
 /// The reserved animation slots the baked plays are packed under
 /// (`AnimDesc::EFFECT`), in the title's menu pack.
@@ -150,21 +150,15 @@ pub fn pin(x: f32, y: f32) -> [f32; 2] {
 /// children (`DropShadow`, `Smash`, `Super`, `Bros`, `TM`, `Footer`,
 /// `Header`) and "Press Start", generated from the ROM
 /// ([`crate::d_arrays`]).
-pub const LABEL_CENTRES: [[f32; 2]; 7] = {
-    let mut centres = [[0.0; 2]; 7];
-    let mut i = 0;
-    while i < 7 {
-        centres[i] = sprite_centre(i);
-        i += 1;
-    }
-    centres
-};
+pub static LABEL_CENTRES: ssb_tables::Decoded<[[f32; 2]; 7]> =
+    ssb_tables::Decoded::new(|| core::array::from_fn(sprite_centre));
 /// `dMNTitleCommonSpriteDescs[7]`, `PressStart`'s.
-pub const PRESS_START_CENTRE: [f32; 2] = sprite_centre(7);
+pub static PRESS_START_CENTRE: ssb_tables::Decoded<[f32; 2]> =
+    ssb_tables::Decoded::new(|| sprite_centre(7));
 
 /// The centre of `dMNTitleCommonSpriteDescs[row]` (US), generated from the
 /// ROM (`ssb-tablegen`, D-048).
-const fn sprite_centre(row: usize) -> [f32; 2] {
+fn sprite_centre(row: usize) -> [f32; 2] {
     [
         crate::d_arrays::MN_TITLE_COMMON_SPRITE_DESCS_X[row] as f32,
         crate::d_arrays::MN_TITLE_COMMON_SPRITE_DESCS_Y[row] as f32,

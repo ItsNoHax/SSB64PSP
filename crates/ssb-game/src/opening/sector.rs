@@ -13,8 +13,7 @@ use crate::menu::Piece;
 pub const FILE: u32 = 0x49;
 pub const GREAT_FOX: u32 = 0xD820;
 pub const GREAT_FOX_ANIM_JOINT: u32 = 0xDA10;
-pub const ARWING_ANIM_JOINTS: [u32; 3] =
-    crate::d_arrays::MV_OPENING_SECTOR_MAKE_ARWINGS_ANIM_JOINTS;
+pub use crate::d_arrays::MV_OPENING_SECTOR_MAKE_ARWINGS_ANIM_JOINTS as ARWING_ANIM_JOINTS;
 pub const CAM_ANIM_JOINT: u32 = 0xF9A0;
 pub const COCKPIT: u32 = 0x3CC90;
 /// `llFoxSpecial3FileID` and `llFoxSpecial3EntryArwingDObjDesc`.
@@ -108,7 +107,7 @@ impl Sector {
             ),
         );
         // `mvOpeningSectorMakeArwings`: Fox's entry Arwing, three times.
-        for &anim in &ARWING_ANIM_JOINTS {
+        for &anim in ARWING_ANIM_JOINTS.iter() {
             models.push(world.object(
                 27,
                 Head::Links,

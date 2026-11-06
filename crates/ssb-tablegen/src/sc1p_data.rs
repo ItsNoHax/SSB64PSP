@@ -11,6 +11,7 @@ use std::fmt::Write;
 
 use crate::emit::{self, f32_lit};
 use crate::source::{OverlayData, OVL24, OVL56, OVL6, OVL65};
+use crate::tables::{le_words, Ctx};
 use crate::{Generated, Result, Source};
 
 /// `dSC1PStageClearBonusData` (`SC1PStageClearScore[58]`: `intptr_t offset`,
@@ -189,119 +190,76 @@ pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
     ])
 }
 
-/// `ssb-rom`'s table from the same array: the bonus text sprites' offsets.
-pub fn generate_rom(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let d = OverlayData::new(rom, OVL56);
+/// The `CampaignBonusLabels` table: `dSC1PStageClearBonusData`'s
+/// `offset`s.
+pub fn bonus_labels_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL56);
     let (at, n) = STAGE_CLEAR_BONUS;
-    let mut w = emit::header("`dSC1PStageClearBonusData`'s `offset`s");
-    let offsets = (0..n as u32)
+    let words = (0..n as u32)
         .map(|i| d.u32(at + i * STAGE_CLEAR_BONUS_SIZE))
         .collect::<Result<Vec<_>>>()?;
-    let _ = writeln!(w, "pub const BONUS_LABELS: [u32; {n}] = [");
-    emit::hex_rows_u32(&mut w, &offsets);
-    w.push_str("];\n");
-    let mut files = vec![Generated {
-        name: "campaign_bonus_labels.rs",
-        text: w,
-    }];
-    files.push(ally_cameras(rom)?);
-    files.extend(bonus_stage_layout(rom)?);
-    Ok(files)
+    Ok(le_words(&words))
 }
 
-/// The 1P Game's intro cameras, `ssb-rom`'s `campaign::ALLY_CAMERAS`: each
-/// `CObjDesc`'s eye and at points.
-fn ally_cameras(rom: Option<&Source>) -> Result<Generated> {
-    let d = OverlayData::new(rom, OVL24);
+/// The `CampaignAllyCameras` table: each `CObjDesc`'s eye and at points,
+/// by `FTKind` then camera.
+pub fn ally_cameras_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL24);
     let (at, kinds, cameras) = ALLY_CAMERAS;
-    let mut w = emit::header("`sc1PIntroGetFighterCObjDesc`'s `cobj_descs` eye and at points");
-    let _ = writeln!(
-        w,
-        "pub const ALLY_CAMERAS: [[[f32; 6]; {cameras}]; {kinds}] = ["
-    );
-    for k in 0..kinds as u32 {
-        w.push_str("    [\n");
-        for c in 0..cameras as u32 {
-            let at = at + (k * cameras as u32 + c) * COBJ_DESC_SIZE;
-            let cells = (0..6)
-                .map(|i| d.f32(at + i * 4).map(f32_lit))
-                .collect::<Result<Vec<_>>>()?;
-            let _ = writeln!(w, "        [{}],", cells.join(", "));
+    let mut words = Vec::with_capacity(kinds * cameras * 6);
+    for i in 0..(kinds * cameras) as u32 {
+        for k in 0..6 {
+            words.push(d.u32(at + i * COBJ_DESC_SIZE + k * 4)?);
         }
-        w.push_str("    ],\n");
     }
-    w.push_str("];\n");
-    Ok(Generated {
-        name: "campaign_ally_cameras.rs",
-        text: w,
-    })
+    Ok(le_words(&words))
 }
 
-/// The bonus stages' tables in `ovl6`, `ssb-rom`'s `bonus1::COURSES` and
-/// `bonus2::{TREES, BUMPERS}`.
-fn bonus_stage_layout(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let d = OverlayData::new(rom, OVL6);
-    let words =
-        |at: u32, n: u32| -> Result<Vec<u32>> { (0..n).map(|i| d.u32(at + i * 4)).collect() };
-    let (at, n) = BONUS_TARGETS;
-    let mut w = emit::header("`dSC1PBonusStageTargetDescs`");
-    let _ = writeln!(w, "pub const COURSES: [Course; {n}] = [");
-    for i in 0..n as u32 {
-        let c = words(at + i * BONUS_TARGET_SIZE, 3)?;
-        let _ = writeln!(
-            w,
-            "    Course {{\n        start: 0x{:X},\n        placements: 0x{:X},\n        scripts: 0x{:X},\n    }},",
-            c[0], c[1], c[2]
-        );
-    }
-    w.push_str("];\n");
-    let courses = Generated {
-        name: "bonus1_courses.rs",
-        text: w,
-    };
+/// `n` words from `at` in `ovl6`.
+fn bonus_words(c: &Ctx, at: u32, n: u32) -> Result<Vec<u32>> {
+    let d = OverlayData::new(Some(c.rom), OVL6);
+    (0..n).map(|i| d.u32(at + i * 4)).collect()
+}
 
-    let mut w = emit::header(
-        "`dSC1PBonusStagePlatformDescs` and `dSC1PBonusStageBoardedPlatformDescs` (the boarded ones have no \
-         MObj or material tables)",
-    );
+/// The `Bonus1Courses` table: `dSC1PBonusStageTargetDescs`.
+pub fn courses_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let (at, n) = BONUS_TARGETS;
+    let mut words = Vec::new();
+    for i in 0..n as u32 {
+        words.extend(bonus_words(c, at + i * BONUS_TARGET_SIZE, 3)?);
+    }
+    Ok(le_words(&words))
+}
+
+/// The platforms, then the boarded platforms (no MObj or material tables:
+/// two zeros).
+pub const TREE_COUNT: usize = BONUS_PLATFORMS.1 + BONUS_BOARDED.1;
+
+/// The `Bonus2Trees` table: `dSC1PBonusStagePlatformDescs` and
+/// `dSC1PBonusStageBoardedPlatformDescs`.
+pub fn trees_bytes(c: &Ctx) -> Result<Vec<u8>> {
     let (pat, pn) = BONUS_PLATFORMS;
     let (bat, bn) = BONUS_BOARDED;
-    let _ = writeln!(w, "pub const TREES: [[u32; 4]; {}] = [", pn + bn);
+    let mut words = Vec::new();
     for i in 0..pn as u32 {
-        let t = words(pat + i * BONUS_PLATFORM_SIZE, 4)?;
-        let _ = writeln!(
-            w,
-            "    [0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}],",
-            t[0], t[1], t[2], t[3]
-        );
+        words.extend(bonus_words(c, pat + i * BONUS_PLATFORM_SIZE, 4)?);
     }
     for i in 0..bn as u32 {
-        let t = words(bat + i * BONUS_BOARDED_SIZE, 2)?;
-        let _ = writeln!(w, "    [0x{:x}, 0x{:x}, 0, 0],", t[0], t[1]);
+        words.extend(bonus_words(c, bat + i * BONUS_BOARDED_SIZE, 2)?);
+        words.extend([0, 0]);
     }
-    w.push_str("];\n");
-    let trees = Generated {
-        name: "bonus2_trees.rs",
-        text: w,
-    };
+    Ok(le_words(&words))
+}
 
-    let mut w = emit::header("`dSC1PBonusStageBumperDescs` (a kind with no bumpers holds 0, 0)");
+/// The `Bonus2Bumpers` table: `dSC1PBonusStageBumperDescs` (0, 0: a kind
+/// with no bumpers).
+pub fn bumpers_bytes(c: &Ctx) -> Result<Vec<u8>> {
     let (at, n) = BONUS_BUMPERS;
-    let _ = writeln!(w, "pub const BUMPERS: [Option<(u32, u32)>; {n}] = [");
+    let mut words = Vec::new();
     for i in 0..n as u32 {
-        let b = words(at + i * BONUS_BUMPER_SIZE, 2)?;
-        if (b[0], b[1]) == (0, 0) {
-            w.push_str("    None,\n");
-        } else {
-            let _ = writeln!(w, "    Some((0x{:x}, 0x{:x})),", b[0], b[1]);
-        }
+        words.extend(bonus_words(c, at + i * BONUS_BUMPER_SIZE, 2)?);
     }
-    w.push_str("];\n");
-    let bumpers = Generated {
-        name: "bonus2_bumpers.rs",
-        text: w,
-    };
-    Ok(vec![courses, trees, bumpers])
+    Ok(le_words(&words))
 }
 
 fn bonus_points(d: OverlayData) -> Result<String> {
@@ -535,8 +493,6 @@ mod tests {
         assert_eq!(boss.matches("    WallpaperDesc {").count(), 4);
         assert_eq!(boss.matches("            Plan {").count(), 2 + 1 + 2 + 2);
         assert_eq!(boss.matches("Some(EffectAsset {").count(), 1 + 1 + 2 + 2);
-        let rom = generate_rom(None).unwrap();
-        assert!(rom[0].text.contains("BONUS_LABELS: [u32; 58]"));
     }
 
     #[test]

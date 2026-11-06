@@ -91,7 +91,7 @@ pub enum MotionAttackId {
 
 /// `dFTParamStaleTable` (`ftparam.c`): the multiplier for a move found 1st,
 /// 2nd, 3rd or 4th most recently in the queue.
-pub const STALE_TABLE: [f32; 4] = crate::d_arrays::FT_PARAM_STALE_TABLE;
+pub use crate::d_arrays::FT_PARAM_STALE_TABLE as STALE_TABLE;
 
 /// `ARRAY_COUNT(SCPlayerData::stale_info)`.
 pub const STALE_QUEUE_LEN: usize = 5;

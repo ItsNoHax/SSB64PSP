@@ -169,7 +169,7 @@ fn kirby_copies_read_files_their_scene_holds() {
         }
     }
     let team = closure(&pack, &r::KIRBY_TEAM);
-    for kind in ssb_game::spgame::setup::KIRBY_TEAM_COPY_KINDS {
+    for kind in *ssb_game::spgame::setup::KIRBY_TEAM_COPY_KINDS {
         for f in copy_files(kind as usize) {
             assert!(team.contains(&f), "{kind:?}: {f:#x} not in {team:x?}");
         }

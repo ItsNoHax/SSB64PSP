@@ -19,7 +19,7 @@ use ssb_engine::math::Vec3;
 pub const TRANSITION_COUNT: i32 = 11;
 
 /// `dSCSubsysFighterScales` (`sc/scsubsys/scsubsysdata.c`), by fighter kind.
-pub const FIGHTER_SCALES: [f32; 12] = crate::d_arrays::SC_SUBSYS_FIGHTER_SCALES;
+pub use crate::d_arrays::SC_SUBSYS_FIGHTER_SCALES as FIGHTER_SCALES;
 
 /// `mnVSResultsFuncLights`: the fighters' light angles
 /// (`scSubsysFighterSetLightParams(10.0F, 10.0F, ...)`).
@@ -43,23 +43,23 @@ pub struct Camera {
 /// `dGCPerspDefault`'s `fovy` (degrees), `aspect`, `near` and `far`,
 /// generated from the ROM: the projection `gcAddCameraMatrixSets` gives
 /// every camera it makes.
-pub const PERSP_FOVY: f32 = crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0];
-pub const PERSP_ASPECT: f32 = crate::d_arrays::GC_PERSP_DEFAULT_ASPECT[0];
-pub const PERSP_NEAR: f32 = crate::d_arrays::GC_PERSP_DEFAULT_NEAR[0];
-pub const PERSP_FAR: f32 = crate::d_arrays::GC_PERSP_DEFAULT_FAR[0];
+pub static PERSP_FOVY: ssb_tables::DArr<f32> = crate::d_arrays::GC_PERSP_DEFAULT_FOVY.at(0);
+pub static PERSP_ASPECT: ssb_tables::DArr<f32> = crate::d_arrays::GC_PERSP_DEFAULT_ASPECT.at(0);
+pub static PERSP_NEAR: ssb_tables::DArr<f32> = crate::d_arrays::GC_PERSP_DEFAULT_NEAR.at(0);
+pub static PERSP_FAR: ssb_tables::DArr<f32> = crate::d_arrays::GC_PERSP_DEFAULT_FAR.at(0);
 
 impl Camera {
     /// A camera at `eye` looking at `at`, up +y, with `dGCPerspDefault`'s
     /// projection.
-    pub const fn persp_default(eye: Vec3, at: Vec3, viewport: [f32; 4]) -> Camera {
+    pub fn persp_default(eye: Vec3, at: Vec3, viewport: [f32; 4]) -> Camera {
         Camera {
             eye,
             at,
             up: Vec3::new(0.0, 1.0, 0.0),
-            fovy: PERSP_FOVY,
-            aspect: PERSP_ASPECT,
-            near: PERSP_NEAR,
-            far: PERSP_FAR,
+            fovy: *PERSP_FOVY,
+            aspect: *PERSP_ASPECT,
+            near: *PERSP_NEAR,
+            far: *PERSP_FAR,
             viewport,
         }
     }
@@ -67,11 +67,13 @@ impl Camera {
 
 /// `mnVSResultsMakeFighterCamera`: eye (0, 0, 1800) on the origin, with
 /// the default projection ([`Camera::persp_default`]).
-pub const CAMERA: Camera = Camera::persp_default(
-    Vec3::new(0.0, 0.0, 1800.0),
-    Vec3::ZERO,
-    [10.0, 10.0, 310.0, 230.0],
-);
+pub static CAMERA: ssb_tables::Decoded<Camera> = ssb_tables::Decoded::new(|| {
+    Camera::persp_default(
+        Vec3::new(0.0, 0.0, 1800.0),
+        Vec3::ZERO,
+        [10.0, 10.0, 310.0, 230.0],
+    )
+});
 
 /// `nFTDemoStatusWin1` to `nFTDemoStatusLose`, the statuses the results
 /// set (`scSubsysFighterSetStatus`).
@@ -177,7 +179,7 @@ impl Scene {
                 costume,
                 pos: position(r, player, spot),
                 rotate_y: 0.0,
-                scale: FIGHTER_SCALES.get(kind as usize).copied().unwrap_or(1.0),
+                scale: (*FIGHTER_SCALES).get(kind as usize).copied().unwrap_or(1.0),
                 status: status(r, player, kind),
             });
         }
@@ -268,8 +270,8 @@ pub(crate) fn distance_id(r: &Results, player: usize) -> usize {
 /// is `places[5 - n]`. Past either end (which no ranking reaches) it
 /// counts as 1.
 pub(crate) fn spot(r: &Results, player: usize) -> usize {
-    let aheads = d::MN_VS_RESULTS_GET_SPOT_AHEADS;
-    let places = d::MN_VS_RESULTS_GET_SPOT_PLACES;
+    let aheads = *d::MN_VS_RESULTS_GET_SPOT_AHEADS;
+    let places = *d::MN_VS_RESULTS_GET_SPOT_PLACES;
     let place = r.places[player];
     let i = place - count_ahead(r, player);
     let ahead = if i < 0 {
@@ -298,14 +300,14 @@ fn position(r: &Results, player: usize, spot: usize) -> Vec3 {
 /// `mnVSResultsGetStatusWin`: Win1 to Win3 at random, Win1 or Win2 for
 /// Kirby (`syUtilsRandIntRange`).
 fn status_win(kind: FighterKind) -> DemoStatus {
-    const STATUS_IDS: [DemoStatus; 3] = {
-        let ids = crate::d_arrays::MN_VS_RESULTS_GET_STATUS_WIN_STATUS_IDS;
+    static STATUS_IDS: ssb_tables::Decoded<[DemoStatus; 3]> = ssb_tables::Decoded::new(|| {
+        let ids = *crate::d_arrays::MN_VS_RESULTS_GET_STATUS_WIN_STATUS_IDS;
         [
             DemoStatus::from_id(ids[0]),
             DemoStatus::from_id(ids[1]),
             DemoStatus::from_id(ids[2]),
         ]
-    };
+    });
     let range = if kind == FighterKind::Kirby { 2 } else { 3 };
     STATUS_IDS[rng::rand_int_range(range) as usize]
 }

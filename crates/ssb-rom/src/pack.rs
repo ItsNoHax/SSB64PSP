@@ -514,7 +514,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // tables a runtime reads at boot instead of compiling them in (D-048,
 // `ssb-tables`; format `ssb_tablegen::tables`). `Header::SIZE` 124 -> 132
 // (`tables_offset`, `tables_len`); [`resident_len`] is unchanged.
-pub const VERSION: u32 = 142;
+// 143 adds `TABLES` entries: the decomp's small `d*` arrays (one group
+// table per element kind, `ssb_tablegen::d_arrays`) and `ssb-rom`'s
+// generated tables (fighter, transition, effect, weapon, bonus, campaign,
+// ending and animation tables). Everything outside the section is unchanged.
+pub const VERSION: u32 = 143;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

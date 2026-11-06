@@ -22,8 +22,7 @@ pub mod sprite {
     pub const LABEL_ITEM_SWITCH: u32 = 0xB20;
     /// `Appearance{None,VeryLow,Low,Middle,High,VeryHigh}Sprite`
     /// (`mnVSItemSwitchMakeAppearance`'s `rate_offsets`).
-    pub const APPEARANCE: [u32; 6] =
-        crate::d_arrays::MN_VS_ITEM_SWITCH_MAKE_APPEARANCE_RATE_OFFSETS;
+    pub use crate::d_arrays::MN_VS_ITEM_SWITCH_MAKE_APPEARANCE_RATE_OFFSETS as APPEARANCE;
     pub const TOGGLE_ON: u32 = 0x1488;
     pub const TOGGLE_OFF: u32 = 0x1568;
     pub const TOGGLE_SLASH: u32 = 0x1608;
@@ -33,7 +32,7 @@ pub mod sprite {
 }
 
 /// `mnVSItemSwitchMakeAppearance`'s `pos_x`, by rate.
-const APPEARANCE_X: [i32; 6] = crate::d_arrays::MN_VS_ITEM_SWITCH_MAKE_APPEARANCE_POS_X;
+use crate::d_arrays::MN_VS_ITEM_SWITCH_MAKE_APPEARANCE_POS_X as APPEARANCE_X;
 
 /// `nSCBattleItemSwitch*`, in order.
 const RATES: [Appearance; 6] = [
@@ -82,8 +81,8 @@ const fn item_kinds(kinds: [i32; ROWS]) -> [u8; ROWS] {
 }
 
 /// `dMNVSItemSwitchTogglesItemKinds`: row 0 is the appearance rate.
-pub const TOGGLE_KINDS: [u8; ROWS] =
-    item_kinds(crate::d_arrays::MN_VS_ITEM_SWITCH_TOGGLES_ITEM_KINDS);
+pub static TOGGLE_KINDS: ssb_tables::Decoded<[u8; ROWS]> =
+    ssb_tables::Decoded::new(|| item_kinds(*crate::d_arrays::MN_VS_ITEM_SWITCH_TOGGLES_ITEM_KINDS));
 
 /// `(nITKindUtilityEnd - nITKindUtilityStart) + 1`: the rows.
 pub const ROWS: usize = 16;

@@ -89,7 +89,14 @@ pub fn build(
     #[allow(unused_unsafe)]
     // SAFETY: nothing has read a table before this point in the build.
     let installed = unsafe { ssb_tables::install(Vec::leak(tables.clone())) };
-    installed.map_err(|e| format!("tables section: {e}"))?;
+    match installed {
+        Ok(_) => {}
+        // A host process that read a table first (its `host-rom`
+        // fallback, or an earlier build) holds this ROM's section already.
+        Err(ssb_tables::InstallError::AlreadyInstalled)
+            if ssb_tables::installed().is_some_and(|s| s.bytes() == tables.as_slice()) => {}
+        Err(e) => return Err(format!("tables section: {e}").into()),
+    }
 
     // The audio section: sequences, both banks, the FGM files and the
     // synthesizer's constant tables, loaded once at boot (D-049). Made
@@ -2170,7 +2177,7 @@ pub fn build(
     let mut effect_anim_joints = 0usize;
     for (effect_index, (&(file_id, graph_at), &anim_at)) in ssb_rom::effect::MANAGER_EFFECT_KEYS
         .iter()
-        .zip(ssb_rom::effect::MANAGER_EFFECT_ANIM_JOINTS)
+        .zip(ssb_rom::effect::MANAGER_EFFECT_ANIM_JOINTS.iter())
         .enumerate()
     {
         let Some(anim_at) = anim_at else { continue };
@@ -3056,7 +3063,7 @@ pub fn build(
     // ten scalar tracks in native format; eye/at overrides remain in the host.
     let intro = archive.load(ssb_rom::campaign::INTRO.file)?;
     let mut cameras = Vec::new();
-    for offset in ssb_rom::campaign::CAMERA_OFFSETS {
+    for offset in *ssb_rom::campaign::CAMERA_OFFSETS {
         let values = ssb_rom::campaign::initial_camera(&intro.data, offset)?;
         for value in values {
             cameras.extend_from_slice(&value.to_le_bytes());
@@ -3153,7 +3160,7 @@ pub fn build(
     // `SObj` sprites (RE-392): each through its format's combiner, in 8888,
     // clamped on both axes like a texture rectangle.
     let mut sprites = 0usize;
-    for f in ssb_rom::sprite::FILES {
+    for f in ssb_rom::sprite::FILES.iter() {
         let file = loaded
             .files
             .get(f.file as usize)
@@ -3340,10 +3347,11 @@ pub fn build(
         writer.add_sprite(sprite_desc(file, at, &s, texture, 0, role, gkind));
         Ok(())
     };
-    let vs = (0u8..).zip(ssb_rom::stage::VS_GROUND_FILES.map(|_| ssb_rom::stage::MAP_HEADER));
+    let vs = (0u8..).zip(ssb_rom::stage::VS_GROUND_FILES.map(|_| *ssb_rom::stage::MAP_HEADER));
     let others = ssb_rom::stage::ONE_P_WALLPAPER_GROUNDS
-        .into_iter()
-        .chain([ssb_rom::stage::EXPLAIN_WALLPAPER_GROUND]);
+        .iter()
+        .copied()
+        .chain([ssb_rom::stage::explain_wallpaper_ground()]);
     for (gkind, header) in vs.chain(others) {
         let map_id = ssb_rom::stage::COMMON_GROUND_FILES[usize::from(gkind)];
         let map = loaded
@@ -3372,7 +3380,7 @@ pub fn build(
             .files
             .get(map_id as usize)
             .ok_or_else(|| format!("stage file {map_id} missing"))?;
-        let target = ssb_rom::stage::wallpaper(&map, ssb_rom::stage::BONUS_MAP_HEADER)
+        let target = ssb_rom::stage::wallpaper(&map, *ssb_rom::stage::BONUS_MAP_HEADER)
             .ok_or_else(|| format!("stage file {map_id}: no wallpaper"))?;
         if bonus.as_ref().is_none_or(|(t, _, _)| *t != target) {
             let (file, at) = target;
@@ -3404,11 +3412,11 @@ pub fn build(
         ));
         sprites += 1;
     }
-    for file in ssb_rom::sprite::TRAINING_WALLPAPER_FILES {
+    for file in *ssb_rom::sprite::TRAINING_WALLPAPER_FILES {
         add_wallpaper(
             &mut writer,
             file,
-            ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE,
+            *ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE,
             ssb_rom::pack::SpriteDesc::ROLE_NONE,
             0,
         )?;

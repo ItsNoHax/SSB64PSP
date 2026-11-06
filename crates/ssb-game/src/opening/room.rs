@@ -112,19 +112,20 @@ const fn figures(fkinds: [i32; 8]) -> [FighterKind; 8] {
 }
 
 /// `mvOpeningRoomGetPulledFighterKind`'s eight starters.
-pub const PULLED_FIGURES: [FighterKind; 8] =
-    figures(crate::d_arrays::MV_OPENING_ROOM_GET_PULLED_FIGHTER_KIND_FKINDS);
+pub static PULLED_FIGURES: ssb_tables::Decoded<[FighterKind; 8]> = ssb_tables::Decoded::new(|| {
+    figures(*crate::d_arrays::MV_OPENING_ROOM_GET_PULLED_FIGHTER_KIND_FKINDS)
+});
 
 /// `mvOpeningRoomGetDroppedFighterKind`'s, the same eight.
-pub const DROPPED_FIGURES: [FighterKind; 8] =
-    figures(crate::d_arrays::MV_OPENING_ROOM_GET_DROPPED_FIGHTER_KIND_FKINDS);
+pub static DROPPED_FIGURES: ssb_tables::Decoded<[FighterKind; 8]> =
+    ssb_tables::Decoded::new(|| {
+        figures(*crate::d_arrays::MV_OPENING_ROOM_GET_DROPPED_FIGHTER_KIND_FKINDS)
+    });
 
+use crate::d_arrays::MV_OPENING_ROOM_SET_SPOTLIGHT_POSITION_SCALES as SPOTLIGHT_SCALES;
 /// `mvOpeningRoomSetSpotlightPosition`'s translations (times 30) and
 /// scales by `FTKind`.
-const SPOTLIGHT_TRANSLATES: [[f32; 3]; 12] =
-    crate::d_arrays::MV_OPENING_ROOM_SET_SPOTLIGHT_POSITION_TRANSLATES;
-const SPOTLIGHT_SCALES: [[f32; 3]; 12] =
-    crate::d_arrays::MV_OPENING_ROOM_SET_SPOTLIGHT_POSITION_SCALES;
+use crate::d_arrays::MV_OPENING_ROOM_SET_SPOTLIGHT_POSITION_TRANSLATES as SPOTLIGHT_TRANSLATES;
 
 /// The host's displays.
 pub const HOST_TRANSITION_OUTLINE: u16 = 1;
@@ -574,7 +575,7 @@ impl Room {
                     fovy: 39.56115341,
                     near: 128.0,
                     far: 16384.0,
-                    ..Persp::DEFAULT
+                    ..Persp::defaults()
                 },
                 zbuffer: false,
             },

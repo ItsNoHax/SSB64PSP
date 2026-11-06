@@ -25,6 +25,11 @@ pub mod collision;
 mod d_arrays {
     include!(concat!(env!("OUT_DIR"), "/d_arrays.rs"));
 }
+/// The names and counts the port gives the ROM tables' entries (layout
+/// only; the values are in the pack's `TABLES` section).
+pub mod rom_layout {
+    include!(concat!(env!("OUT_DIR"), "/rom_layout.rs"));
+}
 pub mod depth_mask;
 pub mod dl;
 pub mod effect;

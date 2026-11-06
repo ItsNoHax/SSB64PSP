@@ -187,7 +187,7 @@ pub enum WeaponEffect {
 
 /// `dGRPupupuWhispyLeavesEffectAttributes`' position and `rotate.y` per
 /// `lr_players`, from the ROM ([`crate::d_arrays`]).
-const fn pupupu_leaves() -> [(Vec3, f32); 2] {
+fn pupupu_leaves() -> [(Vec3, f32); 2] {
     use crate::d_arrays as d;
     let mut out = [(Vec3::ZERO, 0.0); 2];
     let mut i = 0;
@@ -204,11 +204,12 @@ const fn pupupu_leaves() -> [(Vec3, f32); 2] {
 
 /// `dGRPupupuWhispyLeavesEffectAttributes`, by `lr_players`: the position
 /// and `rotate.y` (`F_CLC_DTOR32`).
-const PUPUPU_LEAVES: [(Vec3, f32); 2] = pupupu_leaves();
+static PUPUPU_LEAVES: ssb_tables::Decoded<[(Vec3, f32); 2]> =
+    ssb_tables::Decoded::new(pupupu_leaves);
 
 /// `dGRPupupuWhispyDustEffectPositions`, from the ROM
 /// ([`crate::d_arrays`]).
-const fn pupupu_dust() -> [Vec3; 2] {
+fn pupupu_dust() -> [Vec3; 2] {
     use crate::d_arrays as d;
     let mut out = [Vec3::ZERO; 2];
     let mut i = 0;
@@ -221,7 +222,7 @@ const fn pupupu_dust() -> [Vec3; 2] {
 }
 
 /// `dGRPupupuWhispyDustEffectPositions`.
-const PUPUPU_DUST: [Vec3; 2] = pupupu_dust();
+static PUPUPU_DUST: ssb_tables::Decoded<[Vec3; 2]> = ssb_tables::Decoded::new(pupupu_dust);
 
 /// `F_CST_DTOR32(180.0F)`: the dust's `rotate.y` when the wind blows left.
 const PUPUPU_DUST_TURN: f32 = 180.0 * ((core::f64::consts::PI / 180.0) as f32);

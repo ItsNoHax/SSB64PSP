@@ -17,11 +17,11 @@ use crate::sound::{self, id};
 use ssb_engine::input::N64Buttons;
 
 /// `mn1PModeSetOptionSpriteColors`'s `selcolors`, `hicolors` and `notcolors`.
-const TAB_COLORS: TabColors = TabColors {
-    sel: crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_SELCOLORS,
-    hi: crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_HICOLORS,
-    not: crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
-};
+static TAB_COLORS: ssb_tables::Decoded<TabColors> = ssb_tables::Decoded::new(|| TabColors {
+    sel: *crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_SELCOLORS,
+    hi: *crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_HICOLORS,
+    not: *crate::d_arrays::MN_1P_MODE_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
+});
 
 /// `llMN1PFileID`.
 pub const FILE_1P: u32 = 0x02;

@@ -35,12 +35,14 @@ impl CamInit {
     /// `dGCCObjVecDefault` and `dGCPerspDefault`'s field of view: what a
     /// scene camera holds once `gcAddXObjForCamera` has given it a view and
     /// a perspective.
-    pub const DEFAULT: CamInit = CamInit {
-        eye: crate::d_arrays::GC_COBJ_VEC_DEFAULT_EYE,
-        at: crate::d_arrays::GC_COBJ_VEC_DEFAULT_AT,
-        up_x: crate::d_arrays::GC_COBJ_VEC_DEFAULT_UP_X[0],
-        fovy: crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0],
-    };
+    pub fn defaults() -> CamInit {
+        CamInit {
+            eye: *crate::d_arrays::GC_COBJ_VEC_DEFAULT_EYE,
+            at: *crate::d_arrays::GC_COBJ_VEC_DEFAULT_AT,
+            up_x: crate::d_arrays::GC_COBJ_VEC_DEFAULT_UP_X[0],
+            fovy: crate::d_arrays::GC_PERSP_DEFAULT_FOVY[0],
+        }
+    }
 
     fn frame(&self) -> Frame {
         [

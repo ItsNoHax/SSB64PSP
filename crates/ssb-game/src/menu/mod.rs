@@ -84,7 +84,7 @@ pub mod common {
     /// `llMNCommonDigit0Sprite` to `...Digit9Sprite`, as
     /// `mnVSModeMakeNumber`'s `number_offsets` lists them.
     #[cfg(test)]
-    pub const DIGITS: [u32; 10] = crate::d_arrays::MN_VS_MODE_MAKE_NUMBER_NUMBER_OFFSETS;
+    pub use crate::d_arrays::MN_VS_MODE_MAKE_NUMBER_NUMBER_OFFSETS as DIGITS;
     pub const PERCENTAGE: u32 = 0xDB30;
     pub const INFINITY: u32 = 0xDC48;
     pub const ARROW_R: u32 = 0xDD90;

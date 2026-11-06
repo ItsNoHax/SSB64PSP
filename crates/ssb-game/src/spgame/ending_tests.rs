@@ -80,7 +80,7 @@ fn congratulations_waits_eight_ticks_then_fades_ninety_and_ends_five_frames_afte
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn the_challenger_takes_the_scene_light() {
     use super::intro::FighterLight::Scene;
-    let b = crate::d_arrays::SC_1P_CHALLENGER_LIGHTS1;
+    let b = *crate::d_arrays::SC_1P_CHALLENGER_LIGHTS1;
     assert_eq!(b[0..3], b[4..7], "ambient colc");
     assert_eq!(b[8..11], b[12..15], "light colc");
     assert_eq!([b[3], b[7], b[11], b[15], b[19]], [0; 5], "pads");

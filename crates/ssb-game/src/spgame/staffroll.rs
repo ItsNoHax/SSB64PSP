@@ -67,9 +67,9 @@ pub const ROLL_END_WAIT: i32 = 60;
 /// (default `dGCPerspDefault`) projection.
 pub const CAMERA_EYE: [f32; 3] = [0.0, 0.0, 580.0];
 pub const CAMERA_FOVY: f32 = 50.0;
-pub const CAMERA_ASPECT: f32 = crate::results_scene::PERSP_ASPECT;
-pub const CAMERA_NEAR: f32 = crate::results_scene::PERSP_NEAR;
-pub const CAMERA_FAR: f32 = crate::results_scene::PERSP_FAR;
+pub use crate::results_scene::PERSP_ASPECT as CAMERA_ASPECT;
+pub use crate::results_scene::PERSP_FAR as CAMERA_FAR;
+pub use crate::results_scene::PERSP_NEAR as CAMERA_NEAR;
 /// Both cameras' viewport.
 pub const VIEWPORT: [f32; 4] = [20.0, 20.0, 620.0, 460.0];
 /// `scStaffrollNameProcDisplay` and `scStaffrollJobProcDisplay`'s PRIM.
@@ -87,7 +87,7 @@ pub const BRACKET_RIGHT: [f32; 2] = [588.0, 30.0];
 /// `gsDPPipeSync`, `gsDPSetCycleType`, `gsDPSetRenderMode`,
 /// `gsDPSetFillColor`, four `gsDPFillRectangle`s and `gsSPEndDisplayList`,
 /// two words each.
-const TEXT_BOX_LIST: [u32; 18] = crate::d_arrays::SC_STAFFROLL_TEXT_BOX_DISPLAY_LIST;
+use crate::d_arrays::SC_STAFFROLL_TEXT_BOX_DISPLAY_LIST as TEXT_BOX_LIST;
 /// The word index of `gsDPSetFillColor`'s second word.
 const TEXT_BOX_FILL_COLOR_WORD: usize = 7;
 /// The word index of the first `gsDPFillRectangle`.
@@ -100,7 +100,7 @@ const fn widen_5bit(c: u32) -> u8 {
 }
 
 /// `GPACK_FILL16(GPACK_RGBA5551(..))`: the fill colour as 8-bit channels.
-const fn text_box_color() -> [u8; 3] {
+fn text_box_color() -> [u8; 3] {
     let fill = TEXT_BOX_LIST[TEXT_BOX_FILL_COLOR_WORD] >> 16;
     [
         widen_5bit((fill >> 11) & 0x1F),
@@ -111,11 +111,11 @@ const fn text_box_color() -> [u8; 3] {
 
 /// `dSCStaffrollTextBoxDisplayList`'s fill colour and rectangles
 /// (`G_CYC_FILL`, both corners inclusive).
-pub const TEXT_BOX_COLOR: [u8; 3] = text_box_color();
+pub static TEXT_BOX_COLOR: ssb_tables::Decoded<[u8; 3]> = ssb_tables::Decoded::new(text_box_color);
 /// `gsDPFillRectangle(ulx, uly, lrx, lry)`'s corners, both inclusive: the
 /// command packs `lrx`, `lry` in its first word and `ulx`, `uly` in its
 /// second, each as 10.2 fixed point.
-const fn text_box_rects() -> [[i32; 4]; 4] {
+fn text_box_rects() -> [[i32; 4]; 4] {
     let mut out = [[0; 4]; 4];
     let mut i = 0;
     while i < 4 {
@@ -132,7 +132,8 @@ const fn text_box_rects() -> [[i32; 4]; 4] {
     out
 }
 
-pub const TEXT_BOX_RECTS: [[i32; 4]; 4] = text_box_rects();
+pub static TEXT_BOX_RECTS: ssb_tables::Decoded<[[i32; 4]; 4]> =
+    ssb_tables::Decoded::new(text_box_rects);
 /// `scStaffrollHighlightProcDisplay`'s fill colour.
 pub const HIGHLIGHT_COLOR: [u8; 3] = [0x80, 0x00, 0x00];
 /// The role and company texts' colours.
@@ -319,21 +320,21 @@ impl Credits {
         use super::Unlock;
         use crate::d_arrays as d;
         if unlock_mask & Unlock::Luigi.mask() == 0 {
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_LUIGI);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_LUIGI);
         }
         if unlock_mask & Unlock::Purin.mask() == 0 {
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_PURIN);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_PURIN);
         }
         if unlock_mask & Unlock::Captain.mask() == 0 {
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_CAPTAIN);
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_FZERO);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_CAPTAIN);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_FZERO);
         }
         if unlock_mask & Unlock::Ness.mask() == 0 {
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_NESS);
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_EARTHBOUND);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_NESS);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_EARTHBOUND);
         }
         if unlock_mask & Unlock::Inishie.mask() == 0 {
-            self.hide(&d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_CLASSICMARIO);
+            self.hide(&*d::SC_STAFFROLL_TRY_HIDE_UNLOCKS_CLASSICMARIO);
         }
     }
 }
@@ -1203,9 +1204,9 @@ fn camera_matrix(at: [f32; 3]) -> Mtx {
         ],
     ];
     let cot = sy_persp_cot(CAMERA_FOVY);
-    let (near, far, scale) = (CAMERA_NEAR, CAMERA_FAR, 1.0);
+    let (near, far, scale) = (*CAMERA_NEAR, *CAMERA_FAR, 1.0);
     let persp = [
-        [(cot / CAMERA_ASPECT) * scale, 0.0, 0.0, 0.0],
+        [(cot / *CAMERA_ASPECT) * scale, 0.0, 0.0, 0.0],
         [0.0, cot * scale, 0.0, 0.0],
         [0.0, 0.0, ((near + far) * scale) / (near - far), -scale],
         [0.0, 0.0, (2.0 * near * far * scale) / (near - far), 0.0],
@@ -1248,7 +1249,7 @@ mod camera_tests {
         let m = camera_matrix(at);
         let cot = ssb_engine::math::sy_persp_cot(CAMERA_FOVY);
         assert_eq!(m[1][1], cot);
-        assert_eq!(m[0][0], cot / CAMERA_ASPECT);
+        assert_eq!(m[0][0], cot / *CAMERA_ASPECT);
         let exact = 1.0 / (CAMERA_FOVY.to_radians() * 0.5).tan();
         assert!(cot != exact && (cot - exact).abs() < 2e-3 * exact);
     }

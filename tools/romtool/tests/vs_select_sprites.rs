@@ -14,7 +14,7 @@ fn every_vs_select_sprite_is_packed() {
     for &(file, offset) in layer::SPRITES {
         assert!(packed(file, offset), "{file}+{offset:#x}");
     }
-    for &(file, list) in layer::SPRITE_LISTS {
+    for &(file, list) in layer::SPRITE_LISTS.iter() {
         for &offset in list.iter().filter(|&&o| o != 0) {
             assert!(packed(file, offset), "{file}+{offset:#x}");
         }
@@ -64,7 +64,7 @@ fn every_1p_select_sprite_is_packed() {
     for &(file, offset) in one::SPRITES {
         assert!(packed(file, offset), "{file}+{offset:#x}");
     }
-    for &(file, list) in one::SPRITE_LISTS {
+    for &(file, list) in one::SPRITE_LISTS.iter() {
         for &offset in list {
             assert!(packed(file, offset), "{file}+{offset:#x}");
         }

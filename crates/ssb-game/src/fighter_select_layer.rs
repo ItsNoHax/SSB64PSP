@@ -54,19 +54,21 @@ pub const SPRITES: &[(u32, u32)] = &[(FILE_GAME_MODES, TRAINING_MODE_TEXT)];
 const DL_CURSOR: u8 = 32;
 const DL_PUCK: u8 = 33;
 /// `mnPlayers1PTrainingMakeCursor`'s `priorities`, by port.
-const CURSOR_PRIORITIES: [u32; 4] = d::MN_PLAYERS_1P_TRAINING_MAKE_CURSOR_PRIORITIES;
+use d::MN_PLAYERS_1P_TRAINING_MAKE_CURSOR_PRIORITIES as CURSOR_PRIORITIES;
 /// `mnPlayers1PTrainingMakePuck`'s `dropped_priorities` and
 /// `held_priorities`, by port.
-const PUCK_DROPPED_PRIORITIES: [u32; 4] =
-    rom::unsigned(d::MN_PLAYERS_1P_TRAINING_MAKE_PUCK_DROPPED_PRIORITIES);
-const PUCK_HELD_PRIORITIES: [u32; 4] =
-    rom::unsigned(d::MN_PLAYERS_1P_TRAINING_MAKE_PUCK_HELD_PRIORITIES);
+static PUCK_DROPPED_PRIORITIES: ssb_tables::Decoded<[u32; 4]> = ssb_tables::Decoded::new(|| {
+    rom::unsigned(*d::MN_PLAYERS_1P_TRAINING_MAKE_PUCK_DROPPED_PRIORITIES)
+});
+static PUCK_HELD_PRIORITIES: ssb_tables::Decoded<[u32; 4]> = ssb_tables::Decoded::new(|| {
+    rom::unsigned(*d::MN_PLAYERS_1P_TRAINING_MAKE_PUCK_HELD_PRIORITIES)
+});
 /// `mnPlayers1PTrainingUpdateCursorGrabPriorities`' `priorities`.
-const GRAB_PRIORITIES: [u32; 4] =
-    d::MN_PLAYERS_1P_TRAINING_UPDATE_CURSOR_GRAB_PRIORITIES_PRIORITIES;
+use d::MN_PLAYERS_1P_TRAINING_UPDATE_CURSOR_GRAB_PRIORITIES_PRIORITIES as GRAB_PRIORITIES;
 /// `mnPlayers1PTrainingUpdateCursorPlacementPriorities`' `unheld_priorities`.
-const PLACEMENT_PRIORITIES: [u32; 4] =
-    rom::unsigned(d::MN_PLAYERS_1P_TRAINING_UPDATE_CURSOR_PLACEMENT_PRIORITIES_UNHELD_PRIORITIES);
+static PLACEMENT_PRIORITIES: ssb_tables::Decoded<[u32; 4]> = ssb_tables::Decoded::new(|| {
+    rom::unsigned(*d::MN_PLAYERS_1P_TRAINING_UPDATE_CURSOR_PLACEMENT_PRIORITIES_UNHELD_PRIORITIES)
+});
 
 /// `mnPlayers1PTrainingMakeGate`'s card corner, by slot.
 const CARD_POS: [(f32, f32); 2] = [(53.0, 127.0), (185.0, 127.0)];
@@ -125,7 +127,7 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         View {
-            portrait_x: vs::PORTRAIT_START_X,
+            portrait_x: *vs::PORTRAIT_START_X,
             glow: 0,
             glow_up: false,
             ready_blink: 0,

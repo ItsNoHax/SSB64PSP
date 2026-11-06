@@ -34,7 +34,7 @@ use crate::weapon::{WeaponKind, WeaponSpawn};
 
 /// `FTKIRBY_JUMPAERIAL_VEL_MUL` and `dFTKirbyJumpAerialFVelocities`.
 pub const JUMPAERIAL_VEL_MUL: f32 = 0.8;
-pub const JUMPAERIAL_VELOCITIES: [f32; 4] = crate::d_arrays::FT_KIRBY_JUMP_AERIAL_F_VELOCITIES;
+pub use crate::d_arrays::FT_KIRBY_JUMP_AERIAL_F_VELOCITIES as JUMPAERIAL_VELOCITIES;
 /// `FTCOMMON_JUMPAERIAL_STICK_RANGE_MIN`, `..._TURN_STICK_RANGE_MIN`,
 /// `..._TURN_FRAMES` and `..._TURN_INVERT_LR_WAIT`.
 pub const JUMPAERIAL_STICK_RANGE_MIN: i32 = 53;

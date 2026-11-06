@@ -8,7 +8,7 @@ use crate::rng;
 use crate::stale::WeaponStale;
 use crate::team::TeamRules;
 use crate::weapon::{
-    MapSurface, MapSurfaceKind, WeaponKind, WeaponPool, WeaponSpawn, MARIO_FIREBALL_LIFETIME,
+    MapSurface, MapSurfaceKind, WeaponKind, WeaponPool, WeaponSpawn, FIREBALL_ATTRIBUTES,
 };
 
 /// Records the weapon effects it is handed.
@@ -219,7 +219,7 @@ fn a_star_survives_its_set_off_and_a_cutter_does_not() {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_fireball_makes_its_dust_on_the_frame_it_expires() {
-    let lifetime = std::hint::black_box(MARIO_FIREBALL_LIFETIME);
+    let lifetime = std::hint::black_box(FIREBALL_ATTRIBUTES[0].lifetime);
     let mut pool = WeaponPool::default();
     pool.spawn(spawn(WeaponKind::MarioFireball, 0, 0.0, 1.0));
     let mut last = Vec3::ZERO;
@@ -244,7 +244,7 @@ fn a_fireball_makes_its_dust_on_the_frame_it_expires() {
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn effects_are_made_in_link_order() {
-    let lifetime = std::hint::black_box(MARIO_FIREBALL_LIFETIME);
+    let lifetime = std::hint::black_box(FIREBALL_ATTRIBUTES[0].lifetime);
     let mut pool = WeaponPool::default();
     // Slot 0: Luigi's Fireball (80 frames); slot 1: Mario's (140).
     pool.spawn(spawn(WeaponKind::LuigiFireball, 0, 0.0, 1.0));

@@ -195,10 +195,12 @@ fn entrant(kind: FighterKind, spawn: u16, level: u8, port: u8) -> Entrant {
 
 /// The demos' battle state: `dSCManagerDefaultBattleState`'s rules (every
 /// item at middle appearance), no interface.
-const RULES: VsRules = VsRules {
-    demo: true,
-    ..VsRules::DEFAULT
-};
+fn rules() -> VsRules {
+    VsRules {
+        demo: true,
+        ..VsRules::defaults()
+    }
+}
 
 /// `scExplainStartScene` and `scExplainFuncStart`. `false` when the pack
 /// or the scene's sprites are missing.
@@ -225,7 +227,7 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
     // `syUtilsSetRandomSeedPtr(&dSCExplainRandomSeed1)`: the overlay's
     // seed, 1 on every load.
     let seed_outside = ssb_game::rng::seed();
-    ssb_game::rng::set_seed(explain::RANDOM_SEED);
+    ssb_game::rng::set_seed(*explain::RANDOM_SEED);
     // `scExplainSetBattleState`: Mario and Luigi on players 1 and 2's
     // spawns.
     let mut roster: Roster = [None; 4];
@@ -233,7 +235,7 @@ pub(crate) fn start_explain(s: &mut Session, pack: Option<&Pack<'_>>) -> bool {
         roster[port] = Some(entrant(kind, port as u16, 3, port as u8));
     }
     ssb_game::item::set_explain(true);
-    s.enter(pack, explain::GKIND, &roster, Some(RULES));
+    s.enter(pack, explain::GKIND, &roster, Some(rules()));
     s.scene_gkind = explain::GKIND;
     let Some(w) = s.world.as_deref_mut() else {
         ssb_game::item::set_explain(false);
@@ -432,7 +434,7 @@ pub(crate) fn start_auto_demo(s: &mut Session, pack: Option<&Pack<'_>>) -> bool 
             port as u8,
         ));
     }
-    s.enter(pack, setup.gkind, &roster, Some(RULES));
+    s.enter(pack, setup.gkind, &roster, Some(rules()));
     s.scene_gkind = setup.gkind;
     let Some(stage) = p.stage(s.training_stage) else {
         return false;
@@ -865,7 +867,7 @@ fn make_battle(s: &mut Session, p: &Pack<'_>, b: &ssb_game::opening::fighters::B
         // `dSCManagerDefaultBattleState`'s players: costume 0, level 3.
         roster[port] = Some(entrant(pl.kind, pl.spawn, 3, port as u8));
     }
-    s.enter(Some(p), b.gkind, &roster, Some(RULES));
+    s.enter(Some(p), b.gkind, &roster, Some(rules()));
     s.scene_gkind = b.gkind;
     let Some(w) = s.world.as_deref_mut() else {
         return;

@@ -372,9 +372,9 @@ impl VsOptionsMenu {
     /// `envcolor` from the pair's `prim`, the sprite colour from its `env`.
     fn bubble(&self, f: &mut impl FnMut(Draw), option: VsOption, x: f32, y: f32) {
         let [env, prim] = if self.option == option {
-            crate::d_arrays::MN_VS_OPTIONS_SET_OPTION_SPRITE_COLORS_HICOLORS
+            *crate::d_arrays::MN_VS_OPTIONS_SET_OPTION_SPRITE_COLORS_HICOLORS
         } else {
-            crate::d_arrays::MN_VS_OPTIONS_SET_OPTION_SPRITE_COLORS_NOTCOLORS
+            *crate::d_arrays::MN_VS_OPTIONS_SET_OPTION_SPRITE_COLORS_NOTCOLORS
         };
         f(Draw::Sprite(
             Piece::clear(FILE_VS_OPTIONS, sprite::BUBBLE, x, y)
@@ -473,7 +473,7 @@ fn damage_digits(f: &mut impl FnMut(Draw), damage: i32, y: f32) {
         damage,
         220.0,
         y,
-        &crate::d_arrays::MN_VS_OPTIONS_MAKE_DAMAGE_DIGITS_COLORS,
+        &*crate::d_arrays::MN_VS_OPTIONS_MAKE_DAMAGE_DIGITS_COLORS,
         &crate::d_arrays::MN_VS_OPTIONS_MAKE_DAMAGE_DIGIT_S_OBJS_DIGIT_OFFSETS,
         3,
     );

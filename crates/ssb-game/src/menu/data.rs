@@ -15,11 +15,11 @@ use crate::spgame::Unlock;
 use ssb_engine::input::N64Buttons;
 
 /// `mnDataSetOptionSpriteColors`'s `selcolors`, `hicolors` and `notcolors`.
-const TAB_COLORS: TabColors = TabColors {
-    sel: crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_SELCOLORS,
-    hi: crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_HICOLORS,
-    not: crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
-};
+static TAB_COLORS: ssb_tables::Decoded<TabColors> = ssb_tables::Decoded::new(|| TabColors {
+    sel: *crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_SELCOLORS,
+    hi: *crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_HICOLORS,
+    not: *crate::d_arrays::MN_DATA_SET_OPTION_SPRITE_COLORS_NOTCOLORS,
+});
 
 /// `llMNData*Sprite`.
 pub mod sprite {

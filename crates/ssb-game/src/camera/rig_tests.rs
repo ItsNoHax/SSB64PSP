@@ -331,7 +331,7 @@ fn a_reborn_fighters_interest_carries_its_zoom_range() {
         s.camera,
         1.0,
     );
-    let adjust = super::super::ONE_PLAYER_ZOOM;
+    let adjust = *super::super::ONE_PLAYER_ZOOM;
     assert_eq!(normal.1, 850.0 * adjust);
     assert_eq!(reborn.1, 850.0 * adjust * 0.6);
     assert!(reborn.0.x < normal.0.x);

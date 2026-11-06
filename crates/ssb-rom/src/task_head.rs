@@ -7,10 +7,26 @@
 
 use crate::effect::{MANAGER_EFFECT_DISPLAYS, MANAGER_EFFECT_DL_LINKS, MANAGER_EFFECT_KEYS};
 
-// `WEAPON_DESC_FLAGS`: each `ll*WeaponAttributes` record's
-// `(attributes file, attributes offset, WPDesc.flags)`, generated at build
-// time from the user's ROM by `crates/ssb-tablegen` (never committed).
-include!(concat!(env!("OUT_DIR"), "/weapon_tables.rs"));
+use crate::rom_layout::WEAPON_COUNT;
+
+/// `(attributes file, attributes offset, WPDesc.flags, WPAttributes.data)`.
+pub type WeaponDescFlags = (u32, u32, u8, Option<(u32, u32)>);
+
+/// Each weapon's `[attributes file, attributes offset, WPDesc.flags, data
+/// present, data file, data offset]` (`TableId::WeaponDescs`).
+static WEAPON_DESCS: ssb_tables::Table<[[u32; 6]; WEAPON_COUNT]> =
+    ssb_tables::Table::new(ssb_tables::TableId::WeaponDescs);
+
+/// Each `ll*WeaponAttributes` record's `(attributes file, attributes
+/// offset, WPDesc.flags, WPAttributes.data)`, read from the pack's
+/// `TABLES` section.
+pub static WEAPON_DESC_FLAGS: ssb_tables::Decoded<[WeaponDescFlags; WEAPON_COUNT]> =
+    ssb_tables::Decoded::new(|| {
+        core::array::from_fn(|i| {
+            let [file, at, flags, present, df, doff] = WEAPON_DESCS[i];
+            (file, at, flags as u8, (present != 0).then_some((df, doff)))
+        })
+    });
 
 /// `lbCommonDObjScaleXProcDisplay` (`lb/lbcommon.c:2067`): walks the whole
 /// tree with `lbCommonDrawDObjScaleX`, which puts every node's matrix and
@@ -45,8 +61,8 @@ pub struct Head1Effect {
 pub fn whole_head1_effects() -> impl Iterator<Item = Head1Effect> {
     MANAGER_EFFECT_KEYS
         .iter()
-        .zip(MANAGER_EFFECT_DISPLAYS)
-        .zip(MANAGER_EFFECT_DL_LINKS)
+        .zip(MANAGER_EFFECT_DISPLAYS.iter().copied())
+        .zip(MANAGER_EFFECT_DL_LINKS.iter())
         .filter(|((_, display), _)| WHOLE_HEAD1_EFFECT_DISPLAYS.contains(display))
         .map(|((&key, _), link)| Head1Effect {
             key,

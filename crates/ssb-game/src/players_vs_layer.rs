@@ -49,36 +49,36 @@ pub(crate) mod common {
     use crate::d_arrays as g;
 
     /// `mnPlayersVSMakePlayerKind`'s `offsets`: `1PText` to `4PText`.
-    pub const TEXT_1P: [u32; 4] = g::MN_PLAYERS_VS_MAKE_PLAYER_KIND_OFFSETS;
+    pub use g::MN_PLAYERS_VS_MAKE_PLAYER_KIND_OFFSETS as TEXT_1P;
     pub const TEXT_CP: u32 = 0xFF8;
     pub const HANDICAP_TEXT: u32 = 0x1108;
     pub const CP_LEVEL_TEXT: u32 = 0x1218;
     pub const START_TEXT: u32 = 0x1378;
     pub const PRESS_TEXT: u32 = 0x14D8;
     /// `mnPlayersVSMakeNameAndEmblem`'s `name_offsets`, by fighter kind.
-    pub const NAMES: [u32; 12] = g::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_NAME_OFFSETS;
+    pub use g::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_NAME_OFFSETS as NAMES;
     pub const INFINITY_DARK: u32 = 0x3EF0;
     pub const TIME_SELECTOR: u32 = 0x48B0;
     pub const STOCK_SELECTOR: u32 = 0x5270;
     /// `mnPlayersVSMakeGameRuleNumber`'s `offsets`: `0DarkSprite` to
     /// `9DarkSprite`.
-    pub const DARK_DIGITS: [u32; 10] = g::MN_PLAYERS_VS_MAKE_GAME_RULE_NUMBER_OFFSETS;
-    /// `mnPlayersVSUpdatePlayerKindSelect`'s `offsets`: `HmnLabel`,
-    /// `CPLabel`, `NALabel`, by player kind.
-    pub const KIND_LABELS: [u32; 3] = g::MN_PLAYERS_VS_UPDATE_PLAYER_KIND_SELECT_OFFSETS;
+    pub use g::MN_PLAYERS_VS_MAKE_GAME_RULE_NUMBER_OFFSETS as DARK_DIGITS;
     /// `mnPlayersVSUpdateCursor`'s `cursor_offsets`: `CursorHandPoint`,
     /// `...Grab`, `...Hover`, by cursor status.
-    pub const CURSORS: [u32; 3] = g::MN_PLAYERS_VS_UPDATE_CURSOR_CURSOR_OFFSETS;
+    pub use g::MN_PLAYERS_VS_UPDATE_CURSOR_CURSOR_OFFSETS as CURSORS;
     /// `mnPlayersVSUpdateCursor`'s `num_offsets`, by port.
-    pub const TEXT_GRADIENT: [u32; 4] = g::MN_PLAYERS_VS_UPDATE_CURSOR_NUM_OFFSETS;
+    pub use g::MN_PLAYERS_VS_UPDATE_CURSOR_NUM_OFFSETS as TEXT_GRADIENT;
+    /// `mnPlayersVSUpdatePlayerKindSelect`'s `offsets`: `HmnLabel`,
+    /// `CPLabel`, `NALabel`, by player kind.
+    pub use g::MN_PLAYERS_VS_UPDATE_PLAYER_KIND_SELECT_OFFSETS as KIND_LABELS;
     /// `mnPlayersVSUpdatePuck`'s `offsets`: `1PPuck` to `4PPuck`, then
     /// `CPPuck`.
-    pub const PUCKS: [u32; 5] = g::MN_PLAYERS_VS_UPDATE_PUCK_OFFSETS;
+    pub use g::MN_PLAYERS_VS_UPDATE_PUCK_OFFSETS as PUCKS;
     pub const DOOR_LEFT: u32 = 0xCDB0;
     pub const DOOR_RIGHT: u32 = 0xDFA0;
     /// `mnPlayersVSMakeTeamSelect`'s `offsets`: `RedLabel`, `BlueLabel`,
     /// `GreenLabel`, by team.
-    pub const TEAM_LABELS: [u32; 3] = g::MN_PLAYERS_VS_MAKE_TEAM_SELECT_OFFSETS;
+    pub use g::MN_PLAYERS_VS_MAKE_TEAM_SELECT_OFFSETS as TEAM_LABELS;
     pub const ARROW_L: u32 = 0xECE8;
     pub const ARROW_R: u32 = 0xEDC8;
     pub const READY_TEXT: u32 = 0xF448;
@@ -89,24 +89,23 @@ pub(crate) mod common {
 
 /// `mnPlayersVSMakeHandicapLevelValue`'s `offsets`:
 /// `llMNCommonDigit0Sprite` to `...Digit9Sprite`.
-const MN_DIGITS: [u32; 10] = crate::d_arrays::MN_PLAYERS_VS_MAKE_HANDICAP_LEVEL_VALUE_OFFSETS;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_HANDICAP_LEVEL_VALUE_OFFSETS as MN_DIGITS;
 const MN_COLON: u32 = 0xDCF0;
 /// `mnPlayersVSMakeNameAndEmblem`'s `emblem_offsets`, by fighter kind.
-pub(crate) const EMBLEMS: [u32; 12] =
-    crate::d_arrays::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_EMBLEM_OFFSETS;
+pub(crate) use crate::d_arrays::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_EMBLEM_OFFSETS as EMBLEMS;
 pub(crate) const STONE_BACKGROUND: u32 = 0x440;
 /// `mnPlayersVSMakeLabels`' `offsets`: `FreeForAllTextSprite`,
 /// `TeamBattleTextSprite`.
-const GAME_MODE_TEXT: [u32; 2] = crate::d_arrays::MN_PLAYERS_VS_MAKE_LABELS_OFFSETS;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_LABELS_OFFSETS as GAME_MODE_TEXT;
 /// `llMNPlayersPortraits*` offsets.
 const WHITE_SQUARE: u32 = 0x6F0;
 const QUESTION_MARK: u32 = 0xF68;
 const FIRE_BG: u32 = 0x24D0;
 /// `mnPlayersVSMakePortrait`'s `offsets`, by fighter kind.
-const PORTRAIT_SPRITES: [u32; 12] = crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_OFFSETS;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_OFFSETS as PORTRAIT_SPRITES;
 /// `mnPlayersVSMakePortraitShadow`'s `offsets`, by fighter kind (the
 /// unlocked fighters' entries are 0 and never read).
-const SHADOW_SPRITES: [u32; 12] = crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_SHADOW_OFFSETS;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_PORTRAIT_SHADOW_OFFSETS as SHADOW_SPRITES;
 
 /// Every sprite the layer names, as `(file, offset)`, for the pack's
 /// check. The gate card is packed through its LUTs.
@@ -135,21 +134,24 @@ pub const SPRITES: &[(u32, u32)] = &[
 
 /// Every sprite list the layer indexes, for the pack's check (0 entries are
 /// never read).
-pub const SPRITE_LISTS: &[(u32, &[u32])] = &[
-    (FILE_PLAYERS_COMMON, &common::TEXT_1P),
-    (FILE_PLAYERS_COMMON, &common::NAMES),
-    (FILE_PLAYERS_COMMON, &common::DARK_DIGITS),
-    (FILE_PLAYERS_COMMON, &common::KIND_LABELS),
-    (FILE_PLAYERS_COMMON, &common::CURSORS),
-    (FILE_PLAYERS_COMMON, &common::TEXT_GRADIENT),
-    (FILE_PLAYERS_COMMON, &common::PUCKS),
-    (FILE_PLAYERS_COMMON, &common::TEAM_LABELS),
-    (FILE_MN_COMMON, &MN_DIGITS),
-    (FILE_EMBLEMS, &EMBLEMS),
-    (FILE_GAME_MODES, &GAME_MODE_TEXT),
-    (FILE_PORTRAITS, &PORTRAIT_SPRITES),
-    (FILE_PORTRAITS, &SHADOW_SPRITES),
-];
+pub static SPRITE_LISTS: ssb_tables::Decoded<alloc::vec::Vec<(u32, &[u32])>> =
+    ssb_tables::Decoded::new(|| {
+        alloc::vec![
+            (FILE_PLAYERS_COMMON, common::TEXT_1P.get()),
+            (FILE_PLAYERS_COMMON, common::NAMES.get()),
+            (FILE_PLAYERS_COMMON, common::DARK_DIGITS.get()),
+            (FILE_PLAYERS_COMMON, common::KIND_LABELS.get()),
+            (FILE_PLAYERS_COMMON, common::CURSORS.get()),
+            (FILE_PLAYERS_COMMON, common::TEXT_GRADIENT.get()),
+            (FILE_PLAYERS_COMMON, common::PUCKS.get()),
+            (FILE_PLAYERS_COMMON, common::TEAM_LABELS.get()),
+            (FILE_MN_COMMON, MN_DIGITS.get()),
+            (FILE_EMBLEMS, EMBLEMS.get()),
+            (FILE_GAME_MODES, GAME_MODE_TEXT.get()),
+            (FILE_PORTRAITS, PORTRAIT_SPRITES.get()),
+            (FILE_PORTRAITS, SHADOW_SPRITES.get()),
+        ]
+    });
 
 /// The gate card: its file, offset and `mnPlayersVSSetGateLUT`'s LUT count.
 pub const GATE_CARD: (u32, u32, u8) = (FILE_PLAYERS_COMMON, common::RED_CARD, 8);
@@ -158,33 +160,38 @@ pub const GATE_CARD: (u32, u32, u8) = (FILE_PLAYERS_COMMON, common::RED_CARD, 8)
 pub const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// `mnPlayersVSGetNextPortraitX`'s `portrait_pos_x`, by portrait.
-const PORTRAIT_X: [f32; 12] = crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_PORTRAIT_X_PORTRAIT_POS_X;
+use crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_PORTRAIT_X_PORTRAIT_POS_X as PORTRAIT_X;
 /// `mnPlayersVSGetNextPortraitX`'s `portrait_vel`, by portrait.
-const PORTRAIT_VEL: [f32; 12] = crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_PORTRAIT_X_PORTRAIT_VEL;
+use crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_PORTRAIT_X_PORTRAIT_VEL as PORTRAIT_VEL;
 /// `mnPlayersVSSetPortraitWallpaperPosition`'s start `x`, by portrait
 /// (its `pos[].x`). The 1P, Training and Bonus selects' copies of the
 /// portrait tables hold the same values; their layers share these.
-pub(crate) const PORTRAIT_START_X: [f32; 12] =
-    rom::column_x(crate::d_arrays::MN_PLAYERS_VS_SET_PORTRAIT_WALLPAPER_POSITION_POS);
+pub(crate) static PORTRAIT_START_X: ssb_tables::Decoded<[f32; 12]> =
+    ssb_tables::Decoded::new(|| {
+        rom::column_x(*crate::d_arrays::MN_PLAYERS_VS_SET_PORTRAIT_WALLPAPER_POSITION_POS)
+    });
 
 /// `mnPlayersVSMakeLabels`' game-mode label colours.
-const GAME_MODE_COLORS: [[u8; 3]; 2] = crate::d_arrays::MN_PLAYERS_VS_MAKE_LABELS_COLORS;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_LABELS_COLORS as GAME_MODE_COLORS;
 /// `mnPlayersVSMakeTimeSetting`'s `colors`: environment, then primitive.
-const TIME_DIGIT_COLORS: ([u8; 3], [u8; 3]) =
-    rom::env_prim(crate::d_arrays::MN_PLAYERS_VS_MAKE_TIME_SETTING_COLORS);
+static TIME_DIGIT_COLORS: ssb_tables::Decoded<([u8; 3], [u8; 3])> =
+    ssb_tables::Decoded::new(|| {
+        rom::env_prim(*crate::d_arrays::MN_PLAYERS_VS_MAKE_TIME_SETTING_COLORS)
+    });
 /// `mnPlayersVSMakeStockSetting`'s `colors`.
-const STOCK_DIGIT_COLORS: ([u8; 3], [u8; 3]) =
-    rom::env_prim(crate::d_arrays::MN_PLAYERS_VS_MAKE_STOCK_SETTING_COLORS);
+static STOCK_DIGIT_COLORS: ssb_tables::Decoded<([u8; 3], [u8; 3])> =
+    ssb_tables::Decoded::new(|| {
+        rom::env_prim(*crate::d_arrays::MN_PLAYERS_VS_MAKE_STOCK_SETTING_COLORS)
+    });
 /// `mnPlayersVSUpdateCursor`'s `colors`: the number's primitive, then
 /// environment, by player.
-pub(crate) const CURSOR_COLORS: [[[u8; 3]; 2]; 4] =
-    crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_COLORS;
+pub(crate) use crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_COLORS as CURSOR_COLORS;
 /// `mnPlayersVSUpdateCursor`'s `pos`: the number's offset from the hand,
 /// by cursor status.
-pub(crate) const CURSOR_NUMBER_OFFSETS: [(f32, f32); 3] =
-    rom::xy_i(crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_POS);
+pub(crate) static CURSOR_NUMBER_OFFSETS: ssb_tables::Decoded<[(f32, f32); 3]> =
+    ssb_tables::Decoded::new(|| rom::xy_i(*crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_POS));
 /// `mnPlayersVSMakePlayerKind`'s `pos_x`.
-const KIND_TEXT_X: [f32; 4] = crate::d_arrays::MN_PLAYERS_VS_MAKE_PLAYER_KIND_POS_X;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_PLAYER_KIND_POS_X as KIND_TEXT_X;
 /// `mnPlayersVSShutter1PProcDisplay` to `...4P`'s scissors, `[x0, y0, x1,
 /// y1]` (`lbCommonSetSpriteScissor(ulx, lrx, uly, lry)`).
 const SHUTTER_SCISSORS: [[f32; 4]; 4] = [
@@ -512,7 +519,7 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         View {
-            portrait_x: PORTRAIT_START_X,
+            portrait_x: *PORTRAIT_START_X,
             glow: 0,
             glow_up: false,
             ready_blink: 0,
@@ -950,7 +957,7 @@ impl PlayersVs {
             ));
             // `mnPlayersVSMakeTimeSetting`.
             if self.time_value == TIMELIMIT_INFINITE {
-                let (env, prim) = TIME_DIGIT_COLORS;
+                let (env, prim) = *TIME_DIGIT_COLORS;
                 let mut inf = piece(FILE_PLAYERS_COMMON, common::INFINITY_DARK, 194.0, 24.0);
                 inf.prim = Some(prim);
                 inf.env = env;
@@ -963,7 +970,7 @@ impl PlayersVs {
                     23.0,
                     2,
                     &DARK_DIGIT_WIDTHS,
-                    TIME_DIGIT_COLORS,
+                    *TIME_DIGIT_COLORS,
                     &mut put,
                 );
             }
@@ -983,7 +990,7 @@ impl PlayersVs {
                 23.0,
                 2,
                 &DARK_DIGIT_WIDTHS,
-                STOCK_DIGIT_COLORS,
+                *STOCK_DIGIT_COLORS,
                 &mut put,
             );
         }

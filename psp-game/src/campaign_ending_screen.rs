@@ -29,7 +29,7 @@ pub(super) struct LastScenes {
 }
 
 /// `gcMakeCameraGObj`'s default projection (`dGCPerspDefault`).
-const ASPECT: f32 = ssb_game::results_scene::PERSP_ASPECT;
+use ssb_game::results_scene::PERSP_ASPECT as ASPECT;
 const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// Makes a new scene's models and visuals. `false` for the other scenes.
@@ -139,7 +139,7 @@ unsafe fn draw_ending(
     let (eye, at) = (Vec3::new(c[0], c[1], c[2]), Vec3::new(c[3], c[4], c[5]));
     if let Some(room) = pres.last.room.as_ref() {
         gpu.set_viewport_n64(VIEWPORT);
-        let proj = Mat4::sy_persp_fast(c[6], ASPECT, movie::CAMERA_NEAR, movie::CAMERA_FAR);
+        let proj = Mat4::sy_persp_fast(c[6], *ASPECT, movie::CAMERA_NEAR, movie::CAMERA_FAR);
         let view = Mat4::look_at(eye, at, Vec3::Y);
         gpu.set_projection(&proj);
         gpu.reset_modelview();
@@ -167,7 +167,7 @@ unsafe fn draw_ending(
                 FighterLight::Reflect(movie::LIGHT_ANGLE),
                 ModelView {
                     camera: [c[0], c[1], c[2], 0.0, c[3], c[4], c[5], 0.0, 0.0, c[6]],
-                    aspect: ASPECT,
+                    aspect: *ASPECT,
                     yaw: 0.0,
                     fog: None,
                     rsp: RspCamera::Projection,
@@ -203,9 +203,9 @@ unsafe fn draw_staffroll(
     gpu.set_viewport_n64(staffroll::VIEWPORT.map(|v| v * 0.5));
     gpu.set_perspective(
         staffroll::CAMERA_FOVY,
-        staffroll::CAMERA_ASPECT,
-        staffroll::CAMERA_NEAR,
-        staffroll::CAMERA_FAR,
+        *staffroll::CAMERA_ASPECT,
+        *staffroll::CAMERA_NEAR,
+        *staffroll::CAMERA_FAR,
     );
     gpu.reset_modelview();
     st.begin_frame();
@@ -242,8 +242,8 @@ unsafe fn draw_staffroll(
         }
     }
     if s.text_box {
-        for r in staffroll::TEXT_BOX_RECTS {
-            fill(st, r, staffroll::TEXT_BOX_COLOR);
+        for r in *staffroll::TEXT_BOX_RECTS {
+            fill(st, r, *staffroll::TEXT_BOX_COLOR);
         }
     }
     let glyph = |st: &mut DrawState, at: u32, pos: [f32; 2], scale: [f32; 2], color: [u8; 3]| {
@@ -346,7 +346,7 @@ unsafe fn draw_challenger(
             challenger::fighter_light(),
             ModelView {
                 camera: m.camera,
-                aspect: ASPECT,
+                aspect: *ASPECT,
                 yaw: c.rotate_y,
                 // `dGMColScriptsFighterChallenger`: black at full alpha.
                 fog: Some([0, 0, 0, 0xFF]),

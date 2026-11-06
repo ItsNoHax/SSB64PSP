@@ -111,9 +111,7 @@ impl MenuScene {
             MenuScene::SoundTest => &[DATA_HEADER, COMMON_ARROWS_LR, SOUND_TEST],
             MenuScene::Explain => &[crate::explain::SPRITES],
             MenuScene::Startup => &[op::STARTUP_SPRITES],
-            MenuScene::OpeningPortraits => {
-                &[op::PORTRAITS_SET1_SPRITES, op::PORTRAITS_SET2_SPRITES]
-            }
+            MenuScene::OpeningPortraits => op::PORTRAITS_SPRITES.get(),
             MenuScene::OpeningRun => &[op::RUN_SPRITES],
             MenuScene::OpeningCliff | MenuScene::OpeningStandoff => {
                 &[op::STANDOFF_WALLPAPER_SPRITES]

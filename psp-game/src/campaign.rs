@@ -609,7 +609,7 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     s.enter(pack, gkind, &roster, Some(VsRules { rule: ssb_game::battle::Rule::Time,
         time_limit: bonus.state.time_limit, stocks: 0, team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
         skip_entry: true,
-        ..VsRules::DEFAULT }));
+        ..VsRules::defaults() }));
     s.scene_gkind = gkind;
     s.vs_battle = Some(bonus.battle());
     let Some(w) = s.world.as_deref_mut() else {

@@ -28,12 +28,15 @@ pub const COM: usize = 1;
 
 /// `mnPlayers1PTrainingGetFighterKind`'s `fkinds`: the portraits, top row
 /// then bottom.
-pub const PORTRAIT_KINDS: [FighterKind; 12] =
-    fighter_kinds(crate::d_arrays::MN_PLAYERS_1P_TRAINING_GET_FIGHTER_KIND_FKINDS);
+pub static PORTRAIT_KINDS: ssb_tables::Decoded<[FighterKind; 12]> =
+    ssb_tables::Decoded::new(|| {
+        fighter_kinds(*crate::d_arrays::MN_PLAYERS_1P_TRAINING_GET_FIGHTER_KIND_FKINDS)
+    });
 
 /// `mnPlayers1PTrainingGetPortrait`'s `portraits`, indexed by `nFTKind`.
-const KIND_PORTRAITS: [usize; 12] =
-    portrait_ids(crate::d_arrays::MN_PLAYERS_1P_TRAINING_GET_PORTRAIT_PORTRAITS);
+static KIND_PORTRAITS: ssb_tables::Decoded<[usize; 12]> = ssb_tables::Decoded::new(|| {
+    portrait_ids(*crate::d_arrays::MN_PLAYERS_1P_TRAINING_GET_PORTRAIT_PORTRAITS)
+});
 
 /// `nFTKind` ordinals as playable [`FighterKind`]s, checked at compile time.
 const fn fighter_kinds<const N: usize>(v: [i32; N]) -> [FighterKind; N] {
@@ -833,8 +836,7 @@ pub fn portrait_center(kind: FighterKind) -> (f32, f32) {
 
 /// `announce_names` in `mnPlayers*AnnounceFighter`: each playable
 /// fighter's name voice, in [`FighterKind`] order.
-pub const ANNOUNCE_NAMES: [u16; 12] =
-    crate::d_arrays::MN_PLAYERS_1P_TRAINING_ANNOUNCE_FIGHTER_ANNOUNCE_NAMES;
+pub use crate::d_arrays::MN_PLAYERS_1P_TRAINING_ANNOUNCE_FIGHTER_ANNOUNCE_NAMES as ANNOUNCE_NAMES;
 
 /// `mnPlayers*AnnounceFighter`: stops the cursor's last name voice
 /// (`func_80026738_27338(p_sfx)`), plays `nSYAudioFGMMarioDash` and
@@ -845,7 +847,7 @@ pub fn announce_fighter(p_sfx: Option<FgmHandle>, kind: FighterKind) -> Option<F
         sound::stop_fgm(h);
     }
     sound::play_fgm(id::nSYAudioFGMMarioDash);
-    ANNOUNCE_NAMES
+    (*ANNOUNCE_NAMES)
         .get(kind as usize)
         .and_then(|&v| sound::play_fgm(v))
 }

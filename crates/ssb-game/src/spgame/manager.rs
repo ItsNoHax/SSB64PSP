@@ -2,7 +2,7 @@
 use super::*;
 use crate::{costume::costume_common_id, rng::rand_int_range};
 
-pub const KIRBY_MODEL_PARTS: [u8; 12] = crate::d_arrays::SC1P_MANAGER_KIRBY_TEAM_MODEL_PART_IDS;
+pub use crate::d_arrays::SC1P_MANAGER_KIRBY_TEAM_MODEL_PART_IDS as KIRBY_MODEL_PARTS;
 /// A generated `FTKind` table (`s32`) as the port's [`FighterKind`]s.
 const fn challengers<const N: usize>(kinds: [i32; N]) -> [FighterKind; N] {
     let mut out = [FighterKind::Mario; N];
@@ -15,8 +15,9 @@ const fn challengers<const N: usize>(kinds: [i32; N]) -> [FighterKind; N] {
     out
 }
 
-const CHALLENGERS: [FighterKind; 4] =
-    challengers(crate::d_arrays::SC1P_MANAGER_CHALLANGER_FIGHTER_KINDS);
+static CHALLENGERS: ssb_tables::Decoded<[FighterKind; 4]> = ssb_tables::Decoded::new(|| {
+    challengers(*crate::d_arrays::SC1P_MANAGER_CHALLANGER_FIGHTER_KINDS)
+});
 /// A generated `nLBBackupUnlock*` table as the port's [`Unlock`]s.
 const fn newcomers<const N: usize>(kinds: [u32; N]) -> [Unlock; N] {
     let mut out = [Unlock::Luigi; N];
@@ -28,7 +29,8 @@ const fn newcomers<const N: usize>(kinds: [u32; N]) -> [Unlock; N] {
     out
 }
 
-const NEWCOMERS: [Unlock; 4] = newcomers(crate::d_arrays::SC1P_MANAGER_UNLOCK_NEWCOMER_KINDS);
+static NEWCOMERS: ssb_tables::Decoded<[Unlock; 4]> =
+    ssb_tables::Decoded::new(|| newcomers(*crate::d_arrays::SC1P_MANAGER_UNLOCK_NEWCOMER_KINDS));
 
 /// An overlay the host must run to completion before calling `advance`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

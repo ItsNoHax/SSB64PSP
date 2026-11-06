@@ -103,6 +103,7 @@ version = "0.1.0"
 dependencies = [
  "ssb-engine",
  "ssb-tablegen",
+ "ssb-tables",
 ]
 
 [[package]]
@@ -147,6 +148,7 @@ dependencies = [
  "sha1_smol",
  "ssb-engine",
  "ssb-tablegen",
+ "ssb-tables",
 ]
 
 [[package]]

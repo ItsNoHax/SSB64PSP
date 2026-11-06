@@ -27,15 +27,17 @@ pub const EXPLODE_TICKS: u16 = 36;
 
 /// `dEFManagerDeadExplodeEnvColorChild{R,G,B}[player]`: ENV of the blast's
 /// first drawn DObj (`dobj->child`), generated from the ROM.
-pub const DEAD_EXPLODE_ENV_CHILD: [[u8; 3]; 4] = dead_explode_env(3);
+pub static DEAD_EXPLODE_ENV_CHILD: ssb_tables::Decoded<[[u8; 3]; 4]> =
+    ssb_tables::Decoded::new(|| dead_explode_env(3));
 /// `dEFManagerDeadExplodeEnvColorSibling{R,G,B}[player]`: ENV of the third
 /// (`dobj->child->sib_next->sib_next`). The second keeps its display
 /// list's own `G_SETENVCOLOR`.
-pub const DEAD_EXPLODE_ENV_SIBLING: [[u8; 3]; 4] = dead_explode_env(0);
+pub static DEAD_EXPLODE_ENV_SIBLING: ssb_tables::Decoded<[[u8; 3]; 4]> =
+    ssb_tables::Decoded::new(|| dead_explode_env(0));
 
 /// The `[R, G, B]` per player of the three channel arrays from `first`.
-const fn dead_explode_env(first: usize) -> [[u8; 3]; 4] {
-    let c = crate::d_arrays::EF_MANAGER_DEAD_EXPLODE_ENV_COLORS;
+fn dead_explode_env(first: usize) -> [[u8; 3]; 4] {
+    let c = *crate::d_arrays::EF_MANAGER_DEAD_EXPLODE_ENV_COLORS;
     let mut out = [[0; 3]; 4];
     let mut p = 0;
     while p < 4 {

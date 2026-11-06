@@ -337,8 +337,8 @@ pub struct EntryPart {
 
 /// `key`'s `ssb_rom::effect::MANAGER_EFFECT_KEYS` slot, which the pack
 /// keys its own animation by.
-const fn manager_slot(key: (u32, u32)) -> u32 {
-    let keys = ssb_rom::effect::MANAGER_EFFECT_KEYS;
+fn manager_slot(key: (u32, u32)) -> u32 {
+    let keys = &*ssb_rom::effect::MANAGER_EFFECT_KEYS;
     let mut i = 0;
     while i < keys.len() {
         if keys[i].0 == key.0 && keys[i].1 == key.1 {
@@ -349,11 +349,11 @@ const fn manager_slot(key: (u32, u32)) -> u32 {
     panic!("not a manager effect")
 }
 
-const fn manager_part(key: (u32, u32)) -> EntryPart {
+fn manager_part(key: (u32, u32)) -> EntryPart {
     with_anim(key, manager_slot(key))
 }
 
-const fn with_anim(key: (u32, u32), slot: u32) -> EntryPart {
+fn with_anim(key: (u32, u32), slot: u32) -> EntryPart {
     EntryPart {
         key,
         anim_slot: slot,
@@ -368,7 +368,7 @@ const fn with_anim(key: (u32, u32), slot: u32) -> EntryPart {
 
 /// The manager effect at `slot`'s `ssb_rom::effect::MANAGER_EFFECT_KEYS`
 /// key, read from the generated table (`ssb_rom::effect::slot`).
-const fn effect_key(slot: usize) -> (u32, u32) {
+fn effect_key(slot: usize) -> (u32, u32) {
     ssb_rom::effect::MANAGER_EFFECT_KEYS[slot]
 }
 
@@ -378,7 +378,7 @@ const fn effect_key(slot: usize) -> (u32, u32) {
 /// barrel, Samus's capsule, Link's wave and beam, Yoshi's egg, Kirby's star
 /// both ways, Fox's Arwing both ways, Captain Falcon's car, the Poké Ball
 /// both ways and its rays.
-pub const ENTRY_PARTS: [EntryPart; 14] = {
+pub static ENTRY_PARTS: ssb_tables::Decoded<[EntryPart; 14]> = ssb_tables::Decoded::new(|| {
     use ssb_rom::effect::slot;
     [
         manager_part(effect_key(slot::MARIO_ENTRY_DOKAN)),
@@ -438,7 +438,7 @@ pub const ENTRY_PARTS: [EntryPart; 14] = {
             ..manager_part(effect_key(slot::M_BALL_RAYS))
         },
     ]
-};
+});
 
 /// The [`ENTRY_PARTS`] a fighter's entry effect draws: the rightward
 /// tables for `lr == +1`, the leftward ones otherwise
@@ -1709,7 +1709,7 @@ pub fn common_stage_index(pack: &Pack<'_>, gkind: u8) -> Option<u32> {
     if (17..29).contains(&gkind) {
         return pack.stage_of_file(271 + u32::from(gkind - 17));
     }
-    let file = *ssb_rom::stage::COMMON_GROUND_FILES.get(usize::from(gkind))?;
+    let file = *(*ssb_rom::stage::COMMON_GROUND_FILES).get(usize::from(gkind))?;
     pack.stage_of_file(file)
 }
 

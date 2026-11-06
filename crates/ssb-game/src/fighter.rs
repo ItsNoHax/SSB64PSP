@@ -3204,7 +3204,7 @@ mod tests {
                 assert_eq!(shuffle_position(electric, i), Vec2::new(x, y));
             }
         }
-        assert_eq!(crate::d_arrays::FT_PARAM_SHUFFLE_FRAME_INDEX_MAX, [4, 3]);
+        assert_eq!(*crate::d_arrays::FT_PARAM_SHUFFLE_FRAME_INDEX_MAX, [4, 3]);
     }
 
     #[test]

@@ -115,8 +115,8 @@ pub mod room {
 /// top to bottom, then set 1's cover.
 pub mod portraits {
     /// `mvOpeningPortraitsMakeSet1` and `...MakeSet2`'s `offsets`.
-    pub const SET1: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_OFFSETS;
-    pub const SET2: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_OFFSETS;
+    pub use crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_OFFSETS as SET1;
+    pub use crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_OFFSETS as SET2;
     pub const COVER: u32 = 0x2B2D0;
 }
 
@@ -124,7 +124,7 @@ pub mod portraits {
 pub mod run {
     /// The eight fighters' proxy `AnimJoint`s, in `mvOpeningRunMakeFighters`'
     /// order: Mario, Fox, Donkey Kong, Samus, Link, Yoshi, Kirby, Pikachu.
-    pub const FIGHTER_ANIM_JOINTS: [u32; 8] = crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_OFFSETS;
+    pub use crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_OFFSETS as FIGHTER_ANIM_JOINTS;
     pub const WALLPAPER: u32 = 0x58A0;
     pub const CRASH_MOBJSUB: u32 = 0x2AA8;
     pub const CRASH: u32 = 0x35F8;
@@ -225,8 +225,7 @@ pub mod sector {
     pub const GREAT_FOX: u32 = 0xD820;
     pub const GREAT_FOX_ANIM_JOINT: u32 = 0xDA10;
     /// `mvOpeningSectorMakeArwings`' `anim_joints`.
-    pub const ARWING_ANIM_JOINTS: [u32; 3] =
-        crate::d_arrays::MV_OPENING_SECTOR_MAKE_ARWINGS_ANIM_JOINTS;
+    pub use crate::d_arrays::MV_OPENING_SECTOR_MAKE_ARWINGS_ANIM_JOINTS as ARWING_ANIM_JOINTS;
     pub const CAM_ANIM_JOINT: u32 = 0xF9A0;
     pub const COCKPIT: u32 = 0x3CC90;
     /// `llMVOpeningSectorWallpaperSprite` (file 0x4A).
@@ -247,7 +246,19 @@ pub const FILE_START_CAM_ANIM_JOINT: u32 = 0x0;
 pub struct CamAnim {
     pub file: u32,
     pub offset: u32,
-    pub init: CamInit,
+    pub start: CamStart,
+}
+
+/// A [`CamAnim`]'s camera before its script. The default and movie values
+/// carry fields generated from the ROM, so they resolve at run time
+/// ([`CamAnim::init`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CamStart {
+    /// [`CamInit::defaults`].
+    Default,
+    /// [`MOVIE_CAMERA_INIT`].
+    Movie,
+    Fixed(CamInit),
 }
 
 impl CamAnim {
@@ -255,7 +266,16 @@ impl CamAnim {
         CamAnim {
             file,
             offset,
-            init: CamInit::DEFAULT,
+            start: CamStart::Default,
+        }
+    }
+
+    /// The camera's values before the script.
+    pub fn init(&self) -> CamInit {
+        match self.start {
+            CamStart::Default => CamInit::defaults(),
+            CamStart::Movie => *MOVIE_CAMERA_INIT,
+            CamStart::Fixed(init) => init,
         }
     }
 
@@ -270,12 +290,12 @@ impl CamAnim {
 /// `gmCameraMakeDefaultCamera` puts 10000 out from (0, 300, 0). The field
 /// of view is generated from the ROM ([`crate::d_arrays`]); the eye and
 /// `at` are that function's constants.
-pub const MOVIE_CAMERA_INIT: CamInit = CamInit {
+pub static MOVIE_CAMERA_INIT: ssb_tables::Decoded<CamInit> = ssb_tables::Decoded::new(|| CamInit {
     eye: [0.0, 300.0, 10000.0],
     at: [0.0, 300.0, 0.0],
     up_x: 0.0,
     fovy: crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FOVY[0],
-};
+});
 
 /// `mvOpeningRoomInitScene3Cameras`' camera before its script.
 pub const ROOM_SCENE3_INIT: CamInit = CamInit {
@@ -298,11 +318,11 @@ pub const ROOM_CAMERAS: [CamAnim; 4] = [
     CamAnim::new(file::ROOM_SCENE1, 0),
     CamAnim::new(file::ROOM_SCENE2, 0),
     CamAnim {
-        init: ROOM_SCENE3_INIT,
+        start: CamStart::Fixed(ROOM_SCENE3_INIT),
         ..CamAnim::new(file::ROOM_SCENE3, 0)
     },
     CamAnim {
-        init: ROOM_SCENE4_INIT,
+        start: CamStart::Fixed(ROOM_SCENE4_INIT),
         ..CamAnim::new(file::ROOM_SCENE4, 0)
     },
 ];
@@ -324,7 +344,7 @@ pub const RUN_CAMERA: CamAnim = CamAnim::new(file::RUN_MAIN, 0);
 pub const CLIFF_CAMERA: CamAnim = CamAnim::new(file::CLIFF, cliff::CAM_ANIM_JOINT);
 pub const YAMABUKI_CAMERA: CamAnim = CamAnim::new(file::YAMABUKI, yamabuki::CAM_ANIM_JOINT);
 pub const JUNGLE_CAMERA: CamAnim = CamAnim {
-    init: MOVIE_CAMERA_INIT,
+    start: CamStart::Movie,
     ..CamAnim::new(file::JUNGLE, JUNGLE_CAM_ANIM_JOINT)
 };
 pub const YOSTER_CAMERA: CamAnim = CamAnim::new(file::YOSTER, yoster::CAM_ANIM_JOINT);
@@ -493,21 +513,26 @@ pub const STARTUP_SPRITES: SpriteFile = SpriteFile {
     offsets: &[N64_LOGO],
 };
 
-pub const PORTRAITS_SET1_SPRITES: SpriteFile = SpriteFile {
-    file: file::PORTRAITS_SET1,
-    offsets: &[
-        portraits::SET1[0],
-        portraits::SET1[1],
-        portraits::SET1[2],
-        portraits::SET1[3],
-        portraits::COVER,
-    ],
-};
+/// Set 1's four portraits, then the cover.
+static PORTRAITS_SET1_OFFSETS: ssb_tables::Decoded<[u32; 5]> = ssb_tables::Decoded::new(|| {
+    let set1 = *portraits::SET1;
+    [set1[0], set1[1], set1[2], set1[3], portraits::COVER]
+});
 
-pub const PORTRAITS_SET2_SPRITES: SpriteFile = SpriteFile {
-    file: file::PORTRAITS_SET2,
-    offsets: &portraits::SET2,
-};
+/// The portraits scene's two sprite files: set 1 (with the cover), set 2.
+pub static PORTRAITS_SPRITES: ssb_tables::Decoded<[SpriteFile; 2]> =
+    ssb_tables::Decoded::new(|| {
+        [
+            SpriteFile {
+                file: file::PORTRAITS_SET1,
+                offsets: PORTRAITS_SET1_OFFSETS.get(),
+            },
+            SpriteFile {
+                file: file::PORTRAITS_SET2,
+                offsets: portraits::SET2.get(),
+            },
+        ]
+    });
 
 pub const RUN_SPRITES: SpriteFile = SpriteFile {
     file: file::RUN,

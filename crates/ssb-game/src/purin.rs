@@ -25,7 +25,7 @@ use crate::status::{self, AnyStatus, PurinStatus as P, StatusTiming};
 
 /// `FTPURIN_JUMPAERIAL_VEL_MUL` and `dFTPurinJumpAerialFVelocities`.
 pub const JUMPAERIAL_VEL_MUL: f32 = 0.8;
-pub const JUMPAERIAL_VELOCITIES: [f32; 4] = crate::d_arrays::FT_PURIN_JUMP_AERIAL_F_VELOCITIES;
+pub use crate::d_arrays::FT_PURIN_JUMP_AERIAL_F_VELOCITIES as JUMPAERIAL_VELOCITIES;
 /// `FTPURIN_POUND_VEL_BASE` and `FTPURIN_POUND_VEL_MUL`.
 pub const POUND_VEL_BASE: f32 = 65.0;
 pub const POUND_VEL_MUL: f32 = 0.92;

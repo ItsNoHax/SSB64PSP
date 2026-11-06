@@ -191,10 +191,10 @@ pub unsafe fn draw(
         view,
         proj,
         screen: false,
-        planes: lb::BATTLE_PLANES,
+        planes: *lb::BATTLE_PLANES,
         ge_planes: (
-            ssb_game::camera::DEFAULT_NEAR,
-            ssb_game::camera::DEFAULT_FAR,
+            *ssb_game::camera::DEFAULT_NEAR,
+            *ssb_game::camera::DEFAULT_FAR,
         ),
         rect: ssb_engine::coord::n64_rect_to_psp_xywh(ssb_game::camera::BATTLE_VIEWPORT),
     };
@@ -221,8 +221,8 @@ pub unsafe fn draw_screen(
         view: &proj,
         proj: &proj,
         screen: true,
-        planes: lb::BATTLE_PLANES,
-        ge_planes: lb::BATTLE_PLANES,
+        planes: *lb::BATTLE_PLANES,
+        ge_planes: *lb::BATTLE_PLANES,
         rect: ssb_engine::coord::n64_rect_to_psp_xywh(viewport),
     };
     draw_lists(banks, particles, &camera, lists, 0, draw_state);

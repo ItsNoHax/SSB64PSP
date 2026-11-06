@@ -91,14 +91,29 @@ pub struct FighterFile {
     pub specials: [Option<u32>; 4],
 }
 
-// `dFTManagerDataFiles`' main file and `o_attributes` for every `FTKind`,
-// generated at build time from the user's ROM by `crates/ssb-tablegen`
-// (never committed). All 27 `FTKind` ordinals are present, so indexing
-// this by kind is total. The ordering is the enum's, not the file ids':
-// Metal Mario (13) and Giant DK (26) sit far from their base characters in
-// the roster but adjacent to them in the archive, and it is the roster
-// ordering that indexes asset tables elsewhere.
-include!(concat!(env!("OUT_DIR"), "/fighter_files.rs"));
+/// `dFTManagerDataFiles` by `FTKind` (`TableId::FighterFiles`): `[file,
+/// o_attributes, special1..4, present-specials mask]`.
+static FIGHTER_FILE_ROWS: ssb_tables::Table<[[u32; 7]; 27]> =
+    ssb_tables::Table::new(ssb_tables::TableId::FighterFiles);
+
+/// `dFTManagerDataFiles`' main file and `o_attributes` for every `FTKind`,
+/// read from the pack's `TABLES` section. All 27 `FTKind` ordinals are
+/// present, so indexing this by kind is total. The ordering is the enum's,
+/// not the file ids': Metal Mario (13) and Giant DK (26) sit far from their
+/// base characters in the roster but adjacent to them in the archive, and
+/// it is the roster ordering that indexes asset tables elsewhere.
+pub static FIGHTER_FILES: ssb_tables::Decoded<[FighterFile; 27]> = ssb_tables::Decoded::new(|| {
+    core::array::from_fn(|kind| {
+        let r = FIGHTER_FILE_ROWS[kind];
+        FighterFile {
+            kind: kind as u8,
+            name: crate::rom_layout::FIGHTER_NAMES[kind],
+            file: r[0],
+            offset: r[1],
+            specials: core::array::from_fn(|i| (r[6] & 1 << i != 0).then_some(r[2 + i])),
+        }
+    })
+});
 
 /// The body a fighter collides with — `MPObjectColl`.
 ///

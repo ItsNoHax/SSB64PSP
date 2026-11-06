@@ -27,8 +27,8 @@ pub const CRASH: u32 = 0x35F8;
 pub const CAMERA_SLOT: u32 = 0x4000_0000 | (FILE_MAIN << 20);
 
 /// `mvOpeningRunMakeFighters`' `fkinds`.
-pub const KINDS: [FighterKind; 8] = {
-    let fkinds = crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_FKINDS;
+pub static KINDS: ssb_tables::Decoded<[FighterKind; 8]> = ssb_tables::Decoded::new(|| {
+    let fkinds = *crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_FKINDS;
     let mut out = [FighterKind::Mario; 8];
     let mut i = 0;
     while i < 8 {
@@ -36,7 +36,7 @@ pub const KINDS: [FighterKind; 8] = {
         i += 1;
     }
     out
-};
+});
 
 /// `nFTDemoStatusRun` (0x10006) and 0x10007: submotion rows 6 and 7.
 pub const ROW_RUN: u8 = 6;

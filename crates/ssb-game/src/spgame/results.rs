@@ -7,8 +7,7 @@ use super::{bonus::Bonus, BattleState, Difficulty, SceneData, Stage};
 // `crates/ssb-tablegen` (never committed).
 include!(concat!(env!("OUT_DIR"), "/stage_clear_bonus.rs"));
 /// `sc1PStageClearGetNoMissMultiplier`'s `nomiss`, by [`Stage`].
-pub const NO_MISS_MULTIPLIERS: [i32; 14] =
-    crate::d_arrays::SC_1P_STAGE_CLEAR_GET_NO_MISS_MULTIPLIER_NOMISS;
+pub use crate::d_arrays::SC_1P_STAGE_CLEAR_GET_NO_MISS_MULTIPLIER_NOMISS as NO_MISS_MULTIPLIERS;
 
 pub fn bonus_points(id: usize, stage: Stage, difficulty: Difficulty) -> i32 {
     let points = BONUS_POINTS[id];

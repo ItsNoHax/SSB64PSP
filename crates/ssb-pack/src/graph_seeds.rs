@@ -141,7 +141,7 @@ pub fn ground_layer1_graphs(loaded: &Loaded) -> alloc::collections::BTreeMap<(u3
         .flat_map(|stage| &stage.layers)
         .map(|layer| (layer.graph, layer.index))
         .collect();
-    for tree in ssb_rom::bonus2::TREES {
+    for tree in *ssb_rom::bonus2::TREES {
         graphs.insert((ssb_rom::bonus2::FILE, tree[0]), 1);
     }
     for asset in &ssb_rom::ground_obj::OBJECTS {
@@ -877,7 +877,7 @@ pub fn initial_material_for(
         // separately where the two differ).
         ssb_rom::mesh::InitialMaterial::WEAPON_EXTERNAL
     } else if (file, graph_offset) == SHIELD_GRAPH {
-        ssb_rom::mesh::InitialMaterial::SHIELD_EXTERNAL
+        ssb_rom::mesh::InitialMaterial::shield_external()
     } else if EFFECT_XLU_GRAPHS.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial {
             head1: ssb_rom::mesh::Head1Seed::LayerXlu,

@@ -58,7 +58,7 @@ pub fn play_fgm_store_info(f: &mut Fighter, sfx_id: u16) {
 
 /// `dFTMainHitCollisionFGMs`: the hit sound by `fgm_kind` (rows: punch,
 /// kick, coin, burn, shock, slash, fan, bat) and `fgm_level` (columns).
-pub const HIT_COLLISION_FGMS: [[u16; 3]; 8] = crate::d_arrays::FT_MAIN_HIT_COLLISION_FGMS;
+pub use crate::d_arrays::FT_MAIN_HIT_COLLISION_FGMS as HIT_COLLISION_FGMS;
 
 /// `ftMainPlayHitSFX`: the attacker `f` stops its `PlayFGMStoreInfo` sound
 /// and plays the hit sound at its TopN x.
@@ -71,4 +71,4 @@ pub fn play_hit_sfx(f: &mut Fighter, fgm_kind: u8, fgm_level: u8) {
 }
 
 /// `dFTCommonDataDownBounceSFX`, by `FTKind`.
-pub const DOWN_BOUNCE_SFX: [u16; 27] = crate::d_arrays::FT_COMMON_DATA_DOWN_BOUNCE_SFX;
+pub use crate::d_arrays::FT_COMMON_DATA_DOWN_BOUNCE_SFX as DOWN_BOUNCE_SFX;

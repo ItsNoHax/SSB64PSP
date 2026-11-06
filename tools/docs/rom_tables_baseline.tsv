@@ -63,10 +63,12 @@ crates/ssb-rom/src/effect.rs	YOSHI_EGG_LAY_KEY	link-time labels: the egg's file 
 crates/ssb-rom/src/ending.rs	MESSAGE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/ending.rs	MESSAGE_COLLAGE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/ending.rs	STAFFROLL	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
+crates/ssb-rom/src/ending.rs	CONGRA	decoder: reads dMNCongraPictures from the TABLES section (TableId::EndingCongra); its literals are row and column indices
 crates/ssb-rom/src/explain.rs	SPRITES	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/figatree.rs	RATE	port constants: the figatree decoder's fixed-point scales (ftAnimParseDObjFigatree's code)
 crates/ssb-rom/src/figatree.rs	VALUE	port constants: the figatree decoder's fixed-point scales (ftAnimParseDObjFigatree's code)
 crates/ssb-rom/src/fighter.rs	EXPECTED	test fixture
+crates/ssb-rom/src/fighter.rs	FIGHTER_FILES	decoder: reads dFTManagerDataFiles from the TABLES section (TableId::FighterFiles); its literals are column indices
 crates/ssb-rom/src/filter_compensation.rs	COMPENSATED	layout: archive file IDs and texture byte offsets of the textures whose filter compensation runs, the owner's choice (RE-588)
 crates/ssb-rom/src/ground_obj.rs	ANIMS	link-time labels: ll*AnimJoint offsets that the grJungle/grYamabuki/grZebes/grInishie/grCastle/itMonster/itPakkun functions pass as immediates, ordered and named by the port; the dGRPupupuWhispy* entries are indices into the generated arrays
 crates/ssb-rom/src/ground_obj.rs	OBJECTS	link-time labels (ll*DObjDesc offsets that grPupupuInitAll, grJungleMakeTaruCann, ... pass as immediates) plus port fields (display link, instance count, build kind) that no d* array holds; follow-up: derive the object list from the stage init functions
@@ -93,7 +95,6 @@ crates/ssb-rom/src/pack.rs	GAPS	port constant: shell-sort gap sequence
 crates/ssb-rom/src/particle.rs	BANKS	cartridge ROM ranges of each particle bank pair: the linker section symbols that efParticleSetupBankID callers pass as immediates (scripts_lo/hi, textures_lo/hi), named by the port; no d* array holds them
 crates/ssb-rom/src/scene.rs	IDENTITY	port constant: the identity matrix
 crates/ssb-rom/src/scene.rs	INVS	test fixture: matrix inputs
-crates/ssb-rom/src/scene_roots.rs	FIGHTER_MAIN	generated: copies crate::fighter::FIGHTER_FILES (ssb-tablegen fighter_files.rs, read from dFTManagerDataFiles); its literals are the kind count
 crates/ssb-rom/src/scene_roots.rs	JUNGLE_CLIPS	port constants: FTKind values (Donkey 2, Samus 3) with slots resolved from SLOT_NAMES by name; the list is the statuses PSP read traces of the opening jungle battle stream (RE-575), not ROM data
 crates/ssb-rom/src/scene_roots.rs	FIGHTER_SCENE_CLIPS	port constants: FTKind values with slots resolved from SLOT_NAMES by name; the list is the statuses PSP read traces of the opening fighter scenes stream (RE-575), not ROM data
 crates/ssb-rom/src/scene_roots.rs	STAGE_PREVIEW_MODELS	link-time labels: the llStage<Name>File2 and llGRWallpaper*FileID file IDs by gkind, the files each map's header relocates into
@@ -110,8 +111,6 @@ crates/ssb-rom/src/sprite.rs	STOCKS_ZAKO	link-time labels: llFTStocksZakoFileID 
 crates/ssb-rom/src/sprite.rs	TRAINING_TABLES	layout: offsets, counts and strides of the Training sprite tables in their file
 crates/ssb-rom/src/sprite_offsets.rs	BATTLE_PAUSE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/sprite_offsets.rs	GAME_STATUS	layout: file 82's sprite manifest (reloc_data.us.h order), which ssb-tablegen indexes the dIFCommon* sprite tables by; its letters and lamps are what those tables name, and Rod, Frame and RodShadow are code immediates
-crates/ssb-rom/src/stage.rs	EXPLAIN_WALLPAPER_GROUND	link-time labels: GRKind and each map's ll*MapMapHeader offset
-crates/ssb-rom/src/stage.rs	ONE_P_WALLPAPER_GROUNDS	link-time labels: GRKind and each map's ll*MapMapHeader offset
 crates/ssb-rom/src/task_head.rs	HEAD0_DISPLAY_WEAPONS	link-time label: (file ID, ll* offset) key of the weapon object whose display stays head 0
 crates/ssb-rom/src/transition.rs	EXPECTED_FILES	test fixture: the llLBTransition*FileID labels (reloc_data_symbols.us.txt) the generated dLBTransitionDescs is checked against
 crates/ssb-rom/tests/backup.rs	DEFAULT_BACKUP_ROM	layout: the symbol's address and its segment's ROM and VRAM start, to find the array in the ROM

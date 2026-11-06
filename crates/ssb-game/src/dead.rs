@@ -52,7 +52,7 @@ pub const HALO_STAND_WAIT: i32 = 75;
 /// `ftCommonRebirthDownSetStatus`'s `frame_begin`.
 pub const REBIRTH_DOWN_FRAME_BEGIN: f32 = 100.0;
 /// `dFTCommonRebirthOffsetsX`, by halo number.
-pub const REBIRTH_OFFSETS_X: [f32; 4] = crate::d_arrays::FT_COMMON_REBIRTH_OFFSETS_X;
+pub use crate::d_arrays::FT_COMMON_REBIRTH_OFFSETS_X as REBIRTH_OFFSETS_X;
 
 /// `FTStruct::camera_zoom_range` while reborn
 /// (`ftCommonRebirth{Down,Stand,Wait}SetStatus`): the camera frames the

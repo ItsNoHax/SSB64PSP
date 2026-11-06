@@ -118,14 +118,15 @@ const fn to_f32<const N: usize>(positions: [i32; N]) -> [f32; N] {
 
 /// `dSC1PBonusStageTimerDigitPositions`: each digit's centre x; their
 /// centre y is 30.
-pub const TIMER_DIGIT_X: [f32; 6] = to_f32(crate::d_arrays::SC1P_BONUS_STAGE_TIMER_DIGIT_POSITIONS);
+pub static TIMER_DIGIT_X: ssb_tables::Decoded<[f32; 6]> =
+    ssb_tables::Decoded::new(|| to_f32(*crate::d_arrays::SC1P_BONUS_STAGE_TIMER_DIGIT_POSITIONS));
 /// The `SymbolSec` and `SymbolCSec` marks' centres.
 pub const TIMER_SEC_AT: [f32; 2] = [231.0, 20.0];
 pub const TIMER_CSEC_AT: [f32; 2] = [264.0, 20.0];
 
 /// `dSC1PBonusStageTimerUnitLengths`: ten minutes, a minute, ten seconds,
 /// a second, a tenth and `277 / 500` of a tic.
-const TIMER_UNITS: [f32; 6] = crate::d_arrays::SC1P_BONUS_STAGE_TIMER_UNIT_LENGTHS;
+use crate::d_arrays::SC1P_BONUS_STAGE_TIMER_UNIT_LENGTHS as TIMER_UNITS;
 
 /// `sc1PBonusStageMakeTimer`'s practice timer: minutes, seconds and
 /// hundredths of `time_passed`, the tens of minutes hidden until they

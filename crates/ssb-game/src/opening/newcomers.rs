@@ -103,7 +103,7 @@ impl Newcomers {
                     fovy: 2.864789,
                     near: 128.0,
                     far: 16384.0,
-                    ..Persp::DEFAULT
+                    ..Persp::defaults()
                 },
                 zbuffer: false,
             },

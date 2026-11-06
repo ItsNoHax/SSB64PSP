@@ -381,7 +381,7 @@ fn the_rule_number_is_right_aligned_on_its_digits() {
         23.0,
         2,
         &DARK_DIGIT_WIDTHS,
-        TIME_DIGIT_COLORS,
+        *TIME_DIGIT_COLORS,
         |p| xs.push((p.offset, p.x)),
     );
     // The 5 (11 wide) ends at 212, the 1 (7 wide) left of it.
@@ -393,7 +393,7 @@ fn the_rule_number_is_right_aligned_on_its_digits() {
         23.0,
         2,
         &DARK_DIGIT_WIDTHS,
-        TIME_DIGIT_COLORS,
+        *TIME_DIGIT_COLORS,
         |p| xs.push((p.offset, p.x)),
     );
     assert_eq!(xs, [(0x5668, 198.0)]);

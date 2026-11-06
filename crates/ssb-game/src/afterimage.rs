@@ -37,27 +37,28 @@ pub struct TrailStyle {
 
 /// `dFTDisplayMainDefaultAfterImageColor1`/`2` and
 /// `dFTDisplayMainItemAfterImageColor1`/`2`, as RGB.
-const fn trail_rgb(i: usize) -> [u8; 3] {
+fn trail_rgb(i: usize) -> [u8; 3] {
     let c = crate::d_arrays::FT_DISPLAY_MAIN_AFTER_IMAGE_COLORS[i];
     [c[0], c[1], c[2]]
 }
 
 /// Link's own sword (`is_itemswing` FALSE). The distances are the switch's
 /// immediates.
-pub const TRAIL_SWORD: TrailStyle = TrailStyle {
+pub static TRAIL_SWORD: ssb_tables::Decoded<TrailStyle> = ssb_tables::Decoded::new(|| TrailStyle {
     near: 50.0,
     far: 250.0,
     near_rgb: trail_rgb(0),
     far_rgb: trail_rgb(1),
-};
+});
 
 /// A held Beam Sword (`is_itemswing` TRUE).
-pub const TRAIL_ITEM_SWORD: TrailStyle = TrailStyle {
-    near: 80.0,
-    far: 580.0,
-    near_rgb: trail_rgb(2),
-    far_rgb: trail_rgb(3),
-};
+pub static TRAIL_ITEM_SWORD: ssb_tables::Decoded<TrailStyle> =
+    ssb_tables::Decoded::new(|| TrailStyle {
+        near: 80.0,
+        far: 580.0,
+        near_rgb: trail_rgb(2),
+        far_rgb: trail_rgb(3),
+    });
 
 /// `base_alpha` and `add_alpha`: the same in both variants.
 const BASE_ALPHA: i32 = 0xFF;

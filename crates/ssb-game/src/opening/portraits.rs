@@ -14,10 +14,10 @@ pub const FILE_SET2: u32 = 0x36;
 /// Each set's four rows, top to bottom (Samus, Mario, Fox, Pikachu; Link,
 /// Kirby, Donkey Kong, Yoshi): `mvOpeningPortraitsMakeSet1` and
 /// `...MakeSet2`'s `offsets` and `pos`. Then set 1's cover.
-pub const SET1: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_OFFSETS;
-pub const SET2: [u32; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_OFFSETS;
-const SET1_POS: [[f32; 2]; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_POS;
-const SET2_POS: [[f32; 2]; 4] = crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_POS;
+pub use crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_OFFSETS as SET1;
+use crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_1_POS as SET1_POS;
+pub use crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_OFFSETS as SET2;
+use crate::d_arrays::MV_OPENING_PORTRAITS_MAKE_SET_2_POS as SET2_POS;
 pub const COVER: u32 = 0x2B2D0;
 
 /// The cover's display (`mvOpeningPortraitsCoverProcDisplay`), drawn by

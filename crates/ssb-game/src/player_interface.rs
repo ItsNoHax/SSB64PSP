@@ -20,16 +20,20 @@ const fn rgba(r: [u8; 5], g: [u8; 5], b: [u8; 5]) -> [[u8; 4]; 5] {
     out
 }
 
-pub const TAG_COLORS: [[u8; 4]; 5] = rgba(
-    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_R,
-    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_G,
-    crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_B,
-);
-pub const MAGNIFY_COLORS: [[u8; 4]; 5] = rgba(
-    crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_R,
-    crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_G,
-    crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_B,
-);
+pub static TAG_COLORS: ssb_tables::Decoded<[[u8; 4]; 5]> = ssb_tables::Decoded::new(|| {
+    rgba(
+        *crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_R,
+        *crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_G,
+        *crate::d_arrays::IF_COMMON_PLAYER_TAG_PRIM_COLORS_B,
+    )
+});
+pub static MAGNIFY_COLORS: ssb_tables::Decoded<[[u8; 4]; 5]> = ssb_tables::Decoded::new(|| {
+    rgba(
+        *crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_R,
+        *crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_G,
+        *crate::d_arrays::IF_COMMON_PLAYER_MAGNIFY_COLORS_B,
+    )
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FighterInterface {

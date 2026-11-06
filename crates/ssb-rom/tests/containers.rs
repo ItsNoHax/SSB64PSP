@@ -453,7 +453,7 @@ fn vs_stages_have_item_points_and_weights() {
     )
     .unwrap();
     let p = Pack::open(&bytes).unwrap();
-    for &file in &ssb_rom::stage::VS_GROUND_FILES {
+    for &file in ssb_rom::stage::VS_GROUND_FILES.iter() {
         let i = p.stage_of_file(file).unwrap();
         let stage = p.stage(i).unwrap();
         // `nMPMapObjKindItem`; more than 30 halts `itManagerMakeAppearActor`.

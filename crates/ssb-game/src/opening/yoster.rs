@@ -26,8 +26,8 @@ pub const CAMERA_SLOT: u32 = 0x4000_0000 | (FILE << 20) | CAM_ANIM_JOINT;
 /// `mvOpeningYosterMakeFighters`' `status_ids` (0x1000F to 0x10012) as
 /// submotion rows (the ID less `nFTDemoStatusNull`, 0x10000), one per
 /// Yoshi costume 0 to 3.
-pub const ROWS: [u8; 4] = {
-    let ids = crate::d_arrays::MV_OPENING_YOSTER_MAKE_FIGHTERS_STATUS_IDS;
+pub static ROWS: ssb_tables::Decoded<[u8; 4]> = ssb_tables::Decoded::new(|| {
+    let ids = *crate::d_arrays::MV_OPENING_YOSTER_MAKE_FIGHTERS_STATUS_IDS;
     let mut out = [0; 4];
     let mut i = 0;
     while i < 4 {
@@ -40,7 +40,7 @@ pub const ROWS: [u8; 4] = {
         i += 1;
     }
     out
-};
+});
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Yoster {
@@ -171,7 +171,7 @@ mod tests {
             .iter()
             .map(|&id| y.world.fighter_mut(id).unwrap().row)
             .collect();
-        assert_eq!(rows, ROWS);
+        assert_eq!(rows, *ROWS);
     }
 
     #[test]

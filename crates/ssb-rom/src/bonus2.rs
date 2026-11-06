@@ -9,13 +9,25 @@ pub const FILE: u32 = 136;
 pub const FIRST_ANIM: u32 = 184;
 pub const BUMPER_ANIM: u32 = 190;
 pub const FIRST_BUMPER_ASSET: u8 = 34;
-// `dSC1PBonusStagePlatformDescs` and `...BoardedPlatformDescs`: graph, joint
-// table, MObj table, material table (the latter two only on the unboarded
-// trees; all labels are offsets into file 136), and `dSC1PBonusStageBumperDescs`:
-// map_nodes graph and root-script table in files 137..148. Generated at build
-// time from the user's ROM by `crates/ssb-tablegen` (never committed).
-include!(concat!(env!("OUT_DIR"), "/bonus2_trees.rs"));
-include!(concat!(env!("OUT_DIR"), "/bonus2_bumpers.rs"));
+/// `dSC1PBonusStagePlatformDescs` and `...BoardedPlatformDescs`: graph,
+/// joint table, MObj table, material table (the latter two only on the
+/// unboarded trees, else 0; all labels are offsets into file 136)
+/// (`TableId::Bonus2Trees`).
+pub static TREES: ssb_tables::Table<[[u32; 4]; 6]> =
+    ssb_tables::Table::new(ssb_tables::TableId::Bonus2Trees);
+/// `dSC1PBonusStageBumperDescs`: map_nodes graph and root-script table in
+/// files 137..148; (0, 0) for a kind without bumpers
+/// (`TableId::Bonus2Bumpers`).
+static BUMPER_LABELS: ssb_tables::Table<[[u32; 2]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::Bonus2Bumpers);
+/// Each kind's bumper `(graph, root scripts)`, `None` without bumpers.
+pub static BUMPERS: ssb_tables::Decoded<[Option<(u32, u32)>; 12]> =
+    ssb_tables::Decoded::new(|| {
+        core::array::from_fn(|k| match BUMPER_LABELS[k] {
+            [0, 0] => None,
+            [graph, scripts] => Some((graph, scripts)),
+        })
+    });
 pub fn kind(file: u32) -> Option<u8> {
     (283..295).contains(&file).then(|| (file - 283) as u8)
 }

@@ -53,10 +53,10 @@ pub const TEAM_BLUE: u8 = 1;
 pub const TEAM_GREEN: u8 = 2;
 
 /// `mnPlayersVSResetPlayer`'s `default_teams`: red, red, blue, blue.
-const DEFAULT_TEAMS: [u8; PLAYERS] = crate::d_arrays::MN_PLAYERS_VS_RESET_PLAYER_DEFAULT_TEAMS;
+use crate::d_arrays::MN_PLAYERS_VS_RESET_PLAYER_DEFAULT_TEAMS as DEFAULT_TEAMS;
 
 /// `dIFCommonPlayerTeamColorIDs` (`if/ifcommon.c`), indexed by team.
-pub const TEAM_COLOR_IDS: [u8; 5] = crate::d_arrays::IF_COMMON_PLAYER_TEAM_COLOR_IDS;
+pub use crate::d_arrays::IF_COMMON_PLAYER_TEAM_COLOR_IDS as TEAM_COLOR_IDS;
 
 /// `I_MIN_TO_TICS(5)`.
 const RETURN_TICS: i32 = 5 * 60 * 60;
@@ -96,18 +96,20 @@ const IDLE_BUTTONS: u16 = N64Buttons::A
 
 /// `mnPlayersVSGetNextTimeValue`'s `timer_values`, minutes; the last is
 /// `TIMELIMIT_INFINITE`.
-const NEXT_TIME_VALUES: [u8; 8] =
-    layer::rom::bytes(crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_TIME_VALUE_TIMER_VALUES);
+static NEXT_TIME_VALUES: ssb_tables::Decoded<[u8; 8]> = ssb_tables::Decoded::new(|| {
+    layer::rom::bytes(*crate::d_arrays::MN_PLAYERS_VS_GET_NEXT_TIME_VALUE_TIMER_VALUES)
+});
 /// `mnPlayersVSGetPrevTimeValue`'s `timer_values`.
-const PREV_TIME_VALUES: [u8; 8] =
-    layer::rom::bytes(crate::d_arrays::MN_PLAYERS_VS_GET_PREV_TIME_VALUE_TIMER_VALUES);
+static PREV_TIME_VALUES: ssb_tables::Decoded<[u8; 8]> = ssb_tables::Decoded::new(|| {
+    layer::rom::bytes(*crate::d_arrays::MN_PLAYERS_VS_GET_PREV_TIME_VALUE_TIMER_VALUES)
+});
 
 /// The select button a pick came from: `nMNPlayersSelectButton*`.
 const BUTTON_A: usize = 4;
 
 /// `mnPlayersVSMakeCursor`'s `pos`: the start positions.
-const CURSOR_STARTS: [(f32, f32); PLAYERS] =
-    layer::rom::xy(crate::d_arrays::MN_PLAYERS_VS_MAKE_CURSOR_POS);
+static CURSOR_STARTS: ssb_tables::Decoded<[(f32, f32); PLAYERS]> =
+    ssb_tables::Decoded::new(|| layer::rom::xy(*crate::d_arrays::MN_PLAYERS_VS_MAKE_CURSOR_POS));
 /// `mnPlayersVSMakePuck`: a puck with no fighter waits here.
 const PUCK_START: (f32, f32) = (51.0, 161.0);
 
@@ -115,20 +117,24 @@ const PUCK_START: (f32, f32) = (51.0, 161.0);
 const DL_CURSOR: u8 = 32;
 const DL_PUCK: u8 = 33;
 /// `mnPlayersVSMakeCursor`'s `priorities`.
-const CURSOR_PRIORITIES: [u32; PLAYERS] = crate::d_arrays::MN_PLAYERS_VS_MAKE_CURSOR_PRIORITIES;
+use crate::d_arrays::MN_PLAYERS_VS_MAKE_CURSOR_PRIORITIES as CURSOR_PRIORITIES;
 /// `mnPlayersVSMakePuck`'s `dropped_priorities` and `held_priorities`.
-const PUCK_DROPPED_PRIORITIES: [u32; PLAYERS] =
-    layer::rom::unsigned(crate::d_arrays::MN_PLAYERS_VS_MAKE_PUCK_DROPPED_PRIORITIES);
-const PUCK_HELD_PRIORITIES: [u32; PLAYERS] =
-    layer::rom::unsigned(crate::d_arrays::MN_PLAYERS_VS_MAKE_PUCK_HELD_PRIORITIES);
+static PUCK_DROPPED_PRIORITIES: ssb_tables::Decoded<[u32; PLAYERS]> =
+    ssb_tables::Decoded::new(|| {
+        layer::rom::unsigned(*crate::d_arrays::MN_PLAYERS_VS_MAKE_PUCK_DROPPED_PRIORITIES)
+    });
+static PUCK_HELD_PRIORITIES: ssb_tables::Decoded<[u32; PLAYERS]> = ssb_tables::Decoded::new(|| {
+    layer::rom::unsigned(*crate::d_arrays::MN_PLAYERS_VS_MAKE_PUCK_HELD_PRIORITIES)
+});
 /// `mnPlayersVSUpdateCursorGrabPriorities`' `priorities`.
-const GRAB_PRIORITIES: [u32; PLAYERS] =
-    crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_GRAB_PRIORITIES_PRIORITIES;
+use crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_GRAB_PRIORITIES_PRIORITIES as GRAB_PRIORITIES;
 /// `mnPlayersVSUpdateCursorPlacementPriorities`' `unheld_priorities` (its
 /// `held_priorities` is never read).
-const PLACEMENT_PRIORITIES: [u32; PLAYERS] = layer::rom::unsigned(
-    crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_PLACEMENT_PRIORITIES_UNHELD_PRIORITIES,
-);
+static PLACEMENT_PRIORITIES: ssb_tables::Decoded<[u32; PLAYERS]> = ssb_tables::Decoded::new(|| {
+    layer::rom::unsigned(
+        *crate::d_arrays::MN_PLAYERS_VS_UPDATE_CURSOR_PLACEMENT_PRIORITIES_UNHELD_PRIORITIES,
+    )
+});
 
 /// `nFTPlayerKind`: the kinds a VS slot takes, in the source's order
 /// (the HMN/CP/NA button cycles through them).
@@ -201,15 +207,15 @@ pub struct BattleState {
 
 /// `dSCManagerDefaultBattleState`'s bytes (`SCBattleState`), generated from
 /// the ROM.
-const DEFAULT_STATE: [u8; 0x1F0] = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE;
+use crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE as DEFAULT_STATE;
 /// `sizeof(SCBattleState)` before `players`, and `sizeof(SCPlayerData)`.
 const STATE_PLAYERS: usize = 0x20;
 const PLAYER_DATA_SIZE: usize = 0x74;
 /// `SCBATTLE_GAMERULE_STOCK`.
 const GAMERULE_STOCK: u8 = 0x2;
 /// `dSCManagerDefaultBattleState.time_limit` and `.stocks`.
-pub const DEFAULT_TIME_LIMIT: u8 = DEFAULT_STATE[6];
-pub const DEFAULT_STOCKS: u8 = DEFAULT_STATE[7];
+pub static DEFAULT_TIME_LIMIT: ssb_tables::DArr<u8> = DEFAULT_STATE.at(6);
+pub static DEFAULT_STOCKS: ssb_tables::DArr<u8> = DEFAULT_STATE.at(7);
 
 impl Default for BattleState {
     /// `dSCManagerDefaultBattleState` (`sc/scmanager.c`), which
@@ -407,25 +413,25 @@ pub struct PlayersVs {
 
 /// `mnPlayersVSGetNextTimeValue`.
 pub fn next_time_value(current: u8) -> u8 {
-    const V: [u8; 8] = NEXT_TIME_VALUES;
-    if current == V[V.len() - 1] {
-        return V[0];
+    let v: [u8; 8] = *NEXT_TIME_VALUES;
+    if current == v[v.len() - 1] {
+        return v[0];
     }
-    V.into_iter()
+    v.into_iter()
         .find(|&v| current < v)
-        .unwrap_or(V[V.len() - 1])
+        .unwrap_or(v[v.len() - 1])
 }
 
 /// `mnPlayersVSGetPrevTimeValue`.
 pub fn prev_time_value(current: u8) -> u8 {
-    const V: [u8; 8] = PREV_TIME_VALUES;
-    if current == V[0] {
-        return V[V.len() - 1];
+    let v: [u8; 8] = *PREV_TIME_VALUES;
+    if current == v[0] {
+        return v[v.len() - 1];
     }
-    V.into_iter()
+    v.into_iter()
         .rev()
         .find(|&v| current > v)
-        .unwrap_or(V[V.len() - 1])
+        .unwrap_or(v[v.len() - 1])
 }
 
 /// `syUtilsRandTimeUCharRange(range)` from one `osGetTime() & 0xFF`.

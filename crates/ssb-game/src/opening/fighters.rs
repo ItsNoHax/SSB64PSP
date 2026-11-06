@@ -66,7 +66,7 @@ const fn desc(eye: Vec3, at: Vec3, up_x: f32) -> CObjDesc {
 }
 
 /// One fighter scene's statics.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Params {
     pub kind: Kind,
     pub fighter: FighterKind,
@@ -77,8 +77,8 @@ pub struct Params {
     /// `dMVOpening*KeyEvents` as halfwords.
     pub keys: &'static [u16],
     /// The name's letters: each one's sprite in [`FILE_ANNOUNCE`] and its
-    /// offset.
-    pub letters: &'static [(u32, f32, f32)],
+    /// offset (read from the pack's `TABLES` section on first use).
+    pub letters: fn() -> &'static [(u32, f32, f32)],
     /// The name's origin, added to each letter's offset.
     pub name_at: [f32; 2],
     /// The movie camera's viewport and `persp.aspect`.
@@ -102,6 +102,14 @@ pub struct Params {
     pub posed_axis: Vec3,
 }
 
+/// One scene per [`Kind`] in [`SCENES`], so the kind names the statics
+/// (`letters` is a function pointer, which has no meaningful `==`).
+impl PartialEq for Params {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
 // Each scene's `dMVOpening*CObjDescStart`, `...End` and `...KeyEvents`
 // (`FTKEY_EVENT_STICK(x, y, wait)` and `FTKEY_EVENT_BUTTON(buttons, wait)`
 // as `ft/ftkey.c` reads them, in halfwords), and the jungle's two scripts,
@@ -115,7 +123,7 @@ mod generated {
 
 /// `mvOpening*MakeName`'s letters: `offsets` (ending in 0) with `pos_x`,
 /// each letter on the name's row.
-const fn name_x<const N: usize, const M: usize>(
+fn name_x<const N: usize, const M: usize>(
     offsets: [u32; M],
     pos_x: [f32; N],
 ) -> [(u32, f32, f32); N] {
@@ -130,7 +138,7 @@ const fn name_x<const N: usize, const M: usize>(
 }
 
 /// `mvOpening*MakeName`'s letters: `offsets` (ending in 0) with `pos`.
-const fn name_xy<const N: usize, const M: usize>(
+fn name_xy<const N: usize, const M: usize>(
     offsets: [u32; M],
     pos: [[f32; 2]; N],
 ) -> [(u32, f32, f32); N] {
@@ -145,59 +153,69 @@ const fn name_xy<const N: usize, const M: usize>(
 }
 
 /// `mvOpeningMarioMakeName`'s `offsets` and `pos_x`.
-const MARIO_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_POS_X.len()] =
+static MARIO_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 5]> = ssb_tables::Decoded::new(|| {
     name_x(
-        crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_OFFSETS,
-        crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_POS_X,
-    );
+        *crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_MARIO_MAKE_NAME_POS_X,
+    )
+});
 
 /// `mvOpeningDonkeyMakeName`'s `offsets` and `pos`.
-const DONKEY_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_POS.len()] =
+static DONKEY_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 2]> = ssb_tables::Decoded::new(|| {
     name_xy(
-        crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_OFFSETS,
-        crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_POS,
-    );
+        *crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_DONKEY_MAKE_NAME_POS,
+    )
+});
 
 /// `mvOpeningLinkMakeName`'s `offsets` and `pos_x`.
-const LINK_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_POS_X.len()] =
+static LINK_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 4]> = ssb_tables::Decoded::new(|| {
     name_x(
-        crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_OFFSETS,
-        crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_POS_X,
-    );
+        *crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_LINK_MAKE_NAME_POS_X,
+    )
+});
 
 /// `mvOpeningSamusMakeName`'s `offsets` and `pos_x`.
-const SAMUS_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_POS_X.len()] =
+static SAMUS_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 5]> = ssb_tables::Decoded::new(|| {
     name_x(
-        crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_OFFSETS,
-        crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_POS_X,
-    );
+        *crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_SAMUS_MAKE_NAME_POS_X,
+    )
+});
 
 /// `mvOpeningYoshiMakeName`'s `offsets` and `pos_x`.
-const YOSHI_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_POS_X.len()] =
+static YOSHI_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 5]> = ssb_tables::Decoded::new(|| {
     name_x(
-        crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_OFFSETS,
-        crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_POS_X,
-    );
+        *crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_YOSHI_MAKE_NAME_POS_X,
+    )
+});
 
 /// `mvOpeningKirbyMakeName`'s `offsets` and `pos`.
-const KIRBY_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_POS.len()] =
+static KIRBY_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 5]> = ssb_tables::Decoded::new(|| {
     name_xy(
-        crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_OFFSETS,
-        crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_POS,
-    );
+        *crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_KIRBY_MAKE_NAME_POS,
+    )
+});
 
 /// `mvOpeningFoxMakeName`'s `offsets` and `pos`.
-const FOX_LETTERS: [(u32, f32, f32); crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_POS.len()] = name_xy(
-    crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_OFFSETS,
-    crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_POS,
-);
+static FOX_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 3]> = ssb_tables::Decoded::new(|| {
+    name_xy(
+        *crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_OFFSETS,
+        *crate::d_arrays::MV_OPENING_FOX_MAKE_NAME_POS,
+    )
+});
 
 /// `mvOpeningPikachuMakeName`'s `offsets` and `pos_x`.
-const PIKACHU_LETTERS: [(u32, f32, f32);
-    crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_POS_X.len()] = name_x(
-    crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_OFFSETS,
-    crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_POS_X,
-);
+static PIKACHU_LETTERS: ssb_tables::Decoded<[(u32, f32, f32); 7]> =
+    ssb_tables::Decoded::new(|| {
+        name_x(
+            *crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_OFFSETS,
+            *crate::d_arrays::MV_OPENING_PIKACHU_MAKE_NAME_POS_X,
+        )
+    });
 
 /// A side panel's layout (the posed fighter on the left or right of a
 /// motion window 200 wide), and a band's (above or below one 140 high).
@@ -215,7 +233,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::MARIO_START,
         end: generated::MARIO_END,
         keys: &generated::MARIO_KEYS,
-        letters: &MARIO_LETTERS,
+        letters: || MARIO_LETTERS.get().as_slice(),
         name_at: [80.0, 100.0],
         motion_viewport: RIGHT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -237,7 +255,7 @@ pub const SCENES: [Params; 8] = [
         end: generated::DONKEY_END,
         keys: &generated::DONKEY_KEYS,
         // The US build's "DK".
-        letters: &DONKEY_LETTERS,
+        letters: || DONKEY_LETTERS.get().as_slice(),
         name_at: [120.0, 100.0],
         motion_viewport: LEFT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -258,7 +276,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::LINK_START,
         end: generated::LINK_END,
         keys: &generated::LINK_KEYS,
-        letters: &LINK_LETTERS,
+        letters: || LINK_LETTERS.get().as_slice(),
         name_at: [100.0, 100.0],
         motion_viewport: [10.0, 90.0, 310.0, 230.0],
         motion_aspect: 15.0 / 7.0,
@@ -279,7 +297,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::SAMUS_START,
         end: generated::SAMUS_END,
         keys: &generated::SAMUS_KEYS,
-        letters: &SAMUS_LETTERS,
+        letters: || SAMUS_LETTERS.get().as_slice(),
         name_at: [80.0, 100.0],
         motion_viewport: RIGHT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -300,7 +318,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::YOSHI_START,
         end: generated::YOSHI_END,
         keys: &generated::YOSHI_KEYS,
-        letters: &YOSHI_LETTERS,
+        letters: || YOSHI_LETTERS.get().as_slice(),
         name_at: [80.0, 100.0],
         motion_viewport: [10.0, 10.0, 310.0, 150.0],
         motion_aspect: 15.0 / 7.0,
@@ -321,7 +339,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::KIRBY_START,
         end: generated::KIRBY_END,
         keys: &generated::KIRBY_KEYS,
-        letters: &KIRBY_LETTERS,
+        letters: || KIRBY_LETTERS.get().as_slice(),
         name_at: [90.0, 100.0],
         motion_viewport: LEFT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -342,7 +360,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::FOX_START,
         end: generated::FOX_END,
         keys: &generated::FOX_KEYS,
-        letters: &FOX_LETTERS,
+        letters: || FOX_LETTERS.get().as_slice(),
         name_at: [110.0, 100.0],
         motion_viewport: LEFT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -363,7 +381,7 @@ pub const SCENES: [Params; 8] = [
         start: generated::PIKACHU_START,
         end: generated::PIKACHU_END,
         keys: &generated::PIKACHU_KEYS,
-        letters: &PIKACHU_LETTERS,
+        letters: || PIKACHU_LETTERS.get().as_slice(),
         name_at: [65.0, 100.0],
         motion_viewport: RIGHT_MOTION,
         motion_aspect: 10.0 / 11.0,
@@ -502,8 +520,7 @@ impl FighterScene {
         );
         // `mvOpening*MakeName`: white letters (`envcolor` and
         // `sprite.red..blue` all 0xFF).
-        let pieces = params
-            .letters
+        let pieces = (params.letters)()
             .iter()
             .map(|&(c, x, y)| {
                 Piece::clear(

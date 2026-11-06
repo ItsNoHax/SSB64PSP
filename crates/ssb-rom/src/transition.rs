@@ -27,9 +27,26 @@ pub struct TransitionAsset {
     pub frames: u32,
 }
 
-// `dLBTransitionDescs`, generated at build time from the user's ROM by
-// `crates/ssb-tablegen` (never committed).
-include!(concat!(env!("OUT_DIR"), "/transition_assets.rs"));
+/// `dLBTransitionDescs` (`TableId::TransitionDescs`): `[file, graph,
+/// anim_joints]`.
+static DESCS: ssb_tables::Table<[[u32; 3]; 11]> =
+    ssb_tables::Table::new(ssb_tables::TableId::TransitionDescs);
+
+/// `dLBTransitionDescs`, read from the pack's `TABLES` section, with each
+/// transition's label and length (layout).
+pub static ASSETS: ssb_tables::Decoded<[TransitionAsset; 11]> = ssb_tables::Decoded::new(|| {
+    core::array::from_fn(|i| {
+        let [file, graph, anim_joints] = DESCS[i];
+        let (name, frames) = crate::rom_layout::TRANSITIONS[i];
+        TransitionAsset {
+            name,
+            file,
+            graph,
+            anim_joints,
+            frames,
+        }
+    })
+});
 
 #[cfg(test)]
 mod tests {

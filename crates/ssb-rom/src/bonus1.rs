@@ -10,9 +10,22 @@ pub struct Course {
     pub placements: u32,
     pub scripts: u32,
 }
-// `dSC1PBonusStageTargetDescs`' labels, generated at build time from the
-// user's ROM by `crates/ssb-tablegen` (never committed).
-include!(concat!(env!("OUT_DIR"), "/bonus1_courses.rs"));
+/// `dSC1PBonusStageTargetDescs`' `[start, dobjdesc, anim_joint]` labels
+/// (`TableId::Bonus1Courses`).
+static COURSE_LABELS: ssb_tables::Table<[[u32; 3]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::Bonus1Courses);
+/// `dSC1PBonusStageTargetDescs`' labels by fighter kind, read from the
+/// pack's `TABLES` section.
+pub static COURSES: ssb_tables::Decoded<[Course; 12]> = ssb_tables::Decoded::new(|| {
+    core::array::from_fn(|k| {
+        let [start, placements, scripts] = COURSE_LABELS[k];
+        Course {
+            start,
+            placements,
+            scripts,
+        }
+    })
+});
 pub fn kind(file: u32) -> Option<u8> {
     (271..283).contains(&file).then(|| (file - 271) as u8)
 }

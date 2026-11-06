@@ -56,7 +56,7 @@ fn every_emblem_animates_both_light_colours() {
         return;
     };
     let pack = Pack::open(&bytes).unwrap();
-    for e in EMBLEMS {
+    for e in EMBLEMS.iter() {
         let prims = prims(&pack, e.dobjdesc);
         assert!(!prims.is_empty(), "{e:x?}");
         for (f, m) in prims {
@@ -99,7 +99,7 @@ fn an_emblems_start_frame_is_its_players_colour() {
         assert_eq!(&l2[..3], &[0; 3]);
     }
     // Every emblem's frames give the same four player colours.
-    for e in EMBLEMS {
+    for e in EMBLEMS.iter() {
         for (frame, rgb) in expect.iter().enumerate() {
             for (l1, _) in lights(&pack, e.dobjdesc, frame as f32) {
                 assert_eq!(&l1[..3], rgb, "{e:x?} frame {frame}");
@@ -114,7 +114,7 @@ fn an_emblems_start_frame_is_its_players_colour() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn each_series_is_numbered_at_its_first_fighter() {
     assert_eq!(
-        ssb_rom::effect::EMBLEM_BY_FIGHTER,
+        *ssb_rom::effect::EMBLEM_BY_FIGHTER,
         [0, 1, 2, 3, 0, 4, 5, 6, 7, 8, 8, 9]
     );
 }

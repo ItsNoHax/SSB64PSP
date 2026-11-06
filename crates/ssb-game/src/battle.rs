@@ -236,13 +236,13 @@ pub struct Battle {
 }
 
 /// `dIFCommonAnnounceDefeatedVoiceIDs`: "Player 1" to "Player 4".
-const DEFEATED_VOICES: [u16; 4] = crate::d_arrays::IF_COMMON_ANNOUNCE_DEFEATED_VOICE_IDS;
+use crate::d_arrays::IF_COMMON_ANNOUNCE_DEFEATED_VOICE_IDS as DEFEATED_VOICES;
 
 /// `nGRKindInishie`.
 const GKIND_INISHIE: u8 = 8;
 
 /// `dIFCommonAnnounceTimerVoiceIDs`: "one" to "five".
-const TIMER_VOICES: [u16; 5] = crate::d_arrays::IF_COMMON_ANNOUNCE_TIMER_VOICE_IDS;
+use crate::d_arrays::IF_COMMON_ANNOUNCE_TIMER_VOICE_IDS as TIMER_VOICES;
 
 /// `ARRAY_COUNT(sIFCommonBattleEndSoundsQueue)`.
 pub const END_SOUNDS_MAX: usize = 16;
@@ -309,7 +309,7 @@ impl Battle {
     /// timer (`ifCommonTimerMakeInterface` is not made) and the status
     /// "Go" from the first frame.
     pub fn new_demo(players: [Player; 4]) -> Battle {
-        let stocks = crate::players_vs::DEFAULT_STOCKS as i8;
+        let stocks = *crate::players_vs::DEFAULT_STOCKS as i8;
         let mut b = Battle::new(Rule::Time, TIMELIMIT_INFINITE, stocks, players);
         b.status = GameStatus::Go;
         b.go_tick = 0;

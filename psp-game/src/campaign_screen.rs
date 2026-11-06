@@ -484,7 +484,7 @@ impl Presentation {
                         m,
                         pos,
                         scale,
-                        spgame::continue_scene::CAMERA_PROJECTION,
+                        *spgame::continue_scene::CAMERA_PROJECTION,
                         FighterLight::Reflect([45.0, 45.0]),
                         RspCamera::Projection,
                     );
@@ -598,7 +598,7 @@ impl Presentation {
                     m,
                     [0.0, 0.0, m.entrance.z],
                     1.0,
-                    spgame::intro::CAMERA_PROJECTION,
+                    *spgame::intro::CAMERA_PROJECTION,
                     light,
                     // `sc1PIntroMakeStageCamera` (kind 15) draws the frozen
                     // opponents; `sc1PIntroMakeFighterCamera` (kind 7) the
@@ -908,7 +908,7 @@ unsafe fn digits(
         let file = ssb_rom::scene_roots::ONE_P_STAGE_CLEAR[a::CLEAR_DIGIT_FILES[digit_kind] as usize];
         let at = a::CLEAR_DIGIT_OFFSETS[digit][digit_kind];
         let [env, color] = if kind == 3 {
-            a::CLEAR_NO_MISS_COLORS
+            *a::CLEAR_NO_MISS_COLORS
         } else {
             a::CLEAR_DIGIT_COLORS[digit_kind]
         };

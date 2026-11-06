@@ -36,8 +36,7 @@ pub const NESS_PK_TRAIL_SPRITES: [u32; 3] = [0x85C8, 0x81C0, 0x7DB8];
 /// played on its tree (RE-417). Index 2, the Throw table, is the `EFDesc`'s
 /// own (`MANAGER_EFFECT_ANIM_JOINTS`).
 pub const YOSHI_EGG_LAY_KEY: (u32, u32) = (339, 0x0960);
-pub const YOSHI_EGG_LAY_ANIM_JOINTS: [u32; 2] =
-    crate::d_arrays::EF_MANAGER_YOSHI_EGG_LAY_ANIM_JOINTS;
+pub use crate::d_arrays::EF_MANAGER_YOSHI_EGG_LAY_ANIM_JOINTS as YOSHI_EGG_LAY_ANIM_JOINTS;
 /// The `AnimDesc::EFFECT` slot of the Wait table; Break follows.
 pub const YOSHI_EGG_LAY_ANIM_SLOT: u32 = 0x104;
 
@@ -61,33 +60,39 @@ pub const PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS: [u32; 3] = [0x1A90, 0x1AD0, 0x1B20]
 /// table. `efManagerFoxReflectorSetAnimID` adds index 1 to 3 of
 /// `dEFManagerFoxReflectorAnimJointOffsets` in its place: Loop, Hit, End.
 pub const FOX_REFLECTOR_KEY: (u32, u32) = (346, 0x02B0);
-pub const FOX_REFLECTOR_ANIM_JOINTS: [u32; 3] = {
-    let table = crate::d_arrays::EF_MANAGER_FOX_REFLECTOR_ANIM_JOINT_OFFSETS;
-    [table[1], table[2], table[3]]
-};
+pub static FOX_REFLECTOR_ANIM_JOINTS: ssb_tables::Decoded<[u32; 3]> =
+    ssb_tables::Decoded::new(|| {
+        let table = *crate::d_arrays::EF_MANAGER_FOX_REFLECTOR_ANIM_JOINT_OFFSETS;
+        [table[1], table[2], table[3]]
+    });
 /// The `AnimDesc::EFFECT` slot of the Loop table; Hit and End follow.
 pub const FOX_REFLECTOR_ANIM_SLOT: u32 = 0x108;
+
+/// One [`VARIANT_ANIMS`] row.
+pub type VariantAnim = (u32, (u32, u32), &'static [u32]);
 
 /// The transform tables a maker adds to a manager effect's tree in place
 /// of its `EFDesc`'s own: `(first AnimDesc::EFFECT slot, object key,
 /// tables)`, one slot per table.
-pub const VARIANT_ANIMS: [(u32, (u32, u32), &[u32]); 3] = [
-    (
-        YOSHI_EGG_LAY_ANIM_SLOT,
-        YOSHI_EGG_LAY_KEY,
-        &YOSHI_EGG_LAY_ANIM_JOINTS,
-    ),
-    (
-        PIKACHU_THUNDER_SHOCK_ANIM_SLOT,
-        PIKACHU_THUNDER_SHOCK_KEY,
-        &PIKACHU_THUNDER_SHOCK_ANIM_JOINTS,
-    ),
-    (
-        FOX_REFLECTOR_ANIM_SLOT,
-        FOX_REFLECTOR_KEY,
-        &FOX_REFLECTOR_ANIM_JOINTS,
-    ),
-];
+pub static VARIANT_ANIMS: ssb_tables::Decoded<[VariantAnim; 3]> = ssb_tables::Decoded::new(|| {
+    [
+        (
+            YOSHI_EGG_LAY_ANIM_SLOT,
+            YOSHI_EGG_LAY_KEY,
+            YOSHI_EGG_LAY_ANIM_JOINTS.get(),
+        ),
+        (
+            PIKACHU_THUNDER_SHOCK_ANIM_SLOT,
+            PIKACHU_THUNDER_SHOCK_KEY,
+            &PIKACHU_THUNDER_SHOCK_ANIM_JOINTS,
+        ),
+        (
+            FOX_REFLECTOR_ANIM_SLOT,
+            FOX_REFLECTOR_KEY,
+            FOX_REFLECTOR_ANIM_JOINTS.get(),
+        ),
+    ]
+});
 
 /// One [`ENTRY_ANIMS`] row.
 pub type EntryAnim = (u32, (u32, u32), u32, Option<u32>, &'static [(u32, u32)]);
@@ -186,11 +191,11 @@ pub struct Emblem {
 
 /// The ten series emblems: Mario, Fox, Donkey, Metroid, Zelda, Yoshi,
 /// FZero, Kirby, PMonsters and Mother.
-pub const EMBLEMS: [Emblem; 10] = emblems();
+pub static EMBLEMS: ssb_tables::Decoded<[Emblem; 10]> = ssb_tables::Decoded::new(emblems);
 
 /// [`EMBLEMS`] from `mnVSResultsMakeEmblem`'s `dobjdescs`, `mobjsubs` and
 /// `matanim_joints`, by fighter kind: each series at its first fighter.
-const fn emblems() -> [Emblem; 10] {
+fn emblems() -> [Emblem; 10] {
     let mut out = [Emblem {
         dobjdesc: 0,
         mobjsub: 0,
@@ -211,10 +216,11 @@ const fn emblems() -> [Emblem; 10] {
 /// `mnVSResultsMakeEmblem`'s `dobjdescs[fkind]`, as an [`EMBLEMS`] index,
 /// for the twelve playable kinds: each distinct `DObjDesc` in order of its
 /// first fighter (Luigi shares Mario's, Jigglypuff Pikachu's).
-pub const EMBLEM_BY_FIGHTER: [u8; 12] = emblem_by_fighter();
+pub static EMBLEM_BY_FIGHTER: ssb_tables::Decoded<[u8; 12]> =
+    ssb_tables::Decoded::new(emblem_by_fighter);
 
-const fn emblem_by_fighter() -> [u8; 12] {
-    let d = crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_DOBJDESCS;
+fn emblem_by_fighter() -> [u8; 12] {
+    let d = *crate::d_arrays::MN_VS_RESULTS_MAKE_EMBLEM_DOBJDESCS;
     let mut out = [0u8; 12];
     let mut series = 0u8;
     let mut f = 0;
@@ -252,7 +258,38 @@ const fn emblem_by_fighter() -> [u8; 12] {
 //   (`dEFManagerDeadExplodeMatAnimJoints`); player 0's is listed. The
 //   alternate player/facing tables remain gameplay selection work.
 // * `slot::NAME`: each effect's index in the three tables.
-include!(concat!(env!("OUT_DIR"), "/effect_tables.rs"));
+//
+// Read from the pack's `TABLES` section (`TableId::ManagerEffects`).
+pub use crate::rom_layout::slot;
+use crate::rom_layout::EFFECT_COUNT;
+
+/// Each manager effect's `[file, o_dobjdesc, o_anim_joint, o_matanim_joint,
+/// dl_link, proc_display]` (`TableId::ManagerEffects`).
+static MANAGER_EFFECTS: ssb_tables::Table<[[u32; 6]; EFFECT_COUNT]> =
+    ssb_tables::Table::new(ssb_tables::TableId::ManagerEffects);
+
+/// Column `c` of [`MANAGER_EFFECTS`] through `f`.
+fn effect_column<T>(c: usize, f: fn(u32) -> T) -> [T; EFFECT_COUNT] {
+    core::array::from_fn(|i| f(MANAGER_EFFECTS[i][c]))
+}
+
+/// `(file, o_dobjdesc)` of each desc.
+pub static MANAGER_EFFECT_KEYS: ssb_tables::Decoded<[(u32, u32); EFFECT_COUNT]> =
+    ssb_tables::Decoded::new(|| {
+        core::array::from_fn(|i| (MANAGER_EFFECTS[i][0], MANAGER_EFFECTS[i][1]))
+    });
+/// `o_anim_joint` of each desc; `None` for 0.
+pub static MANAGER_EFFECT_ANIM_JOINTS: ssb_tables::Decoded<[Option<u32>; EFFECT_COUNT]> =
+    ssb_tables::Decoded::new(|| effect_column(2, |v| (v != 0).then_some(v)));
+/// `o_matanim_joint` of each desc; `None` for 0.
+pub static MANAGER_EFFECT_MAT_ANIM_JOINTS: ssb_tables::Decoded<[Option<u32>; EFFECT_COUNT]> =
+    ssb_tables::Decoded::new(|| effect_column(3, |v| (v != 0).then_some(v)));
+/// `EFDesc.dl_link`.
+pub static MANAGER_EFFECT_DL_LINKS: ssb_tables::Decoded<[u8; EFFECT_COUNT]> =
+    ssb_tables::Decoded::new(|| effect_column(4, |v| v as u8));
+/// `EFDesc.proc_display`'s address.
+pub static MANAGER_EFFECT_DISPLAYS: ssb_tables::Decoded<[u32; EFFECT_COUNT]> =
+    ssb_tables::Decoded::new(|| effect_column(5, |v| v));
 
 /// Effects whose authored rest pose is intentionally invisible until their
 /// AObjEvent32 runtime starts. The ROM gives Ness PK Flash scales X/Y of
@@ -320,7 +357,7 @@ mod tests {
 
         let has_mat_anim: BTreeSet<_> = MANAGER_EFFECT_KEYS
             .iter()
-            .zip(MANAGER_EFFECT_MAT_ANIM_JOINTS)
+            .zip(*MANAGER_EFFECT_MAT_ANIM_JOINTS)
             .filter_map(|(key, mat)| mat.is_some().then_some(*key))
             .collect();
         let unreachable: BTreeSet<_> = MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS

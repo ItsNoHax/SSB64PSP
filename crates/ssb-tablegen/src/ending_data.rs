@@ -11,6 +11,7 @@ use std::fmt::Write;
 
 use crate::emit;
 use crate::source::{OverlayData, OVL57, OVL59};
+use crate::tables::{le_words, Ctx};
 use crate::{Generated, Result, Source};
 
 /// `dSCStaffrollNameAndJobSpriteInfo`, by name/job font index.
@@ -56,60 +57,36 @@ pub fn generate(rom: Option<&Source>) -> Result<Vec<Generated>> {
     }])
 }
 
-/// `ssb-rom`'s tables from the same arrays: the images' and sprites'
-/// offsets in the staff roll's file.
-pub fn generate_rom(rom: Option<&Source>) -> Result<Vec<Generated>> {
-    let d = OverlayData::new(rom, OVL59);
-    let mut w = emit::header(
-        "`dSCStaffrollNameAndJobSpriteInfo` and `dSCStaffrollTextBoxSpriteInfo`'s `offset`s",
-    );
-    for (name, (at, n)) in [("NAME_IMAGES", NAME_AND_JOB), ("TEXT_SPRITES", TEXT_BOX)] {
-        let offsets = (0..n as u32)
-            .map(|i| d.u32(at + i * SPRITE_INFO_SIZE + 4))
-            .collect::<Result<Vec<_>>>()?;
-        let _ = writeln!(w, "pub const {name}: [u32; {n}] = [");
-        emit::hex_rows_u32(&mut w, &offsets);
-        w.push_str("];\n");
-    }
-    Ok(vec![
-        Generated {
-            name: "ending_staffroll_offsets.rs",
-            text: w,
-        },
-        congra(rom)?,
-    ])
+/// `n` sprite infos' `offset`s from `at`.
+fn offsets_bytes(c: &Ctx, (at, n): (u32, usize)) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL59);
+    let words = (0..n as u32)
+        .map(|i| d.u32(at + i * SPRITE_INFO_SIZE + 4))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(le_words(&words))
 }
 
-/// `dMNCongraPictures`: the files by kind (`CONGRA_FILES`) and as sprite
-/// files, bottom then top for each kind (`CONGRA`).
-fn congra(rom: Option<&Source>) -> Result<Generated> {
-    let d = OverlayData::new(rom, OVL57);
+/// The `StaffrollNameImages` table: `dSCStaffrollNameAndJobSpriteInfo`'s
+/// `offset`s.
+pub fn name_images_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    offsets_bytes(c, NAME_AND_JOB)
+}
+
+/// The `StaffrollTextSprites` table: `dSCStaffrollTextBoxSpriteInfo`'s
+/// `offset`s.
+pub fn text_sprites_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    offsets_bytes(c, TEXT_BOX)
+}
+
+/// The `EndingCongra` table: `dMNCongraPictures` (bottom file, offset, top
+/// file, offset), by `FTKind`.
+pub fn congra_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let d = OverlayData::new(Some(c.rom), OVL57);
     let (at, n) = CONGRA_PICTURES;
-    let mut files = String::new();
-    let mut sprites = String::new();
-    for i in 0..n as u32 {
-        let at = at + i * CONGRA_PICTURE_SIZE;
-        let (bottom, bottom_offset, top, top_offset) =
-            (d.u32(at)?, d.u32(at + 4)?, d.u32(at + 8)?, d.u32(at + 12)?);
-        let _ = writeln!(files, "    [0x{bottom:X}, 0x{top:X}],");
-        for (file, offset) in [(bottom, bottom_offset), (top, top_offset)] {
-            let _ = writeln!(
-                sprites,
-                "    SpriteFile {{\n        file: 0x{file:X},\n        offsets: &[0x{offset:X}],\n    }},"
-            );
-        }
-    }
-    let mut w = emit::header("`dMNCongraPictures`");
-    let _ = writeln!(w, "pub const CONGRA_FILES: [[u32; 2]; {n}] = [\n{files}];");
-    let _ = writeln!(
-        w,
-        "pub const CONGRA: [SpriteFile; {}] = [\n{sprites}];",
-        n * 2
-    );
-    Ok(Generated {
-        name: "ending_congra.rs",
-        text: w,
-    })
+    let words = (0..n as u32 * 4)
+        .map(|i| d.u32(at + (i / 4) * CONGRA_PICTURE_SIZE + (i % 4) * 4))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(le_words(&words))
 }
 
 #[cfg(test)]
@@ -121,9 +98,6 @@ mod tests {
         let files = generate(None).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].text.matches("    [0, 0],").count(), 56 + 74);
-        let rom = generate_rom(None).unwrap();
-        assert!(rom[0].text.contains("NAME_IMAGES: [u32; 56]"));
-        assert!(rom[0].text.contains("TEXT_SPRITES: [u32; 74]"));
     }
 
     #[test]

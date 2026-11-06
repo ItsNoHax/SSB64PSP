@@ -468,19 +468,21 @@ impl InitialMaterial {
     /// priority 2, so its head-1 list starts under `efDisplayCLDProcDisplay`'s
     /// state and, setting no render mode or `G_ZBUFFER` of its own, draws with
     /// no depth test (RE-421).
-    pub const SHIELD_EXTERNAL: InitialMaterial = InitialMaterial {
-        lit: true,
-        depth_test: false,
-        depth_write: false,
-        depth_mode: ZMode::Opaque,
-        translucent: false,
-        alpha_blend: None,
-        env_color: {
-            let env = crate::d_arrays::EF_MANAGER_SHIELD_COLORS_ENV[0];
-            Some([env[0], env[1], env[2], 0xC0])
-        },
-        head1: Head1Seed::EffectCld,
-    };
+    pub fn shield_external() -> InitialMaterial {
+        InitialMaterial {
+            lit: true,
+            depth_test: false,
+            depth_write: false,
+            depth_mode: ZMode::Opaque,
+            translucent: false,
+            alpha_blend: None,
+            env_color: {
+                let env = crate::d_arrays::EF_MANAGER_SHIELD_COLORS_ENV[0];
+                Some([env[0], env[1], env[2], 0xC0])
+            },
+            head1: Head1Seed::EffectCld,
+        }
+    }
 }
 
 /// Render state a primitive is drawn under.
@@ -5006,7 +5008,10 @@ mod tests {
         assert!(!cld.depth_test && !cld.depth_write && !cld.z_buffer);
         assert_eq!(cld.depth_mode, ZMode::Opaque);
         assert!(cld.alpha_compare_threshold);
-        assert_eq!(InitialMaterial::SHIELD_EXTERNAL.head1, Head1Seed::EffectCld);
+        assert_eq!(
+            InitialMaterial::shield_external().head1,
+            Head1Seed::EffectCld
+        );
     }
 
     /// Yoshi's Island's fruit panel (file 111 + 0x758) as its strip at rows

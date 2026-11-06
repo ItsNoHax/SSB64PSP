@@ -76,13 +76,12 @@ const fn behaviors<const N: usize>(ids: [i32; N]) -> [Behavior; N] {
 }
 
 /// `dSC1PTrainingModeDummyBehaviors`: Stand, Walk, Evade, Jump, Attack.
-pub const DUMMY_BEHAVIORS: [Behavior; CP_OPTION_COUNT as usize] =
-    behaviors(crate::d_arrays::SC1P_TRAINING_MODE_DUMMY_BEHAVIORS);
+pub static DUMMY_BEHAVIORS: ssb_tables::Decoded<[Behavior; CP_OPTION_COUNT as usize]> =
+    ssb_tables::Decoded::new(|| behaviors(*crate::d_arrays::SC1P_TRAINING_MODE_DUMMY_BEHAVIORS));
 
 /// `dSC1PTrainingModeLagIntervals`: per speed, the ticks that run before
 /// a skip and the ticks skipped. Full, 2/3, 1/2, 1/4.
-pub const LAG_INTERVALS: [[u8; 2]; SPEED_OPTION_COUNT as usize] =
-    crate::d_arrays::SC1P_TRAINING_MODE_LAG_INTERVALS;
+pub use crate::d_arrays::SC1P_TRAINING_MODE_LAG_INTERVALS as LAG_INTERVALS;
 
 /// `nSC1PTrainingModeMenuViewCloseUp`.
 pub const VIEW_CLOSE_UP: u8 = 0;

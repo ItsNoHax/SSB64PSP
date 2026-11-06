@@ -26,7 +26,7 @@ pub const CAMERA_EYE: [f32; 3] = [0.0, 0.0, 3000.0];
 /// `FighterChallenger` colour animation sets no light, so the one fighter
 /// (drawn first) takes the scene's direction (RE-458).
 pub fn fighter_light() -> super::intro::FighterLight {
-    let b = crate::d_arrays::SC_1P_CHALLENGER_LIGHTS1;
+    let b = *crate::d_arrays::SC_1P_CHALLENGER_LIGHTS1;
     super::intro::FighterLight::Scene([b[16] as i8, b[17] as i8, b[18] as i8])
 }
 

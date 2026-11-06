@@ -73,16 +73,33 @@ pub fn congra_part(s: &Sprite, part: usize) -> Sprite {
     }
 }
 
-// `dMNCongraPictures`' files by `FTKind` (Mario .. Ness), bottom then top
-// (`CONGRA_FILES`), and as sprite files (`CONGRA`), generated at build time
-// from the user's ROM by `crates/ssb-tablegen` (never committed).
-include!(concat!(env!("OUT_DIR"), "/ending_congra.rs"));
+/// `dMNCongraPictures` by `FTKind` (Mario .. Ness): `[bottom file, bottom
+/// offset, top file, top offset]` (`TableId::EndingCongra`).
+static CONGRA_PICTURES: ssb_tables::Table<[[u32; 4]; 12]> =
+    ssb_tables::Table::new(ssb_tables::TableId::EndingCongra);
+/// `dMNCongraPictures`' files by `FTKind`, bottom then top.
+pub static CONGRA_FILES: ssb_tables::Decoded<[[u32; 2]; 12]> = ssb_tables::Decoded::new(|| {
+    core::array::from_fn(|k| [CONGRA_PICTURES[k][0], CONGRA_PICTURES[k][2]])
+});
+/// `dMNCongraPictures` as sprite files: `2k` is kind `k`'s bottom, `2k + 1`
+/// its top.
+pub static CONGRA: ssb_tables::Decoded<[SpriteFile; 24]> = ssb_tables::Decoded::new(|| {
+    let pictures: &'static [[u32; 4]; 12] = CONGRA_PICTURES.get();
+    core::array::from_fn(|i| {
+        let row = &pictures[i / 2];
+        let half = (i % 2) * 2;
+        SpriteFile {
+            file: row[half],
+            offsets: core::slice::from_ref(&row[half + 1]),
+        }
+    })
+});
 
 /// File 195, `SCStaffroll`.
 pub const STAFFROLL_FILE: u32 = 0xc3;
 
-// `NAME_IMAGES` and `TEXT_SPRITES`, generated at build time from the user's
-// ROM by `crates/ssb-tablegen` (never committed):
+// `NAME_IMAGES` and `TEXT_SPRITES`, read from the pack's `TABLES` section
+// (`TableId::StaffrollNameImages`, `TableId::StaffrollTextSprites`):
 //
 // `NAME_IMAGES` is `dSCStaffrollNameAndJobSpriteInfo`'s images by name/job
 // font index: A-Z, a-z, period, comma, apostrophe, 4. Each is a raw I4 image
@@ -92,7 +109,10 @@ pub const STAFFROLL_FILE: u32 = 0xc3;
 // `TEXT_SPRITES` is `dSCStaffrollTextBoxSpriteInfo`'s sprites by text font
 // index: A-Z, a-z, colon, 9 to 0, period, dash, comma, ampersand, quote,
 // slash, apostrophe, question mark, brackets, e-acute.
-include!(concat!(env!("OUT_DIR"), "/ending_staffroll_offsets.rs"));
+pub static NAME_IMAGES: ssb_tables::Table<[u32; 56]> =
+    ssb_tables::Table::new(ssb_tables::TableId::StaffrollNameImages);
+pub static TEXT_SPRITES: ssb_tables::Table<[u32; 74]> =
+    ssb_tables::Table::new(ssb_tables::TableId::StaffrollTextSprites);
 
 /// A name/job letter image as a sprite: the `width` x `height` texels the
 /// letter's quad samples (`tc` from 0 to `width` and `height`), cut from
@@ -286,7 +306,7 @@ mod tests {
         font.dedup();
         assert_eq!(font.len(), 74);
         assert_eq!(STAFFROLL.offsets.len(), 74 + 3);
-        for at in TEXT_SPRITES {
+        for at in *TEXT_SPRITES {
             assert!(STAFFROLL.offsets.contains(&at));
         }
     }

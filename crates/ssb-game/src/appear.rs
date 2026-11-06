@@ -419,10 +419,10 @@ pub fn place(f: &mut Fighter, t: Vec3) {
 }
 
 /// `dIFCommonEntryFocusSleepTics`.
-const FOCUS_SLEEP: [u32; 3] = {
-    let a = crate::d_arrays::IF_COMMON_ENTRY_FOCUS_SLEEP_TICS;
+static FOCUS_SLEEP: ssb_tables::Decoded<[u32; 3]> = ssb_tables::Decoded::new(|| {
+    let a = *crate::d_arrays::IF_COMMON_ENTRY_FOCUS_SLEEP_TICS;
     [a[0] as u32, a[1] as u32, a[2] as u32]
-};
+});
 
 /// `ifCommonEntryFocusThread`, made at the countdown's creation with
 /// `syUtilsRandIntRange(3)` as its `id`: when each fighter enters, and for

@@ -325,9 +325,9 @@ impl BackupClear {
             for i in 0..ClearOption::ALL.len() {
                 // `mnBackupClearUpdateOptionTabColors`.
                 let prim = if self.highlighted[i] {
-                    d::MN_BACKUP_CLEAR_UPDATE_OPTION_TAB_COLORS_HICOLORS
+                    *d::MN_BACKUP_CLEAR_UPDATE_OPTION_TAB_COLORS_HICOLORS
                 } else {
-                    d::MN_BACKUP_CLEAR_UPDATE_OPTION_TAB_COLORS_NOTCOLORS
+                    *d::MN_BACKUP_CLEAR_UPDATE_OPTION_TAB_COLORS_NOTCOLORS
                 };
                 let offset = d::MN_BACKUP_CLEAR_SET_OPTION_SPRITE_COLORS_OFFSETS[i];
                 let [x, y] = d::MN_BACKUP_CLEAR_SET_OPTION_SPRITE_COLORS_POS[i];

@@ -145,7 +145,7 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         }
     }
     if let Some((gkind, kinds)) = opening_fight {
-        v.extend(r::GM_COMMON);
+        v.extend(*r::GM_COMMON);
         v.extend(r::EF_COMMON);
         v.extend(r::IT_COMMON);
         v.extend(r::FT_MANAGER);
@@ -172,31 +172,31 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
     };
     match s {
         Scene::Startup => v.extend(r::STARTUP),
-        Scene::Title => v.extend(r::TITLE),
-        Scene::ModeSelect => v.extend(r::MODE_SELECT),
-        Scene::OnePMode => v.extend(r::ONE_P_MODE),
-        Scene::VsMode => v.extend(r::VS_MODE),
-        Scene::VsOptions => v.extend(r::VS_OPTIONS),
-        Scene::VsItemSwitch => v.extend(r::ITEM_SWITCH),
-        Scene::Option => v.extend(r::OPTION),
-        Scene::ScreenAdjust => v.extend(r::SCREEN_ADJUST),
-        Scene::BackupClear => v.extend(r::BACKUP_CLEAR),
-        Scene::Data => v.extend(r::DATA),
-        Scene::SoundTest => v.extend(r::SOUND_TEST),
-        Scene::Message => v.extend(r::MESSAGE),
-        Scene::VsRecord => v.extend(r::VS_RECORD),
+        Scene::Title => v.extend(*r::TITLE),
+        Scene::ModeSelect => v.extend(*r::MODE_SELECT),
+        Scene::OnePMode => v.extend(*r::ONE_P_MODE),
+        Scene::VsMode => v.extend(*r::VS_MODE),
+        Scene::VsOptions => v.extend(*r::VS_OPTIONS),
+        Scene::VsItemSwitch => v.extend(*r::ITEM_SWITCH),
+        Scene::Option => v.extend(*r::OPTION),
+        Scene::ScreenAdjust => v.extend(*r::SCREEN_ADJUST),
+        Scene::BackupClear => v.extend(*r::BACKUP_CLEAR),
+        Scene::Data => v.extend(*r::DATA),
+        Scene::SoundTest => v.extend(*r::SOUND_TEST),
+        Scene::Message => v.extend(*r::MESSAGE),
+        Scene::VsRecord => v.extend(*r::VS_RECORD),
         Scene::Characters => {
-            v.extend(r::CHARACTERS);
+            v.extend(*r::CHARACTERS);
             v.extend(r::EF_COMMON);
             v.extend(r::FT_MANAGER);
             v.extend(playable());
         }
-        Scene::PlayersVs => players(&mut v, &r::PLAYERS_VS),
-        Scene::Players1PGame => players(&mut v, &r::PLAYERS_1P),
-        Scene::Players1PTraining => players(&mut v, &r::PLAYERS_TRAINING),
-        Scene::Players1PBonus1 | Scene::Players1PBonus2 => players(&mut v, &r::PLAYERS_BONUS),
+        Scene::PlayersVs => players(&mut v, &*r::PLAYERS_VS),
+        Scene::Players1PGame => players(&mut v, &*r::PLAYERS_1P),
+        Scene::Players1PTraining => players(&mut v, &*r::PLAYERS_TRAINING),
+        Scene::Players1PBonus1 | Scene::Players1PBonus2 => players(&mut v, &*r::PLAYERS_BONUS),
         // The preview of the cursor's stage: `maps`.
-        Scene::Maps => v.extend(r::MAPS),
+        Scene::Maps => v.extend(*r::MAPS),
         Scene::Explain => {
             v.extend(r::EXPLAIN);
             // Its battle's, held from the scene's start (RE-476).
@@ -208,7 +208,7 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         Scene::OnePGame | Scene::BonusStage => {}
         Scene::Opening(k) => v.extend_from_slice(match k {
             Kind::Room => &r::OPENING_ROOM[..],
-            Kind::Portraits => &r::OPENING_PORTRAITS,
+            Kind::Portraits => &*r::OPENING_PORTRAITS,
             Kind::Mario
             | Kind::Donkey
             | Kind::Link
@@ -216,16 +216,16 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
             | Kind::Yoshi
             | Kind::Kirby
             | Kind::Fox
-            | Kind::Pikachu => &r::OPENING_FIGHTER,
-            Kind::Run => &r::OPENING_RUN,
-            Kind::Cliff => &r::OPENING_CLIFF,
-            Kind::Yamabuki => &r::OPENING_YAMABUKI,
-            Kind::Jungle => &r::OPENING_JUNGLE,
-            Kind::Yoster => &r::OPENING_YOSTER,
-            Kind::Sector => &r::OPENING_SECTOR,
-            Kind::Standoff => &r::OPENING_STANDOFF,
-            Kind::Clash => &r::OPENING_CLASH,
-            Kind::Newcomers => &r::OPENING_NEWCOMERS,
+            | Kind::Pikachu => &*r::OPENING_FIGHTER,
+            Kind::Run => &*r::OPENING_RUN,
+            Kind::Cliff => &*r::OPENING_CLIFF,
+            Kind::Yamabuki => &*r::OPENING_YAMABUKI,
+            Kind::Jungle => &*r::OPENING_JUNGLE,
+            Kind::Yoster => &*r::OPENING_YOSTER,
+            Kind::Sector => &*r::OPENING_SECTOR,
+            Kind::Standoff => &*r::OPENING_STANDOFF,
+            Kind::Clash => &*r::OPENING_CLASH,
+            Kind::Newcomers => &*r::OPENING_NEWCOMERS,
         }),
     }
     v
@@ -290,12 +290,12 @@ pub fn battle_roots(pack: &Pack<'_>, gkind: u8, kinds: &[u32]) -> Vec<u32> {
 /// figatrees stream ([`stream_scene`]).
 pub fn fighter_battle_roots(pack: &Pack<'_>, kinds: &[u32]) -> Vec<u32> {
     let mut v: Vec<u32> = Vec::new();
-    v.extend(r::GM_COMMON);
+    v.extend(*r::GM_COMMON);
     v.extend(r::EF_COMMON);
     v.extend(r::IT_COMMON);
     v.extend(r::FT_MANAGER);
     for &k in kinds {
-        if let Some(&main) = r::FIGHTER_MAIN.get(k as usize) {
+        if let Some(&main) = (*r::FIGHTER_MAIN).get(k as usize) {
             v.push(main);
         }
         v.extend(pinned_figatrees(pack, k));
@@ -330,7 +330,7 @@ pub fn stage_battle_roots(gkind: u8) -> Vec<u32> {
 /// ([`maps_preview_roots`]). The N64 reads no other stage's preview until
 /// the cursor lands on it (RE-572).
 pub fn maps_roots(training: bool, gkind: u8) -> Vec<u32> {
-    let mut v: Vec<u32> = Vec::from(r::MAPS);
+    let mut v: Vec<u32> = Vec::from(*r::MAPS);
     v.extend(maps_preview_roots(training, gkind));
     v
 }
@@ -344,7 +344,7 @@ pub fn maps_preview_roots(training: bool, gkind: u8) -> Vec<u32> {
 /// `mnMapsFuncStart`: the stage select holds its own files, and the
 /// preview of `gkind`, the stage its cursor opens on.
 pub fn maps(training: bool, gkind: u8) {
-    *base() = Vec::from(r::MAPS);
+    *base() = Vec::from(*r::MAPS);
     // SAFETY: as `base`.
     unsafe { BASE_IN_BATTLE = Base::Own };
     load("maps", &maps_preview_roots(training, gkind), Base::Own);
@@ -365,11 +365,11 @@ pub fn maps_preview(training: bool, gkind: u8) {
 /// The VS results' files: `mnVSResultsFuncStart`'s, all twelve kinds, the
 /// wipes, and the demo clips its fighters play (`Win1` to `Win4`, `Lose`).
 pub fn results_roots() -> Vec<u32> {
-    let mut v: Vec<u32> = Vec::from(r::VS_RESULTS);
+    let mut v: Vec<u32> = Vec::from(*r::VS_RESULTS);
     v.extend(r::EF_COMMON);
     v.extend(r::FT_MANAGER);
     v.extend(&r::FIGHTER_MAIN[..12]);
-    v.extend(r::TRANSITIONS);
+    v.extend(*r::TRANSITIONS);
     if let Some(p) = scene_files::pack() {
         v.extend(r::clip_files(p, 0..12, &r::RESULTS_CLIP_SLOTS));
     }
@@ -384,7 +384,7 @@ pub fn campaign(id: u8, fkind: u32) {
     let fighters = |v: &mut Vec<u32>| {
         v.extend(r::EF_COMMON);
         v.extend(r::FT_MANAGER);
-        v.extend(r::FIGHTER_MAIN.get(fkind as usize).copied());
+        v.extend((*r::FIGHTER_MAIN).get(fkind as usize).copied());
     };
     // The player's demo clips the scene poses it with.
     let clips = |v: &mut Vec<u32>, slots: &[usize]| {
@@ -395,42 +395,42 @@ pub fn campaign(id: u8, fkind: u32) {
     let mut v: Vec<u32> = Vec::new();
     let name = match id {
         0 => {
-            v.extend(r::ONE_P_INTRO);
+            v.extend(*r::ONE_P_INTRO);
             fighters(&mut v);
             "1p-intro"
         }
         1 => {
-            v.extend(r::ONE_P_CONTINUE);
+            v.extend(*r::ONE_P_CONTINUE);
             fighters(&mut v);
             clips(&mut v, &r::CONTINUE_CLIP_SLOTS);
             "1p-continue"
         }
         2 => {
-            v.extend(r::ONE_P_STAGE_CLEAR);
+            v.extend(*r::ONE_P_STAGE_CLEAR);
             "1p-stage-clear"
         }
         4 => {
-            v.extend(r::ENDING);
+            v.extend(*r::ENDING);
             fighters(&mut v);
             clips(&mut v, &r::ENDING_CLIP_SLOTS);
             "ending"
         }
         5 => {
-            v.extend(r::STAFFROLL);
+            v.extend(*r::STAFFROLL);
             "staffroll"
         }
         6 => {
-            v.extend(r::CONGRA.get(fkind as usize).into_iter().flatten().copied());
+            v.extend((*r::CONGRA).get(fkind as usize).into_iter().flatten().copied());
             "congra"
         }
         7 => {
-            v.extend(r::CHALLENGER);
+            v.extend(*r::CHALLENGER);
             v.extend(r::EF_COMMON);
             v.extend(r::FT_MANAGER);
             "challenger"
         }
         8 => {
-            v.extend(r::MESSAGE);
+            v.extend(*r::MESSAGE);
             "message"
         }
         _ => return,
@@ -450,7 +450,7 @@ pub fn set_base(roots: Vec<u32>) {
 pub fn fighter_roots(pack: &Pack<'_>, kinds: core::ops::RangeInclusive<u32>) -> Vec<u32> {
     let mut v = Vec::new();
     for k in kinds {
-        v.extend(r::FIGHTER_MAIN.get(k as usize).copied());
+        v.extend((*r::FIGHTER_MAIN).get(k as usize).copied());
         v.extend(pinned_figatrees(pack, k));
     }
     v
@@ -507,7 +507,7 @@ fn stream_scene(name: &str, roots: &[u32], slabs: bool) {
     let mut table: Vec<(u32, u8)> = Vec::new();
     if matches!(name, "battle" | "opening") {
         let groups: Vec<u32> = (0u32..)
-            .zip(r::FIGHTER_MAIN)
+            .zip(*r::FIGHTER_MAIN)
             .filter(|(_, main)| roots.contains(main))
             .map(|(k, _)| r::anim_kind(k))
             .collect();

@@ -120,8 +120,9 @@ pub fn add_menu_scenes(
             if writer.has_anim(AnimDesc::EFFECT, cam.slot()) {
                 continue;
             }
-            let frames = ssb_rom::camanim::bake(&file(cam.file)?.data, cam.offset, cam.init, 8192)
-                .map_err(|e| format!("camera {:#x}+{:#x}: {e:?}", cam.file, cam.offset))?;
+            let frames =
+                ssb_rom::camanim::bake(&file(cam.file)?.data, cam.offset, cam.init(), 8192)
+                    .map_err(|e| format!("camera {:#x}+{:#x}: {e:?}", cam.file, cam.offset))?;
             if frames.is_empty() || frames.len() >= 8192 {
                 return Err(format!(
                     "camera {:#x}+{:#x}: {} plays",
@@ -250,7 +251,7 @@ pub fn add_title_anims(
         title::LABEL_PLAYS,
     )
     .map_err(|e| format!("title labels: {e:?}"))?;
-    let c = title::PRESS_START_CENTRE;
+    let c = *title::PRESS_START_CENTRE;
     let press = title::bake(
         &title.data,
         title::PRESS_START_DOBJDESC,

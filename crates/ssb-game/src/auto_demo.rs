@@ -17,14 +17,14 @@ use crate::menu::title::{kind_of, kinds_num, shuffled_kind, DemoData};
 use crate::menu::Scene;
 
 /// `dSCAutoDemoGroundOrder`.
-pub const GROUND_ORDER: [u8; 8] = crate::d_arrays::SC_AUTO_DEMO_GROUND_ORDER;
+pub use crate::d_arrays::SC_AUTO_DEMO_GROUND_ORDER as GROUND_ORDER;
 
 /// `dSCAutoDemoMapObjKindList`: `nMPMapObjKindAutoDemoPlayer1..8`.
-pub const MAP_OBJ_KINDS: [u16; 8] = crate::d_arrays::SC_AUTO_DEMO_MAP_OBJ_KIND_LIST;
+pub use crate::d_arrays::SC_AUTO_DEMO_MAP_OBJ_KIND_LIST as MAP_OBJ_KINDS;
 
 /// `dSCAutoDemoZoomEyeX` and `...Y`, in degrees.
-pub const ZOOM_EYE_X: [f32; 6] = crate::d_arrays::SC_AUTO_DEMO_ZOOM_EYE_X;
-pub const ZOOM_EYE_Y: [f32; 5] = crate::d_arrays::SC_AUTO_DEMO_ZOOM_EYE_Y;
+pub use crate::d_arrays::SC_AUTO_DEMO_ZOOM_EYE_X as ZOOM_EYE_X;
+pub use crate::d_arrays::SC_AUTO_DEMO_ZOOM_EYE_Y as ZOOM_EYE_Y;
 /// `scAutoDemoSetCameraPlayerZoom`'s pan scale and field of view; the
 /// distance is the fighter's `closeup_camera_zoom`.
 pub const ZOOM_PAN_SCALE: f32 = 0.3;
@@ -56,11 +56,14 @@ pub enum Change {
     Exit,
 }
 
+/// One [`FOCUS`] step: `(frames, change, focused player)`.
+pub type FocusStep = (u16, Option<Change>, Option<usize>);
+
 /// `dSCAutoDemoFuncList`: frames until the next change (`focus_end_wait`),
 /// the change, and the player whose death cuts the step short
 /// (`func_focus`).
-pub const FOCUS: [(u16, Option<Change>, Option<usize>); 7] = {
-    let w = crate::d_arrays::SC_AUTO_DEMO_FUNC_LIST_FOCUS_END_WAIT;
+pub static FOCUS: ssb_tables::Decoded<[FocusStep; 7]> = ssb_tables::Decoded::new(|| {
+    let w = *crate::d_arrays::SC_AUTO_DEMO_FUNC_LIST_FOCUS_END_WAIT;
     [
         (w[0], None, None),
         (w[1], Some(Change::Fade), None),
@@ -70,7 +73,7 @@ pub const FOCUS: [(u16, Option<Change>, Option<usize>); 7] = {
         (w[5], Some(Change::MagnifyOn), None),
         (w[6], Some(Change::Exit), None),
     ]
-};
+});
 
 /// What the battle shows the focus script, and what the script does to it.
 pub trait World {
@@ -216,14 +219,14 @@ impl AutoDemo {
     /// `scAutoDemoUpdateFocus`.
     fn update_focus(&mut self, world: &mut dyn World) -> Option<Scene> {
         let mut load = None;
-        if let Some(&(_, _, Some(player))) = FOCUS.get(self.step) {
+        if let Some(&(_, _, Some(player))) = (*FOCUS).get(self.step) {
             if world.is_dead(player) {
                 self.wait = 0;
             }
         }
         while self.wait == 0 {
             // `scAutoDemoChangeFocus`.
-            let Some(&(wait, change, _)) = FOCUS.get(self.step) else {
+            let Some(&(wait, change, _)) = (*FOCUS).get(self.step) else {
                 break;
             };
             self.wait = wait;

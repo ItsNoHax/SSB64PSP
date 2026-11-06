@@ -35,7 +35,7 @@ use crate::sound::{self, id::*, FgmHandle};
 
 /// `dFTCommonDataPublicFighterCallFGMs`: each fighter's chant, by `FTKind`
 /// (none for Master Hand, the Polygons and Giant Donkey Kong).
-const FIGHTER_CALL_FGMS: [u16; 27] = crate::d_arrays::FT_COMMON_DATA_PUBLIC_FIGHTER_CALL_FGMS;
+use crate::d_arrays::FT_COMMON_DATA_PUBLIC_FIGHTER_CALL_FGMS as FIGHTER_CALL_FGMS;
 
 /// `FTCOMMON_DAMAGE_KNOCKBACK_VERYHIGH`.
 const KNOCKBACK_VERYHIGH: f32 = 160.0;
@@ -302,7 +302,7 @@ fn try_start_call(s: &mut State, knockback: f32, player_num: i32) -> bool {
     if player_num == s.call_player_num {
         return false;
     }
-    s.call_id = FIGHTER_CALL_FGMS
+    s.call_id = (*FIGHTER_CALL_FGMS)
         .get(attacker.kind as usize)
         .copied()
         .unwrap_or(nSYAudioFGMVoiceEnd);

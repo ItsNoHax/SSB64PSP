@@ -6,7 +6,7 @@ use crate::map::{GroupStatus, MapGroup};
 use ssb_engine::math::Vec3;
 
 /// `dGRYosterCloudLineIDs`: each cloud's collision group.
-pub const CLOUD_GROUPS: [u8; 3] = crate::d_arrays::GR_YOSTER_CLOUD_LINE_IDS;
+pub use crate::d_arrays::GR_YOSTER_CLOUD_LINE_IDS as CLOUD_GROUPS;
 
 /// `grYosterCloudStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

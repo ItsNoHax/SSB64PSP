@@ -678,8 +678,8 @@ fn make_emblem(
     p: &Pack<'_>,
     kind: FighterKind,
 ) -> Option<Box<(ssb_rom::pack::ObjectDesc, ssb_rom::skeleton::EffectMaterialAnimator)>> {
-    let series = ssb_rom::effect::EMBLEM_BY_FIGHTER.get(kind as usize)?;
-    let desc = ssb_rom::effect::EMBLEMS.get(usize::from(*series))?;
+    let series = (*ssb_rom::effect::EMBLEM_BY_FIGHTER).get(kind as usize)?;
+    let desc = (*ssb_rom::effect::EMBLEMS).get(usize::from(*series))?;
     let object = ssb_psp_runtime::scene::object_keyed(p, (ssb_rom::effect::EMBLEM_FILE, desc.dobjdesc))?;
     let mut mats = ssb_rom::skeleton::EffectMaterialAnimator::new();
     let prims = (0..object.node_count)

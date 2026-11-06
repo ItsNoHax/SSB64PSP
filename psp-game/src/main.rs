@@ -2863,16 +2863,18 @@ impl VsRules {
     /// `dSCManagerDefaultBattleState` (generated from the ROM in
     /// `ssb_game`): a three-minute free-for-all time battle, stocks 2,
     /// Team Attack off.
-    pub(crate) const DEFAULT: VsRules = VsRules {
+    pub(crate) fn defaults() -> VsRules {
+        VsRules {
         rule: ssb_game::battle::Rule::Time,
-        time_limit: ssb_game::players_vs::DEFAULT_TIME_LIMIT,
-        stocks: ssb_game::players_vs::DEFAULT_STOCKS as i8,
+        time_limit: *ssb_game::players_vs::DEFAULT_TIME_LIMIT,
+        stocks: *ssb_game::players_vs::DEFAULT_STOCKS as i8,
         team_rules: ssb_game::team::TeamRules::FREE_FOR_ALL,
-        items: ssb_game::item::normal::Switches::DEFAULT,
+        items: ssb_game::item::normal::Switches::defaults(),
         damage_ratio: ssb_game::stale::DAMAGE_RATIO_DEFAULT,
         demo: false,
         skip_entry: false,
-    };
+        }
+    }
 
     /// The rules `mnPlayersVSSetSceneData` left in the battle state.
     fn of(state: &ssb_game::players_vs::BattleState) -> VsRules {
@@ -2898,24 +2900,24 @@ fn vs_rules(scene: GameScene) -> VsRules {
     let mut rules = match scene {
         GameScene::VsTimeUp | GameScene::VsTimeUpSign | GameScene::VsSuddenDeath => VsRules {
             time_limit: 1,
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
         GameScene::VsTeam => VsRules {
             team_rules: ssb_game::team::TeamRules::TEAMS,
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
         // Two lives each (`stock_setting` 1).
         GameScene::VsTeamSteal => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 1,
             team_rules: ssb_game::team::TeamRules::TEAMS,
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
         // Two lives each: the KO takes a stock and the CPU comes back.
         GameScene::VsPush | GameScene::VsKnock => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 1,
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
         // Items off: no item lands in `vsmagnify`'s frame.
         GameScene::VsMagnify => VsRules {
@@ -2925,7 +2927,7 @@ fn vs_rules(scene: GameScene) -> VsRules {
                 appearance: ssb_game::item::normal::Appearance::None,
                 toggles: 0,
             },
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
         // The N64 reference: stock 3, items off.
         GameScene::CpuFxD
@@ -2940,15 +2942,15 @@ fn vs_rules(scene: GameScene) -> VsRules {
                 appearance: ssb_game::item::normal::Appearance::None,
                 toggles: 0,
             },
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
         // One stock (`stock_setting` 0).
         GameScene::VsResults | GameScene::VsResultsEmblem | GameScene::VsResultsLink => VsRules {
             rule: ssb_game::battle::Rule::Stock,
             stocks: 0,
-            ..VsRules::DEFAULT
+            ..VsRules::defaults()
         },
-        _ => VsRules::DEFAULT,
+        _ => VsRules::defaults(),
     };
     if let Some(appearance) = capture::items_override() {
         rules.items.appearance = appearance;
@@ -4631,7 +4633,7 @@ unsafe fn session_frame(
                         s.leave_battle();
                     }
                     s.vs = s.cursor == VS_ENTRY;
-                    let rules = s.vs.then(|| capture_scene.map_or(VsRules::DEFAULT, vs_rules));
+                    let rules = s.vs.then(|| capture_scene.map_or(VsRules::defaults(), vs_rules));
                     if s.world.as_ref().is_some_and(|w| w.play_state.is_some()) {
                         s.screen = Screen::Training;
                     } else if route == Some(CaptureRoute::Direct) {
@@ -5263,7 +5265,7 @@ impl Session {
             let kinds: alloc::vec::Vec<u32> = roster.iter().flatten().map(|e| e.kind as u32).collect();
             let mut roots = scene_load::battle_roots(p, gkind, &kinds);
             if rules.is_none() {
-                roots.extend(ssb_rom::scene_roots::TRAINING);
+                roots.extend(*ssb_rom::scene_roots::TRAINING);
             }
             scene_load::battle("battle", &roots);
         }
@@ -5373,7 +5375,7 @@ impl Session {
             scene_load::read_ahead("battle", u32::MAX, || {
                 let mut roots = scene_load::fighter_battle_roots(p, &kinds);
                 if !vs {
-                    roots.extend(ssb_rom::scene_roots::TRAINING);
+                    roots.extend(*ssb_rom::scene_roots::TRAINING);
                 }
                 roots
             });
@@ -5425,7 +5427,7 @@ fn new_session(backup: ssb_game::backup::Backup, save: save::Save) -> alloc::box
         training_menu: None,
         training_paused: false,
         maps_vsmode_gkind: ssb_game::stage_select::DEFAULT_GKIND,
-        vs_menu_rules: VsRules::DEFAULT,
+        vs_menu_rules: VsRules::defaults(),
         vs_results: None,
         vs_transfer: None,
         vs_message: None,
@@ -9332,8 +9334,8 @@ fn draw_particles(
     let proj = ssb_engine::math::Mat4::sy_persp_fast(
         pl.camera.fovy_degrees,
         w / h,
-        ssb_game::camera::DEFAULT_NEAR,
-        ssb_game::camera::DEFAULT_FAR,
+        *ssb_game::camera::DEFAULT_NEAR,
+        *ssb_game::camera::DEFAULT_FAR,
     );
     unsafe {
         ssb_psp_runtime::particles::draw(&banks, &mut hud.particles, &view, &proj, lists, draw_state);
@@ -9798,8 +9800,8 @@ unsafe fn draw_training(
         let proj = ssb_engine::math::Mat4::sy_persp_fast(
             pl.camera.fovy_degrees,
             viewport_w / viewport_h,
-            ssb_game::camera::DEFAULT_NEAR,
-            ssb_game::camera::DEFAULT_FAR,
+            *ssb_game::camera::DEFAULT_NEAR,
+            *ssb_game::camera::DEFAULT_FAR,
         );
         gpu.set_projection(&proj);
         gpu.reset_modelview();

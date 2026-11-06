@@ -15,8 +15,8 @@ use ssb_engine::input::N64Buttons;
 pub const INPUT_WAIT: u32 = 120;
 
 /// `mnMessageMakeMessage`'s US `message_pos` (`Vec2i`), by [`Unlock`].
-pub const MESSAGE_POSITIONS: [[f32; 2]; 7] = {
-    let pos = crate::d_arrays::MN_MESSAGE_MAKE_MESSAGE_MESSAGE_POS;
+pub static MESSAGE_POSITIONS: ssb_tables::Decoded<[[f32; 2]; 7]> = ssb_tables::Decoded::new(|| {
+    let pos = *crate::d_arrays::MN_MESSAGE_MAKE_MESSAGE_MESSAGE_POS;
     let mut out = [[0.0; 2]; 7];
     let mut i = 0;
     while i < 7 {
@@ -24,11 +24,11 @@ pub const MESSAGE_POSITIONS: [[f32; 2]; 7] = {
         i += 1;
     }
     out
-};
+});
 
 /// `mnMessageApplyUnlock`'s `fkinds`, by the newcomers' [`Unlock`].
-const UNLOCK_FKINDS: [FighterKind; 4] = {
-    let fkinds = crate::d_arrays::MN_MESSAGE_APPLY_UNLOCK_FKINDS;
+static UNLOCK_FKINDS: ssb_tables::Decoded<[FighterKind; 4]> = ssb_tables::Decoded::new(|| {
+    let fkinds = *crate::d_arrays::MN_MESSAGE_APPLY_UNLOCK_FKINDS;
     let mut out = [FighterKind::Mario; 4];
     let mut i = 0;
     while i < 4 {
@@ -36,7 +36,7 @@ const UNLOCK_FKINDS: [FighterKind; 4] = {
         i += 1;
     }
     out
-};
+});
 
 /// `mnMessageMakeWallpaper`'s collage position.
 pub const WALLPAPER_POSITION: [f32; 2] = [10.0, 10.0];

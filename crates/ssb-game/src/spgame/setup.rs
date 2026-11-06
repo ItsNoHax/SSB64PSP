@@ -96,8 +96,8 @@ const fn playable_kinds<const N: usize>(kinds: [u8; N]) -> [FighterKind; N] {
 
 /// `dSC1PGameKirbyTeamCopyKinds`: the copy each Kirby of the team wears,
 /// in the order they appear.
-pub const KIRBY_TEAM_COPY_KINDS: [FighterKind; 7] =
-    playable_kinds(crate::d_arrays::SC1P_GAME_KIRBY_TEAM_COPY_KINDS);
+pub static KIRBY_TEAM_COPY_KINDS: ssb_tables::Decoded<[FighterKind; 7]> =
+    ssb_tables::Decoded::new(|| playable_kinds(*crate::d_arrays::SC1P_GAME_KIRBY_TEAM_COPY_KINDS));
 
 /// `nFTKindNStart`: the Fighting Polygon Team's first kind.
 const POLY_START: u8 = FighterKind::PolyMario as u8;
@@ -691,9 +691,9 @@ pub struct StockIcon {
 }
 
 /// `dSC1PGameZoomEyeX`, degrees.
-pub const ZOOM_EYE_X: [f32; 6] = crate::d_arrays::SC1P_GAME_ZOOM_EYE_X;
+pub use crate::d_arrays::SC1P_GAME_ZOOM_EYE_X as ZOOM_EYE_X;
 /// `dSC1PGameZoomEyeY`, degrees.
-pub const ZOOM_EYE_Y: [f32; 4] = crate::d_arrays::SC1P_GAME_ZOOM_EYE_Y;
+pub use crate::d_arrays::SC1P_GAME_ZOOM_EYE_Y as ZOOM_EYE_Y;
 
 /// `sc1PGameSetCameraZoom`'s angles in radians: a random eye x turned by
 /// the player's facing, then a random eye y. The camera eases at 0.06

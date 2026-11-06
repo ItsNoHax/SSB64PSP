@@ -42,18 +42,18 @@ impl Switches {
     /// `dSCManagerDefaultBattleState`'s `item_appearance_rate` and
     /// `item_toggles` (generated from the ROM): every item, middle
     /// appearance.
-    pub const DEFAULT: Switches = {
-        let d = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE;
+    pub fn defaults() -> Switches {
+        let d = crate::d_arrays::SC_MANAGER_DEFAULT_BATTLE_STATE.get();
         Switches {
             appearance: Appearance::from_switch(d[0x1C]),
             toggles: u32::from_be_bytes([d[12], d[13], d[14], d[15]]),
         }
-    };
+    }
 }
 
 impl Default for Switches {
     fn default() -> Self {
-        Self::DEFAULT
+        Self::defaults()
     }
 }
 impl Switches {
@@ -116,9 +116,9 @@ impl DropWeights {
     }
 }
 
+use crate::d_arrays::IT_MANAGER_APPEARANCE_RATES_MAX as APPEARANCE_RATES_MAX;
 /// `dITManagerAppearanceRatesMin` / `Max`, by [`Appearance`].
-const APPEARANCE_RATES_MIN: [u16; 6] = crate::d_arrays::IT_MANAGER_APPEARANCE_RATES_MIN;
-const APPEARANCE_RATES_MAX: [u16; 6] = crate::d_arrays::IT_MANAGER_APPEARANCE_RATES_MAX;
+use crate::d_arrays::IT_MANAGER_APPEARANCE_RATES_MIN as APPEARANCE_RATES_MIN;
 /// `item_mapobj_ids[30]`: more item points halt the source.
 pub const APPEAR_POINTS_MAX: usize = 30;
 

@@ -1166,7 +1166,7 @@ fn a_prefetch_reads_from_the_next_frame() {
     assert!(new.plan.in_flight());
     assert_eq!(background(&new), 1);
     // A prefetch while one runs lets it run, and starts no other.
-    new.plan.prefetch(&mut new.io, &crate::scene_roots::MAPS);
+    new.plan.prefetch(&mut new.io, &*crate::scene_roots::MAPS);
     assert!(new.plan.in_flight());
     assert_eq!(background(&new), 1);
     new.plan.drain(&mut new.io);

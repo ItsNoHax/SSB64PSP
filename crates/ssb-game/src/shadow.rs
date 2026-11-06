@@ -24,9 +24,9 @@ pub const TEX_SCALE: f32 = 0.5;
 /// Source half-depth in match Z units.
 pub const HALF_DEPTH: f32 = 200.0;
 /// `dFTCommonDataShadowColorDefault`.
-pub const COLOR_DEFAULT: [u8; 4] = crate::d_arrays::FT_COMMON_DATA_SHADOW_COLOR_DEFAULT;
+pub use crate::d_arrays::FT_COMMON_DATA_SHADOW_COLOR_DEFAULT as COLOR_DEFAULT;
 /// `dFTCommonDataShadowColorTeams`: red, blue and green.
-pub const COLOR_TEAMS: [[u8; 4]; 3] = crate::d_arrays::FT_COMMON_DATA_SHADOW_COLOR_TEAMS;
+pub use crate::d_arrays::FT_COMMON_DATA_SHADOW_COLOR_TEAMS as COLOR_TEAMS;
 /// `pos_project.y = translate.y - 65536`: the wall guard's probe length.
 const WALL_PROBE_DEPTH: f32 = 65536.0;
 
@@ -42,7 +42,7 @@ pub fn color(is_team_battle: bool, is_not_teamshadows: bool, team: u8) -> [u8; 4
     if is_team_battle && !is_not_teamshadows {
         COLOR_TEAMS[usize::from(team)]
     } else {
-        COLOR_DEFAULT
+        *COLOR_DEFAULT
     }
 }
 
@@ -449,11 +449,11 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn team_shadows_use_the_team_colour_except_in_the_1p_game() {
-        assert_eq!(color(false, false, 1), COLOR_DEFAULT);
+        assert_eq!(color(false, false, 1), *COLOR_DEFAULT);
         assert_eq!(color(true, false, 0), [0x80, 0x00, 0x00, 0xB4]);
         assert_eq!(color(true, false, 1), [0x00, 0x00, 0x80, 0xB4]);
         assert_eq!(color(true, false, 2), [0x00, 0x80, 0x00, 0xB4]);
-        assert_eq!(color(true, true, 2), COLOR_DEFAULT);
+        assert_eq!(color(true, true, 2), *COLOR_DEFAULT);
         assert!(crate::battle::Battle::new_1p(5, Default::default(), false, 0).is_not_teamshadows);
     }
 

@@ -11,6 +11,8 @@ description = "Reads Super Smash Bros. 64 ROM data: validation, VPK0, relocData 
 sha1_smol = { version = "1.0", default-features = false }
 # `lbCommonSin` for the collision matrices (`Mat4::from_trs_collision`).
 ssb-engine = { workspace = true }
+# The ROM-derived `d*` arrays and records, from the pack's TABLES section.
+ssb-tables = { workspace = true }
 
 [build-dependencies]
 # Writes the tables read from the user's ROM into OUT_DIR (`build.rs`).

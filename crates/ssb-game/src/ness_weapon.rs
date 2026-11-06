@@ -14,12 +14,12 @@ pub const TRAIL_HIT: Hitbox = Hitbox {
     offset: crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.attack_offset(0),
     ..crate::monster_weapon::weapon_attributes::NESS_PK_THUNDER_TRAIL.hitbox()
 };
-/// `dWPDisplayPKThunderPrimColors`: the PRIM `wpDisplayPKThunderProcDisplay`
-/// sets for a trail by its `trail_id` (alpha 0xFF), generated from the ROM.
-pub const PK_THUNDER_TRAIL_PRIM: [[u8; 3]; 4] = crate::d_arrays::WP_DISPLAY_PK_THUNDER_PRIM_COLORS;
 /// `dWPDisplayPKThunderEnvColors`: the trail's ENV, as
 /// [`PK_THUNDER_TRAIL_PRIM`].
-pub const PK_THUNDER_TRAIL_ENV: [[u8; 3]; 4] = crate::d_arrays::WP_DISPLAY_PK_THUNDER_ENV_COLORS;
+pub use crate::d_arrays::WP_DISPLAY_PK_THUNDER_ENV_COLORS as PK_THUNDER_TRAIL_ENV;
+/// `dWPDisplayPKThunderPrimColors`: the PRIM `wpDisplayPKThunderProcDisplay`
+/// sets for a trail by its `trail_id` (alpha 0xFF), generated from the ROM.
+pub use crate::d_arrays::WP_DISPLAY_PK_THUNDER_PRIM_COLORS as PK_THUNDER_TRAIL_PRIM;
 /// The spark's `WPAttributes` map collision box.
 const SPARK_MAP_COLL: BodyColl = crate::monster_weapon::weapon_attributes::NESS_PK_FIRE.map_coll;
 #[derive(Debug, Clone, Copy, PartialEq)]

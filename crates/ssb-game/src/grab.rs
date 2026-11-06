@@ -128,11 +128,13 @@ pub(crate) use throw_descs::{KIRBY_INHALE, KIRBY_THROW_F};
 
 /// `FTThrowReleaseDesc dFTCommonCaptureKnockbackCatch`: what the catcher
 /// suffers when the held fighter breaks free. `{ angle, kbs, kbw, kbb }`.
-const CAPTURE_KNOCKBACK_CATCH: (i32, i32, i32, i32) =
-    release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KNOCKBACK_CATCH);
+static CAPTURE_KNOCKBACK_CATCH: ssb_tables::Decoded<(i32, i32, i32, i32)> =
+    ssb_tables::Decoded::new(|| release_desc(*crate::d_arrays::FT_COMMON_CAPTURE_KNOCKBACK_CATCH));
 /// `dFTCommonCaptureKnockbackCapture`: what the escaping fighter suffers.
-const CAPTURE_KNOCKBACK_CAPTURE: (i32, i32, i32, i32) =
-    release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KNOCKBACK_CAPTURE);
+static CAPTURE_KNOCKBACK_CAPTURE: ssb_tables::Decoded<(i32, i32, i32, i32)> =
+    ssb_tables::Decoded::new(|| {
+        release_desc(*crate::d_arrays::FT_COMMON_CAPTURE_KNOCKBACK_CAPTURE)
+    });
 
 /// An `FTThrowReleaseDesc` as the `{ angle, kbs, kbw, kbb }` tuple.
 pub(crate) const fn release_desc(d: [i32; 4]) -> (i32, i32, i32, i32) {
@@ -1397,7 +1399,7 @@ fn apply_capture_knockback(f: &mut Fighter) {
     let Some(holder) = f.grab.holder else {
         return;
     };
-    apply_capture_knockback_with(f, holder, CAPTURE_KNOCKBACK_CAPTURE);
+    apply_capture_knockback_with(f, holder, *CAPTURE_KNOCKBACK_CAPTURE);
 }
 
 /// [`apply_capture_knockback`] with the capture's own descriptor.
@@ -1434,7 +1436,7 @@ pub(crate) fn apply_capture_knockback_with(
 /// `ftCommonCaptureApplyCatchKnockback` @ 0x8014E1D0: the catcher's recoil
 /// when the held fighter escapes.
 fn apply_catch_knockback(f: &mut Fighter, capture_handicap: u8) {
-    apply_catch_knockback_with(f, capture_handicap, CAPTURE_KNOCKBACK_CATCH);
+    apply_catch_knockback_with(f, capture_handicap, *CAPTURE_KNOCKBACK_CATCH);
 }
 
 fn apply_catch_knockback_with(f: &mut Fighter, capture_handicap: u8, desc: (i32, i32, i32, i32)) {
@@ -1893,10 +1895,10 @@ fn resisted(knockback: f32, resist: f32) -> f32 {
 
 /// `dFTCommonThrownNoDamageKnockback`, an `FTThrowHitDesc`: `{ status_id,
 /// damage, angle, kbs, kbw, kbb, element }` with `-1` for no forced status.
-const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = {
-    let d = crate::d_arrays::FT_COMMON_THROWN_NO_DAMAGE_KNOCKBACK;
+static NO_DAMAGE_KNOCKBACK: ssb_tables::Decoded<ThrowHitDesc> = ssb_tables::Decoded::new(|| {
+    let d = *crate::d_arrays::FT_COMMON_THROWN_NO_DAMAGE_KNOCKBACK;
     desc(None, d[1], d[2], d[3], d[4], d[5])
-};
+});
 
 /// `ftCommonThrownSetStatusNoDamageRelease` @ 0x8014B5B4, on the catcher.
 /// The attack handicap is the source's literal `9`, and the fighter keeps
@@ -1904,7 +1906,7 @@ const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = {
 fn set_no_damage_release(f: &mut Fighter) {
     let resist = knockback_resist(f);
     f.pos.z = 0.0;
-    let d = NO_DAMAGE_KNOCKBACK;
+    let d = *NO_DAMAGE_KNOCKBACK;
     let knockback = attack::knockback(
         f.damage,
         d.damage,
@@ -2734,7 +2736,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
                 apply_catch_knockback_with(
                     to,
                     from.handicap,
-                    crate::capture_kirby::KNOCKBACK_CATCH,
+                    *crate::capture_kirby::KNOCKBACK_CATCH,
                 );
             }
         }
@@ -3485,7 +3487,7 @@ mod tests {
             set_thrown(&mut held, Status::ThrownCommon, None);
             assert_eq!(held.hitstatus, want, "{kind:?} Thrown");
             assert_eq!(held.is_invisible, by_yoshi, "{kind:?} Thrown");
-            let desc = NO_DAMAGE_KNOCKBACK;
+            let desc = *NO_DAMAGE_KNOCKBACK;
             let staled = StaledThrow::of(&catcher, desc.damage);
             deliver(
                 GrabEvent::DamageRelease {

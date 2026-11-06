@@ -25,11 +25,11 @@ use crate::players_vs::{BattleState, PLAYERS};
 use crate::sound::{self, id};
 
 /// `mnVSModeUpdateButton`'s `selcolors`, `hicolors` and `notcolors`.
-const TAB_COLORS: TabColors = TabColors {
-    sel: crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_SELCOLORS,
-    hi: crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_HICOLORS,
-    not: crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_NOTCOLORS,
-};
+static TAB_COLORS: ssb_tables::Decoded<TabColors> = ssb_tables::Decoded::new(|| TabColors {
+    sel: *crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_SELCOLORS,
+    hi: *crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_HICOLORS,
+    not: *crate::d_arrays::MN_VS_MODE_UPDATE_BUTTON_NOTCOLORS,
+});
 /// `llMNVSMode*Sprite` (`reloc_data.us.h`).
 pub mod sprite {
     pub const VS_START_TEXT: u32 = 0x24C8;
@@ -576,7 +576,7 @@ impl VsMode {
         let white = |offset, x| {
             Draw::Sprite(
                 Piece::clear(FILE_VS_MODE, offset, x, 78.0)
-                    .prim(crate::d_arrays::MN_VS_MODE_MAKE_RULE_VALUE_COLOR),
+                    .prim(*crate::d_arrays::MN_VS_MODE_MAKE_RULE_VALUE_COLOR),
             )
         };
         match self.rule {
@@ -614,7 +614,7 @@ impl VsMode {
             value,
             x,
             116.0,
-            &crate::d_arrays::MN_VS_MODE_MAKE_TIME_STOCK_VALUE_COLORS,
+            &*crate::d_arrays::MN_VS_MODE_MAKE_TIME_STOCK_VALUE_COLORS,
             &crate::d_arrays::MN_VS_MODE_MAKE_NUMBER_NUMBER_OFFSETS,
             2,
         );

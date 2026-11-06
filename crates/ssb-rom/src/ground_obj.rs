@@ -215,115 +215,117 @@ const fn desc(
 /// `grZebesMakeAcid`, `grYosterInitAll`, `grInishieMakeScale`,
 /// `grCastleInitAll`, and the Mushroom Kingdom items
 /// `itPowerBlockMakeItem` and `itPakkunMakeItem`.
-pub const OBJECTS: [GroundObjectAsset; 46] = [
-    desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
-    desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
-    desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
-    desc("FlowersFront", PUPUPU_FILE, PUPUPU_HEAD, 0x31F8, 16),
-    desc("TaruCann", JUNGLE_FILE, 0xA98, 0xA98, 6),
-    desc("Gate", YAMABUKI_FILE, 0x8A0, 0x8A0, 6),
-    // `llGRZebesMapAcidDObjDesc` is both the map head and the graph.
-    desc("Acid", ZEBES_FILE, 0xB08, 0xB08, 12),
-    // `llGRYosterMapMapHead` with `nGCMatrixKindTra` on every node, then
-    // `llGRYosterMapCloudDisplayList` under each of the three children.
-    GroundObjectAsset {
-        leaf: Some(Leaf {
-            dl: 0x580,
-            mobjsub: 0x4B8,
-        }),
-        instances: CLOUD_COUNT as u8,
-        translate_only: true,
-        ..desc("Cloud", YOSTER_FILE, YOSTER_HEAD, YOSTER_HEAD, 6)
-    },
-    // `llGRInishieMapScaleDObjDesc` with `dGRInishieScaleTransformKinds`:
-    // `nGCMatrixKindTra` on all five nodes.
-    GroundObjectAsset {
-        translate_only: true,
-        ..desc("ScaleStrings", INISHIE_FILE, INISHIE_HEAD, 0x380, 6)
-    },
-    // `gcAddDObjForGObj(llGRInishieMapMapHead)` with `nGCMatrixKindTra`.
-    GroundObjectAsset {
-        build: Build::Dl,
-        instances: 2,
-        translate_only: true,
-        ..desc("ScalePlatform", INISHIE_FILE, INISHIE_HEAD, INISHIE_HEAD, 6)
-    },
-    // `gcAddDObjForGObj(NULL)`, animated by the table `map_nodes` names;
-    // it has no display.
-    GroundObjectAsset {
-        build: Build::Empty,
-        ..desc("CastleGround", CASTLE_FILE, 0x0, 0x0, NO_LINK)
-    },
-    // `llGRInishieMapPowerBlockItemAttributes` (file 260 + 0xD8) names the
-    // `DObjDesc` array at `map_head` + 0x11F8 (`itGetPData` subtracts
-    // `llGRInishieMapPowerBlockDataStart` from it).
-    GroundObjectAsset {
-        item: true,
-        ..desc("PowerBlock", INISHIE_FILE, INISHIE_HEAD, 0x11F8, ITEM_LINK)
-    },
-    // `llGRInishieMapPakkunItemAttributes` (file 260 + 0x120): the tree
-    // at `map_head` + 0xC30, one per `pakkun_gobj` slot.
-    GroundObjectAsset {
-        item: true,
-        instances: 2,
-        ..desc("Pakkun", INISHIE_FILE, INISHIE_HEAD, 0xC30, ITEM_LINK)
-    },
-    GroundObjectAsset {
-        item: true,
-        source_file: Some(MONSTER_FILE),
-        ..desc("Chansey", YAMABUKI_FILE, 0x8A0, 0x360, ITEM_LINK)
-    },
-    GroundObjectAsset {
-        item: true,
-        source_file: Some(MONSTER_FILE),
-        ..desc("Electrode", YAMABUKI_FILE, 0x8A0, 0x790, ITEM_LINK)
-    },
-    GroundObjectAsset {
-        item: true,
-        source_file: Some(MONSTER_FILE),
-        ..desc("Charmander", YAMABUKI_FILE, 0x8A0, 0x1990, ITEM_LINK)
-    },
-    GroundObjectAsset {
-        item: true,
-        source_file: Some(MONSTER_FILE),
-        ..desc("Venusaur", YAMABUKI_FILE, 0x8A0, 0x2340, ITEM_LINK)
-    },
-    GroundObjectAsset {
-        item: true,
-        source_file: Some(MONSTER_FILE),
-        ..desc("Porygon", YAMABUKI_FILE, 0x8A0, 0xEA0, ITEM_LINK)
-    },
-    bonus3_bumper("Bonus3Bumper0"),
-    bonus3_bumper("Bonus3Bumper1"),
-    bonus3_bumper("Bonus3Bumper2"),
-    bonus3_bumper("Bonus3Bumper3"),
-    bonus1_targets(0),
-    bonus1_targets(1),
-    bonus1_targets(2),
-    bonus1_targets(3),
-    bonus1_targets(4),
-    bonus1_targets(5),
-    bonus1_targets(6),
-    bonus1_targets(7),
-    bonus1_targets(8),
-    bonus1_targets(9),
-    bonus1_targets(10),
-    bonus1_targets(11),
-    bonus2_bumpers(0),
-    bonus2_bumpers(1),
-    bonus2_bumpers(2),
-    bonus2_bumpers(3),
-    bonus2_bumpers(4),
-    bonus2_bumpers(5),
-    bonus2_bumpers(6),
-    bonus2_bumpers(7),
-    bonus2_bumpers(8),
-    bonus2_bumpers(9),
-    bonus2_bumpers(10),
-    bonus2_bumpers(11),
-];
+pub static OBJECTS: ssb_tables::Decoded<[GroundObjectAsset; 46]> = ssb_tables::Decoded::new(|| {
+    [
+        desc("WhispyEyes", PUPUPU_FILE, PUPUPU_HEAD, 0x10F0, 4),
+        desc("WhispyMouth", PUPUPU_FILE, PUPUPU_HEAD, 0x1770, 4),
+        desc("FlowersBack", PUPUPU_FILE, PUPUPU_HEAD, 0x2A80, 4),
+        desc("FlowersFront", PUPUPU_FILE, PUPUPU_HEAD, 0x31F8, 16),
+        desc("TaruCann", JUNGLE_FILE, 0xA98, 0xA98, 6),
+        desc("Gate", YAMABUKI_FILE, 0x8A0, 0x8A0, 6),
+        // `llGRZebesMapAcidDObjDesc` is both the map head and the graph.
+        desc("Acid", ZEBES_FILE, 0xB08, 0xB08, 12),
+        // `llGRYosterMapMapHead` with `nGCMatrixKindTra` on every node, then
+        // `llGRYosterMapCloudDisplayList` under each of the three children.
+        GroundObjectAsset {
+            leaf: Some(Leaf {
+                dl: 0x580,
+                mobjsub: 0x4B8,
+            }),
+            instances: CLOUD_COUNT as u8,
+            translate_only: true,
+            ..desc("Cloud", YOSTER_FILE, YOSTER_HEAD, YOSTER_HEAD, 6)
+        },
+        // `llGRInishieMapScaleDObjDesc` with `dGRInishieScaleTransformKinds`:
+        // `nGCMatrixKindTra` on all five nodes.
+        GroundObjectAsset {
+            translate_only: true,
+            ..desc("ScaleStrings", INISHIE_FILE, INISHIE_HEAD, 0x380, 6)
+        },
+        // `gcAddDObjForGObj(llGRInishieMapMapHead)` with `nGCMatrixKindTra`.
+        GroundObjectAsset {
+            build: Build::Dl,
+            instances: 2,
+            translate_only: true,
+            ..desc("ScalePlatform", INISHIE_FILE, INISHIE_HEAD, INISHIE_HEAD, 6)
+        },
+        // `gcAddDObjForGObj(NULL)`, animated by the table `map_nodes` names;
+        // it has no display.
+        GroundObjectAsset {
+            build: Build::Empty,
+            ..desc("CastleGround", CASTLE_FILE, 0x0, 0x0, NO_LINK)
+        },
+        // `llGRInishieMapPowerBlockItemAttributes` (file 260 + 0xD8) names the
+        // `DObjDesc` array at `map_head` + 0x11F8 (`itGetPData` subtracts
+        // `llGRInishieMapPowerBlockDataStart` from it).
+        GroundObjectAsset {
+            item: true,
+            ..desc("PowerBlock", INISHIE_FILE, INISHIE_HEAD, 0x11F8, ITEM_LINK)
+        },
+        // `llGRInishieMapPakkunItemAttributes` (file 260 + 0x120): the tree
+        // at `map_head` + 0xC30, one per `pakkun_gobj` slot.
+        GroundObjectAsset {
+            item: true,
+            instances: 2,
+            ..desc("Pakkun", INISHIE_FILE, INISHIE_HEAD, 0xC30, ITEM_LINK)
+        },
+        GroundObjectAsset {
+            item: true,
+            source_file: Some(MONSTER_FILE),
+            ..desc("Chansey", YAMABUKI_FILE, 0x8A0, 0x360, ITEM_LINK)
+        },
+        GroundObjectAsset {
+            item: true,
+            source_file: Some(MONSTER_FILE),
+            ..desc("Electrode", YAMABUKI_FILE, 0x8A0, 0x790, ITEM_LINK)
+        },
+        GroundObjectAsset {
+            item: true,
+            source_file: Some(MONSTER_FILE),
+            ..desc("Charmander", YAMABUKI_FILE, 0x8A0, 0x1990, ITEM_LINK)
+        },
+        GroundObjectAsset {
+            item: true,
+            source_file: Some(MONSTER_FILE),
+            ..desc("Venusaur", YAMABUKI_FILE, 0x8A0, 0x2340, ITEM_LINK)
+        },
+        GroundObjectAsset {
+            item: true,
+            source_file: Some(MONSTER_FILE),
+            ..desc("Porygon", YAMABUKI_FILE, 0x8A0, 0xEA0, ITEM_LINK)
+        },
+        bonus3_bumper("Bonus3Bumper0"),
+        bonus3_bumper("Bonus3Bumper1"),
+        bonus3_bumper("Bonus3Bumper2"),
+        bonus3_bumper("Bonus3Bumper3"),
+        bonus1_targets(0),
+        bonus1_targets(1),
+        bonus1_targets(2),
+        bonus1_targets(3),
+        bonus1_targets(4),
+        bonus1_targets(5),
+        bonus1_targets(6),
+        bonus1_targets(7),
+        bonus1_targets(8),
+        bonus1_targets(9),
+        bonus1_targets(10),
+        bonus1_targets(11),
+        bonus2_bumpers(0),
+        bonus2_bumpers(1),
+        bonus2_bumpers(2),
+        bonus2_bumpers(3),
+        bonus2_bumpers(4),
+        bonus2_bumpers(5),
+        bonus2_bumpers(6),
+        bonus2_bumpers(7),
+        bonus2_bumpers(8),
+        bonus2_bumpers(9),
+        bonus2_bumpers(10),
+        bonus2_bumpers(11),
+    ]
+});
 
-const fn bonus2_bumpers(kind: usize) -> GroundObjectAsset {
+fn bonus2_bumpers(kind: usize) -> GroundObjectAsset {
     GroundObjectAsset {
         item: true,
         instances: 10,
@@ -373,213 +375,219 @@ const fn table(name: &'static str, object: u8, script: u32) -> GroundAnimAsset {
     }
 }
 
+/// [`ANIMS`]' length.
+pub const ANIM_COUNT: usize = 44;
+
 /// Every animation the ported controllers start. The order is the index
 /// the lookup functions below compute; do not reorder.
-pub const ANIMS: [GroundAnimAsset; 44] = [
-    // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
-    table(
-        "WhispyEyesLeftTurn",
-        WHISPY_EYES,
-        GR_PUPUPU_WHISPY_EYES_ANIMS[0][0][0],
-    ),
-    table(
-        "WhispyEyesLeftBlink",
-        WHISPY_EYES,
-        GR_PUPUPU_WHISPY_EYES_ANIMS[0][1][0],
-    ),
-    table(
-        "WhispyEyesRightTurn",
-        WHISPY_EYES,
-        GR_PUPUPU_WHISPY_EYES_ANIMS[1][0][0],
-    ),
-    table(
-        "WhispyEyesRightBlink",
-        WHISPY_EYES,
-        GR_PUPUPU_WHISPY_EYES_ANIMS[1][1][0],
-    ),
-    // `dGRPupupuWhispyMouthAnims[lr][status][0]`: Stretch, Turn, Open, Close.
-    table(
-        "WhispyMouthLeftStretch",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][0][0],
-    ),
-    table(
-        "WhispyMouthLeftTurn",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][1][0],
-    ),
-    table(
-        "WhispyMouthLeftOpen",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][2][0],
-    ),
-    table(
-        "WhispyMouthLeftClose",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][3][0],
-    ),
-    table(
-        "WhispyMouthRightStretch",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][0][0],
-    ),
-    table(
-        "WhispyMouthRightTurn",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][1][0],
-    ),
-    table(
-        "WhispyMouthRightOpen",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][2][0],
-    ),
-    table(
-        "WhispyMouthRightClose",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][3][0],
-    ),
-    // `dGRPupupuWhispyMouthTextures[lr][phase]`, on the back flowers.
-    table(
-        "WhispyMouthLeftOpenTexture",
-        FLOWERS_BACK,
-        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][0],
-    ),
-    table(
-        "WhispyMouthLeftBlowTexture",
-        FLOWERS_BACK,
-        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][1],
-    ),
-    table(
-        "WhispyMouthLeftCloseTexture",
-        FLOWERS_BACK,
-        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][2],
-    ),
-    table(
-        "WhispyMouthRightOpenTexture",
-        FLOWERS_BACK,
-        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][0],
-    ),
-    table(
-        "WhispyMouthRightBlowTexture",
-        FLOWERS_BACK,
-        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][1],
-    ),
-    table(
-        "WhispyMouthRightCloseTexture",
-        FLOWERS_BACK,
-        GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][2],
-    ),
-    // `dGRPupupuWhispyEyesTextures[lr][phase]`, on the front flowers.
-    table(
-        "WhispyEyesLeft0Texture",
-        FLOWERS_FRONT,
-        GR_PUPUPU_WHISPY_EYES_TEXTURES[0][0],
-    ),
-    table(
-        "WhispyEyesLeft1Texture",
-        FLOWERS_FRONT,
-        GR_PUPUPU_WHISPY_EYES_TEXTURES[0][1],
-    ),
-    table(
-        "WhispyEyesLeft2Texture",
-        FLOWERS_FRONT,
-        GR_PUPUPU_WHISPY_EYES_TEXTURES[0][2],
-    ),
-    table(
-        "WhispyEyesRight0Texture",
-        FLOWERS_FRONT,
-        GR_PUPUPU_WHISPY_EYES_TEXTURES[1][0],
-    ),
-    table(
-        "WhispyEyesRight1Texture",
-        FLOWERS_FRONT,
-        GR_PUPUPU_WHISPY_EYES_TEXTURES[1][1],
-    ),
-    table(
-        "WhispyEyesRight2Texture",
-        FLOWERS_FRONT,
-        GR_PUPUPU_WHISPY_EYES_TEXTURES[1][2],
-    ),
-    // `grJungleMakeTaruCann`, `grJungleTaruCannAddAnimOffset` (the
-    // barrel's child DObj).
-    table("TaruCannDefault", TARUCANN, 0xB20),
-    GroundAnimAsset {
-        name: "TaruCannFill",
-        object: TARUCANN,
-        script: 0xB68,
-        target: AnimTarget::Node(1),
-    },
-    GroundAnimAsset {
-        name: "TaruCannShoot",
-        object: TARUCANN,
-        script: 0xBF8,
-        target: AnimTarget::Node(1),
-    },
-    // `grYamabukiGateAddAnimOffset`.
-    table("GateOpen", GATE, 0x9B0),
-    table("GateClose", GATE, 0xA20),
-    // `grZebesMakeAcid`: `llGRZebesMapAcidAnimJoint`.
-    table("Acid", ACID, 0xB90),
-    // `grInishieScaleUpdateStep`: `llGRInishieMapScaleRetractAnimJoint` on
-    // one platform's only `DObj`.
-    GroundAnimAsset {
-        name: "ScaleRetract",
-        object: SCALE_PLATFORM,
-        script: 0x734,
-        target: AnimTarget::Node(0),
-    },
-    // `grCastleInitAll`: the table at `map_nodes` itself.
-    table("CastleGround", CASTLE_GROUND, 0x0),
-    // The POW Block's `ITAttributes::anim_joints` (file 260 + 0xD8 + 8):
-    // NULL for the descriptor's root, the pop-in for its child, which the
-    // eject makes the item's root.
-    table("PowerBlockAppear", POWER_BLOCK, 0x13B0),
-    // `itPowerBlockWaitProcDamage`: `llGRInishieMapPowerBlockAnimJoint` on
-    // the item's root.
-    GroundAnimAsset {
-        name: "PowerBlockDamage",
-        object: POWER_BLOCK,
-        script: 0x1288,
-        target: AnimTarget::Node(ITEM_ROOT as u8),
-    },
-    // `itPakkunWaitProcUpdate`: `llGRInishieMapPakkunAppearAnimJoint` on
-    // the item's root.
-    GroundAnimAsset {
-        name: "PakkunAppear",
-        object: PAKKUN,
-        script: 0xCC8,
-        target: AnimTarget::Node(ITEM_ROOT as u8),
-    },
-    table("Chansey", MONSTER_FIRST, 0x3F0),
-    table("Electrode", MONSTER_FIRST + 1, 0x820),
-    table("Charmander", MONSTER_FIRST + 2, 0x1A20),
-    table("Venusaur", MONSTER_FIRST + 3, 0x23D0),
-    table("Porygon", MONSTER_FIRST + 4, 0xF30),
-    GroundAnimAsset {
-        name: "Bonus3Bumper0",
-        object: BONUS3_BUMPER_FIRST,
-        script: 0x124,
-        target: AnimTarget::Node(ITEM_ROOT as u8),
-    },
-    GroundAnimAsset {
-        name: "Bonus3Bumper1",
-        object: BONUS3_BUMPER_FIRST + 1,
-        script: 0x150,
-        target: AnimTarget::Node(ITEM_ROOT as u8),
-    },
-    GroundAnimAsset {
-        name: "Bonus3Bumper2",
-        object: BONUS3_BUMPER_FIRST + 2,
-        script: 0x18C,
-        target: AnimTarget::Node(ITEM_ROOT as u8),
-    },
-    GroundAnimAsset {
-        name: "Bonus3Bumper3",
-        object: BONUS3_BUMPER_FIRST + 3,
-        script: 0x1C8,
-        target: AnimTarget::Node(ITEM_ROOT as u8),
-    },
-];
+pub static ANIMS: ssb_tables::Decoded<[GroundAnimAsset; ANIM_COUNT]> =
+    ssb_tables::Decoded::new(|| {
+        [
+            // `dGRPupupuWhispyEyesAnims[lr][status][0]`: Turn, Blink.
+            table(
+                "WhispyEyesLeftTurn",
+                WHISPY_EYES,
+                GR_PUPUPU_WHISPY_EYES_ANIMS[0][0][0],
+            ),
+            table(
+                "WhispyEyesLeftBlink",
+                WHISPY_EYES,
+                GR_PUPUPU_WHISPY_EYES_ANIMS[0][1][0],
+            ),
+            table(
+                "WhispyEyesRightTurn",
+                WHISPY_EYES,
+                GR_PUPUPU_WHISPY_EYES_ANIMS[1][0][0],
+            ),
+            table(
+                "WhispyEyesRightBlink",
+                WHISPY_EYES,
+                GR_PUPUPU_WHISPY_EYES_ANIMS[1][1][0],
+            ),
+            // `dGRPupupuWhispyMouthAnims[lr][status][0]`: Stretch, Turn, Open, Close.
+            table(
+                "WhispyMouthLeftStretch",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][0][0],
+            ),
+            table(
+                "WhispyMouthLeftTurn",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][1][0],
+            ),
+            table(
+                "WhispyMouthLeftOpen",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][2][0],
+            ),
+            table(
+                "WhispyMouthLeftClose",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][3][0],
+            ),
+            table(
+                "WhispyMouthRightStretch",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][0][0],
+            ),
+            table(
+                "WhispyMouthRightTurn",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][1][0],
+            ),
+            table(
+                "WhispyMouthRightOpen",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][2][0],
+            ),
+            table(
+                "WhispyMouthRightClose",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][3][0],
+            ),
+            // `dGRPupupuWhispyMouthTextures[lr][phase]`, on the back flowers.
+            table(
+                "WhispyMouthLeftOpenTexture",
+                FLOWERS_BACK,
+                GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][0],
+            ),
+            table(
+                "WhispyMouthLeftBlowTexture",
+                FLOWERS_BACK,
+                GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][1],
+            ),
+            table(
+                "WhispyMouthLeftCloseTexture",
+                FLOWERS_BACK,
+                GR_PUPUPU_WHISPY_MOUTH_TEXTURES[0][2],
+            ),
+            table(
+                "WhispyMouthRightOpenTexture",
+                FLOWERS_BACK,
+                GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][0],
+            ),
+            table(
+                "WhispyMouthRightBlowTexture",
+                FLOWERS_BACK,
+                GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][1],
+            ),
+            table(
+                "WhispyMouthRightCloseTexture",
+                FLOWERS_BACK,
+                GR_PUPUPU_WHISPY_MOUTH_TEXTURES[1][2],
+            ),
+            // `dGRPupupuWhispyEyesTextures[lr][phase]`, on the front flowers.
+            table(
+                "WhispyEyesLeft0Texture",
+                FLOWERS_FRONT,
+                GR_PUPUPU_WHISPY_EYES_TEXTURES[0][0],
+            ),
+            table(
+                "WhispyEyesLeft1Texture",
+                FLOWERS_FRONT,
+                GR_PUPUPU_WHISPY_EYES_TEXTURES[0][1],
+            ),
+            table(
+                "WhispyEyesLeft2Texture",
+                FLOWERS_FRONT,
+                GR_PUPUPU_WHISPY_EYES_TEXTURES[0][2],
+            ),
+            table(
+                "WhispyEyesRight0Texture",
+                FLOWERS_FRONT,
+                GR_PUPUPU_WHISPY_EYES_TEXTURES[1][0],
+            ),
+            table(
+                "WhispyEyesRight1Texture",
+                FLOWERS_FRONT,
+                GR_PUPUPU_WHISPY_EYES_TEXTURES[1][1],
+            ),
+            table(
+                "WhispyEyesRight2Texture",
+                FLOWERS_FRONT,
+                GR_PUPUPU_WHISPY_EYES_TEXTURES[1][2],
+            ),
+            // `grJungleMakeTaruCann`, `grJungleTaruCannAddAnimOffset` (the
+            // barrel's child DObj).
+            table("TaruCannDefault", TARUCANN, 0xB20),
+            GroundAnimAsset {
+                name: "TaruCannFill",
+                object: TARUCANN,
+                script: 0xB68,
+                target: AnimTarget::Node(1),
+            },
+            GroundAnimAsset {
+                name: "TaruCannShoot",
+                object: TARUCANN,
+                script: 0xBF8,
+                target: AnimTarget::Node(1),
+            },
+            // `grYamabukiGateAddAnimOffset`.
+            table("GateOpen", GATE, 0x9B0),
+            table("GateClose", GATE, 0xA20),
+            // `grZebesMakeAcid`: `llGRZebesMapAcidAnimJoint`.
+            table("Acid", ACID, 0xB90),
+            // `grInishieScaleUpdateStep`: `llGRInishieMapScaleRetractAnimJoint` on
+            // one platform's only `DObj`.
+            GroundAnimAsset {
+                name: "ScaleRetract",
+                object: SCALE_PLATFORM,
+                script: 0x734,
+                target: AnimTarget::Node(0),
+            },
+            // `grCastleInitAll`: the table at `map_nodes` itself.
+            table("CastleGround", CASTLE_GROUND, 0x0),
+            // The POW Block's `ITAttributes::anim_joints` (file 260 + 0xD8 + 8):
+            // NULL for the descriptor's root, the pop-in for its child, which the
+            // eject makes the item's root.
+            table("PowerBlockAppear", POWER_BLOCK, 0x13B0),
+            // `itPowerBlockWaitProcDamage`: `llGRInishieMapPowerBlockAnimJoint` on
+            // the item's root.
+            GroundAnimAsset {
+                name: "PowerBlockDamage",
+                object: POWER_BLOCK,
+                script: 0x1288,
+                target: AnimTarget::Node(ITEM_ROOT as u8),
+            },
+            // `itPakkunWaitProcUpdate`: `llGRInishieMapPakkunAppearAnimJoint` on
+            // the item's root.
+            GroundAnimAsset {
+                name: "PakkunAppear",
+                object: PAKKUN,
+                script: 0xCC8,
+                target: AnimTarget::Node(ITEM_ROOT as u8),
+            },
+            table("Chansey", MONSTER_FIRST, 0x3F0),
+            table("Electrode", MONSTER_FIRST + 1, 0x820),
+            table("Charmander", MONSTER_FIRST + 2, 0x1A20),
+            table("Venusaur", MONSTER_FIRST + 3, 0x23D0),
+            table("Porygon", MONSTER_FIRST + 4, 0xF30),
+            GroundAnimAsset {
+                name: "Bonus3Bumper0",
+                object: BONUS3_BUMPER_FIRST,
+                script: 0x124,
+                target: AnimTarget::Node(ITEM_ROOT as u8),
+            },
+            GroundAnimAsset {
+                name: "Bonus3Bumper1",
+                object: BONUS3_BUMPER_FIRST + 1,
+                script: 0x150,
+                target: AnimTarget::Node(ITEM_ROOT as u8),
+            },
+            GroundAnimAsset {
+                name: "Bonus3Bumper2",
+                object: BONUS3_BUMPER_FIRST + 2,
+                script: 0x18C,
+                target: AnimTarget::Node(ITEM_ROOT as u8),
+            },
+            GroundAnimAsset {
+                name: "Bonus3Bumper3",
+                object: BONUS3_BUMPER_FIRST + 3,
+                script: 0x1C8,
+                target: AnimTarget::Node(ITEM_ROOT as u8),
+            },
+        ]
+    });
 
 /// One material-animation table a controller starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -612,7 +620,7 @@ pub enum MatTarget {
     NodeMObj(u8),
 }
 
-const fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
+fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
     let asset = &OBJECTS[object as usize];
     GroundMatAnimAsset {
         name,
@@ -629,7 +637,7 @@ const fn mat(name: &'static str, object: u8, table: u32) -> GroundMatAnimAsset {
 }
 
 /// A script on an item tree's root `MObj` (`DObjGetStruct(item_gobj)->mobj`).
-const fn root_mat(name: &'static str, object: u8, script: u32) -> GroundMatAnimAsset {
+fn root_mat(name: &'static str, object: u8, script: u32) -> GroundMatAnimAsset {
     GroundMatAnimAsset {
         target: MatTarget::NodeMObj(ITEM_ROOT as u8),
         ..mat(name, object, script)
@@ -639,70 +647,76 @@ const fn root_mat(name: &'static str, object: u8, script: u32) -> GroundMatAnimA
 /// `llGRYosterMapMapHead`.
 const YOSTER_HEAD: u32 = 0x100;
 
+/// [`MAT_ANIMS`]' length.
+pub const MAT_ANIM_COUNT: usize = 15;
+
 /// Every material animation the ported controllers start. The order is
 /// the index [`mat_anim_of`] and the cloud constants name; do not reorder.
-pub const MAT_ANIMS: [GroundMatAnimAsset; 15] = [
-    // `dGRPupupuWhispyEyesAnims[lr][Turn][1]`; Blink has none.
-    mat(
-        "WhispyEyesLeftTurn",
-        WHISPY_EYES,
-        GR_PUPUPU_WHISPY_EYES_ANIMS[0][0][1],
-    ),
-    mat(
-        "WhispyEyesRightTurn",
-        WHISPY_EYES,
-        GR_PUPUPU_WHISPY_EYES_ANIMS[1][0][1],
-    ),
-    // `dGRPupupuWhispyMouthAnims[lr][status][1]`.
-    mat(
-        "WhispyMouthLeftStretch",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][0][1],
-    ),
-    mat(
-        "WhispyMouthLeftTurn",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][1][1],
-    ),
-    mat(
-        "WhispyMouthLeftOpen",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][2][1],
-    ),
-    mat(
-        "WhispyMouthLeftClose",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][3][1],
-    ),
-    mat(
-        "WhispyMouthRightStretch",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][0][1],
-    ),
-    mat(
-        "WhispyMouthRightTurn",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][1][1],
-    ),
-    mat(
-        "WhispyMouthRightOpen",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][2][1],
-    ),
-    mat(
-        "WhispyMouthRightClose",
-        WHISPY_MOUTH,
-        GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][3][1],
-    ),
-    // `grZebesMakeAcid`: `llGRZebesMapAcidMatAnimJoint`.
-    mat("Acid", ACID, 0xBD0),
-    // `dGRYosterCloudMatAnimJoints`.
-    mat("CloudSolid", CLOUD, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS[0]),
-    mat("CloudEvaporate", CLOUD, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS[1]),
-    // `itPakkunWaitProcUpdate` / `itPakkunAppearProcDamage`.
-    root_mat("PakkunAppear", PAKKUN, 0xCF8),
-    root_mat("PakkunDamaged", PAKKUN, 0xE04),
-];
+pub static MAT_ANIMS: ssb_tables::Decoded<[GroundMatAnimAsset; MAT_ANIM_COUNT]> =
+    ssb_tables::Decoded::new(|| {
+        [
+            // `dGRPupupuWhispyEyesAnims[lr][Turn][1]`; Blink has none.
+            mat(
+                "WhispyEyesLeftTurn",
+                WHISPY_EYES,
+                GR_PUPUPU_WHISPY_EYES_ANIMS[0][0][1],
+            ),
+            mat(
+                "WhispyEyesRightTurn",
+                WHISPY_EYES,
+                GR_PUPUPU_WHISPY_EYES_ANIMS[1][0][1],
+            ),
+            // `dGRPupupuWhispyMouthAnims[lr][status][1]`.
+            mat(
+                "WhispyMouthLeftStretch",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][0][1],
+            ),
+            mat(
+                "WhispyMouthLeftTurn",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][1][1],
+            ),
+            mat(
+                "WhispyMouthLeftOpen",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][2][1],
+            ),
+            mat(
+                "WhispyMouthLeftClose",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[0][3][1],
+            ),
+            mat(
+                "WhispyMouthRightStretch",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][0][1],
+            ),
+            mat(
+                "WhispyMouthRightTurn",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][1][1],
+            ),
+            mat(
+                "WhispyMouthRightOpen",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][2][1],
+            ),
+            mat(
+                "WhispyMouthRightClose",
+                WHISPY_MOUTH,
+                GR_PUPUPU_WHISPY_MOUTH_ANIMS[1][3][1],
+            ),
+            // `grZebesMakeAcid`: `llGRZebesMapAcidMatAnimJoint`.
+            mat("Acid", ACID, 0xBD0),
+            // `dGRYosterCloudMatAnimJoints`.
+            mat("CloudSolid", CLOUD, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS[0]),
+            mat("CloudEvaporate", CLOUD, GR_YOSTER_CLOUD_MAT_ANIM_JOINTS[1]),
+            // `itPakkunWaitProcUpdate` / `itPakkunAppearProcDamage`.
+            root_mat("PakkunAppear", PAKKUN, 0xCF8),
+            root_mat("PakkunDamaged", PAKKUN, 0xE04),
+        ]
+    });
 
 pub const CLOUD_SOLID_MAT: usize = 11;
 pub const CLOUD_EVAPORATE_MAT: usize = 12;
@@ -1053,8 +1067,8 @@ pub struct GroundObjects {
     /// Sector Z's Arwing ([`crate::sector`]), whose scripts come from two
     /// files and play node by node.
     pub arwing: Option<crate::sector::Arwing>,
-    anims: [Option<AnimDesc>; ANIMS.len()],
-    mat_anims: [Option<AnimDesc>; MAT_ANIMS.len()],
+    anims: [Option<AnimDesc>; ANIM_COUNT],
+    mat_anims: [Option<AnimDesc>; MAT_ANIM_COUNT],
 }
 
 impl GroundObjects {
@@ -1064,8 +1078,8 @@ impl GroundObjects {
             target_anims: [None; 10],
             objects: [None; MAX_STAGE_OBJECTS],
             arwing: None,
-            anims: [None; ANIMS.len()],
-            mat_anims: [None; MAT_ANIMS.len()],
+            anims: [None; ANIM_COUNT],
+            mat_anims: [None; MAT_ANIM_COUNT],
         }
     }
 
@@ -1133,11 +1147,11 @@ impl GroundObjects {
         for i in 0..pack.anim_count() {
             let Some(a) = pack.anim(i) else { continue };
             let gr = if a.fighter == AnimDesc::GROUND {
-                ANIMS
+                (*ANIMS)
                     .get(a.slot as usize)
                     .map(|anim| OBJECTS[anim.object as usize].gr_file)
             } else if a.fighter == AnimDesc::GROUND_MAT {
-                MAT_ANIMS.get(a.slot as usize).map(|m| m.gr_file)
+                (*MAT_ANIMS).get(a.slot as usize).map(|m| m.gr_file)
             } else {
                 None
             };
@@ -1227,7 +1241,7 @@ impl GroundObjects {
     /// `gcParseDObjAnimJoint`) call does. An animation the pack lacks
     /// leaves the object as it is.
     pub fn play_on(&mut self, pack: &Pack<'_>, anim: usize, instance: u8) -> Result<(), AnimError> {
-        let (Some(asset), Some(Some(desc))) = (ANIMS.get(anim), self.anims.get(anim).copied())
+        let (Some(asset), Some(Some(desc))) = ((*ANIMS).get(anim), self.anims.get(anim).copied())
         else {
             return Ok(());
         };
@@ -1408,7 +1422,7 @@ impl GroundObjects {
         instance: u8,
     ) -> RootWrite {
         let damaged_matrix = asset == PAKKUN && mat == Some(PAKKUN_DAMAGED_MAT);
-        let joint = anim.and_then(|a| Some((self.anims.get(a).copied()??, ANIMS.get(a)?)));
+        let joint = anim.and_then(|a| Some((self.anims.get(a).copied()??, (*ANIMS).get(a)?)));
         let mat = mat.and_then(|m| self.mat_anims.get(m).copied().flatten());
         let Some(obj) = self.instance_mut(asset, instance) else {
             return [None; 3];

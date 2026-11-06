@@ -38,7 +38,7 @@ fn every_stage_wallpaper_is_packed_under_its_kind() {
     let pack = Pack::open(&bytes).unwrap();
     for (gkind, &map_id) in ssb_rom::stage::VS_GROUND_FILES.iter().enumerate() {
         let map = archive.load(map_id).unwrap();
-        let (file, at) = ssb_rom::stage::wallpaper(&map, ssb_rom::stage::MAP_HEADER).unwrap();
+        let (file, at) = ssb_rom::stage::wallpaper(&map, *ssb_rom::stage::MAP_HEADER).unwrap();
         let s = pack.stage_wallpaper(gkind as u8).unwrap();
         assert_eq!((s.source_file, s.source_offset), (file, at), "kind {gkind}");
         assert_eq!(s.role, SpriteDesc::ROLE_WALLPAPER);
@@ -63,7 +63,7 @@ fn every_bonus_stage_wallpaper_is_packed_under_its_kind() {
     for gkind in ssb_rom::stage::BONUS_WALLPAPER_GROUNDS {
         let map_id = ssb_rom::scene_roots::ground_map(u32::from(gkind)).unwrap();
         let map = archive.load(map_id).unwrap();
-        let target = ssb_rom::stage::wallpaper(&map, ssb_rom::stage::BONUS_MAP_HEADER).unwrap();
+        let target = ssb_rom::stage::wallpaper(&map, *ssb_rom::stage::BONUS_MAP_HEADER).unwrap();
         assert_eq!(target, (119, 0x26C88), "kind {gkind}");
         let s = pack.stage_wallpaper(gkind).unwrap();
         assert_eq!((s.source_file, s.source_offset), target, "kind {gkind}");
@@ -80,9 +80,9 @@ fn trainings_wallpapers_and_the_stage_select_sprites_are_packed() {
         return;
     };
     let pack = Pack::open(&bytes).unwrap();
-    for file in ssb_rom::sprite::TRAINING_WALLPAPER_FILES {
+    for file in *ssb_rom::sprite::TRAINING_WALLPAPER_FILES {
         let s = pack
-            .sprite(file, ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE)
+            .sprite(file, *ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE)
             .unwrap();
         assert_eq!((s.width, s.height), (300, 220));
         assert_direct_or_palettized(&pack.texture(s.texture).unwrap());
@@ -100,9 +100,9 @@ fn trainings_wallpapers_and_the_stage_select_sprites_are_packed() {
 fn wallpaper_textures(pack: &Pack<'_>) -> Vec<(SpriteDesc, TextureDesc)> {
     let mut seen = std::collections::BTreeSet::new();
     let training = ssb_rom::sprite::TRAINING_WALLPAPER_FILES
-        .into_iter()
-        .map(|file| {
-            pack.sprite(file, ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE)
+        .iter()
+        .map(|&file| {
+            pack.sprite(file, *ssb_rom::sprite::TRAINING_WALLPAPER_SPRITE)
                 .unwrap()
         });
     (0..pack.sprite_count())

@@ -780,7 +780,7 @@ fn how_to_play_hits_as_the_n64_does() {
     let keys =
         ssb_rom::explain::key_scripts(&archive.load(ssb_rom::explain::FILE_MAIN).unwrap()).unwrap();
     let (map, spawns) = surfaces(&archive);
-    ssb_game::rng::set_seed(ssb_game::explain::RANDOM_SEED);
+    ssb_game::rng::set_seed(*ssb_game::explain::RANDOM_SEED);
     let mut fighters: Vec<Posed> = ssb_game::explain::FIGHTERS
         .iter()
         .enumerate()

@@ -13,8 +13,8 @@ use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use crate::anim_length::Lengths;
-use crate::emit;
 use crate::fighters::{self, motion_descs, MotionDesc, ANIM_FLAG_ANIMJOINT};
+use crate::tables::{le_bytes, Ctx};
 use crate::{Result, Source};
 
 /// How a slot finds its row.
@@ -3876,126 +3876,114 @@ impl Tables<'_> {
     }
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut rows: Vec<(&str, Vec<Entry>)> = Vec::new();
-    let mut boss_joint = [false; BOSS_MOTIONS.len()];
-    if let Some(rom) = rom {
-        let (at, count) = DEMO_STATUS_TABLE;
-        let demo = (0..count)
-            .map(|i| Ok(rom.u32(at + 8 * i)? - 0x10000))
-            .collect::<Result<_>>()?;
-        let t = Tables {
-            rom,
-            lengths: Lengths::default(),
-            common: fighters::common_status_motions(rom)?,
-            demo,
-        };
-        for fighter in FIGHTERS {
-            let mut entry = Vec::with_capacity(SLOTS.len());
-            for &(slot, recipe) in &SLOTS {
-                let e = t.resolve(fighter, slot, recipe)?;
-                if fighter != "Boss" && TIMED_SLOTS.contains(&slot) && e.file != 0 {
-                    assert!(
-                        e.frames.is_some(),
-                        "{fighter} {slot}: loops; it has no length"
-                    );
-                }
-                entry.push(e);
-            }
-            rows.push((fighter, entry));
-        }
-        let boss = t.descs("Boss")?;
-        for (flag, m) in boss_joint.iter_mut().zip(BOSS_MOTIONS) {
-            *flag = boss[m as usize].anim_desc & ANIM_FLAG_ANIMJOINT != 0;
-        }
-    } else {
-        for fighter in FIGHTERS {
-            rows.push((fighter, vec![Entry::default(); SLOTS.len()]));
-        }
-    }
+/// Slots per fighter (`ssb_rom::anim::SLOT_COUNT`).
+pub const SLOT_COUNT: usize = SLOTS.len();
 
-    let mut w = emit::header("the fighter animation table");
-    let names: Vec<String> = SLOTS.iter().map(|(s, _)| format!("\"{s}\"")).collect();
-    w.push_str("/// The statuses carried, in slot order.\n");
-    let _ = write!(
+/// Every fighter's resolved slots, and Master Hand's `AnimJoint` flags.
+pub struct Rows {
+    rows: Vec<Vec<Entry>>,
+    boss_joint: [bool; BOSS_MOTIONS.len()],
+}
+
+/// The fighter animation table read from `rom`.
+fn rows(rom: &Source) -> Result<Rows> {
+    let mut rows = Vec::new();
+    let mut boss_joint = [false; BOSS_MOTIONS.len()];
+    let (at, count) = DEMO_STATUS_TABLE;
+    let demo = (0..count)
+        .map(|i| Ok(rom.u32(at + 8 * i)? - 0x10000))
+        .collect::<Result<_>>()?;
+    let t = Tables {
+        rom,
+        lengths: Lengths::default(),
+        common: fighters::common_status_motions(rom)?,
+        demo,
+    };
+    for fighter in FIGHTERS {
+        let mut entry = Vec::with_capacity(SLOTS.len());
+        for &(slot, recipe) in &SLOTS {
+            let e = t.resolve(fighter, slot, recipe)?;
+            if fighter != "Boss" && TIMED_SLOTS.contains(&slot) && e.file != 0 {
+                assert!(
+                    e.frames.is_some(),
+                    "{fighter} {slot}: loops; it has no length"
+                );
+            }
+            entry.push(e);
+        }
+        rows.push(entry);
+    }
+    let boss = t.descs("Boss")?;
+    for (flag, m) in boss_joint.iter_mut().zip(BOSS_MOTIONS) {
+        *flag = boss[m as usize].anim_desc & ANIM_FLAG_ANIMJOINT != 0;
+    }
+    Ok(Rows { rows, boss_joint })
+}
+
+/// The table, read once per section ([`Ctx`]).
+fn cached<'c>(c: &'c Ctx) -> Result<&'c Rows> {
+    if let Some(r) = c.anim.get() {
+        return Ok(r);
+    }
+    let r = rows(c.rom)?;
+    Ok(c.anim.get_or_init(|| r))
+}
+
+/// Every fighter's slots through `f`, in `FTKind` then slot order.
+fn each<T>(c: &Ctx, f: impl Fn(&Entry) -> T) -> Result<Vec<T>> {
+    Ok(cached(c)?.rows.iter().flatten().map(f).collect())
+}
+
+/// The `AnimFiles` table: archive file id per fighter and slot.
+pub fn files_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let ids = each(c, |e| u16::try_from(e.file).expect("an archive file id"))?;
+    Ok(le_bytes(&ids, u16::to_le_bytes))
+}
+
+/// The `AnimRuntimeBits` table: each motion's `FTAnimDesc` bits 31..5
+/// (hidden parts; bits 31..29 also a leading runtime joint).
+pub fn runtime_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(le_bytes(&each(c, |e| e.runtime)?, u32::to_le_bytes))
+}
+
+/// The `AnimExpectedFrames` table: each slot's figatree length (0 for none,
+/// a loop, or an `AnimJoint` clip).
+pub fn frames_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    let lens = each(c, |e| {
+        u16::try_from(e.frames.unwrap_or(0)).expect("a length in frames")
+    })?;
+    Ok(le_bytes(&lens, u16::to_le_bytes))
+}
+
+/// The `AnimBossJoint` table: Master Hand's slots (`SLOT_BOSS_DEFAULT` on)
+/// that hold a 32-bit `AnimJoint` clip (`FTANIM_FLAG_ANIMJOINT` in
+/// `dFTBossMotionDescs`): 1.
+pub fn boss_joint_bytes(c: &Ctx) -> Result<Vec<u8>> {
+    Ok(cached(c)?.boss_joint.iter().map(|&b| u8::from(b)).collect())
+}
+
+/// `ssb-rom`'s `anim_layout.rs`: the slots' names (layout only).
+pub fn layout_rs() -> String {
+    let mut w = String::from(
+        "// Generated by crates/ssb-tablegen (anim_table): the fighter animation\n\
+         // table's slot names. Layout only; never edit.\n\n",
+    );
+    let names: Vec<String> = SLOTS.iter().map(|(s, _)| format!("{s:?}")).collect();
+    let _ = writeln!(
         w,
-        "pub const SLOT_NAMES: [&str; SLOT_COUNT] = [{}];\n\n",
+        "/// The statuses carried, in slot order.\npub const SLOT_NAMES: [&str; SLOT_COUNT] = [{}];",
         names.join(", ")
     );
-    let table_head = |w: &mut String, ty: &str| {
-        let _ = writeln!(
-            w,
-            "#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const {ty}{}] = [",
-            rows.len()
-        );
-    };
-    table_head(&mut w, "FIGHTER_ANIMS: [FighterAnims; ");
-    for (fighter, entry) in &rows {
-        let ids: Vec<String> = entry.iter().map(|e| format!("{:4}", e.file)).collect();
-        let pad = " ".repeat(9 - fighter.len());
-        let _ = writeln!(
-            w,
-            "    FighterAnims {{ name: \"{fighter}\",{pad}files: [{}] }},",
-            ids.join(", ")
-        );
-    }
-    w.push_str("];\n\n");
-    w.push_str(
-        "/// Whether a motion's extra figatree entry is a leading runtime joint.\n\
-         /// Read from `FTMotionDesc.anim_desc`.\n",
-    );
-    table_head(&mut w, "LEADING_RUNTIME_JOINT: [[bool; SLOT_COUNT]; ");
-    for (fighter, entry) in &rows {
-        let flags: Vec<&str> = entry
-            .iter()
-            .map(|e| {
-                if e.runtime & LEADING_BITS != 0 {
-                    "true"
-                } else {
-                    "false"
-                }
-            })
-            .collect();
-        let _ = writeln!(w, "    [{}],  // {fighter}", flags.join(", "));
-    }
-    w.push_str("];\n\n");
-    w.push_str(
-        "/// Each motion's `FTAnimDesc` hidden-part bits (31..5): bit `31 - i`\n\
-         /// inserts `FTAttributes.hiddenparts[i]` before the figatree binds.\n",
-    );
-    table_head(&mut w, "HIDDEN_PARTS: [[u32; SLOT_COUNT]; ");
-    for (fighter, entry) in &rows {
-        let bits: Vec<String> = entry.iter().map(|e| format!("{:#x}", e.runtime)).collect();
-        let _ = writeln!(w, "    [{}],  // {fighter}", bits.join(", "));
-    }
-    w.push_str("];\n\n");
-    let flags: Vec<&str> = boss_joint
-        .iter()
-        .map(|b| if *b { "true" } else { "false" })
-        .collect();
-    w.push_str(
-        "/// Which of Master Hand's slots (`SLOT_BOSS_DEFAULT` on) hold a 32-bit\n\
-         /// `AnimJoint` clip (`FTANIM_FLAG_ANIMJOINT` in `dFTBossMotionDescs`).\n",
-    );
-    let _ = write!(
+    let _ = writeln!(
         w,
-        "pub const BOSS_ANIM_JOINT: [bool; {}] = [{}];\n\n",
-        boss_joint.len(),
-        flags.join(", ")
+        "/// The fighters, in `FTKind` order.\npub const FIGHTER_ANIM_NAMES: [&str; {}] = [{}];",
+        FIGHTERS.len(),
+        FIGHTERS.map(|f| format!("{f:?}")).join(", ")
     );
-    w.push_str(
-        "/// Each slot's figatree length, walked by the generator (0 for none,\n\
-         /// a loop, or an `AnimJoint` clip). `romtool anims --verify` checks\n\
-         /// `ssb_rom::anim`'s own walk against these.\n",
+    let _ = writeln!(
+        w,
+        "/// `AnimRuntimeBits` bits that mark a motion's extra figatree entry as a\n\
+         /// leading runtime joint (`FTMotionDesc.anim_desc`).\npub const LEADING_RUNTIME_BITS: u32 = {LEADING_BITS:#X};"
     );
-    table_head(&mut w, "EXPECTED_FRAMES: [[u16; SLOT_COUNT]; ");
-    for (fighter, entry) in &rows {
-        let lens: Vec<String> = entry
-            .iter()
-            .map(|e| format!("{:3}", e.frames.unwrap_or(0)))
-            .collect();
-        let _ = writeln!(w, "    [{}],  // {fighter}", lens.join(", "));
-    }
-    w.push_str("];\n");
-    Ok(w)
+    w
 }

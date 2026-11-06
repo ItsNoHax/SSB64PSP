@@ -31,7 +31,7 @@ fn every_camera_bakes_to_its_end() {
     ]);
     for cam in cams {
         let file = archive.load(cam.file).unwrap();
-        let frames = camanim::bake(&file.data, cam.offset, cam.init, 8192).unwrap();
+        let frames = camanim::bake(&file.data, cam.offset, cam.init(), 8192).unwrap();
         eprintln!(
             "camera {:#x}+{:#x}: {} plays, first {:?}, last {:?}",
             cam.file,

@@ -67,7 +67,8 @@ const MIN_DIST: f32 = 2500.0;
 const MAX_DIST: f32 = 30000.0;
 
 /// `dGMCameraPlayerZoomRanges[1]` -- the single-player zoom multiplier.
-const ONE_PLAYER_ZOOM: f32 = crate::d_arrays::GM_CAMERA_PLAYER_ZOOM_RANGES[1];
+static ONE_PLAYER_ZOOM: ssb_tables::DArr<f32> =
+    crate::d_arrays::GM_CAMERA_PLAYER_ZOOM_RANGES.at(core::mem::size_of::<f32>());
 
 /// The final battle-camera state produced by `gmCameraMakeDefaultCamera`.
 ///
@@ -77,14 +78,16 @@ const ONE_PLAYER_ZOOM: f32 = crate::d_arrays::GM_CAMERA_PLAYER_ZOOM_RANGES[1];
 /// observable initial values; the intermediate `{1500, 0, 0}` eye is not.
 pub const DEFAULT_EYE: Vec3 = Vec3::new(0.0, 300.0, 10000.0);
 pub const DEFAULT_AT: Vec3 = Vec3::new(0.0, 300.0, 0.0);
-pub const DEFAULT_FOVY_DEGREES: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FOVY[0];
+pub static DEFAULT_FOVY_DEGREES: ssb_tables::DArr<f32> =
+    crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FOVY.at(0);
 /// `dGMCameraPerspDefault.near` and `.far` (`gm/gmcamera.c`): the battle
 /// camera's clip planes, which the PSP's battle projection uses too. A star
 /// KO flies 15,000 units away and stays inside them (RE-420). The shield
 /// bubble and the other link-15/18 effects cover their fighter because the
 /// original draws them with no depth test, not by a depth tie (RE-421).
-pub const DEFAULT_NEAR: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_NEAR[0];
-pub const DEFAULT_FAR: f32 = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FAR[0];
+pub static DEFAULT_NEAR: ssb_tables::DArr<f32> =
+    crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_NEAR.at(0);
+pub static DEFAULT_FAR: ssb_tables::DArr<f32> = crate::d_arrays::GM_CAMERA_PERSP_DEFAULT_FAR.at(0);
 const DEFAULT_TARGET_DIST: f32 = 10000.0;
 
 /// One fighter entry consumed by `gmCameraUpdateInterests`.
@@ -229,7 +232,7 @@ impl Default for Camera {
         Camera {
             eye: DEFAULT_EYE,
             at: DEFAULT_AT,
-            fovy_degrees: DEFAULT_FOVY_DEGREES,
+            fovy_degrees: *DEFAULT_FOVY_DEGREES,
             target_dist: DEFAULT_TARGET_DIST,
             pause_eye: (0.0, 0.0),
             quake: None,
@@ -340,7 +343,7 @@ impl Camera {
         // gmCameraAdjustFOV(38.0): a 10%-per-frame lerp toward the real
         // default, not an instant snap -- matters once a mode other than
         // this one (not ported) has pulled `fovy` away from 38.
-        self.fovy_degrees += (DEFAULT_FOVY_DEGREES - self.fovy_degrees) * 0.1;
+        self.fovy_degrees += (*DEFAULT_FOVY_DEGREES - self.fovy_degrees) * 0.1;
 
         // gmCameraGetClampDimensionsMax: the distance at which the
         // interest box exactly fits the viewport, clamped to the real
@@ -447,7 +450,7 @@ impl Camera {
     /// authored `zoom_start`, the eye toward `zoom_end`, and the FOV to 38.
     pub fn tick_map_zoom(&mut self, origin: Vec3, target: Vec3) {
         let vel = self.vel_at();
-        self.fovy_degrees += (DEFAULT_FOVY_DEGREES - self.fovy_degrees) * 0.1;
+        self.fovy_degrees += (*DEFAULT_FOVY_DEGREES - self.fovy_degrees) * 0.1;
         self.at = self.at.lerp(origin, pan_scale(self.target_dist));
         self.eye = self.eye.lerp(target, 0.1);
         self.at += vel;
@@ -565,7 +568,7 @@ fn calculate_interest_scaled(
     bounds: Bounds,
     zoom_scale: f32,
 ) -> (Vec3, f32, f32) {
-    let zoom = [0.0, ONE_PLAYER_ZOOM, 1.32, 1.16, 1.0][interests.len()] * zoom_scale;
+    let zoom = [0.0, *ONE_PLAYER_ZOOM, 1.32, 1.16, 1.0][interests.len()] * zoom_scale;
     let (mut gm_left, mut gm_right, mut gm_bottom, mut gm_top) =
         (65536.0f32, -65536.0f32, 65536.0f32, -65536.0f32);
     // The fighters' clamped targets' extents (the decomp's `ft_right`,

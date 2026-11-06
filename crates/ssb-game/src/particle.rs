@@ -1794,12 +1794,13 @@ pub struct Projected {
     pub flip_t: bool,
 }
 
+pub use crate::camera::DEFAULT_FAR as CULL_FAR;
 /// The original battle camera's `near` and `far` (`dGMCameraPerspDefault`),
 /// for the draw's depth cull in a battle.
-pub const CULL_NEAR: f32 = crate::camera::DEFAULT_NEAR;
-pub const CULL_FAR: f32 = crate::camera::DEFAULT_FAR;
+pub use crate::camera::DEFAULT_NEAR as CULL_NEAR;
 /// [`CULL_NEAR`] and [`CULL_FAR`].
-pub const BATTLE_PLANES: (f32, f32) = (CULL_NEAR, CULL_FAR);
+pub static BATTLE_PLANES: ssb_tables::Decoded<(f32, f32)> =
+    ssb_tables::Decoded::new(|| (*CULL_NEAR, *CULL_FAR));
 
 /// Projects one particle as `lbParticleDrawTextures` does: its position
 /// through its transform's matrix, `view` and `proj`, the half extents

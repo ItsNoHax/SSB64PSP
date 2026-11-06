@@ -46,18 +46,18 @@ const RANDOM_SMALL: u32 = 0xCB10;
 const RANDOM_BIG: u32 = 0xDE30;
 
 /// `mnMapsMakeIcons`' `offsets`, by `GRKind`, then the random slot's.
-const ICONS: [u32; 10] = crate::d_arrays::MN_MAPS_MAKE_ICONS_OFFSETS;
+use crate::d_arrays::MN_MAPS_MAKE_ICONS_OFFSETS as ICONS;
 
 /// `mnMapsMakeName`'s `offsets`, by `GRKind`.
-const NAMES: [u32; 9] = crate::d_arrays::MN_MAPS_MAKE_NAME_OFFSETS;
+use crate::d_arrays::MN_MAPS_MAKE_NAME_OFFSETS as NAMES;
 
 /// `mnMapsMakeEmblem`'s `offsets` into `FTEmblemSprites`, by `GRKind`:
 /// Mario, Fox, Donkey, Metroid, Zelda, Yoshi, Kirby, PMonsters and Mario.
-const EMBLEMS: [u32; 9] = crate::d_arrays::MN_MAPS_MAKE_EMBLEM_OFFSETS;
+use crate::d_arrays::MN_MAPS_MAKE_EMBLEM_OFFSETS as EMBLEMS;
 
 /// `mnMapsSetLogoPosition`'s `positions`, offsets from the plaque at
 /// (189, 124), by `GRKind` (a tenth entry the random slot never reads).
-const LOGO_OFFSETS: [[f32; 2]; 10] = crate::d_arrays::MN_MAPS_SET_LOGO_POSITION_POSITIONS;
+use crate::d_arrays::MN_MAPS_SET_LOGO_POSITION_POSITIONS as LOGO_OFFSETS;
 
 /// `mnMapsMakeEmblem`'s brown primitive, for the emblem and question mark.
 const EMBLEM_PRIM: [u8; 3] = [0x5C, 0x22, 0x00];
@@ -66,7 +66,7 @@ const EMBLEM_PRIM: [u8; 3] = [0x5C, 0x22, 0x00];
 pub const VIEWPORT: [f32; 4] = [10.0, 10.0, 310.0, 230.0];
 
 /// `mnMapsSetPreviewCameraPosition`'s `positions`: the target per `GRKind`.
-const PREVIEW_AT: [[f32; 3]; 9] = crate::d_arrays::MN_MAPS_SET_PREVIEW_CAMERA_POSITION_POSITIONS;
+use crate::d_arrays::MN_MAPS_SET_PREVIEW_CAMERA_POSITION_POSITIONS as PREVIEW_AT;
 
 /// The preview camera's eye.
 pub const PREVIEW_EYE: Vec3 = Vec3 {
@@ -76,7 +76,7 @@ pub const PREVIEW_EYE: Vec3 = Vec3 {
 };
 
 /// `mnMapsMakeLayer`'s `scales`: the root `DObj`'s scale, per `GRKind`.
-const MODEL_SCALES: [f32; 9] = crate::d_arrays::MN_MAPS_MAKE_LAYER_SCALES;
+use crate::d_arrays::MN_MAPS_MAKE_LAYER_SCALES as MODEL_SCALES;
 
 /// The preview's RSP light state: `mnMapsFuncLights`, the scene's
 /// pre-render function, runs `dMNMapsDisplayList` (`G_LIGHTING`,
@@ -96,7 +96,7 @@ pub struct PreviewLight {
 /// [`PreviewLight`] from `dMNMapsLights1`'s bytes: `Ambient` (8 bytes),
 /// then `Light` (`col`, pad, `colc`, pad, `dir`, pad).
 pub fn preview_light() -> PreviewLight {
-    let b = crate::d_arrays::MN_MAPS_LIGHTS1;
+    let b = *crate::d_arrays::MN_MAPS_LIGHTS1;
     PreviewLight {
         dir: [b[16] as i8, b[17] as i8, b[18] as i8],
         color: [b[8], b[9], b[10]],
@@ -274,9 +274,9 @@ impl Layer {
             eye: PREVIEW_EYE,
             at: self.at,
             up: Vec3::new(0.0, 1.0, 0.0),
-            fovy: crate::results_scene::PERSP_FOVY,
-            aspect: crate::results_scene::PERSP_ASPECT,
-            near: crate::results_scene::PERSP_NEAR,
+            fovy: *crate::results_scene::PERSP_FOVY,
+            aspect: *crate::results_scene::PERSP_ASPECT,
+            near: *crate::results_scene::PERSP_NEAR,
             far: 16384.0,
             viewport: VIEWPORT,
         }
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_preview_light_reads_gd_sp_def_lights1() {
-        let b = crate::d_arrays::MN_MAPS_LIGHTS1;
+        let b = *crate::d_arrays::MN_MAPS_LIGHTS1;
         assert_eq!(b[0..3], b[4..7], "ambient colc");
         assert_eq!(b[8..11], b[12..15], "light colc");
         assert_eq!([b[3], b[7], b[11], b[15], b[19]], [0; 5], "pads");

@@ -85,8 +85,8 @@ const fn wallpaper_ids<const N: usize>(ids: [i32; N]) -> [u8; N] {
 /// `dSC1PTrainingModeWallpaperIDs`: which of Training's wallpapers
 /// ([`TRAINING_WALLPAPERS`]) each VS stage shows. `mnMapsPreviewWallpaper`'s
 /// copy, `dMNMapsTrainingModeWallpaperIDs`, is the same with a tenth 0.
-const TRAINING_WALLPAPER_IDS: [u8; 9] =
-    wallpaper_ids(crate::d_arrays::SC1P_TRAINING_MODE_WALLPAPER_IDS);
+static TRAINING_WALLPAPER_IDS: ssb_tables::Decoded<[u8; 9]> =
+    ssb_tables::Decoded::new(|| wallpaper_ids(*crate::d_arrays::SC1P_TRAINING_MODE_WALLPAPER_IDS));
 
 /// Training's wallpapers (`dSC1PTrainingModeWallpaperDescs`): the file
 /// (`llGRWallpaperTraining*FileID`) and the fog colour
@@ -98,7 +98,7 @@ pub struct TrainingWallpaper {
 }
 
 /// `dSC1PTrainingModeWallpaperDescs`' file IDs and fog colours.
-const fn training_wallpapers() -> [TrainingWallpaper; 3] {
+fn training_wallpapers() -> [TrainingWallpaper; 3] {
     let mut out = [TrainingWallpaper {
         file: 0,
         fog_color: [0; 3],
@@ -115,7 +115,8 @@ const fn training_wallpapers() -> [TrainingWallpaper; 3] {
 }
 
 /// Black, yellow and blue.
-pub const TRAINING_WALLPAPERS: [TrainingWallpaper; 3] = training_wallpapers();
+pub static TRAINING_WALLPAPERS: ssb_tables::Decoded<[TrainingWallpaper; 3]> =
+    ssb_tables::Decoded::new(training_wallpapers);
 
 /// `llGRWallpaperTraining*Sprite`: the sprite's offset in each file.
 pub const TRAINING_WALLPAPER_SPRITE: u32 = 0x20718;
@@ -123,7 +124,7 @@ pub const TRAINING_WALLPAPER_SPRITE: u32 = 0x20718;
 /// The wallpaper Training shows on the VS stage `gkind`, or `None` for any
 /// other kind.
 pub fn training_wallpaper(gkind: u8) -> Option<TrainingWallpaper> {
-    TRAINING_WALLPAPER_IDS
+    (*TRAINING_WALLPAPER_IDS)
         .get(usize::from(gkind))
         .map(|&id| TRAINING_WALLPAPERS[usize::from(id)])
 }

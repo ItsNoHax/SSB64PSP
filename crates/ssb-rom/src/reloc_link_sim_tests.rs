@@ -344,12 +344,12 @@ impl<'a> Roots<'a> {
 
     fn fighter_battle(&self, kinds: &[u32]) -> Vec<u32> {
         let mut v: Vec<u32> = Vec::new();
-        v.extend(r::GM_COMMON);
+        v.extend(*r::GM_COMMON);
         v.extend(r::EF_COMMON);
         v.extend(r::IT_COMMON);
         v.extend(r::FT_MANAGER);
         for &k in kinds {
-            v.extend(r::FIGHTER_MAIN.get(k as usize).copied());
+            v.extend((*r::FIGHTER_MAIN).get(k as usize).copied());
             v.extend(self.pinned_figatrees(k));
         }
         v
@@ -397,7 +397,7 @@ impl<'a> Roots<'a> {
             _ => None,
         };
         if let Some((gkind, kinds)) = fight {
-            v.extend(r::GM_COMMON);
+            v.extend(*r::GM_COMMON);
             v.extend(r::EF_COMMON);
             v.extend(r::IT_COMMON);
             v.extend(r::FT_MANAGER);
@@ -407,17 +407,17 @@ impl<'a> Roots<'a> {
         }
         v.extend_from_slice(match o {
             Opening::Room => &r::OPENING_ROOM[..],
-            Opening::Portraits => &r::OPENING_PORTRAITS,
-            Opening::Fight(..) => &r::OPENING_FIGHTER,
-            Opening::Run => &r::OPENING_RUN,
-            Opening::Cliff => &r::OPENING_CLIFF,
-            Opening::Yamabuki => &r::OPENING_YAMABUKI,
-            Opening::Jungle => &r::OPENING_JUNGLE,
-            Opening::Yoster => &r::OPENING_YOSTER,
-            Opening::Sector => &r::OPENING_SECTOR,
-            Opening::Standoff => &r::OPENING_STANDOFF,
-            Opening::Clash => &r::OPENING_CLASH,
-            Opening::Newcomers => &r::OPENING_NEWCOMERS,
+            Opening::Portraits => &*r::OPENING_PORTRAITS,
+            Opening::Fight(..) => &*r::OPENING_FIGHTER,
+            Opening::Run => &*r::OPENING_RUN,
+            Opening::Cliff => &*r::OPENING_CLIFF,
+            Opening::Yamabuki => &*r::OPENING_YAMABUKI,
+            Opening::Jungle => &*r::OPENING_JUNGLE,
+            Opening::Yoster => &*r::OPENING_YOSTER,
+            Opening::Sector => &*r::OPENING_SECTOR,
+            Opening::Standoff => &*r::OPENING_STANDOFF,
+            Opening::Clash => &*r::OPENING_CLASH,
+            Opening::Newcomers => &*r::OPENING_NEWCOMERS,
         });
         v
     }
@@ -470,7 +470,7 @@ impl<'a> Roots<'a> {
         v.extend(r::EF_COMMON);
         v.extend(r::FT_MANAGER);
         v.extend(&r::FIGHTER_MAIN[..12]);
-        v.extend(r::TRANSITIONS);
+        v.extend(*r::TRANSITIONS);
         v.extend(r::clip_files(self.pack, 0..12, &r::RESULTS_CLIP_SLOTS));
         v
     }
@@ -479,12 +479,12 @@ impl<'a> Roots<'a> {
     fn campaign(&self, id: u8, fkind: u32) -> Vec<u32> {
         let mut v = Vec::new();
         if id == 0 {
-            v.extend(r::ONE_P_INTRO);
+            v.extend(*r::ONE_P_INTRO);
             v.extend(r::EF_COMMON);
             v.extend(r::FT_MANAGER);
-            v.extend(r::FIGHTER_MAIN.get(fkind as usize).copied());
+            v.extend((*r::FIGHTER_MAIN).get(fkind as usize).copied());
         } else {
-            v.extend(r::ONE_P_STAGE_CLEAR);
+            v.extend(*r::ONE_P_STAGE_CLEAR);
         }
         v
     }
@@ -555,9 +555,9 @@ impl<'a> Roots<'a> {
             };
         let one_p_selects = || {
             alloc::vec![
-                self.players(&r::PLAYERS_1P),
-                self.players(&r::PLAYERS_TRAINING),
-                self.players(&r::PLAYERS_BONUS),
+                self.players(&*r::PLAYERS_1P),
+                self.players(&*r::PLAYERS_TRAINING),
+                self.players(&*r::PLAYERS_BONUS),
             ]
         };
         menu(&mut e, "title", r::TITLE.to_vec(), alloc::vec![]);
@@ -579,7 +579,7 @@ impl<'a> Roots<'a> {
             &mut e,
             "vs-mode",
             r::VS_MODE.to_vec(),
-            alloc::vec![self.players(&r::PLAYERS_VS)],
+            alloc::vec![self.players(&*r::PLAYERS_VS)],
         );
         // The select opens on the stage last picked (Peach's Castle at
         // first), passes the random slot, and rests on the battle's.
@@ -590,7 +590,7 @@ impl<'a> Roots<'a> {
             menu(
                 &mut e,
                 "players-vs",
-                self.players(&r::PLAYERS_VS),
+                self.players(&*r::PLAYERS_VS),
                 alloc::vec![Self::maps(false, from)],
             );
             // `open_stage_select`: the fighters, the previews the cursor
@@ -613,21 +613,21 @@ impl<'a> Roots<'a> {
         menu(
             &mut e,
             "players-training",
-            self.players(&r::PLAYERS_TRAINING),
+            self.players(&*r::PLAYERS_TRAINING),
             alloc::vec![Self::maps(true, 0)],
         );
         let mut fighters = self.fighter_battle(&[5, 2]);
-        fighters.extend(r::TRAINING);
+        fighters.extend(*r::TRAINING);
         Self::stage_select(&mut e, true, 0, &[5, 4], fighters);
         e.push(Prefetch(Self::stage_battle(4)));
         let mut training = self.battle(4, &[5, 2]);
-        training.extend(r::TRAINING);
+        training.extend(*r::TRAINING);
         e.push(Battle(training));
         e.push(Frame);
         menu(
             &mut e,
             "players-training",
-            self.players(&r::PLAYERS_TRAINING),
+            self.players(&*r::PLAYERS_TRAINING),
             alloc::vec![Self::maps(true, 4)],
         );
         // The 1P Game as Mario: Link, the Yoshi team, Fox, the Mario
@@ -636,7 +636,7 @@ impl<'a> Roots<'a> {
         menu(
             &mut e,
             "players-1p",
-            self.players(&r::PLAYERS_1P),
+            self.players(&*r::PLAYERS_1P),
             alloc::vec![],
         );
         let stages: [(u32, &[u32], Vec<u32>); 6] = [
@@ -648,7 +648,7 @@ impl<'a> Roots<'a> {
             (14, &[0, 14, 15, 16], {
                 let mut v = Vec::new();
                 for k in 14..=25 {
-                    v.extend(r::FIGHTER_MAIN.get(k as usize).copied());
+                    v.extend((*r::FIGHTER_MAIN).get(k as usize).copied());
                     v.extend(self.pinned_figatrees(k));
                 }
                 v

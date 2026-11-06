@@ -364,41 +364,26 @@ pub fn wallpaper(file: &File, base: u32) -> Option<Target> {
 /// The nine VS stages' `GR*Map` files (`ll*MapFileID`, US), in `GRKind`
 /// order: the first nine rows of `dMPCollisionGroundFileInfos`. Each file
 /// holds its `MPGroundData` at `ll*MapMapHeader` ([`MAP_HEADER`]).
-pub const VS_GROUND_FILES: [u32; 9] = ground_files();
+pub static VS_GROUND_FILES: ssb_tables::DArr<[u32; 9]> =
+    crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_FILE_ID.at(0);
 
 /// `dMPCollisionGroundFileInfos[..=nGRKindCommonEnd]`: the `GR*Map` file
 /// of every common `GRKind`, the VS stages first, then Beta Dream Land,
 /// the test stage, How to Play and the 1P Game's stages.
-pub const COMMON_GROUND_FILES: [u32; 17] = ground_files();
-
-/// The first `N` rows of `dMPCollisionGroundFileInfos[].file_id`, which the
-/// build reads from the ROM (`ssb-tablegen`, D-048).
-const fn ground_files<const N: usize>() -> [u32; N] {
-    let files = crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_FILE_ID;
-    let mut out = [0; N];
-    let mut i = 0;
-    while i < N {
-        out[i] = files[i];
-        i += 1;
-    }
-    out
-}
+pub static COMMON_GROUND_FILES: ssb_tables::DArr<[u32; 17]> =
+    crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_FILE_ID.at(0);
 
 /// `dMPCollisionGroundFileInfos[gkind].offset`: where `gkind`'s `GR*Map`
 /// file keeps its `MPGroundData` (`ll*MapMapHeader`).
-const fn map_header(gkind: usize) -> u32 {
+fn map_header(gkind: usize) -> u32 {
     crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_OFFSET[gkind]
 }
 
 /// The 1P Game stages with a wallpaper, by `GRKind`, and their
 /// `ll*MapMapHeader`: Small Yoshi's Island, Meta Crystal, Duel Zone and
 /// Final Destination. Race to the Finish has none.
-pub const ONE_P_WALLPAPER_GROUNDS: [(u8, u32); 4] = [
-    (12, map_header(12)),
-    (13, map_header(13)),
-    (14, map_header(14)),
-    (16, map_header(16)),
-];
+pub static ONE_P_WALLPAPER_GROUNDS: ssb_tables::Decoded<[(u8, u32); 4]> =
+    ssb_tables::Decoded::new(|| [12, 13, 14, 16].map(|k| (k, map_header(usize::from(k)))));
 
 /// The bonus stages by `GRKind` (`nGRKindBonusStageStart` to
 /// `nGRKindBonusStageEnd`: Break the Targets, then Board the Platforms,
@@ -409,12 +394,15 @@ pub const BONUS_WALLPAPER_GROUNDS: core::ops::RangeInclusive<u8> = 17..=40;
 
 /// `llGRBonus1MarioMapMapHeader` to `llGRBonus2NessMapMapHeader`: every
 /// bonus map holds its `MPGroundData` at 0.
-pub const BONUS_MAP_HEADER: u32 = map_header(17);
+pub static BONUS_MAP_HEADER: ssb_tables::DArr<u32> =
+    crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_OFFSET.at(17 * 4);
 
 /// How to Play's stage (`nGRKindExplain`), whose header
 /// (`llGRExplainMapMapHeader`) is at 0: `grWallpaperMakeCommon` draws its
 /// wallpaper.
-pub const EXPLAIN_WALLPAPER_GROUND: (u8, u32) = (11, map_header(11));
+pub fn explain_wallpaper_ground() -> (u8, u32) {
+    (11, map_header(11))
+}
 
 /// `GRKind` of a common stage's `GR*Map` file.
 pub fn common_ground_kind(file: u32) -> Option<u8> {
@@ -425,7 +413,8 @@ pub fn common_ground_kind(file: u32) -> Option<u8> {
 }
 
 /// `ll*MapMapHeader`: where each VS `GR*Map` file keeps its header.
-pub const MAP_HEADER: u32 = map_header(0);
+pub static MAP_HEADER: ssb_tables::DArr<u32> =
+    crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_OFFSET.at(0);
 
 /// `GRKind` of a VS stage's `GR*Map` file.
 pub fn vs_ground_kind(file: u32) -> Option<u8> {
@@ -549,7 +538,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn the_common_stage_table_keeps_the_vs_rows_and_race_to_the_finish() {
-        assert_eq!(&COMMON_GROUND_FILES[..9], &VS_GROUND_FILES);
+        assert_eq!(&COMMON_GROUND_FILES[..9], &*VS_GROUND_FILES);
         assert_eq!(COMMON_GROUND_FILES[15], crate::ground_obj::BONUS3_FILE);
         assert_eq!(common_ground_kind(270), Some(12));
         assert_eq!(common_ground_kind(0x109), vs_ground_kind(0x109));
@@ -602,7 +591,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn common_ground_files_extend_the_vs_table() {
-        assert_eq!(COMMON_GROUND_FILES[..9], VS_GROUND_FILES);
+        assert_eq!(COMMON_GROUND_FILES[..9], *VS_GROUND_FILES);
         assert_eq!(common_ground_kind(0x127), Some(15));
         assert_eq!(common_ground_kind(0x10A), Some(16));
     }

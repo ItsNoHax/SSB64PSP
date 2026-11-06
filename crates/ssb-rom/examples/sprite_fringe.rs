@@ -94,7 +94,7 @@ fn gather(archive: &Archive) -> Vec<Item> {
             "menu"
         }
     };
-    for f in sprite::FILES {
+    for f in sprite::FILES.iter() {
         let file = archive.load(f.file).unwrap();
         for &at in f.offsets {
             push(class_of(f), &file, at, None);
@@ -109,11 +109,11 @@ fn gather(archive: &Archive) -> Vec<Item> {
         }
     }
     // Drawn `SP_FASTCOPY`, opaque, at runtime (`grWallpaperMakeDecideKind`).
-    for f in sprite::TRAINING_WALLPAPER_FILES {
+    for f in *sprite::TRAINING_WALLPAPER_FILES {
         push(
             "wallpaper",
             &archive.load(f).unwrap(),
-            sprite::TRAINING_WALLPAPER_SPRITE,
+            *sprite::TRAINING_WALLPAPER_SPRITE,
             None,
         );
     }

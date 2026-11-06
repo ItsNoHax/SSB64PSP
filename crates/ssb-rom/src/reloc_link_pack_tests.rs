@@ -188,7 +188,7 @@ fn pack_readers_never_reach_an_extern_slot() {
         if a.fighter == AnimDesc::SECTOR {
             // `sector::Script::locate`.
             if a.slot == crate::sector::SLOT_FLIGHT {
-                for desc in crate::sector::SECTOR_DESCS {
+                for desc in *crate::sector::SECTOR_DESCS {
                     for (field, _) in crate::sector::DESC_FIELDS {
                         let at = desc + field;
                         c.words.push(at);

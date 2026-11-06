@@ -2950,13 +2950,14 @@ where
 /// `llITCommonDataContainerVelocitiesY` (file 251 + 0), by `ITKind`.
 const CONTAINER_VEL_Y: [f32; 20] = generated::CONTAINER_VELOCITIES_Y;
 /// `dITBoxItemSpawnVelocities`: one item, two, then three.
-const BOX_SPAWN_VELOCITIES: [(f32, f32); 6] = {
-    let v = crate::d_arrays::IT_BOX_ITEM_SPAWN_VELOCITIES;
-    let mut out = [(0.0, 0.0); 6];
-    let mut i = 0;
-    while i < out.len() {
-        out[i] = (v[i][0], v[i][1]);
-        i += 1;
-    }
-    out
-};
+static BOX_SPAWN_VELOCITIES: ssb_tables::Decoded<[(f32, f32); 6]> =
+    ssb_tables::Decoded::new(|| {
+        let v = *crate::d_arrays::IT_BOX_ITEM_SPAWN_VELOCITIES;
+        let mut out = [(0.0, 0.0); 6];
+        let mut i = 0;
+        while i < out.len() {
+            out[i] = (v[i][0], v[i][1]);
+            i += 1;
+        }
+        out
+    });

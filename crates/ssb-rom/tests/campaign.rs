@@ -21,7 +21,7 @@ fn authored_campaign_sprites_keep_their_rom_dimensions_and_attributes() {
     let pack = Pack::open(&bytes).unwrap();
     for group in [
         a::INTRO,
-        a::NAMES,
+        *a::NAMES,
         a::PICTURES,
         a::PLATFORM_PICTURE,
         a::CONTINUE,
@@ -45,7 +45,7 @@ fn authored_campaign_sprites_keep_their_rom_dimensions_and_attributes() {
                 .is_some());
         }
     }
-    for &offset in &a::BONUS_LABELS {
+    for &offset in a::BONUS_LABELS.iter() {
         assert!(pack.sprite(80, offset).is_some());
     }
 }

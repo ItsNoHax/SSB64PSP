@@ -11,7 +11,7 @@ use crate::rng;
 use ssb_engine::math::Vec3;
 
 /// `dGRInishieScaleLineGroups`.
-pub const SCALE_GROUPS: [u8; 2] = crate::d_arrays::GR_INISHIE_SCALE_LINE_GROUPS;
+pub use crate::d_arrays::GR_INISHIE_SCALE_LINE_GROUPS as SCALE_GROUPS;
 /// The scale height at which both platforms fall.
 pub const SCALE_ALT_MAX: f32 = 1100.0;
 /// `scale[i].string_dobj`: `map_dobjs[4]` and `map_dobjs[2]`.
@@ -235,7 +235,7 @@ impl Inishie {
                 if self.platform[0].y < deadzone && self.platform[1].y < deadzone {
                     self.status = ScaleStatus::Sleep;
                     self.accelerate = 0.0;
-                    for id in SCALE_GROUPS {
+                    for id in *SCALE_GROUPS {
                         if let Some(g) = groups.get_mut(id as usize) {
                             g.status = GroupStatus::Off;
                         }
@@ -264,7 +264,7 @@ impl Inishie {
                 }
                 if complete {
                     self.alt = 0.0;
-                    for (i, id) in SCALE_GROUPS.into_iter().enumerate() {
+                    for (i, id) in (*SCALE_GROUPS).into_iter().enumerate() {
                         objects.stop(StageObj::Scale(i as u8));
                         if let Some(g) = groups.get_mut(id as usize) {
                             g.status = GroupStatus::On;
@@ -275,7 +275,7 @@ impl Inishie {
                 self.place(objects);
             }
         }
-        for (i, id) in SCALE_GROUPS.into_iter().enumerate() {
+        for (i, id) in (*SCALE_GROUPS).into_iter().enumerate() {
             objects.set_translate(StageObj::Scale(i as u8), self.platform[i]);
             if let Some(g) = groups.get_mut(id as usize) {
                 g.set_position(self.platform[i]);

@@ -9,7 +9,7 @@
 /// `dGMCommonFileIDs` (`src/gm/gmcommon.c:11`): the battle interface
 /// (`IFCommonPlayer`, `...GameStatus`, `...PlayerDamage`, `...Timer`,
 /// `...Digits`, `...BattlePause`, `...PlayerTags`, `...AnnounceCommon`).
-pub const GM_COMMON: [u32; 8] = crate::d_arrays::GM_COMMON_FILE_IDS;
+pub use crate::d_arrays::GM_COMMON_FILE_IDS as GM_COMMON;
 /// `efManagerInitEffects`: `EFCommonEffects1` to `3`.
 pub const EF_COMMON: [u32; 3] = [0x53, 0x54, 0x55];
 /// `itManagerInitItems`: `ITCommonData` (with `ITCommonObject`) and
@@ -18,28 +18,14 @@ pub const IT_COMMON: [u32; 2] = [0xFB, 0x57];
 /// `ftManagerAllocFighter`: `FTManagerCommon`, `FTCommonMoveset`.
 pub const FT_MANAGER: [u32; 2] = [0xA3, 0xC9];
 /// The wipes' models (`LBTransition*`, `lbTransitionSetupTransition`).
-pub const TRANSITIONS: [u32; 11] = {
-    let mut files = [0; 11];
-    let mut i = 0;
-    while i < 11 {
-        files[i] = crate::transition::ASSETS[i].file;
-        i += 1;
-    }
-    files
-};
+pub static TRANSITIONS: ssb_tables::Decoded<[u32; 11]> =
+    ssb_tables::Decoded::new(|| crate::transition::ASSETS.map(|a| a.file));
 
 /// `dFTManagerDataFiles[kind].file_main_id`, in `FTKind` order
 /// (`src/ft/ftdata.c:127`): the twelve playable kinds, Master Hand, Metal
 /// Mario, the twelve Polygons and Giant Donkey Kong.
-pub const FIGHTER_MAIN: [u32; 27] = {
-    let mut main = [0; 27];
-    let mut kind = 0;
-    while kind < 27 {
-        main[kind] = crate::fighter::FIGHTER_FILES[kind].file;
-        kind += 1;
-    }
-    main
-};
+pub static FIGHTER_MAIN: ssb_tables::Decoded<[u32; 27]> =
+    ssb_tables::Decoded::new(|| crate::fighter::FIGHTER_FILES.map(|f| f.file));
 
 /// The `FTKind` whose figatrees `kind` plays: Metal Mario and the
 /// Polygons reuse their model's, Giant Donkey Kong Donkey Kong's.
@@ -56,17 +42,17 @@ pub fn anim_kind(kind: u32) -> u32 {
 /// (`src/mp/mpcollision.c:26`), generated from the ROM: the stage's map
 /// file, whose closure holds its models and wallpaper.
 pub fn ground_map(gkind: u32) -> Option<u32> {
-    crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_FILE_ID
+    (*crate::d_arrays::MP_COLLISION_GROUND_FILE_INFOS_FILE_ID)
         .get(gkind as usize)
         .copied()
 }
 
 /// `sc1PTrainingModeLoadWallpaper`'s three wallpapers
 /// (`GRWallpaperTraining{Black,Yellow,Blue}`) and `SC1PTrainingMode`.
-pub const TRAINING: [u32; 4] = {
-    let wallpapers = crate::d_arrays::SC_1P_TRAINING_MODE_WALLPAPER_DESCS_FILE_ID;
+pub static TRAINING: ssb_tables::Decoded<[u32; 4]> = ssb_tables::Decoded::new(|| {
+    let wallpapers = *crate::d_arrays::SC_1P_TRAINING_MODE_WALLPAPER_DESCS_FILE_ID;
     [wallpapers[0], wallpapers[1], wallpapers[2], 0xFE]
-};
+});
 /// Break the Targets' `ITBonus1ObjectHeader` and both bonus stages'
 /// `SC1PStageClear3` (`sc1pbonusstage.c`).
 pub const BONUS1: [u32; 2] = [0xFD, 0x97];
@@ -83,27 +69,27 @@ pub const KIRBY_TEAM: [u32; 1] = [0xE6];
 
 /// The N64 logo's `N64Logo` (`mnstartup.c:232`).
 pub const STARTUP: [u32; 1] = [0xC2];
-/// `mnTitleLoadFiles`: `MNTitle`, `MNTitleFireAnim`.
-pub const TITLE: [u32; 2] = crate::d_arrays::MN_TITLE_FILE_IDS;
-pub const MODE_SELECT: [u32; 2] = crate::d_arrays::MN_MODE_SELECT_FILE_IDS;
-pub const ONE_P_MODE: [u32; 2] = crate::d_arrays::MN_1P_MODE_FILE_IDS;
-pub const VS_MODE: [u32; 2] = crate::d_arrays::MN_VS_MODE_FILE_IDS;
-pub const VS_OPTIONS: [u32; 2] = crate::d_arrays::MN_VS_OPTIONS_FILE_IDS;
-pub const ITEM_SWITCH: [u32; 1] = crate::d_arrays::MN_VS_ITEM_SWITCH_FILE_IDS;
-pub const OPTION: [u32; 2] = crate::d_arrays::MN_OPTION_FILE_IDS;
-pub const SCREEN_ADJUST: [u32; 1] = crate::d_arrays::MN_SCREEN_ADJUST_FILE_IDS;
-pub const BACKUP_CLEAR: [u32; 3] = crate::d_arrays::MN_BACKUP_CLEAR_FILE_IDS;
-pub const DATA: [u32; 2] = crate::d_arrays::MN_DATA_FILE_IDS;
-pub const CHARACTERS: [u32; 4] = crate::d_arrays::MN_CHARACTERS_FILE_IDS;
-pub const VS_RECORD: [u32; 4] = crate::d_arrays::MN_VS_RECORD_FILE_IDS;
-pub const SOUND_TEST: [u32; 5] = crate::d_arrays::MN_SOUND_TEST_FILE_IDS;
-pub const MESSAGE: [u32; 2] = crate::d_arrays::MN_MESSAGE_FILE_IDS;
-pub const PLAYERS_VS: [u32; 7] = crate::d_arrays::MN_PLAYERS_VS_FILE_IDS;
-pub const PLAYERS_1P: [u32; 11] = crate::d_arrays::MN_PLAYERS_1P_GAME_FILE_IDS;
-pub const PLAYERS_TRAINING: [u32; 8] = crate::d_arrays::MN_PLAYERS_1P_TRAINING_FILE_IDS;
-pub const PLAYERS_BONUS: [u32; 11] = crate::d_arrays::MN_PLAYERS_1P_BONUS_FILE_IDS;
+pub use crate::d_arrays::MN_1P_MODE_FILE_IDS as ONE_P_MODE;
+pub use crate::d_arrays::MN_BACKUP_CLEAR_FILE_IDS as BACKUP_CLEAR;
+pub use crate::d_arrays::MN_CHARACTERS_FILE_IDS as CHARACTERS;
+pub use crate::d_arrays::MN_DATA_FILE_IDS as DATA;
 /// `mnMaps` (`mnmaps.c:19`).
-pub const MAPS: [u32; 5] = crate::d_arrays::MN_MAPS_FILE_IDS;
+pub use crate::d_arrays::MN_MAPS_FILE_IDS as MAPS;
+pub use crate::d_arrays::MN_MESSAGE_FILE_IDS as MESSAGE;
+pub use crate::d_arrays::MN_MODE_SELECT_FILE_IDS as MODE_SELECT;
+pub use crate::d_arrays::MN_OPTION_FILE_IDS as OPTION;
+pub use crate::d_arrays::MN_PLAYERS_1P_BONUS_FILE_IDS as PLAYERS_BONUS;
+pub use crate::d_arrays::MN_PLAYERS_1P_GAME_FILE_IDS as PLAYERS_1P;
+pub use crate::d_arrays::MN_PLAYERS_1P_TRAINING_FILE_IDS as PLAYERS_TRAINING;
+pub use crate::d_arrays::MN_PLAYERS_VS_FILE_IDS as PLAYERS_VS;
+pub use crate::d_arrays::MN_SCREEN_ADJUST_FILE_IDS as SCREEN_ADJUST;
+pub use crate::d_arrays::MN_SOUND_TEST_FILE_IDS as SOUND_TEST;
+/// `mnTitleLoadFiles`: `MNTitle`, `MNTitleFireAnim`.
+pub use crate::d_arrays::MN_TITLE_FILE_IDS as TITLE;
+pub use crate::d_arrays::MN_VS_ITEM_SWITCH_FILE_IDS as ITEM_SWITCH;
+pub use crate::d_arrays::MN_VS_MODE_FILE_IDS as VS_MODE;
+pub use crate::d_arrays::MN_VS_OPTIONS_FILE_IDS as VS_OPTIONS;
+pub use crate::d_arrays::MN_VS_RECORD_FILE_IDS as VS_RECORD;
 /// The stage model file (`llStage<Name>File2`) each VS stage's preview
 /// draws, by `gkind`: the file of the pack stage's layer objects, one file
 /// of the map closure `mnMapsLoadMapFile` reads into a model heap each time
@@ -128,8 +114,9 @@ pub fn maps_preview(gkind: u8, training: bool) -> Option<[u32; 2]> {
     let g = usize::from(gkind);
     let model = *STAGE_PREVIEW_MODELS.get(g)?;
     let wallpaper = if training {
-        let id = *crate::d_arrays::MN_MAPS_TRAINING_MODE_WALLPAPER_IDS.get(g)?;
-        *crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID.get(usize::try_from(id).ok()?)?
+        let id = *(*crate::d_arrays::MN_MAPS_TRAINING_MODE_WALLPAPER_IDS).get(g)?;
+        *(*crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID)
+            .get(usize::try_from(id).ok()?)?
     } else {
         STAGE_WALLPAPERS[g]
     };
@@ -319,39 +306,39 @@ pub fn clip_files(
     }
     v
 }
-/// `mnVSResults` (`mnvsresults.c:72`).
-pub const VS_RESULTS: [u32; 8] = crate::d_arrays::MN_VS_RESULTS_FILE_IDS;
-/// `sc1PIntro` (`sc1pintro.c:18`).
-pub const ONE_P_INTRO: [u32; 4] = crate::d_arrays::SC_1P_INTRO_FILE_IDS;
 /// `mnPlayers1PGameContinue` (`mn1pcontinue.c:37`).
-pub const ONE_P_CONTINUE: [u32; 5] = crate::d_arrays::MN_1P_CONTINUE_FILE_IDS;
-/// `sc1PStageClear` (`sc1pstageclear.c:24`).
-pub const ONE_P_STAGE_CLEAR: [u32; 7] = crate::d_arrays::SC_1P_STAGE_CLEAR_FILE_IDS;
-/// `sc1PChallenger`.
-pub const CHALLENGER: [u32; 1] = crate::d_arrays::SC_1P_CHALLENGER_FILE_IDS;
+pub use crate::d_arrays::MN_1P_CONTINUE_FILE_IDS as ONE_P_CONTINUE;
+/// `mnVSResults` (`mnvsresults.c:72`).
+pub use crate::d_arrays::MN_VS_RESULTS_FILE_IDS as VS_RESULTS;
 /// `mvEnding`: `MVCommon`, `MVEnding`.
-pub const ENDING: [u32; 2] = crate::d_arrays::MV_ENDING_FILE_IDS;
+pub use crate::d_arrays::MV_ENDING_FILE_IDS as ENDING;
+/// `sc1PChallenger`.
+pub use crate::d_arrays::SC_1P_CHALLENGER_FILE_IDS as CHALLENGER;
+/// `sc1PIntro` (`sc1pintro.c:18`).
+pub use crate::d_arrays::SC_1P_INTRO_FILE_IDS as ONE_P_INTRO;
+/// `sc1PStageClear` (`sc1pstageclear.c:24`).
+pub use crate::d_arrays::SC_1P_STAGE_CLEAR_FILE_IDS as ONE_P_STAGE_CLEAR;
 /// `scStaffroll`.
-pub const STAFFROLL: [u32; 1] = crate::d_arrays::SC_STAFFROLL_FILE_IDS;
+pub use crate::d_arrays::SC_STAFFROLL_FILE_IDS as STAFFROLL;
 
 /// `dMNCongraPictures` (`mncongra.c:18`): the bottom and top pictures of
 /// each playable kind, in `FTKind` order.
-pub const CONGRA: [[u32; 2]; 12] = crate::ending::CONGRA_FILES;
+pub use crate::ending::CONGRA_FILES as CONGRA;
 
+pub use crate::d_arrays::MV_OPENING_CLASH_FILE_IDS as OPENING_CLASH;
+pub use crate::d_arrays::MV_OPENING_CLIFF_FILE_IDS as OPENING_CLIFF;
+pub use crate::d_arrays::MV_OPENING_FOX_FILE_IDS as OPENING_FIGHTER;
+pub use crate::d_arrays::MV_OPENING_JUNGLE_FILE_IDS as OPENING_JUNGLE;
+pub use crate::d_arrays::MV_OPENING_NEWCOMERS_FILE_IDS as OPENING_NEWCOMERS;
+pub use crate::d_arrays::MV_OPENING_PORTRAITS_FILE_IDS as OPENING_PORTRAITS;
 /// The opening's scenes' listed files (`mvOpening*FuncStart`), by
 /// `ssb_game::opening::Kind` name.
-pub const OPENING_ROOM: [u32; 8] = crate::d_arrays::MV_OPENING_ROOM_FILE_IDS;
-pub const OPENING_PORTRAITS: [u32; 2] = crate::d_arrays::MV_OPENING_PORTRAITS_FILE_IDS;
-pub const OPENING_FIGHTER: [u32; 2] = crate::d_arrays::MV_OPENING_FOX_FILE_IDS;
-pub const OPENING_RUN: [u32; 3] = crate::d_arrays::MV_OPENING_RUN_FILE_IDS;
-pub const OPENING_YOSTER: [u32; 2] = crate::d_arrays::MV_OPENING_YOSTER_FILE_IDS;
-pub const OPENING_CLIFF: [u32; 2] = crate::d_arrays::MV_OPENING_CLIFF_FILE_IDS;
-pub const OPENING_STANDOFF: [u32; 2] = crate::d_arrays::MV_OPENING_STANDOFF_FILE_IDS;
-pub const OPENING_YAMABUKI: [u32; 1] = crate::d_arrays::MV_OPENING_YAMABUKI_FILE_IDS;
-pub const OPENING_CLASH: [u32; 2] = crate::d_arrays::MV_OPENING_CLASH_FILE_IDS;
-pub const OPENING_SECTOR: [u32; 3] = crate::d_arrays::MV_OPENING_SECTOR_FILE_IDS;
-pub const OPENING_JUNGLE: [u32; 2] = crate::d_arrays::MV_OPENING_JUNGLE_FILE_IDS;
-pub const OPENING_NEWCOMERS: [u32; 2] = crate::d_arrays::MV_OPENING_NEWCOMERS_FILE_IDS;
+pub use crate::d_arrays::MV_OPENING_ROOM_FILE_IDS as OPENING_ROOM;
+pub use crate::d_arrays::MV_OPENING_RUN_FILE_IDS as OPENING_RUN;
+pub use crate::d_arrays::MV_OPENING_SECTOR_FILE_IDS as OPENING_SECTOR;
+pub use crate::d_arrays::MV_OPENING_STANDOFF_FILE_IDS as OPENING_STANDOFF;
+pub use crate::d_arrays::MV_OPENING_YAMABUKI_FILE_IDS as OPENING_YAMABUKI;
+pub use crate::d_arrays::MV_OPENING_YOSTER_FILE_IDS as OPENING_YOSTER;
 
 #[cfg(test)]
 mod tests {
@@ -387,7 +374,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_preview_is_its_model_and_one_wallpaper() {
-        let training = crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID;
+        let training = *crate::d_arrays::MN_MAPS_TRAINING_MODE_FILE_INFOS_FILE_ID;
         // `GRWallpaperTrainingBlack` is also one of the scene's own files.
         assert!(MAPS.contains(&training[0]));
         let mut shown = [false; 3];

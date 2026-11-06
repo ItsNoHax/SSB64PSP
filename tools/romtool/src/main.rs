@@ -2278,7 +2278,7 @@ fn fighters(path: &Path, opts: &[&str]) -> Res {
     let mut ok = 0usize;
     let mut implausible = Vec::new();
     let mut decoded = Vec::new();
-    for entry in fighter::FIGHTER_FILES {
+    for entry in fighter::FIGHTER_FILES.iter().copied() {
         let file = archive.load(entry.file)?;
         let f = fighter::decode_file(entry, &file)?;
         let a = &f.attributes;
@@ -4442,7 +4442,7 @@ fn anims(path: &Path, opts: &[&str]) -> Res {
 
     let mut looping = Vec::new();
     let mut decoded = Vec::new();
-    for entry in anim::FIGHTER_ANIMS {
+    for entry in anim::FIGHTER_ANIMS.iter().copied() {
         let lengths = anim::decode_fighter(entry, &archive)?;
         print!("{:<10}", entry.name);
         for (slot, &frames) in lengths.frames.iter().enumerate() {
@@ -4600,7 +4600,7 @@ fn figatree(path: &Path, opts: &[&str]) -> Res {
     let mut checked = 0usize;
     let mut mismatched = Vec::new();
     let mut worst_drift = 0.0f32;
-    for entry in anim::FIGHTER_ANIMS {
+    for entry in anim::FIGHTER_ANIMS.iter() {
         if want_fighter.as_deref().is_some_and(|w| w != entry.name) {
             continue;
         }
@@ -7437,7 +7437,7 @@ mod tests {
         let mut prims_checked = 0usize;
         let mut depth_test_changed = 0usize;
         let mut depth_write_changed = 0usize;
-        for asset in ssb_rom::transition::ASSETS {
+        for asset in ssb_rom::transition::ASSETS.iter() {
             let Some(file) = loaded.files.get(asset.file as usize) else {
                 continue;
             };
@@ -7986,7 +7986,7 @@ mod tests {
             .iter()
             .map(|asset| (asset.file, asset.graph))
             .collect();
-        assert_eq!(ordered_keys, ssb_rom::effect::MANAGER_EFFECT_KEYS);
+        assert_eq!(ordered_keys, *ssb_rom::effect::MANAGER_EFFECT_KEYS);
         assert_eq!(
             ssb_rom::effect::MANAGER_EFFECT_REST_INVISIBLE_KEYS,
             &[(84, 0x6D00), (349, 0x0B90), (353, 0x11C0)]

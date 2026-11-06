@@ -61,10 +61,14 @@ pub const WAIT_OFF_X: f32 = 10.0;
 pub const CAPTURE_OFF: Vec2 = Vec2::new(160.0, 100.0);
 /// `dFTCommonCaptureKirbyKnockbackCatch` and `...KnockbackCapture`:
 /// `{ angle, kbs, kbw, kbb }`.
-pub const KNOCKBACK_CATCH: (i32, i32, i32, i32) =
-    crate::grab::release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KIRBY_KNOCKBACK_CATCH);
-pub const KNOCKBACK_CAPTURE: (i32, i32, i32, i32) =
-    crate::grab::release_desc(crate::d_arrays::FT_COMMON_CAPTURE_KIRBY_KNOCKBACK_CAPTURE);
+pub static KNOCKBACK_CATCH: ssb_tables::Decoded<(i32, i32, i32, i32)> =
+    ssb_tables::Decoded::new(|| {
+        crate::grab::release_desc(*crate::d_arrays::FT_COMMON_CAPTURE_KIRBY_KNOCKBACK_CATCH)
+    });
+pub static KNOCKBACK_CAPTURE: ssb_tables::Decoded<(i32, i32, i32, i32)> =
+    ssb_tables::Decoded::new(|| {
+        crate::grab::release_desc(*crate::d_arrays::FT_COMMON_CAPTURE_KIRBY_KNOCKBACK_CAPTURE)
+    });
 
 /// The victim's `status_vars.common.capturekirby` and the star's motion
 /// flags.
@@ -250,7 +254,7 @@ pub fn update_captured(f: &mut Fighter) {
 /// The victim's half of a finished breakout: `ftCommonCaptureApplyCaptureKnockback`
 /// with the Kirby descriptor.
 fn escape_breakout(f: &mut Fighter, holder: Holder) {
-    grab::apply_capture_knockback_with(f, holder, KNOCKBACK_CAPTURE);
+    grab::apply_capture_knockback_with(f, holder, *KNOCKBACK_CAPTURE);
 }
 
 /// `ftCommonThrownKirbyStarSetStatus` / `ftCommonThrownCopyStarSetStatus`

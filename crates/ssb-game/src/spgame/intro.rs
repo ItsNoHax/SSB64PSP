@@ -9,7 +9,8 @@ use ssb_engine::input::N64Buttons;
 /// immediates. Neither sets `persp.aspect`, so it stays the generated
 /// default ([`crate::results_scene::PERSP_ASPECT`], 4:3) over the 300 x 220
 /// viewport (N64 RDRAM: both cameras 1.3333, RE-458).
-pub const CAMERA_PROJECTION: (f32, f32, f32) = (crate::results_scene::PERSP_ASPECT, 128.0, 16384.0);
+pub static CAMERA_PROJECTION: ssb_tables::Decoded<(f32, f32, f32)> =
+    ssb_tables::Decoded::new(|| (*crate::results_scene::PERSP_ASPECT, 128.0, 16384.0));
 
 /// How `ftDisplayMain` lights an intro fighter.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,7 +53,7 @@ impl FighterLights {
         } else {
             // `Lights1`: `Ambient` (8 bytes), then `Light` (`col`, pad,
             // `colc`, pad, `dir`, pad).
-            let b = crate::d_arrays::SC_1P_INTRO_LIGHTS1;
+            let b = *crate::d_arrays::SC_1P_INTRO_LIGHTS1;
             FighterLight::Scene([b[16] as i8, b[17] as i8, b[18] as i8])
         };
         self.restored = true;
@@ -71,12 +72,14 @@ pub enum Announce {
 
 /// `sc1PIntroUpdateAnnounce`'s `vs_fighter_voices`, by stage; the bonus
 /// stages' and Master Hand's entries are never read.
-const VS_FIGHTER_VOICES: [u16; 14] =
-    voices(crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_VS_FIGHTER_VOICES);
+static VS_FIGHTER_VOICES: ssb_tables::Decoded<[u16; 14]> = ssb_tables::Decoded::new(|| {
+    voices(*crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_VS_FIGHTER_VOICES)
+});
 
 /// `sc1PIntroUpdateAnnounce`'s `fighter_voices`, by [`FighterKind`].
-const FIGHTER_VOICES: [u16; 12] =
-    voices(crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_FIGHTER_VOICES);
+static FIGHTER_VOICES: ssb_tables::Decoded<[u16; 12]> = ssb_tables::Decoded::new(|| {
+    voices(*crate::d_arrays::SC_1P_INTRO_UPDATE_ANNOUNCE_FIGHTER_VOICES)
+});
 
 /// The `u32` voice IDs as the `u16` the sound calls take.
 const fn voices<const N: usize>(ids: [u32; N]) -> [u16; N] {
@@ -94,9 +97,9 @@ impl Announce {
     /// The voice `sc1PIntroUpdateAnnounce` plays for it.
     pub fn voice(self) -> Option<u16> {
         match self {
-            Announce::Player(kind) => FIGHTER_VOICES.get(kind as usize).copied(),
+            Announce::Player(kind) => (*FIGHTER_VOICES).get(kind as usize).copied(),
             Announce::Versus => Some(id::nSYAudioVoiceAnnounceVersus),
-            Announce::Opponent(stage) => VS_FIGHTER_VOICES.get(stage as usize).copied(),
+            Announce::Opponent(stage) => (*VS_FIGHTER_VOICES).get(stage as usize).copied(),
             Announce::Bonus(Stage::Bonus1) => Some(id::nSYAudioVoiceAnnounceBreakTheTargets),
             Announce::Bonus(Stage::Bonus2) => Some(id::nSYAudioVoiceAnnounceBoardThePlatforms),
             Announce::Bonus(Stage::Bonus3) => Some(id::nSYAudioVoiceAnnounceRaceToTheFinish),

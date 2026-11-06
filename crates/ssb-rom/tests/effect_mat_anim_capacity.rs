@@ -59,7 +59,7 @@ fn effect_fills(p: &Pack<'_>) -> Fills {
         if a.fighter != AnimDesc::GROUND_MAT {
             continue;
         }
-        let Some(asset) = MAT_ANIMS.get(a.slot as usize) else {
+        let Some(asset) = (*MAT_ANIMS).get(a.slot as usize) else {
             continue;
         };
         let keys = stage.entry(asset.object).or_default();

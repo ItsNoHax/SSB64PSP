@@ -32,26 +32,24 @@ pub mod sprite {
     pub const NAME_TAG_DEFAULT: u32 = 0x1230;
     pub const NAME_TAG_TALL: u32 = 0x28F0;
     /// `mnCharactersMakeName`'s `offsets` (`*NameSprite`), by `FTKind`.
-    pub const NAMES: [u32; 12] = crate::d_arrays::MN_CHARACTERS_MAKE_NAME_OFFSETS;
+    pub use crate::d_arrays::MN_CHARACTERS_MAKE_NAME_OFFSETS as NAMES;
     /// `mnCharactersMakeStory`'s `offsets` (`*StorySprite`), by `FTKind`.
-    pub const STORIES: [u32; 12] = crate::d_arrays::MN_CHARACTERS_MAKE_STORY_OFFSETS;
+    pub use crate::d_arrays::MN_CHARACTERS_MAKE_STORY_OFFSETS as STORIES;
     pub const WORKS_WALLPAPER: u32 = 0x25058;
     /// `mnCharactersMakeWorks`'s `offsets` (`*WorksSprite`), by `FTKind`.
-    pub const WORKS: [u32; 12] = crate::d_arrays::MN_CHARACTERS_MAKE_WORKS_OFFSETS;
+    pub use crate::d_arrays::MN_CHARACTERS_MAKE_WORKS_OFFSETS as WORKS;
     /// `mnCharactersUpdateMotionName`'s `motion_inputs`
     /// (`MotionSpecial{Hi,N,Lw}InputSprite`).
-    pub const MOTION_INPUTS: [u32; 3] =
-        crate::d_arrays::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_INPUTS;
+    pub use crate::d_arrays::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_INPUTS as MOTION_INPUTS;
     /// `mnCharactersUpdateMotionName`'s `motion_names`, by `FTKind`, then
     /// Hi, N and Lw. Luigi's up and neutral specials are Mario's names.
-    pub const MOTION_NAMES: [[u32; 3]; 12] =
-        crate::d_arrays::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_NAMES;
+    pub use crate::d_arrays::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_NAMES as MOTION_NAMES;
     pub const STORY_WALLPAPER: u32 = 0x30888;
 }
 
 /// `mnCharactersGetFighterKind`'s `fkinds`: the pages' order.
-pub const PAGES: [FighterKind; 12] = {
-    let fkinds = crate::d_arrays::MN_CHARACTERS_GET_FIGHTER_KIND_FKINDS;
+pub static PAGES: ssb_tables::Decoded<[FighterKind; 12]> = ssb_tables::Decoded::new(|| {
+    let fkinds = *crate::d_arrays::MN_CHARACTERS_GET_FIGHTER_KIND_FKINDS;
     let mut out = [FighterKind::Mario; 12];
     let mut i = 0;
     while i < 12 {
@@ -59,11 +57,11 @@ pub const PAGES: [FighterKind; 12] = {
         i += 1;
     }
     out
-};
+});
 
 /// `mnCharactersGetPage`'s `pages`, by [`FighterKind`]; 0 past the roster.
 pub fn page_of(kind: FighterKind) -> usize {
-    crate::d_arrays::MN_CHARACTERS_GET_PAGE_PAGES
+    (*crate::d_arrays::MN_CHARACTERS_GET_PAGE_PAGES)
         .get(kind as usize)
         .map_or(0, |&page| page as usize)
 }
@@ -388,14 +386,16 @@ pub fn motion(kind: FighterKind, motion_kind: usize, track: usize) -> Track {
 
 /// `mnCharactersMakeFighterCamera`: eye (0, 0, 3000) looking at
 /// (700, 370, 0), with every camera's projection.
-pub const FIGHTER_CAMERA: Camera = Camera::persp_default(
-    Vec3::new(0.0, 0.0, 3000.0),
-    Vec3::new(700.0, 370.0, 0.0),
-    super::VIEWPORT,
-);
+pub static FIGHTER_CAMERA: ssb_tables::Decoded<Camera> = ssb_tables::Decoded::new(|| {
+    Camera::persp_default(
+        Vec3::new(0.0, 0.0, 3000.0),
+        Vec3::new(700.0, 370.0, 0.0),
+        super::VIEWPORT,
+    )
+});
 
 /// `mnCharactersMakeEmblemCamera`: eye (0, 0, 1800) on the origin.
-pub const EMBLEM_CAMERA: Camera = Camera {
+pub static EMBLEM_CAMERA: ssb_tables::Decoded<Camera> = ssb_tables::Decoded::new(|| Camera {
     eye: Vec3 {
         x: 0.0,
         y: 0.0,
@@ -406,8 +406,8 @@ pub const EMBLEM_CAMERA: Camera = Camera {
         y: 0.0,
         z: 0.0,
     },
-    ..FIGHTER_CAMERA
-};
+    ..*FIGHTER_CAMERA
+});
 
 /// `mnCharactersMakeEmblem`'s DObj: translate, and scale in x and y.
 pub const EMBLEM_TRANSLATE: Vec3 = Vec3 {
@@ -513,7 +513,7 @@ impl CharactersMenu {
                 serial: 0,
                 rotate_y: 0.0,
             },
-            camera: FIGHTER_CAMERA,
+            camera: *FIGHTER_CAMERA,
             motion_kind: 0,
             anim_frames_remain: 0,
             is_use_anim_frames_remain: false,
@@ -664,7 +664,7 @@ impl CharactersMenu {
 
     /// `mnCharactersResetFighterCamera`.
     fn reset_camera(&mut self) {
-        self.camera = FIGHTER_CAMERA;
+        self.camera = *FIGHTER_CAMERA;
         self.held_stick_angle = 0.0;
     }
 

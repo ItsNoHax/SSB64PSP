@@ -44,14 +44,14 @@ pub mod sprite {
 
 /// `dMNSoundTestDigitSpriteOffsets`: `llIFCommonPlayerDamageDigit0Sprite`
 /// to `...Digit9Sprite`.
-pub const DIGITS: [u32; 10] = crate::d_arrays::MN_SOUND_TEST_DIGIT_SPRITE_OFFSETS;
+pub use crate::d_arrays::MN_SOUND_TEST_DIGIT_SPRITE_OFFSETS as DIGITS;
 
 /// `dMNSoundTestDigitSpriteWidths` (the last two are never read).
-pub const DIGIT_WIDTHS: [i32; 12] = crate::d_arrays::MN_SOUND_TEST_DIGIT_SPRITE_WIDTHS;
+pub use crate::d_arrays::MN_SOUND_TEST_DIGIT_SPRITE_WIDTHS as DIGIT_WIDTHS;
 
 /// `dMNSoundTestArrowSpritePositions`: per row, the left arrow's x, both
 /// arrows' y, the right arrow's x.
-pub const ARROW_POSITIONS: [f32; 9] = crate::d_arrays::MN_SOUND_TEST_ARROW_SPRITE_POSITIONS;
+pub use crate::d_arrays::MN_SOUND_TEST_ARROW_SPRITE_POSITIONS as ARROW_POSITIONS;
 
 /// `nMNSoundTestOption*`.
 pub const OPTION_MUSIC: usize = 0;
@@ -416,7 +416,7 @@ impl SoundTest {
 }
 
 /// `dMNSoundTestMusicIDs`.
-pub const MUSIC_IDS: [u32; 45] = crate::d_arrays::MN_SOUND_TEST_MUSIC_IDS;
+pub use crate::d_arrays::MN_SOUND_TEST_MUSIC_IDS as MUSIC_IDS;
 
 /// A generated `u32` ID table as the port's `u16` IDs.
 const fn narrow<const N: usize>(ids: [u32; N]) -> [u16; N] {
@@ -431,10 +431,12 @@ const fn narrow<const N: usize>(ids: [u32; N]) -> [u16; N] {
 }
 
 /// `dMNSoundTestSoundIDs`.
-pub const SOUND_IDS: [u16; 194] = narrow(crate::d_arrays::MN_SOUND_TEST_SOUND_IDS);
+pub static SOUND_IDS: ssb_tables::Decoded<[u16; 194]> =
+    ssb_tables::Decoded::new(|| narrow(*crate::d_arrays::MN_SOUND_TEST_SOUND_IDS));
 
 /// `dMNSoundTestVoiceIDs`.
-pub const VOICE_IDS: [u16; 244] = narrow(crate::d_arrays::MN_SOUND_TEST_VOICE_IDS);
+pub static VOICE_IDS: ssb_tables::Decoded<[u16; 244]> =
+    ssb_tables::Decoded::new(|| narrow(*crate::d_arrays::MN_SOUND_TEST_VOICE_IDS));
 
 #[cfg(test)]
 mod tests {

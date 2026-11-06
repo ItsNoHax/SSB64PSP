@@ -48,7 +48,7 @@ pub mod flags {
 /// `nMPMaterial3` is 1.0, a quarter of the common material's 4.0. The decomp
 /// guesses "presumably ice due to low traction", and the number says the same:
 /// nothing else in the table is anywhere near that slippery.
-pub const MATERIAL_FRICTION: [f32; 16] = crate::d_arrays::MP_COLLISION_MATERIAL_FRICTIONS;
+pub use crate::d_arrays::MP_COLLISION_MATERIAL_FRICTIONS as MATERIAL_FRICTION;
 
 /// The friction multiplier of a surface's material.
 ///

@@ -33,7 +33,7 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 #[cfg(target_endian = "big")]
 compile_error!("the TABLES section is little-endian and read in place");
@@ -75,6 +75,14 @@ static ZEROS: Zeros = Zeros([0; MAX_SIZE]);
 #[cfg(not(feature = "eager"))]
 static TABLES: [AtomicPtr<u8>; TableId::ALL.len()] =
     [const { AtomicPtr::new(ptr::addr_of!(ZEROS) as *mut u8) }; TableId::ALL.len()];
+
+/// Each variable-length table's bytes and length, by `TableId`
+/// ([`VarTable`]): read in place from the installed section (or a leaked
+/// aligned copy), never from the store; empty until [`install`].
+static VAR_PTRS: [AtomicPtr<u8>; TableId::ALL.len()] =
+    [const { AtomicPtr::new(ptr::null_mut()) }; TableId::ALL.len()];
+static VAR_LENS: [AtomicUsize; TableId::ALL.len()] =
+    [const { AtomicUsize::new(0) }; TableId::ALL.len()];
 
 /// [`install`]'s progress: [`NONE`], [`INSTALLING`] or [`READY`].
 static STATE: AtomicU8 = AtomicU8::new(NONE);
@@ -121,7 +129,9 @@ pub fn install(bytes: &'static [u8]) -> Result<Section<'static>, InstallError> {
     install_with(bytes, |tables| {
         for ((slot, id), t) in TABLES.iter().zip(TableId::ALL).zip(tables) {
             if let Some(t) = t {
-                slot.store(placed(id, t) as *mut u8, Ordering::Relaxed);
+                if !id.is_var() {
+                    slot.store(placed(t) as *mut u8, Ordering::Relaxed);
+                }
             }
         }
     })
@@ -141,9 +151,13 @@ pub unsafe fn install(bytes: &'static [u8]) -> Result<Section<'static>, InstallE
         let store = STORE.0.get().cast::<u8>();
         for (id, t) in TableId::ALL.into_iter().zip(tables) {
             if let Some(t) = t {
-                // SAFETY: the table fits its place (`id.size()`, checked by
-                // `checked`); the caller excludes concurrent reads.
-                unsafe { ptr::copy_nonoverlapping(t.as_ptr(), store.add(id.offset()), t.len()) };
+                if !id.is_var() {
+                    // SAFETY: the table fits its place (`id.size()`, checked
+                    // by `checked`); the caller excludes concurrent reads.
+                    unsafe {
+                        ptr::copy_nonoverlapping(t.as_ptr(), store.add(id.offset()), t.len())
+                    };
+                }
             }
         }
     })
@@ -167,6 +181,16 @@ fn install_with(
         return Err(InstallError::AlreadyInstalled);
     }
     place(&tables);
+    for ((id, t), (p, n)) in TableId::ALL
+        .into_iter()
+        .zip(&tables)
+        .zip(VAR_PTRS.iter().zip(&VAR_LENS))
+    {
+        if let (true, Some(t)) = (id.is_var(), t) {
+            p.store(placed(t) as *mut u8, Ordering::Relaxed);
+            n.store(t.len(), Ordering::Relaxed);
+        }
+    }
     INSTALLED.store(Box::into_raw(Box::new(section)), Ordering::Relaxed);
     STATE.store(READY, Ordering::Release);
     Ok(section)
@@ -178,7 +202,12 @@ fn checked(id: TableId, section: &Section<'static>) -> Result<Option<&'static [u
     let Some((kind, bytes)) = section.get(id) else {
         return Ok(None);
     };
-    if kind != id.kind() || bytes.len() != id.size() {
+    let size_ok = if id.is_var() {
+        bytes.len() % id.kind().size() == 0
+    } else {
+        bytes.len() == id.size()
+    };
+    if kind != id.kind() || !size_ok {
         return Err(InstallError::Table(id));
     }
     Ok(Some(bytes))
@@ -196,12 +225,11 @@ pub fn installed() -> Option<Section<'static>> {
 
 /// A checked table's bytes, 4-byte aligned: in place when aligned, else a
 /// leaked copy.
-#[cfg(not(feature = "eager"))]
-fn placed(id: TableId, bytes: &'static [u8]) -> *const u8 {
+fn placed(bytes: &'static [u8]) -> *const u8 {
     if bytes.as_ptr().align_offset(4) == 0 || bytes.is_empty() {
         return bytes.as_ptr();
     }
-    let layout = core::alloc::Layout::from_size_align(id.size(), 4).expect("table layout");
+    let layout = core::alloc::Layout::from_size_align(bytes.len(), 4).expect("table layout");
     // SAFETY: the layout is not zero-sized (`bytes` is not empty).
     let p = unsafe { alloc::alloc::alloc(layout) };
     if p.is_null() {
@@ -216,7 +244,7 @@ fn placed(id: TableId, bytes: &'static [u8]) -> *const u8 {
 /// placed, or [`ZEROS`] when the section lacks it.
 #[cfg(all(test, not(feature = "eager")))]
 fn table_ptr(id: TableId, section: &Section<'static>) -> Result<*const u8, InstallError> {
-    Ok(checked(id, section)?.map_or(ptr::addr_of!(ZEROS) as *const u8, |t| placed(id, t)))
+    Ok(checked(id, section)?.map_or(ptr::addr_of!(ZEROS) as *const u8, placed))
 }
 
 /// Before a checked read: installs the `host-rom` section if none is, or
@@ -346,6 +374,308 @@ impl<T: Pod> Deref for Table<T> {
         self.get()
     }
 }
+
+/// Table `id`'s first byte: its place in the store (`eager`), else its
+/// installed bytes or zeros.
+#[cfg(feature = "eager")]
+#[inline(always)]
+fn base(id: TableId) -> *const u8 {
+    STORE.0.get().cast::<u8>().wrapping_add(id.offset())
+}
+
+/// Table `id`'s first byte: its installed bytes or zeros, after installing
+/// the `host-rom` section if none is.
+#[cfg(not(feature = "eager"))]
+#[inline]
+fn base(id: TableId) -> *const u8 {
+    if STATE.load(Ordering::Acquire) != READY {
+        ensure();
+    }
+    TABLES[id as usize].load(Ordering::Relaxed)
+}
+
+/// Part of a table read as `T`, at a constant byte offset: one of the
+/// decomp's small `d*` arrays in its element kind's group table
+/// (`TableId::DArrU8` ...; `ssb_tablegen::d_arrays`). Reads as a
+/// [`Table`] does.
+pub struct DArr<T: Pod> {
+    id: TableId,
+    offset: usize,
+    _t: PhantomData<T>,
+}
+
+impl<T: Pod> DArr<T> {
+    /// `T` at byte `offset` of table `id`: of its kind, inside it and
+    /// aligned (checked at compile time).
+    pub const fn new(id: TableId, offset: usize) -> Self {
+        assert!(
+            T::KIND as u16 == id.kind() as u16,
+            "the part's element type is not the table's kind"
+        );
+        assert!(!id.is_var(), "a part of a fixed-size table");
+        assert!(
+            offset + core::mem::size_of::<T>() <= id.size(),
+            "the part lies inside its table"
+        );
+        assert!(
+            offset.is_multiple_of(core::mem::align_of::<T>()),
+            "a part is aligned"
+        );
+        assert!(core::mem::align_of::<T>() <= 4, "a table is 4-byte aligned");
+        Self {
+            id,
+            offset,
+            _t: PhantomData,
+        }
+    }
+
+    /// The part `U` at byte `offset` of this one (an element or a row),
+    /// of the same kind (checked at compile time).
+    pub const fn at<U: Pod>(&self, offset: usize) -> DArr<U> {
+        assert!(
+            offset + core::mem::size_of::<U>() <= core::mem::size_of::<T>(),
+            "the element lies inside the part"
+        );
+        DArr::new(self.id, self.offset + offset)
+    }
+
+    /// The part.
+    #[inline(always)]
+    pub fn get(&self) -> &T {
+        let p = base(self.id).wrapping_add(self.offset);
+        // SAFETY: the part is `size_of::<T>()` bytes inside the table's
+        // `id.size()` (`new`), 4-byte aligned (the table and `offset` are),
+        // read as for `Table::get`.
+        unsafe { &*(p as *const T) }
+    }
+}
+
+impl<T: Pod> Deref for DArr<T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        self.get()
+    }
+}
+
+/// A variable-length table (`TableId::is_var`): its elements, whatever
+/// their count, read in place from the installed section; empty when the
+/// section lacks it (the stub) or before [`install`].
+pub struct VarTable<T: Pod> {
+    id: TableId,
+    _t: PhantomData<T>,
+}
+
+impl<T: Pod> VarTable<T> {
+    /// Variable-length table `id` of `T` elements (checked at compile time).
+    pub const fn new(id: TableId) -> Self {
+        assert!(
+            T::KIND as u16 == id.kind() as u16,
+            "the table's element type is not its kind"
+        );
+        assert!(id.is_var(), "a variable-length table");
+        assert!(
+            core::mem::size_of::<T>() == id.kind().size(),
+            "a variable-length table of single elements"
+        );
+        Self {
+            id,
+            _t: PhantomData,
+        }
+    }
+
+    /// The table's elements.
+    pub fn get(&self) -> &'static [T] {
+        #[cfg(not(feature = "eager"))]
+        if STATE.load(Ordering::Acquire) != READY {
+            ensure();
+        }
+        let p = VAR_PTRS[self.id as usize].load(Ordering::Relaxed);
+        let n = VAR_LENS[self.id as usize].load(Ordering::Relaxed) / core::mem::size_of::<T>();
+        if p.is_null() {
+            return &[];
+        }
+        // SAFETY: `install` stored live, leaked, 4-byte aligned bytes of
+        // this table, a multiple of its kind's size (`checked`), before
+        // `READY`; `T` is `Pod` of that kind (`new`).
+        unsafe { core::slice::from_raw_parts(p as *const T, n) }
+    }
+}
+
+/// Rows of different lengths: row `i` is `data[offsets[i]..offsets[i + 1]]`
+/// (`offsets` holds `N + 1` element indices). A row out of `data`'s range
+/// (the stub) is empty.
+pub struct Jagged<T: Pod, const N1: usize> {
+    pub offsets: DArr<[u32; N1]>,
+    pub data: VarTable<T>,
+}
+
+impl<T: Pod, const N1: usize> Jagged<T, N1> {
+    /// Row `i`.
+    pub fn row(&self, i: usize) -> &'static [T] {
+        let offsets = self.offsets.get();
+        let data = self.data.get();
+        let (a, b) = (offsets[i] as usize, offsets[i + 1] as usize);
+        data.get(a..b).unwrap_or(&[])
+    }
+
+    /// Rows.
+    pub const fn len(&self) -> usize {
+        N1 - 1
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        N1 <= 1
+    }
+}
+
+/// `N` strings: string `i` starts at byte `offsets[i]` of the NUL-terminated
+/// string blob `blob` (`ssb_tablegen` writes a `NULL` as offset 0, an
+/// empty string). An offset out of range or text that is not UTF-8 (the
+/// stub) reads as `""`.
+pub struct Strs<const N: usize> {
+    offsets: DArr<[u32; N]>,
+    blob: VarTable<u8>,
+}
+
+impl<const N: usize> Strs<N> {
+    pub const fn new(offsets: TableId, offset: usize, blob: TableId) -> Self {
+        Self {
+            offsets: DArr::new(offsets, offset),
+            blob: VarTable::new(blob),
+        }
+    }
+
+    /// String `i`.
+    pub fn get(&self, i: usize) -> &'static str {
+        let blob = self.blob.get();
+        let at = self.offsets.get()[i] as usize;
+        let tail = blob.get(at..).unwrap_or(&[]);
+        let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+        core::str::from_utf8(&tail[..end]).unwrap_or("")
+    }
+
+    pub const fn len(&self) -> usize {
+        N
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        N == 0
+    }
+
+    /// Every string, in order.
+    pub fn iter(&self) -> impl Iterator<Item = &'static str> + '_ {
+        (0..N).map(|i| self.get(i))
+    }
+}
+
+/// A rich value decoded from tables (records with enums, `Option`s,
+/// `bool`s, names), once: the first read after [`install`] decodes it with
+/// `decode` and keeps it for the rest of the run (`Deref`). A read before
+/// any install decodes the zeros the tables read then and leaks that copy
+/// instead of keeping it, so a later read sees the installed tables.
+pub struct Decoded<T: 'static> {
+    state: AtomicU8,
+    value: core::cell::UnsafeCell<core::mem::MaybeUninit<T>>,
+    decode: fn() -> T,
+}
+
+// SAFETY: `value` is written once, by the thread that moves `state` from
+// `NONE` to `INSTALLING`, and read only after `READY` is published.
+unsafe impl<T: Sync + Send> Sync for Decoded<T> {}
+
+impl<T: 'static> Drop for Decoded<T> {
+    fn drop(&mut self) {
+        if *self.state.get_mut() == READY {
+            // SAFETY: `READY`: the value was written.
+            unsafe { self.value.get_mut().assume_init_drop() };
+        }
+    }
+}
+
+impl<T: 'static> Decoded<T> {
+    pub const fn new(decode: fn() -> T) -> Self {
+        Self {
+            state: AtomicU8::new(NONE),
+            value: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+            decode,
+        }
+    }
+
+    /// The decoded value.
+    #[inline]
+    pub fn get(&self) -> &T {
+        if self.state.load(Ordering::Acquire) == READY {
+            // SAFETY: `READY` follows the write of `value` (`init`).
+            return unsafe { (*self.value.get()).assume_init_ref() };
+        }
+        self.init()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn init(&self) -> &T {
+        #[cfg(not(feature = "eager"))]
+        if STATE.load(Ordering::Acquire) != READY {
+            ensure();
+        }
+        let v = (self.decode)();
+        if installed().is_none() {
+            return Box::leak(Box::new(v));
+        }
+        if self
+            .state
+            .compare_exchange(NONE, INSTALLING, Ordering::Acquire, Ordering::Acquire)
+            .is_ok()
+        {
+            // SAFETY: only this thread passed the exchange; no reader reads
+            // `value` before `READY`.
+            unsafe { (*self.value.get()).write(v) };
+            self.state.store(READY, Ordering::Release);
+        } else {
+            while self.state.load(Ordering::Acquire) != READY {
+                core::hint::spin_loop();
+            }
+        }
+        // SAFETY: `READY`.
+        unsafe { (*self.value.get()).assume_init_ref() }
+    }
+}
+
+impl<T: 'static> Deref for Decoded<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        self.get()
+    }
+}
+
+/// `for x in &VIEW`, `VIEW.iter()`'s items, for each view.
+macro_rules! view_traits {
+    ($($view:ident<$t:ident: $bound:path>),*) => {$(
+        impl<'a, $t: $bound> IntoIterator for &'a $view<$t>
+        where
+            &'a $t: IntoIterator,
+        {
+            type Item = <&'a $t as IntoIterator>::Item;
+            type IntoIter = <&'a $t as IntoIterator>::IntoIter;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.get().into_iter()
+            }
+        }
+
+        impl<$t: $bound + core::fmt::Debug> core::fmt::Debug for $view<$t> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
+    )*};
+}
+
+view_traits!(Table<T: Pod>, DArr<T: Pod>, Decoded<T: Sized>);
 
 #[cfg(test)]
 mod tests {

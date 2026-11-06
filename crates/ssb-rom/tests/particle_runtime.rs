@@ -561,7 +561,7 @@ fn the_results_confetti_falls_on_lists_four_and_zero_and_ends() {
     };
     let mut p = Box::new(Particles::new());
     let mut e = Effects::new(0);
-    for (pos, is_genlink_mask) in ssb_game::results_emblem::CONFETTI {
+    for (pos, is_genlink_mask) in *ssb_game::results_emblem::CONFETTI {
         assert_ne!(e.confetti(&mut p, &banks, pos, is_genlink_mask), lb::NIL);
     }
     // Each script makes four generators; their particles take their lists.

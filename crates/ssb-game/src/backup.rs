@@ -165,7 +165,7 @@ impl Default for Backup {
     /// `dSCManagerDefaultBackupData`, decoded from the ROM's bytes. With the
     /// stub tables, every field is zero but the signature.
     fn default() -> Self {
-        Backup::decode_fields(&crate::d_arrays::SC_MANAGER_DEFAULT_BACKUP_DATA)
+        Backup::decode_fields(&*crate::d_arrays::SC_MANAGER_DEFAULT_BACKUP_DATA)
             .unwrap_or_else(Backup::blank)
     }
 }
