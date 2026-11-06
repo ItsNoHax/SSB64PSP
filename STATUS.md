@@ -29,7 +29,7 @@
 ## Next
 
 1. Electric `vs4@2170` (r12 16.59, r18 15.57 ms; target 16.7 met; budget headroom next). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
-2. ROM-free release (PLAN): on-PSP pack build, owner hard limit 10 min on a real PSP; first a PSP timing probe of the texture-compensation stages (98% of host `romtool pack` time).
+2. ROM-free release (PLAN, RE-588): waiting on the owner's choice of texture compensation kept (exact cannot meet 10 min; none changes 163 goldens); then coverage off f64, portable packer, tables into the pack, installer.
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 

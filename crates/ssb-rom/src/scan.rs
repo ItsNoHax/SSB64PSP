@@ -185,6 +185,28 @@ pub fn find_display_lists_at(file: &File, candidates: &BTreeSet<u32>) -> Vec<Fou
     scan_candidates(file, candidates)
 }
 
+mod root_offsets;
+pub use root_offsets::ROOT_DL_OFFSETS;
+
+/// [`find_root_display_lists`]'s result from the committed offset table
+/// ([`ROOT_DL_OFFSETS`]) instead of the scan: each list decoded where the
+/// scan found it, without testing every aligned offset (RE-588: the scan is
+/// 4.9 s on the host, about 10 min on a PSP).
+pub fn root_display_lists(file: &File) -> Vec<FoundDl> {
+    let Ok(i) = ROOT_DL_OFFSETS.binary_search_by_key(&file.id, |&(id, _)| id) else {
+        return Vec::new();
+    };
+    ROOT_DL_OFFSETS[i]
+        .1
+        .iter()
+        .map(|&off| FoundDl {
+            offset: off,
+            commands: dl::decode_list_at(&file.data[off as usize..], off)
+                .expect("ROOT_DL_OFFSETS names a list that decodes"),
+        })
+        .collect()
+}
+
 /// Finds **self-contained** display lists — the production discovery path.
 ///
 /// Earlier attempts used relocation targets as candidate DL starts. That turns

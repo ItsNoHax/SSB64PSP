@@ -4708,7 +4708,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             continue;
         };
 
-        let all = ssb_rom::scan::find_root_display_lists(file);
+        let all = ssb_rom::scan::root_display_lists(file);
         // convert() inlines G_DL callees, so packing a list that another list
         // calls would duplicate its geometry.
         let called: std::collections::BTreeSet<u32> =
@@ -11440,7 +11440,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
     // inlines callees, so a list another list calls is not a root -- converting
     // it standalone runs it without the state its caller sets up, which is how
     // the report came to claim 75 unresolved textures the pack does not have.
-    let all = ssb_rom::scan::find_root_display_lists(file);
+    let all = ssb_rom::scan::root_display_lists(file);
     let called: BTreeSet<u32> = all.iter().flat_map(|d| d.referenced_lists()).collect();
     for dl in all
         .iter()

@@ -1030,15 +1030,23 @@ pub fn solve_samples_ungated(
 ) -> Rgba8 {
     let (ms, mt) = modes(clamp_s, clamp_t);
     let n = (original.width * original.height) as usize;
-    let mut values: Vec<f64> = original.pixels.iter().map(|&v| v as f64).collect();
+    let mut values: Vec<f32> = original.pixels.iter().map(|&v| v as f32).collect();
+    // f32, not f64: the output bytes are equal (batch 165, every solve of
+    // the pack), and the PSP has no f64 hardware (RE-588: soft-float f64 is
+    // 830x the host's time, f32 128x). The sampler's targets do not depend
+    // on the iterate, so they are taken once.
+    let targets: Vec<[u8; 4]> = coverage
+        .iter()
+        .map(|&[sq, tq]| sample_3point_addressed(original, sq, tq, ms, mt))
+        .collect();
     for _ in 0..48 {
-        let mut grad = alloc::vec![0.0f64; n * 4];
-        let mut norm = alloc::vec![0.0f64; n];
-        for &[sq, tq] in coverage {
+        let mut grad = alloc::vec![0.0f32; n * 4];
+        let mut norm = alloc::vec![0.0f32; n];
+        for (k, &[sq, tq]) in coverage.iter().enumerate() {
             let x0 = sq.div_euclid(32);
             let y0 = tq.div_euclid(32);
-            let sf = (sq.rem_euclid(32) >> 1) as f64 / 16.0;
-            let tf = (tq.rem_euclid(32) >> 1) as f64 / 16.0;
+            let sf = (sq.rem_euclid(32) >> 1) as f32 / 16.0;
+            let tf = (tq.rem_euclid(32) >> 1) as f32 / 16.0;
             let taps = [
                 (x0, y0, (1.0 - sf) * (1.0 - tf)),
                 (x0 + 1, y0, sf * (1.0 - tf)),
@@ -1051,9 +1059,9 @@ pub fn solve_samples_ungated(
                     GeAddressMode::Repeat => v.rem_euclid(len as i32) as u32,
                 }
             };
-            let target = sample_3point_addressed(original, sq, tq, ms, mt);
+            let target = targets[k];
             for c in 0..4 {
-                let predicted: f64 = taps
+                let predicted: f32 = taps
                     .iter()
                     .map(|&(x, y, w)| {
                         let i = (address(y, original.height, mt) * original.width
@@ -1062,7 +1070,7 @@ pub fn solve_samples_ungated(
                         values[i * 4 + c] * w
                     })
                     .sum();
-                let error = predicted - target[c] as f64;
+                let error = predicted - target[c] as f32;
                 for &(x, y, w) in &taps {
                     let i = (address(y, original.height, mt) * original.width
                         + address(x, original.width, ms)) as usize;
