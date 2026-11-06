@@ -14,6 +14,8 @@ description = "Generates ssb-game's, ssb-engine's and ssb-rom's ROM-derived tabl
 
 [dependencies]
 sha1_smol = { version = "1.0", default-features = false }
+# `interp`'s square root without `std` (`math::sqrt_exact`).
+libm = "0.2"
 
 [[bin]]
 name = "ssb-tablegen"

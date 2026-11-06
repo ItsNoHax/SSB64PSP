@@ -74,7 +74,7 @@ fn stick_auto_points_at_the_target() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn move_auto_scales_the_grounded_stick_by_the_dash_reach() {
     let mut f = mario_on_floor();
-    f.attributes = crate::physics::PhysicsAttributes::MARIO;
+    f.attributes = crate::physics::PhysicsAttributes::mario();
     let mut com = Computer::setup(&f, 9);
     assert!(com.dash_predict > 0.0);
     // Far away: full stick along the floor; the target's line matches the
@@ -122,7 +122,7 @@ fn the_wait_before_a_command_shrinks_with_the_level() {
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn a_full_jump_prediction_reaches_above_the_floor() {
     let mut f = mario_on_floor();
-    f.attributes = crate::physics::PhysicsAttributes::MARIO;
+    f.attributes = crate::physics::PhysicsAttributes::mario();
     let com = Computer::setup(&f, 5);
     assert!(com.jump_predict > 0.0);
     assert_eq!(com.origin_pos, Vec2::new(0.0, 0.0));

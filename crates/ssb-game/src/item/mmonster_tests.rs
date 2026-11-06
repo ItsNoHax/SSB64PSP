@@ -711,7 +711,7 @@ fn clefairy_selection_matches_the_n64_sweep() {
         // Both Mario (`training_*_fkind`); `ftManagerMakeFighter` copies
         // the attributes' `map_coll`, which Starmie's target reads.
         for f in &mut w.fighters {
-            f.coll = crate::ground::BodyColl::MARIO;
+            f.coll = crate::ground::BodyColl::mario();
         }
         w.fighters[1].pos.y = 904.0;
         let slot = w.spawn(Kind::Pippi, 0.0);

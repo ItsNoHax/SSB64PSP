@@ -15,7 +15,7 @@
 //! [`register_hitbox`] feeds a positioned hitbox (a weapon) into the
 //! defender's hit log; [`apply_hitbox_at`] also resolves it at once, for
 //! callers outside the frame pipeline. A caller with no posed joints falls
-//! back to one sphere of [`MARIO_HURTBOX_RADIUS`] at the fighter's root.
+//! back to one sphere of [`mario_hurtbox_radius`] at the fighter's root.
 
 use ssb_engine::math::{sin_cos, Vec3};
 
@@ -79,7 +79,10 @@ pub fn mario_jab1_hitbox() -> Hitbox {
 
 /// The root-sphere hurtbox used when a fighter has no posed joints — half
 /// of `dMarioMain_attr.map_coll`'s width ([`crate::hurtbox`]).
-pub const MARIO_HURTBOX_RADIUS: f32 = crate::physics::MARIO_MAP_COLL[3] / 2.0;
+#[inline]
+pub fn mario_hurtbox_radius() -> f32 {
+    crate::physics::mario_map_coll()[3] / 2.0
+}
 
 /// `FTCOMMON_DAMAGE_SAKURAI_*` — `ft/ftcommon.h`.
 const SAKURAI_KNOCKBACK_LOW: f32 = 32.0;

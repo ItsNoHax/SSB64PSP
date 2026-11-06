@@ -8303,7 +8303,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn walking_snaps_up_to_speed_and_eases_down() {
-        let attr = PhysicsAttributes::MARIO;
+        let attr = PhysicsAttributes::mario();
         let mut p = PhysicsState::default();
 
         // Full stick: the target is reached on the first frame.
@@ -8319,7 +8319,7 @@ mod tests {
 
     #[test]
     fn a_dash_does_not_decelerate_for_its_first_seven_frames() {
-        let attr = PhysicsAttributes::MARIO;
+        let attr = PhysicsAttributes::mario();
         let mut p = PhysicsState::default();
         p.vel_ground.x = attr.dash_speed;
 
@@ -8333,7 +8333,7 @@ mod tests {
     #[test]
     #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
     fn a_run_holds_its_speed_but_a_brake_scrubs_it_faster_than_traction() {
-        let attr = PhysicsAttributes::MARIO;
+        let attr = PhysicsAttributes::mario();
         let mut run = PhysicsState::default();
         run.vel_ground.x = attr.run_speed;
         apply_status_physics(&mut run, &attr, Status::Run, 5.0, 80, 4.0, 1.0);

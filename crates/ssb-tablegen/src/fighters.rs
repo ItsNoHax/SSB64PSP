@@ -2,6 +2,8 @@
 //! its `FTMotionDesc` and special-status tables, its `FTAttributes`, and its
 //! demo (`scsubsys`) scripts.
 
+use alloc::vec::Vec;
+
 use crate::source::{be_u32, OVL1};
 use crate::{Result, Source};
 

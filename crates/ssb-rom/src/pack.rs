@@ -526,7 +526,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (`ssb_tablegen::{item_attributes, item_sounds, monster_weapons,
 // throw_descs, battle_data, kirby_copy, ...}`). Everything outside the
 // section is unchanged.
-pub const VERSION: u32 = 145;
+// 146 adds `TABLES` entries: `ssb-game`'s hot tables (hurtboxes, joint
+// masks, hidden and texture parts, Mario's physics, colour-animation
+// scripts and descs, CPU input scripts and attacks; `ssb_tablegen::{hurtbox,
+// model_parts, physics, colanim, computer}`). Everything outside the
+// section is unchanged.
+pub const VERSION: u32 = 146;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

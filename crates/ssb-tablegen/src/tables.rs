@@ -547,7 +547,7 @@ pub const IDS: &[TableDesc] = &[
         kind: Kind::F32,
         len: Len::Exact(crate::monster_weapons::SMOG_PLAYS),
         doc: "The Smog's child `DObj` X scale after each play.",
-        read: std_reader!(crate::monster_weapons::smog_scale_bytes),
+        read: Some(crate::monster_weapons::smog_scale_bytes),
     },
     TableDesc {
         name: "ThrowDescs",
@@ -717,6 +717,90 @@ pub const IDS: &[TableDesc] = &[
         doc: "`FTStatusDesc::sflags`: the common statuses, then each playable fighter's specials.",
         read: Some(crate::stat_flags::flags_bytes),
     },
+    TableDesc {
+        name: "DamageColls",
+        kind: Kind::U32,
+        len: Len::Exact(27 * crate::hurtbox::FIGHTER_WORDS),
+        doc: "Per `FTKind`: `FTAttributes::damage_coll_descs`' used-row count, then 11 rows of `joint, placement, is_grabbable, offset[3], size[3]` (`f32` bits, full size).",
+        read: Some(crate::hurtbox::bytes),
+    },
+    TableDesc {
+        name: "JointMasks",
+        kind: Kind::U32,
+        len: Len::Exact(27 * crate::model_parts::JOINT_MASK_WORDS),
+        doc: "Per `FTKind`: `setup_parts`, `setup_parts & has a display list`, `animlock`, each as (low, high) words of a 64-bit joint mask.",
+        read: Some(crate::model_parts::joint_masks_bytes),
+    },
+    TableDesc {
+        name: "HiddenParts",
+        kind: Kind::U8,
+        len: Len::Exact(27 * crate::model_parts::HIDDEN_PART_BYTES),
+        doc: "Per `FTKind`: the count, then `(index, root joint, has a display list)` per `hiddenparts` entry rooted at joint 4 or later.",
+        read: Some(crate::model_parts::hidden_parts_bytes),
+    },
+    TableDesc {
+        name: "TextureParts",
+        kind: Kind::U8,
+        len: Len::Exact(27 * crate::model_parts::TEXTURE_PART_BYTES),
+        doc: "Per `FTKind`: present, then `(joint, high MObj, low MObj)` per `textureparts` entry, pad.",
+        read: Some(crate::model_parts::texture_parts_bytes),
+    },
+    TableDesc {
+        name: "TexturePartMade",
+        kind: Kind::U8,
+        len: Len::Exact(27 * crate::model_parts::TEXTURE_PART_MADE_BYTES),
+        doc: "Per `FTKind` and texture part: the made `TextureIDCurrent` at high and low detail (`i8`), has an `FTModelPartDesc`; pad.",
+        read: Some(crate::model_parts::texture_part_made_bytes),
+    },
+    TableDesc {
+        name: "MarioPhysics",
+        kind: Kind::U32,
+        len: Len::Exact(crate::physics::WORDS),
+        doc: "Mario's `FTAttributes` physics head in `physics::FIELDS` order (`f32` bits; `jumps_max` an `s32`), then `map_coll`.",
+        read: Some(crate::physics::bytes),
+    },
+    TableDesc {
+        name: "ColAnimEvents",
+        kind: Kind::U32,
+        len: Len::Exact(crate::colanim::EVENTS * crate::colanim::EVENT_WORDS),
+        doc: "Every colour-animation event: its ROM words (a script pointer as the script's index), padded to 4.",
+        read: Some(crate::colanim::events_bytes),
+    },
+    TableDesc {
+        name: "ColAnimScripts",
+        kind: Kind::U16,
+        len: Len::Exact(crate::colanim::SCRIPTS.len() + 1),
+        doc: "Each colour-animation script's first event in `ColAnimEvents`, then the event count.",
+        read: Some(crate::colanim::scripts_bytes),
+    },
+    TableDesc {
+        name: "ColAnimDescs",
+        kind: Kind::U8,
+        len: Len::Exact(crate::colanim::DESCS.1 * crate::colanim::DESC_BYTES),
+        doc: "`dGMColScriptsDescs`: script index + 1 (0 for none), `priority`, `is_unlocked`, pad.",
+        read: Some(crate::colanim::descs_bytes),
+    },
+    TableDesc {
+        name: "InputScripts",
+        kind: Kind::U8,
+        len: Len::Exact(crate::computer::INPUT_SCRIPT_BYTES),
+        doc: "`dFTComputerPlayerInputScripts`' scripts back to back, in pointer-table order.",
+        read: Some(crate::computer::input_scripts_bytes),
+    },
+    TableDesc {
+        name: "InputScriptOffsets",
+        kind: Kind::U16,
+        len: Len::Exact(crate::computer::INPUT_SCRIPT_TABLE.1 + 1),
+        doc: "Each input script's first byte in `InputScripts`, then the byte count.",
+        read: Some(crate::computer::input_script_offsets_bytes),
+    },
+    TableDesc {
+        name: "ComputerAttacks",
+        kind: Kind::U32,
+        len: Len::Exact(12 * crate::computer::FIGHTER_ATTACK_WORDS),
+        doc: "Per playable `FTKind`: the grounded and aerial row counts, then 11 grounded and 7 aerial `FTComputerAttack` rows (7 ROM words each).",
+        read: Some(crate::computer::attacks_bytes),
+    },
 ];
 
 /// `ifcommon::ANNOUNCE_ROWS` (layout).
@@ -780,6 +864,10 @@ const _: () = {
     assert!(b::SECTOR_LASER_COUNTS.1 == 8 && b::SECTOR_PILOT_IDS.1 == 56);
     assert!(b::SECTOR_PILOT_WINDOWS.1 == 6 && crate::ground::GROUND_FILE_INFOS.len() == 41);
     assert!(crate::ground_effect::DESC_COUNT == 24);
+    assert!(crate::fighters::FIGHTERS.len() == 27 && crate::computer::FIGHTERS.len() == 12);
+    assert!(crate::colanim::SCRIPTS.len() == 93 && crate::colanim::DESCS.1 == 86);
+    assert!(crate::colanim::EVENTS == 691 && crate::computer::INPUT_SCRIPT_TABLE.1 == 49);
+    assert!(crate::computer::INPUT_SCRIPT_BYTES == 429 && crate::physics::WORDS == 28);
 };
 
 /// The `ssb-tables` build script's `table_ids.rs`: the ids, kinds and

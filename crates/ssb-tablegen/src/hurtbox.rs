@@ -7,14 +7,14 @@
 //! `ftParamResetFighterDamageCollsAll` skips a row whose `joint_id` is -1;
 //! every fighter's used rows come first, so the generated table holds the
 //! rows before the first -1, and the generator fails if a used row follows
-//! one. The emitted rows call `ssb_game::hurtbox::hurt`, which halves
-//! `size` as `ftParamResetFighterDamageCollsAll` does.
+//! one. `ssb_game::hurtbox` halves `size` as
+//! `ftParamResetFighterDamageCollsAll` does.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
 use crate::fighters::FIGHTERS;
 use crate::source::be_u32;
-use crate::{emit, Error, Result, Source};
+use crate::{Error, Result};
 
 /// `FTAttributes::damage_coll_descs[11]`: `hit_detect_range` (`0x290`, the
 /// `Vec3f` before `setup_parts` at `0x29C`) minus eleven rows.
@@ -63,53 +63,29 @@ fn rows(data: &[u8], attributes: u32, file: u32) -> Result<Vec<Row>> {
     Ok(out)
 }
 
-fn vec(v: [f32; 3]) -> String {
-    let cells: Vec<String> = v.iter().map(|&x| emit::f32_lit(x)).collect();
-    format!("[{}]", cells.join(", "))
-}
+/// Words per fighter in the `DamageColls` table: the used rows' count,
+/// then [`DAMAGE_COLL_DESCS`] rows of [`ROW_WORDS`] (unused rows zero).
+pub const FIGHTER_WORDS: usize = 1 + DAMAGE_COLL_DESCS as usize * ROW_WORDS;
+/// Words per row: `joint_id`, `placement`, `is_grabbable`, `offset` (`f32`
+/// bits), the full `size` (`f32` bits; `ssb_game::hurtbox` halves it as
+/// `ftParamResetFighterDamageCollsAll` does).
+pub const ROW_WORDS: usize = 9;
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut out =
-        emit::header("each fighter's hurtbox descriptors (`FTAttributes::damage_coll_descs`)");
-    out.push_str(
-        "/// Per `FTKind`: `FTAttributes::damage_coll_descs` up to the first unused\n\
-         /// (`joint_id` -1) row, through `hurt` (`size` halved).\n",
-    );
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub static DAMAGE_COLLS: [&[DamageCollDesc]; {}] = [",
-        FIGHTERS.len()
-    );
+/// The `DamageColls` table: per `FTKind`, [`FIGHTER_WORDS`] words.
+pub fn bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut words = Vec::with_capacity(FIGHTERS.len() * FIGHTER_WORDS);
     for f in FIGHTERS.iter() {
-        let rows = match rom {
-            Some(rom) => rows(&rom.file(f.main_file)?.data, f.attributes, f.main_file)?,
-            None => Vec::new(),
-        };
-        let cells: Vec<String> = rows
-            .iter()
-            .map(|&(joint, placement, grabbable, offset, size)| {
-                format!(
-                    "\n        hurt({joint}, {placement}, {grabbable}, {}, {})",
-                    vec(offset),
-                    vec(size)
-                )
-            })
-            .collect();
-        let close = if cells.is_empty() { "" } else { ",\n    " };
-        let _ = writeln!(out, "    &[{}{close}], // {}", cells.join(","), f.name);
+        let rows = rows(&c.rom.file(f.main_file)?.data, f.attributes, f.main_file)?;
+        words.push(rows.len() as u32);
+        for i in 0..DAMAGE_COLL_DESCS as usize {
+            match rows.get(i) {
+                Some(&(joint, placement, grabbable, offset, size)) => {
+                    words.extend([u32::from(joint), u32::from(placement), u32::from(grabbable)]);
+                    words.extend(offset.iter().chain(&size).map(|v| v.to_bits()));
+                }
+                None => words.extend([0; ROW_WORDS]),
+            }
+        }
     }
-    out.push_str("];\n");
-    Ok(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stub_tables_are_empty() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("pub static DAMAGE_COLLS: [&[DamageCollDesc]; 27]"));
-        assert_eq!(text.matches("    &[], //").count(), 27);
-    }
+    Ok(crate::tables::le_words(&words))
 }

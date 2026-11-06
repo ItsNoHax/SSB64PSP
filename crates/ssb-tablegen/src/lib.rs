@@ -49,38 +49,40 @@ pub mod sprite_offsets;
 // fixed `AObjEvent32` script produces (`monster_weapons`).
 #[path = "../../ssb-rom/src/figatree.rs"]
 #[allow(dead_code)]
-#[cfg(feature = "std")]
 pub mod figatree;
 // `ssb-rom`'s figatree binding order, for the joint whose script decides a
 // fighter animation's end (`motion`'s `END_BLOCKS`).
 #[path = "../../ssb-rom/src/figatree_order.rs"]
-#[cfg(feature = "std")]
 pub mod figatree_order;
 #[path = "../../ssb-rom/src/interp.rs"]
 #[allow(dead_code)]
-#[cfg(feature = "std")]
 pub mod interp;
 #[path = "../../ssb-rom/src/objanim.rs"]
 #[allow(dead_code)]
-#[cfg(feature = "std")]
 pub mod objanim;
 // `ssb-rom`'s material animation player, for the texture id a fighter's
 // costume script gives its texture part (`model_parts`).
 #[path = "../../ssb-rom/src/matanim.rs"]
 #[allow(dead_code)]
-#[cfg(feature = "std")]
 pub mod matanim;
 
 // `interp` calls `ssb_engine::math::sqrt_exact`. `ssb-engine`'s build script
-// runs this crate too, so the name resolves to this crate's `math` instead,
-// the host `std` square root that `ssb-engine` uses with `std`.
-#[cfg(feature = "std")]
+// runs this crate too, so the name resolves to this crate's `math` instead:
+// the host `std` square root that `ssb-engine` uses with `std`, else
+// `libm`'s, which rounds correctly too (the same bits as the PSP's
+// `sqrt.s`).
 extern crate self as ssb_engine;
-#[cfg(feature = "std")]
 mod math {
-    /// `ssb_engine::math::sqrt_exact` with `std`.
+    /// `ssb_engine::math::sqrt_exact`.
     pub fn sqrt_exact(v: f32) -> f32 {
-        v.sqrt()
+        #[cfg(feature = "std")]
+        {
+            v.sqrt()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::sqrtf(v)
+        }
     }
 }
 
@@ -92,20 +94,18 @@ mod anim_length;
 mod anim_table;
 mod battle_data;
 mod capture_captain;
-#[cfg(feature = "std")]
 mod colanim;
-#[cfg(feature = "std")]
 mod computer;
 mod d_arrays;
 mod effect_life;
 #[cfg(feature = "std")]
 mod emit;
 mod ending_data;
-#[cfg(feature = "std")]
+// Its motion-data fields are read by the `std`-only `motion` generator.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 mod fighters;
 mod ground;
 mod ground_effect;
-#[cfg(feature = "std")]
 mod hurtbox;
 #[cfg(feature = "std")]
 mod ifcommon;
@@ -114,13 +114,11 @@ mod item_sounds;
 mod kirby_attack100;
 mod kirby_copy;
 mod menu_data;
-#[cfg(feature = "std")]
 mod model_parts;
 mod monster_weapons;
 #[cfg(feature = "std")]
 mod motion;
 mod opening_data;
-#[cfg(feature = "std")]
 mod physics;
 #[cfg(feature = "std")]
 mod rom_layout;
@@ -195,25 +193,14 @@ pub fn generate(krate: Crate, rom: Option<&Source>) -> Result<Vec<Generated>> {
                     name: "motion_scripts.rs",
                     text: motion::generate(rom)?,
                 },
+                // Layout only: the values are in the pack's `TABLES` section.
                 Generated {
-                    name: "colanim_scripts.rs",
-                    text: colanim::generate(rom)?,
+                    name: "colanim_layout.rs",
+                    text: colanim::layout_rs(),
                 },
                 Generated {
-                    name: "computer_scripts.rs",
-                    text: computer::generate(rom)?,
-                },
-                Generated {
-                    name: "joint_masks.rs",
-                    text: model_parts::generate(rom)?,
-                },
-                Generated {
-                    name: "hurtboxes.rs",
-                    text: hurtbox::generate(rom)?,
-                },
-                Generated {
-                    name: "mario_physics.rs",
-                    text: physics::generate(rom)?,
+                    name: "computer_layout.rs",
+                    text: computer::layout_rs(),
                 },
             ];
             files.push(d_arrays::generate_game());

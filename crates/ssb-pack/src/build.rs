@@ -90,7 +90,8 @@ pub fn build(
     // SAFETY: nothing has read a table before this point in the build.
     let installed = unsafe { ssb_tables::install(Vec::leak(tables.clone())) };
     match installed {
-        Ok(_) => {}
+        // SAFETY: just installed; no hot value has been read yet.
+        Ok(_) => unsafe { ssb_game::tables::fill() },
         // A host process that read a table first (its `host-rom`
         // fallback, or an earlier build) holds this ROM's section already.
         Err(ssb_tables::InstallError::AlreadyInstalled)

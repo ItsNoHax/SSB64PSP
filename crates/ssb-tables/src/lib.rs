@@ -652,6 +652,153 @@ impl<T: 'static> Deref for Decoded<T> {
     }
 }
 
+/// Bytes of the `.bss` arena [`hot_rows`] places decoded rows in (`eager`).
+#[cfg(feature = "eager")]
+pub const HOT_ROWS_SIZE: usize = 32 * 1024;
+
+#[cfg(feature = "eager")]
+#[repr(C, align(16))]
+struct HotRows(UnsafeCell<[u8; HOT_ROWS_SIZE]>);
+
+// SAFETY: written only by `hot_rows` during `Hot::fill`, whose contract
+// excludes any concurrent access.
+#[cfg(feature = "eager")]
+unsafe impl Sync for HotRows {}
+
+#[cfg(feature = "eager")]
+static HOT_ROWS: HotRows = HotRows(UnsafeCell::new([0; HOT_ROWS_SIZE]));
+
+#[cfg(feature = "eager")]
+static HOT_ROWS_USED: AtomicUsize = AtomicUsize::new(0);
+
+/// Bytes of [`HOT_ROWS_SIZE`] that [`hot_rows`] has handed out (`eager`).
+#[cfg(feature = "eager")]
+pub fn hot_rows_used() -> usize {
+    HOT_ROWS_USED.load(Ordering::Relaxed)
+}
+
+/// `rows` collected into memory that lives for the program, for a
+/// [`Hot`] value's decoder.
+///
+/// - `eager` (the PSP): placed in a fixed `.bss` arena, so decoding the
+///   hot tables at boot leaves the heap as it was: the heap layout, and
+///   with it the frame time, does not move with the tables (RE-589). A
+///   full arena falls back to the heap.
+/// - Otherwise: a leaked `Vec`.
+pub fn hot_rows<T: Copy + 'static>(rows: impl ExactSizeIterator<Item = T>) -> &'static [T] {
+    #[cfg(feature = "eager")]
+    {
+        let n = rows.len();
+        let size = core::mem::size_of::<T>() * n;
+        let align = core::mem::align_of::<T>();
+        let used = HOT_ROWS_USED.load(Ordering::Relaxed);
+        let start = used.next_multiple_of(align);
+        if align <= 16 && start + size <= HOT_ROWS_SIZE {
+            // SAFETY: `start..start + size` lies in the arena, aligned for
+            // `T`, and no other slice covers it (the bump only grows);
+            // `Hot::fill`'s contract excludes concurrent access.
+            let base = unsafe { (HOT_ROWS.0.get() as *mut u8).add(start) as *mut T };
+            let mut k = 0;
+            for r in rows.take(n) {
+                // SAFETY: `k < n`, inside the reserved range.
+                unsafe { base.add(k).write(r) };
+                k += 1;
+            }
+            HOT_ROWS_USED.store(start + size, Ordering::Relaxed);
+            // SAFETY: `k` elements written and never written again.
+            return unsafe { core::slice::from_raw_parts(base, k) };
+        }
+    }
+    alloc::vec::Vec::leak(rows.collect())
+}
+
+/// A rich value decoded from tables for a hot path (per tick, per
+/// fighter): decoded once by [`Hot::fill`], which a runtime calls right
+/// after [`install`] (`ssb_game::tables::fill`), then read with no check.
+///
+/// - `eager` (the PSP): the value sits in place in `.bss`; a read is a
+///   constant address, with no install or ready-flag check (RE-589). It
+///   reads `empty` (the stub's value) until [`Hot::fill`].
+/// - Otherwise it is a [`Decoded`]: the first read decodes, and
+///   [`Hot::fill`] only forces that.
+pub struct Hot<T: 'static> {
+    #[cfg(feature = "eager")]
+    value: core::cell::UnsafeCell<T>,
+    #[cfg(feature = "eager")]
+    decode: fn() -> T,
+    #[cfg(not(feature = "eager"))]
+    inner: Decoded<T>,
+}
+
+// SAFETY: `eager`: `value` is written only by `fill`, whose contract
+// excludes any concurrent read; otherwise `Decoded`'s.
+unsafe impl<T: Sync + Send> Sync for Hot<T> {}
+
+impl<T: 'static> Hot<T> {
+    /// `empty` until [`Hot::fill`] decodes the value with `decode`.
+    pub const fn new(empty: T, decode: fn() -> T) -> Self {
+        #[cfg(feature = "eager")]
+        {
+            Self {
+                value: core::cell::UnsafeCell::new(empty),
+                decode,
+            }
+        }
+        #[cfg(not(feature = "eager"))]
+        {
+            core::mem::forget(empty);
+            Self {
+                inner: Decoded::new(decode),
+            }
+        }
+    }
+
+    /// The decoded value.
+    #[inline(always)]
+    pub fn get(&self) -> &T {
+        #[cfg(feature = "eager")]
+        {
+            // SAFETY: only `fill` writes `value`, and its contract excludes
+            // reads during it.
+            unsafe { &*self.value.get() }
+        }
+        #[cfg(not(feature = "eager"))]
+        {
+            self.inner.get()
+        }
+    }
+
+    /// Decodes the value from the installed tables.
+    ///
+    /// # Safety
+    ///
+    /// `eager`: no read of this value (no reference [`Hot::get`] gave)
+    /// may be live or made during the call, on any thread: call it at
+    /// boot, right after [`install`].
+    pub unsafe fn fill(&self) {
+        #[cfg(feature = "eager")]
+        {
+            let v = (self.decode)();
+            // SAFETY: the caller excludes every read (this function's
+            // contract).
+            unsafe { *self.value.get() = v };
+        }
+        #[cfg(not(feature = "eager"))]
+        {
+            let _ = self.inner.get();
+        }
+    }
+}
+
+impl<T: 'static> Deref for Hot<T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        self.get()
+    }
+}
+
 /// `for x in &VIEW`, `VIEW.iter()`'s items, for each view.
 macro_rules! view_traits {
     ($($view:ident<$t:ident: $bound:path>),*) => {$(
@@ -675,7 +822,7 @@ macro_rules! view_traits {
     )*};
 }
 
-view_traits!(Table<T: Pod>, DArr<T: Pod>, Decoded<T: Sized>);
+view_traits!(Table<T: Pod>, DArr<T: Pod>, Decoded<T: Sized>, Hot<T: Sized>);
 
 #[cfg(test)]
 mod tests {

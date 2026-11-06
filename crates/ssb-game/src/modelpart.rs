@@ -12,6 +12,8 @@
 //! hidden joint, 0 for its own list (or its `FTModelPart` 0), and otherwise
 //! the `FTModelPart` the renderer draws in its place.
 
+use ssb_tables::{Hot, Table, TableId};
+
 use crate::fighter::{Fighter, FighterKind};
 
 /// `nFTPartsJointCommonStart`.
@@ -28,44 +30,77 @@ pub const HIDDEN: i8 = -1;
 /// the joints).
 pub const ABSENT: i8 = i8::MIN;
 
-/// Per fighter, generated from the ROM by `crates/ssb-tablegen`
-/// (`model_parts.rs`), bit `n` for descriptor `n` (joint `n + 4`):
+/// Fighter kinds (`FTKind`) the per-fighter tables hold.
+const KINDS: usize = 27;
+
+/// Per fighter, read from the ROM into the pack's `TABLES` section by
+/// `crates/ssb-tablegen` (`model_parts.rs`), bit `n` for descriptor `n`
+/// (joint `n + 4`), each mask as `(low, high)` words:
 ///
-/// - `JOINT_MASKS`: which descriptors `lbCommonSetupFighterPartsDObjs`
-///   makes a joint of (`setup_parts`), and which of those have a
-///   high-detail display list (`commonparts[0].dobjdesc[n].dl`), from each
-///   fighter's `*Main` and `*Model` files.
-/// - `ANIMLOCK_MASKS`: `FTAttributes::animlock`, the parts a motion without
+/// - which descriptors `lbCommonSetupFighterPartsDObjs` makes a joint of
+///   (`setup_parts`), and which of those have a high-detail display list
+///   (`commonparts[0].dobjdesc[n].dl`), from each fighter's `*Main` and
+///   `*Model` files;
+/// - `FTAttributes::animlock`, the parts a motion without
 ///   `FTANIM_FLAG_ANIMLOCKS` leaves at their rest transform
 ///   (`ftParamSetAnimLocks`, RE-509).
-/// - `HIDDEN_PARTS`: `FTAttributes::hiddenparts` ([`hidden_parts`]).
-/// - `TEXTURE_PARTS`: `FTAttributes::textureparts_container`
-///   ([`texture_part_table`]).
 ///
+/// Read when a fighter is made, straight from the store.
 /// `crates/ssb-rom/tests/model_parts.rs`, `fighter_fidelity.rs` and
-/// `texture_parts.rs` check them against `ssb-rom`'s own decoders.
-#[allow(clippy::all)]
-mod generated {
-    include!(concat!(env!("OUT_DIR"), "/joint_masks.rs"));
+/// `texture_parts.rs` check these tables against `ssb-rom`'s own decoders.
+static JOINT_MASKS: Table<[[u32; 6]; KINDS]> = Table::new(TableId::JointMasks);
+/// `TableId::HiddenParts`: per fighter, the count, then `(index, root,
+/// has a display list)` for up to 13 parts.
+static HIDDEN_PART_BYTES: Table<[[u8; 40]; KINDS]> = Table::new(TableId::HiddenParts);
+/// `TableId::TextureParts`: present, then `(joint, high, low)` per part.
+static TEXTURE_PART_BYTES: Table<[[u8; 8]; KINDS]> = Table::new(TableId::TextureParts);
+/// `TableId::TexturePartMade`: `(high, low, has an FTModelPartDesc)` per
+/// part.
+static TEXTURE_PART_MADE: Table<[[u8; 8]; KINDS]> = Table::new(TableId::TexturePartMade);
+
+fn mask(row: &[u32; 6], i: usize) -> u64 {
+    u64::from(row[2 * i]) | u64::from(row[2 * i + 1]) << 32
 }
 
-/// `FTAttributes::animlock` (`generated::ANIMLOCK_MASKS`): bit `n` for
-/// descriptor `n`.
+/// `FTAttributes::animlock`: bit `n` for descriptor `n`.
 pub fn animlock_mask(kind: FighterKind) -> u64 {
-    generated::ANIMLOCK_MASKS
+    JOINT_MASKS
+        .get()
         .get(kind as usize)
-        .copied()
-        .unwrap_or(0)
+        .map_or(0, |row| mask(row, 2))
 }
 
-/// `FTAttributes::hiddenparts` from joint 4 on, per fighter
-/// (`generated::HIDDEN_PARTS`): the part's index (its `anim_desc` bit is
-/// `0x80000000 >> index`), its root joint and whether its high-detail
-/// descriptor has a display list. Empty for Master Hand, who has no
-/// model-part state. `crates/ssb-rom/tests/fighter_fidelity.rs` checks them
-/// against `ssb-rom`'s decoder (RE-468).
+/// `(index, root joint, has a display list)`.
+type HiddenPart = (u8, u8, bool);
+
+/// One fighter's [`HIDDEN_PARTS`] row.
+fn decode_hidden_parts(row: &[u8; 40]) -> &'static [(u8, u8, bool)] {
+    let n = usize::from(row[0]).min(13);
+    ssb_tables::hot_rows(
+        row[1..]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .take(n)
+            .map(|c| (c[0], c[1], c[2] != 0)),
+    )
+}
+
+/// `FTAttributes::hiddenparts` from joint 4 on, per fighter: the part's
+/// index (its `anim_desc` bit is `0x80000000 >> index`), its root joint and
+/// whether its high-detail descriptor has a display list. Empty for Master
+/// Hand, who has no model-part state. Read on every hidden-part update, so
+/// a [`Hot`] (RE-589). `crates/ssb-rom/tests/fighter_fidelity.rs` checks
+/// them against `ssb-rom`'s decoder (RE-468).
+pub(crate) static HIDDEN_PARTS: Hot<[&[HiddenPart]; KINDS]> = Hot::new([&[]; KINDS], || {
+    HIDDEN_PART_BYTES.get().each_ref().map(decode_hidden_parts)
+});
+
+/// [`HIDDEN_PARTS`]' row for `kind`.
+#[inline]
 fn hidden_parts(kind: FighterKind) -> &'static [(u8, u8, bool)] {
-    generated::HIDDEN_PARTS
+    HIDDEN_PARTS
+        .get()
         .get(kind as usize)
         .copied()
         .unwrap_or(&[])
@@ -79,12 +114,13 @@ pub fn hidden_part_joints(kind: FighterKind) -> &'static [(u8, u8, bool)] {
 /// `FTAnimDesc`'s low flags, which name no hidden part.
 const ANIM_DESC_FLAGS: u32 = 0x1F;
 
-/// `(setup_parts, has a display list)` for a playable fighter, as
-/// `generated::JOINT_MASKS` holds them.
+/// `(setup_parts, setup_parts & has a display list)` for a playable
+/// fighter ([`JOINT_MASKS`]).
 pub fn joint_masks(kind: FighterKind) -> Option<(u64, u64)> {
-    generated::JOINT_MASKS
+    JOINT_MASKS
+        .get()
         .get(kind as usize)
-        .copied()
+        .map(|row| (mask(row, 0), mask(row, 1)))
         .filter(|_| kind != FighterKind::Boss)
 }
 
@@ -122,7 +158,7 @@ impl Detail {
 pub const TEXTURE_PARTS: usize = 2;
 
 /// `FTAttributes::textureparts_container`, per fighter
-/// (`generated::TEXTURE_PARTS`): each part's joint and the position of its
+/// (`TableId::TextureParts`): each part's joint and the position of its
 /// `MObj` in that joint's chain at high and low detail; `None` for a NULL
 /// container (Donkey Kong, Samus).
 /// A fighter the decompilation gives one part reads the next bytes as its
@@ -130,15 +166,14 @@ pub const TEXTURE_PARTS: usize = 2;
 /// `crates/ssb-rom/tests/texture_parts.rs` checks them against the ROM.
 pub type TexturePartTable = [(u8, [u8; 2]); TEXTURE_PARTS];
 
-/// `generated::TEXTURE_PARTS`' row for `kind`.
+/// `TableId::TextureParts`' row for `kind`.
 pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
-    generated::TEXTURE_PARTS
-        .get(kind as usize)
-        .copied()
-        .flatten()
+    let row = TEXTURE_PART_BYTES.get().get(kind as usize)?;
+    (row[0] != 0)
+        .then(|| core::array::from_fn(|p| (row[1 + 3 * p], [row[2 + 3 * p], row[3 + 3 * p]])))
 }
 
-/// Per texture part (`generated::TEXTURE_PART_MADE`, RE-569): the
+/// Per texture part (`TableId::TexturePartMade`, RE-569): the
 /// `texture_id_curr` its `MObj` has once
 /// `lbCommonAddMObjForFighterPartsDObj` has played the `MObj`'s costume
 /// script (`gcAddMObjForDObj` zeroes it first), at high and low detail, for
@@ -149,10 +184,13 @@ pub fn texture_part_table(kind: FighterKind) -> Option<TexturePartTable> {
 /// every other fighter's is 0. `romtool costumes` checks the table against
 /// the decomp reading, and that no model part's script sets an id there.
 pub fn texture_part_made(kind: FighterKind) -> [([i8; 2], bool); TEXTURE_PARTS] {
-    generated::TEXTURE_PART_MADE
-        .get(kind as usize)
-        .copied()
-        .unwrap_or_default()
+    let Some(row) = TEXTURE_PART_MADE.get().get(kind as usize) else {
+        return Default::default();
+    };
+    core::array::from_fn(|p| {
+        let c = &row[3 * p..3 * p + 3];
+        ([c[0] as i8, c[1] as i8], c[2] != 0)
+    })
 }
 
 /// `FTStruct::texturepart_status` and `is_texturepart_modify`, with what

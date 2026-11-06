@@ -3,13 +3,12 @@
 //!
 //! Each script is a run of `gmColCommand*` words (`gm/gmdef.h`): a 6-bit
 //! event in the top bits of the first word, its arguments in the rest of
-//! that word and in the words after it. They are decoded into
-//! `ssb_game::colanim::ColEvent`s, and their pointers into the scripts they
-//! name.
+//! that word and in the words after it. The `ColAnimEvents` table keeps
+//! those words, a script pointer replaced by the script's index;
+//! `ssb_game::colanim` decodes them into `ColEvent`s once.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit;
 use crate::source::OVL2;
 use crate::{Result, Source};
 
@@ -212,13 +211,10 @@ pub const ID_NAMES: [(u8, &str); 85] = [
 pub const DESCS: (u32, usize) = (0x0A_93D0, 86);
 const DESC_SIZE: u32 = 8;
 
-fn sign(v: u32, bits: u32) -> i32 {
-    ((v << (32 - bits)) as i32) >> (32 - bits)
-}
-
 /// `name` in `SCREAMING_SNAKE_CASE`: an underscore before an upper-case
 /// letter that follows a lower-case letter or digit, or that starts a word
 /// after an acronym.
+#[cfg(feature = "std")]
 pub fn screaming(name: &str) -> String {
     let c: Vec<char> = name.chars().collect();
     let mut out = String::new();
@@ -256,30 +252,32 @@ impl Scripts {
         Self { starts }
     }
 
-    /// The script a run-time pointer names.
-    fn named(&self, vram: u32) -> &'static str {
+    /// The index of the script a run-time pointer names.
+    fn index(&self, vram: u32) -> usize {
         let at = OVL2
             .rom_of(vram)
             .expect("colour script pointer outside ovl2");
-        let i = self
-            .starts
+        self.starts
             .iter()
             .position(|s| *s == at)
-            .unwrap_or_else(|| panic!("0x{vram:08X} is not a colour script's first event"));
-        SCRIPTS[i].0
+            .unwrap_or_else(|| panic!("0x{vram:08X} is not a colour script's first event"))
     }
 }
 
-fn rgba(w: u32) -> String {
-    let b = w.to_be_bytes();
-    format!(
-        "[0x{:02X}, 0x{:02X}, 0x{:02X}, 0x{:02X}]",
-        b[0], b[1], b[2], b[3]
-    )
-}
+/// Events in all scripts, a run-off `Goto` included ([`events`]).
+pub const EVENTS: usize = 691;
+/// Words per event in the `ColAnimEvents` table: the event's words as in
+/// the ROM, a script pointer replaced by the script's index in
+/// [`SCRIPTS`], padded with zeros.
+pub const EVENT_WORDS: usize = 4;
+/// Bytes per entry in the `ColAnimDescs` table: script index + 1 (0 for
+/// none), `priority`, `is_unlocked`, pad.
+pub const DESC_BYTES: usize = 4;
 
-/// Script `i`'s events, as Rust expressions.
-fn events(rom: &Source, scripts: &Scripts, i: usize) -> Result<Vec<String>> {
+/// Script `i`'s events, as [`EVENT_WORDS`] words each; a script that does
+/// not end in `End`, `Goto` or `Return` gets a `Goto` to the next one (it
+/// runs off its end into it, which is what that `Goto` does).
+fn events(rom: &Source, scripts: &Scripts, i: usize) -> Result<Vec<[u32; EVENT_WORDS]>> {
     let (name, size) = SCRIPTS[i];
     let start = scripts.starts[i];
     let end = start + size;
@@ -293,64 +291,94 @@ fn events(rom: &Source, scripts: &Scripts, i: usize) -> Result<Vec<String>> {
     };
     while at < end {
         let w = next(&mut at)?;
-        let arg = w & 0x03FF_FFFF;
-        let ev = match w >> 26 {
-            0 => "End".to_string(),
-            1 => format!("Wait({arg})"),
-            2 => format!("Goto(Script::{})", scripts.named(next(&mut at)?)),
-            3 => format!("LoopBegin({arg})"),
-            4 => "LoopEnd".to_string(),
-            5 => format!("Subroutine(Script::{})", scripts.named(next(&mut at)?)),
-            6 => "Return".to_string(),
-            8 => "ClearColorAll".to_string(),
-            9 => format!("SetColor1({})", rgba(next(&mut at)?)),
+        let op = w >> 26;
+        let more = match op {
+            0 | 1 | 3 | 4 | 6 | 8 | 15 | 16 | 17 | 18 => 0,
             // `gmColCommandBlendColor2` writes `nGMColEventBlendColor1` too.
-            10 => format!("BlendColor1({arg}, {})", rgba(next(&mut at)?)),
-            11 => format!("SetColor2({})", rgba(next(&mut at)?)),
-            op @ (13 | 14) => {
-                let (a, b, c) = (next(&mut at)?, next(&mut at)?, next(&mut at)?);
-                let hi = |x: u32| sign(x >> 16, 16);
-                let lo = |x: u32| sign(x & 0xFFFF, 16);
-                format!(
-                    "Effect(ColEffect {{ joint: {}, kind: {}, flag: {}, offset: [{}, {}, {}], \
-                     scatter: [{}, {}, {}], item_hold: {} }})",
-                    sign((w >> 19) & 0x7F, 7),
-                    (w >> 10) & 0x1FF,
-                    w & 0x3FF,
-                    hi(a),
-                    lo(a),
-                    hi(b),
-                    lo(b),
-                    hi(c),
-                    lo(c),
-                    op == 14
-                )
+            9..=11 => 1,
+            13 | 14 => 3,
+            2 | 5 => {
+                let target = scripts.index(next(&mut at)?) as u32;
+                out.push([w, target, 0, 0]);
+                continue;
             }
-            15 => format!(
-                "SetLight({}, {})",
-                sign((w >> 13) & 0x1FFF, 13),
-                sign(w & 0x1FFF, 13)
-            ),
-            16 => "ClearLight".to_string(),
-            17 => format!("PlayFgm({arg})"),
-
-            18 => format!("SetSkeletonId({arg})"),
             op => panic!("{name}: colour event {op} at 0x{:X}", at - 4),
         };
+        let mut ev = [w, 0, 0, 0];
+        for word in ev.iter_mut().skip(1).take(more) {
+            *word = next(&mut at)?;
+        }
         out.push(ev);
+    }
+    let ends = out
+        .last()
+        .is_some_and(|ev| matches!(ev[0] >> 26, 0 | 2 | 6));
+    if !ends {
+        out.push([2 << 26, i as u32 + 1, 0, 0]);
     }
     Ok(out)
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
+/// Every script's events, in [`SCRIPTS`] order.
+fn all_events(rom: &Source) -> Result<Vec<Vec<[u32; EVENT_WORDS]>>> {
     let scripts = Scripts::new();
-    let mut w = emit::header("the colour-animation scripts and dGMColScriptsDescs");
-    // A stub has no `Effect` events to name `ColEffect`.
-    w.push_str(if rom.is_some() {
-        "use super::{ColDesc, ColEffect, ColEvent, ColEvent::*};\n\n"
-    } else {
-        "use super::{ColDesc, ColEvent, ColEvent::*};\n\n"
-    });
+    let all = (0..SCRIPTS.len())
+        .map(|i| events(rom, &scripts, i))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(all.iter().map(Vec::len).sum::<usize>(), EVENTS);
+    Ok(all)
+}
+
+/// The `ColAnimEvents` table: every script's events back to back.
+pub fn events_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let words: Vec<u32> = all_events(c.rom)?.into_iter().flatten().flatten().collect();
+    Ok(crate::tables::le_words(&words))
+}
+
+/// The `ColAnimScripts` table: each script's first event in
+/// `ColAnimEvents`, then [`EVENTS`].
+pub fn scripts_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut starts = Vec::with_capacity(SCRIPTS.len() + 1);
+    let mut at = 0u16;
+    for evs in all_events(c.rom)? {
+        starts.push(at);
+        at += evs.len() as u16;
+    }
+    starts.push(at);
+    Ok(crate::tables::le_bytes(&starts, u16::to_le_bytes))
+}
+
+/// The `ColAnimDescs` table (`dGMColScriptsDescs`); its named scripts must
+/// be [`ID_NAMES`].
+pub fn descs_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let scripts = Scripts::new();
+    let (table, count) = DESCS;
+    let mut out = Vec::with_capacity(count * DESC_BYTES);
+    let mut named = Vec::new();
+    for i in 0..count as u32 {
+        let at = table + i * DESC_SIZE;
+        let ptr = c.rom.u32(at)?;
+        let script = (ptr != 0).then(|| scripts.index(ptr));
+        if let Some(s) = script {
+            named.push((i as u8, SCRIPTS[s].0));
+        }
+        out.extend([
+            script.map_or(0, |s| s as u8 + 1),
+            c.rom.u8(at + 4)?,
+            u8::from(c.rom.u8(at + 5)? != 0),
+            0,
+        ]);
+    }
+    assert_eq!(named, ID_NAMES, "dGMColScriptsDescs names other scripts");
+    Ok(out)
+}
+
+/// `ssb_game::colanim`'s layout: the `Script` enum, `Script::ALL` and the
+/// `ColAnimId` names.
+#[cfg(feature = "std")]
+pub fn layout_rs() -> String {
+    use std::fmt::Write;
+    let mut w = crate::emit::header("the colour-animation script names and ids (layout only)");
     w.push_str(
         "/// One `dGMColScripts*` array.\n\
          #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
@@ -359,67 +387,22 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
     for (name, _) in SCRIPTS {
         let _ = writeln!(w, "    /// `dGMColScripts{name}`.\n    {name},");
     }
-    w.push_str("}\n\nimpl Script {\n    /// The script's events.\n");
-    w.push_str("    pub fn events(self) -> &'static [ColEvent] {\n        match self {\n");
+    w.push_str("}\n\nimpl Script {\n    /// Every script, in table order.\n");
+    let _ = writeln!(w, "    pub const ALL: [Script; {}] = [", SCRIPTS.len());
     for (name, _) in SCRIPTS {
-        let _ = writeln!(w, "            Script::{name} => &{},", screaming(name));
+        let _ = writeln!(w, "        Script::{name},");
     }
-    w.push_str("        }\n    }\n}\n\n");
-    for (i, (name, _)) in SCRIPTS.iter().enumerate() {
-        let mut evs = match rom {
-            Some(rom) => events(rom, &scripts, i)?,
-            None => vec!["End".to_string()],
-        };
-        let last = evs.last().map(String::as_str).unwrap_or("");
-        if !(last == "End" || last.starts_with("Goto(") || last == "Return") {
-            // Runs off its end into the next array, which is what a `Goto`
-            // to that array does.
-            evs.push(format!("Goto(Script::{})", SCRIPTS[i + 1].0));
-        }
-        let _ = writeln!(
-            w,
-            "/// `dGMColScripts{name}`.\nstatic {}: [ColEvent; {}] = [",
-            screaming(name),
-            evs.len()
-        );
-        for e in evs {
-            let _ = writeln!(w, "    {e},");
-        }
-        w.push_str("];\n\n");
-    }
-
-    let (table, count) = DESCS;
-    let mut descs: Vec<(Option<&str>, u8, bool)> = Vec::new();
-    for i in 0..count as u32 {
-        descs.push(match rom {
-            Some(rom) => {
-                let at = table + i * DESC_SIZE;
-                let ptr = rom.u32(at)?;
-                let script = (ptr != 0).then(|| scripts.named(ptr));
-                (script, rom.u8(at + 4)?, rom.u8(at + 5)? != 0)
-            }
-            None => (None, 0, false),
-        });
-    }
-    w.push_str("/// `dGMColScriptsDescs`, indexed by colour-animation id.\n");
-    let _ = writeln!(w, "pub static DESCS: [ColDesc; {count}] = [");
-    for (script, priority, unlocked) in &descs {
-        let script = script.map_or("None".to_string(), |s| format!("Some(Script::{s})"));
-        let _ = writeln!(
-            w,
-            "    ColDesc {{ script: {script}, priority: {priority}, is_unlocked: {unlocked} }},"
-        );
-    }
-    w.push_str("];\n\n");
+    w.push_str("    ];\n}\n\n");
+    let _ = writeln!(
+        w,
+        "/// Events in all scripts.\npub const EVENT_COUNT: usize = {EVENTS};"
+    );
+    let _ = writeln!(
+        w,
+        "/// `dGMColScriptsDescs`' entries.\npub const DESC_COUNT: usize = {};\n",
+        DESCS.1
+    );
     w.push_str("impl super::ColAnimId {\n");
-    if rom.is_some() {
-        let named: Vec<(u8, &str)> = descs
-            .iter()
-            .enumerate()
-            .filter_map(|(i, (script, _, _))| script.map(|s| (i as u8, s)))
-            .collect();
-        assert_eq!(named, ID_NAMES, "dGMColScriptsDescs names other scripts");
-    }
     for (i, name) in ID_NAMES {
         let _ = writeln!(
             w,
@@ -428,7 +411,7 @@ pub fn generate(rom: Option<&Source>) -> Result<String> {
         );
     }
     w.push_str("}\n");
-    Ok(w)
+    w
 }
 
 #[cfg(test)]
@@ -436,6 +419,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "std")]
     fn names_become_screaming_snake_case() {
         assert_eq!(screaming("FighterComPlayer"), "FIGHTER_COM_PLAYER");
         assert_eq!(

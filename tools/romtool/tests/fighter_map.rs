@@ -82,7 +82,7 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
     }
     let input = || surfaces.iter().copied();
     let floor = map::move_air(
-        &BodyColl::MARIO,
+        &BodyColl::mario(),
         Vec3::new(0.0, 500.0, 0.0),
         Vec3::new(0.0, -200.0, 0.0),
         AirOptions::default(),
@@ -91,7 +91,7 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
     assert_eq!(floor.moved.floor.unwrap().line, 3);
     assert_eq!(floor.moved.pos.y, 0.0);
     let wall = map::move_air(
-        &BodyColl::MARIO,
+        &BodyColl::mario(),
         Vec3::new(2500.0, -500.0, 0.0),
         Vec3::new(2000.0, -500.0, 0.0),
         AirOptions::default(),
@@ -100,7 +100,7 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
     assert_eq!(wall.contacts.right_wall.unwrap().line, 5);
     assert!(wall.moved.pos.x > 2000.0);
     let left = map::move_air(
-        &BodyColl::MARIO,
+        &BodyColl::mario(),
         Vec3::new(-2500.0, -500.0, 0.0),
         Vec3::new(-2000.0, -500.0, 0.0),
         AirOptions::default(),
@@ -111,14 +111,14 @@ fn dream_land_rom_geometry_drives_floor_wall_ceiling_and_cliff_queries() {
     let ceiling = geometry.lines.iter().find(|line| line.id == 4).unwrap();
     let y = ceiling.points[0].pos[1] as f32;
     let ceil = map::move_air(
-        &BodyColl::MARIO,
+        &BodyColl::mario(),
         Vec3::new(0.0, y - 400.0, 0.0),
         Vec3::new(0.0, y - 200.0, 0.0),
         AirOptions::default(),
         input,
     );
     assert_eq!(ceil.contacts.ceiling.unwrap().line, 4);
-    assert_eq!(ceil.moved.pos.y, y - BodyColl::MARIO.top);
+    assert_eq!(ceil.moved.pos.y, y - BodyColl::mario().top);
     let cliff = map::cliff(
         input,
         -1.0,

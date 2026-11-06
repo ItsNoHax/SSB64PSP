@@ -1072,7 +1072,7 @@ pub struct FighterScene {
     /// Jump button last frame, so this frame's tap and release can be derived.
     pub jump_was_held: bool,
     /// Whether the pack supplied this character's real constants. When false
-    /// the fighter falls under [`PhysicsAttributes::MARIO`], and the overlay
+    /// the fighter falls under [`PhysicsAttributes::mario`], and the overlay
     /// says so rather than letting a stale pack look like a physics bug.
     pub from_pack: bool,
     /// The low-detail model's object ([`fighter_low_object`], RE-426), or

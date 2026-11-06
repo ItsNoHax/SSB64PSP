@@ -35,21 +35,15 @@ const FLAGS_WORD: usize = 0x2C;
 const KNOCKBACK_BASE_WORD: usize = 0x30;
 
 /// `llITCommonObjectFileID`: the item models and their animations.
-#[cfg(feature = "std")]
 pub const SMOG_FILE: u32 = 86;
 /// `dITCommonObject_DogasSmog_Weapon_data_DObjDesc[3]`.
-#[cfg(feature = "std")]
 pub const SMOG_DOBJ_DESCS: usize = 0x13100;
 /// `dITCommonObject_DogasSmog_Weapon_animjoints[2]`.
-#[cfg(feature = "std")]
 pub const SMOG_ANIM_JOINTS: u32 = 0x13190;
 /// The animated `DObj`: the second descriptor, whose X scale the Smog reads.
-#[cfg(feature = "std")]
 pub const SMOG_JOINT: usize = 1;
 /// `sizeof(DObjDesc)`: `id`, `dl`, then `translate`, `rotate`, `scale`.
-#[cfg(feature = "std")]
 const DOBJ_DESC_SIZE: usize = 0x2C;
-#[cfg(feature = "std")]
 const DOBJ_DESC_TRANSLATE: usize = 0x8;
 /// `ITDOGAS_SMOG_LIFETIME`: the plays the table covers.
 pub const SMOG_PLAYS: usize = 30;
@@ -99,7 +93,6 @@ pub fn attributes_bytes(c: &Ctx) -> Result<Vec<u8>> {
 }
 
 /// The Smog `DObj`'s X scale after each of its first [`SMOG_PLAYS`] plays.
-#[cfg(feature = "std")]
 fn smog_scale(data: &[u8]) -> Result<[f32; SMOG_PLAYS]> {
     use crate::figatree::JointPose;
     use crate::objanim::{joint_scripts, StageJoint};
@@ -129,7 +122,6 @@ fn smog_scale(data: &[u8]) -> Result<[f32; SMOG_PLAYS]> {
 
 /// `TableId::SmogScale`: the Smog's child `DObj` X scale after each play of
 /// `dITCommonObject_DogasSmog_Weapon_animjoints` (the make frame's first).
-#[cfg(feature = "std")]
 pub fn smog_scale_bytes(c: &Ctx) -> Result<Vec<u8>> {
     Ok(le_bytes(
         &smog_scale(&c.rom.file(SMOG_FILE)?.data)?,

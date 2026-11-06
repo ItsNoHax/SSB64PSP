@@ -21,6 +21,7 @@ crates/ssb-game/src/appear_tests.rs	N64_APPEAR_FRAMES	test fixture: N64 measurem
 crates/ssb-game/src/battle_draw.rs	BATTLE	port constant: the six battle passes as (link, head) steps from gmCameraDefaultProcDisplay (layout, no ROM data)
 crates/ssb-game/src/camera.rs	DEFAULT_EYE	function-body constants: gmCameraMakeDefaultCamera writes this eye as immediates after copying dGMCameraCObjVecDefault (gm/gmcamera.c:1157-1171); no d* value is copied
 crates/ssb-game/src/capture_yoshi.rs	EGG_DESCS	layout: decodes the pack's YoshiEgg table (ssb_tablegen::battle_data); its literals are the row shape
+crates/ssb-game/src/colanim.rs	DESCS	layout: decodes the pack's ColAnimDescs table (ssb_tablegen::colanim); its literals are the empty (stub) value
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_COLANIM	decomp code sites: ftMainSetStatus flag columns per call
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_EFFECT	decomp code sites: ftMainSetStatus flag columns per call
 crates/ssb-game/src/colanim_preserve.rs	PRESERVE_MODELPART	decomp code sites: ftMainSetStatus flag columns per call

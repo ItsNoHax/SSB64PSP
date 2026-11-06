@@ -147,6 +147,7 @@ pub mod status;
 #[cfg(test)]
 mod stick_gate_tests;
 pub mod surface_set;
+pub mod tables;
 pub mod team;
 pub mod thrown;
 pub mod training;

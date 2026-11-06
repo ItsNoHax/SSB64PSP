@@ -2716,7 +2716,7 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
                     c.pos_curr,
                     c.size,
                     dummy.pos,
-                    ssb_game::attack::MARIO_HURTBOX_RADIUS,
+                    ssb_game::attack::mario_hurtbox_radius(),
                 )
         });
 

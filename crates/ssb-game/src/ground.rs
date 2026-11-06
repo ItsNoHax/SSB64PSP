@@ -47,15 +47,15 @@ pub struct BodyColl {
 impl BodyColl {
     /// Mario's, from `dMarioMain_attr.map_coll`. Used where a test wants a
     /// real body rather than a point.
-    pub const MARIO: BodyColl = {
-        let [top, center, bottom, width] = crate::physics::MARIO_MAP_COLL;
+    pub fn mario() -> BodyColl {
+        let [top, center, bottom, width] = crate::physics::mario_map_coll();
         BodyColl {
             top,
             center,
             bottom,
             width,
         }
-    };
+    }
 }
 
 /// The floor a body is standing on.

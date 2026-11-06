@@ -1,8 +1,9 @@
 //! Fighter hurtboxes — `FTDamageColl`.
 //!
 //! Each fighter carries up to eleven boxes bound to model joints
-//! (`FTAttributes::damage_coll_descs`, generated at build time from each
-//! fighter's `*Main` file in the user's ROM by `crates/ssb-tablegen`). A hit tests its sphere against them in
+//! (`FTAttributes::damage_coll_descs`, read from each fighter's `*Main`
+//! file in the user's ROM into the pack's `TABLES` section by
+//! `crates/ssb-tablegen`). A hit tests its sphere against them in
 //! order (`ftMainSearchHitFighter`) and the first box it touches decides the
 //! hurtbox `placement`: the low/middle/high column of the damage status
 //! tables ([`crate::attack::damage_status`]).
@@ -19,8 +20,9 @@
 //! sphere at the fighter's root, read as a middle hit.
 
 use ssb_engine::math::{div_nonzero, Vec3};
+use ssb_tables::{Hot, Table, TableId};
 
-use crate::attack::{DAMAGE_INDEX_N, MARIO_HURTBOX_RADIUS};
+use crate::attack::{mario_hurtbox_radius, DAMAGE_INDEX_N};
 use crate::combat::{AttackState, HitStatus};
 use crate::fighter::{Fighter, FighterKind, JointTransform};
 use crate::status::Status;
@@ -42,8 +44,6 @@ pub struct DamageCollDesc {
 /// the box's full extent, and `ftParamResetFighterDamageCollsAll` halves it
 /// into the live `FTDamageColl::size` the hit tests read (RE-468; the N64's
 /// Luigi carries 55 x 65 x 49 for the descriptor's 110 x 130 x 98).
-/// The generated table calls it (unused in a stub build).
-#[cfg_attr(ssb64_stub_tables, allow(dead_code))]
 const fn hurt(
     joint: u8,
     placement: u8,
@@ -64,20 +64,38 @@ const fn hurt(
     }
 }
 
-/// `FTAttributes::damage_coll_descs` per fighter, generated from the ROM by
-/// `crates/ssb-tablegen` (`hurtbox.rs`): the rows before the first unused
-/// one, each through [`hurt`].
-#[allow(clippy::all)]
-mod generated {
-    #[cfg_attr(ssb64_stub_tables, allow(unused_imports))]
-    use super::{hurt, DamageCollDesc};
-    include!(concat!(env!("OUT_DIR"), "/hurtboxes.rs"));
+/// `TableId::DamageColls`' words per fighter: the used-row count, then 11
+/// rows of 9 (`ssb_tablegen`'s `hurtbox::FIGHTER_WORDS`).
+const FIGHTER_WORDS: usize = 100;
+static WORDS: Table<[[u32; FIGHTER_WORDS]; FIGHTER_KINDS]> = Table::new(TableId::DamageColls);
+const FIGHTER_KINDS: usize = 27;
+
+/// One fighter's used rows, each through [`hurt`].
+fn decode(words: &[u32; FIGHTER_WORDS]) -> &'static [DamageCollDesc] {
+    let n = (words[0] as usize).min(11);
+    ssb_tables::hot_rows(words[1..].as_chunks::<9>().0.iter().take(n).map(|w| {
+        let f = |i: usize| f32::from_bits(w[i]);
+        hurt(
+            w[0] as u8,
+            w[1] as u8,
+            w[2] != 0,
+            [f(3), f(4), f(5)],
+            [f(6), f(7), f(8)],
+        )
+    }))
 }
 
+/// `FTAttributes::damage_coll_descs` per `FTKind` (`TableId::DamageColls`):
+/// the rows before the first unused one, each through [`hurt`]. Read on
+/// every hit test, so a [`Hot`] (RE-589).
+pub(crate) static DAMAGE_COLLS: Hot<[&[DamageCollDesc]; FIGHTER_KINDS]> =
+    Hot::new([&[]; FIGHTER_KINDS], || WORDS.get().each_ref().map(decode));
+
 /// A fighter's hurtbox table (`FTAttributes::damage_coll_descs`,
-/// `generated::DAMAGE_COLLS`).
+/// [`DAMAGE_COLLS`]).
+#[inline]
 pub fn damage_colls(kind: FighterKind) -> Option<&'static [DamageCollDesc]> {
-    generated::DAMAGE_COLLS.get(kind as usize).copied()
+    DAMAGE_COLLS.get().get(kind as usize).copied()
 }
 
 /// `dFTCommonYoshiEggDamageCollDescs` (`ftcommoncaptureyoshi.c:11`): the one
@@ -327,9 +345,9 @@ pub fn search_attack(
         return None;
     }
     // No pose (host tests): the root-sphere stand-in.
-    let touches = crate::attack::spheres_overlap(pos_curr, radius, f.pos, MARIO_HURTBOX_RADIUS)
+    let touches = crate::attack::spheres_overlap(pos_curr, radius, f.pos, mario_hurtbox_radius())
         || (state == AttackState::Interpolate
-            && crate::attack::spheres_overlap(pos_prev, radius, f.pos, MARIO_HURTBOX_RADIUS));
+            && crate::attack::spheres_overlap(pos_prev, radius, f.pos, mario_hurtbox_radius()));
     touches.then_some(HurtHit {
         placement: DAMAGE_INDEX_N as u8,
         joint: 0,
@@ -756,7 +774,7 @@ pub fn hit_index(f: &Fighter, pos: Vec3, radius: f32) -> Option<usize> {
     match result {
         Some(Some(index)) => Some(index),
         None => None,
-        Some(None) => crate::attack::spheres_overlap(pos, radius, f.pos, MARIO_HURTBOX_RADIUS)
+        Some(None) => crate::attack::spheres_overlap(pos, radius, f.pos, mario_hurtbox_radius())
             .then_some(DAMAGE_INDEX_N),
     }
 }
@@ -784,7 +802,7 @@ pub fn catch_touches(f: &Fighter, pos: Vec3, radius: f32) -> bool {
     match search(f, &mut grabbable, pos, radius) {
         Some(Some(_)) => true,
         None => false,
-        Some(None) => crate::attack::spheres_overlap(pos, radius, f.pos, MARIO_HURTBOX_RADIUS),
+        Some(None) => crate::attack::spheres_overlap(pos, radius, f.pos, mario_hurtbox_radius()),
     }
 }
 

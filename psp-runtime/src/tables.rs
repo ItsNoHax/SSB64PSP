@@ -54,5 +54,7 @@ pub unsafe fn load(path: &'static str, head: &[u8]) -> Result<usize, TablesError
     let bytes = bytes.map_err(TablesError::Load)?;
     // SAFETY: the caller excludes table reads (this function's contract).
     unsafe { ssb_tables::install(bytes) }.map_err(TablesError::Install)?;
+    // SAFETY: as above; nothing has read a hot value yet (RE-589).
+    unsafe { ssb_game::tables::fill() };
     Ok(len)
 }

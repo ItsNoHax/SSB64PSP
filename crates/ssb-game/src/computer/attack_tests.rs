@@ -61,8 +61,8 @@ fn world<'a>(
 
 fn standing_mario(x: f32) -> Fighter {
     let mut f = Fighter::new(FighterKind::Mario, 1, 3);
-    f.attributes = crate::physics::PhysicsAttributes::MARIO;
-    f.coll = crate::ground::BodyColl::MARIO;
+    f.attributes = crate::physics::PhysicsAttributes::mario();
+    f.coll = crate::ground::BodyColl::mario();
     f.pos = Vec3::new(x, 0.0, 0.0);
     f.situation = Situation::Ground;
     f.floor = Some(Standing {

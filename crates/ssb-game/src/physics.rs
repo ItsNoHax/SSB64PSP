@@ -16,6 +16,7 @@
 //!   equivalent would not. Do not "tidy" these into a shared helper.
 
 use ssb_engine::math::Vec3;
+use ssb_tables::{Hot, Table, TableId};
 
 /// Per-frame displacement and pitch from a fighter animation's hidden TransN
 /// joint. The renderer/runtime supplies this; gameplay deliberately owns only
@@ -84,9 +85,68 @@ pub struct PhysicsAttributes {
 
 impl PhysicsAttributes {
     /// Mario's: `dMarioMain_attr`, file 203 at `0x428` (US `size` 1.12;
-    /// the JP build's is 1.0). ROM data generated at build time by
-    /// `ssb-tablegen`, never committed; zeros in stub builds.
-    pub const MARIO: PhysicsAttributes = generated::MARIO;
+    /// the JP build's is 1.0). ROM data in the pack's `TABLES` section
+    /// (`TableId::MarioPhysics`), never committed; zeros in stub builds.
+    #[inline]
+    pub fn mario() -> PhysicsAttributes {
+        MARIO.get().0
+    }
+
+    /// The fields from `TableId::MarioPhysics`' words, in its order.
+    const fn from_words(w: &[u32; MARIO_WORDS]) -> Self {
+        PhysicsAttributes {
+            size: f32::from_bits(w[0]),
+            traction: f32::from_bits(w[1]),
+            dash_speed: f32::from_bits(w[2]),
+            dash_decel: f32::from_bits(w[3]),
+            run_speed: f32::from_bits(w[4]),
+            walk_speed_mul: f32::from_bits(w[5]),
+            jump_vel_x: f32::from_bits(w[6]),
+            jump_height_mul: f32::from_bits(w[7]),
+            jump_height_base: f32::from_bits(w[8]),
+            jumpaerial_vel_x: f32::from_bits(w[9]),
+            jumpaerial_height: f32::from_bits(w[10]),
+            air_accel: f32::from_bits(w[11]),
+            air_speed_max_x: f32::from_bits(w[12]),
+            air_friction: f32::from_bits(w[13]),
+            gravity: f32::from_bits(w[14]),
+            tvel_base: f32::from_bits(w[15]),
+            tvel_fast: f32::from_bits(w[16]),
+            jumps_max: w[17] as i32,
+            weight: f32::from_bits(w[18]),
+            kneebend_anim_length: f32::from_bits(w[19]),
+            dash_to_run: f32::from_bits(w[20]),
+            walkslow_anim_length: f32::from_bits(w[21]),
+            walkmiddle_anim_length: f32::from_bits(w[22]),
+            walkfast_anim_length: f32::from_bits(w[23]),
+        }
+    }
+}
+
+/// `TableId::MarioPhysics`: `ssb_tablegen`'s `physics::FIELDS` words in
+/// [`PhysicsAttributes`]' field order, then `map_coll`'s four.
+const MARIO_WORDS: usize = 28;
+static MARIO_TABLE: Table<[u32; MARIO_WORDS]> = Table::new(TableId::MarioPhysics);
+
+fn decode_mario() -> (PhysicsAttributes, [f32; 4]) {
+    let w = MARIO_TABLE.get();
+    (
+        PhysicsAttributes::from_words(w),
+        [24, 25, 26, 27].map(|i| f32::from_bits(w[i])),
+    )
+}
+
+/// Mario's physics head and `map_coll`. A new fighter copies the head
+/// ([`Default`]), as `ftManagerMakeFighter` does from `FTAttributes`.
+pub(crate) static MARIO: Hot<(PhysicsAttributes, [f32; 4])> = Hot::new(
+    (PhysicsAttributes::from_words(&[0; MARIO_WORDS]), [0.0; 4]),
+    decode_mario,
+);
+
+/// `dMarioMain_attr.map_coll`: `top`, `center`, `bottom`, `width`.
+#[inline]
+pub(crate) fn mario_map_coll() -> [f32; 4] {
+    MARIO.get().1
 }
 
 impl Default for PhysicsAttributes {
@@ -94,16 +154,9 @@ impl Default for PhysicsAttributes {
     /// on-device test uses, so defaulting to real numbers beats defaulting to
     /// invented ones that quietly rescale every result.
     fn default() -> Self {
-        PhysicsAttributes::MARIO
+        PhysicsAttributes::mario()
     }
 }
-
-#[allow(clippy::all)]
-mod generated {
-    use super::PhysicsAttributes;
-    include!(concat!(env!("OUT_DIR"), "/mario_physics.rs"));
-}
-pub(crate) use generated::MARIO_MAP_COLL;
 
 /// A fighter's velocity state.
 ///

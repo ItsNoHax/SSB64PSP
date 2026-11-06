@@ -818,7 +818,7 @@ fn rising_fractional_floor_lands_a_stationary_body() {
         Vec3::new(0.25, 100.5, 0.0),
     );
     let pos = Vec3::new(0.0, 50.0, 0.0);
-    let out = move_air(&BodyColl::MARIO, pos, pos, AirOptions::default(), || {
+    let out = move_air(&BodyColl::mario(), pos, pos, AirOptions::default(), || {
         [floor]
     });
     assert_eq!(out.moved.floor.unwrap().line, 3);
@@ -834,9 +834,13 @@ fn moving_wall_and_ceiling_use_relative_sweeps_and_world_correction() {
         Vec3::new(-200.5, 0.0, 0.0),
     );
     let from = Vec3::new(200.0, 0.0, 0.0);
-    let out = move_air(&BodyColl::MARIO, from, from, AirOptions::default(), || {
-        [wall]
-    });
+    let out = move_air(
+        &BodyColl::mario(),
+        from,
+        from,
+        AirOptions::default(),
+        || [wall],
+    );
     assert_eq!(out.contacts.left_wall.unwrap().line, 1);
     assert_eq!(out.moved.pos.x, 149.5);
     let ceil = moving(
@@ -845,7 +849,7 @@ fn moving_wall_and_ceiling_use_relative_sweeps_and_world_correction() {
         Vec3::new(0.0, -200.25, 0.0),
     );
     let out = move_air(
-        &BodyColl::MARIO,
+        &BodyColl::mario(),
         Vec3::ZERO,
         Vec3::ZERO,
         AirOptions::default(),
@@ -884,7 +888,7 @@ fn group_carry_is_added_on_the_first_substep() {
 #[test]
 fn copied_diamond_sweeps_previous_bottom_to_current_bottom() {
     let floor = surface(Kind::Floor, 3, (-1000, -50), (1000, -50), 0);
-    let previous = BodyColl::MARIO;
+    let previous = BodyColl::mario();
     let current = BodyColl {
         bottom: -100.0,
         ..previous
@@ -1367,8 +1371,8 @@ fn cliff_release_sweeps_from_the_outside_corner_into_the_live_pose() {
 fn a_released_fighter_dropped_below_the_floor_is_put_back_on_it() {
     let floor = surface(Kind::Floor, 0, (-1000, -6), (1000, -6), 0);
     let pos = run_default_collision(
-        &BodyColl::MARIO,
-        &BodyColl::MARIO,
+        &BodyColl::mario(),
+        &BodyColl::mario(),
         Vec3::new(104.91, -6.0, 0.0),
         Vec3::new(483.53, -16.81, 23.19),
         || [floor],
@@ -1378,8 +1382,8 @@ fn a_released_fighter_dropped_below_the_floor_is_put_back_on_it() {
     let above = Vec3::new(483.53, 40.0, 0.0);
     assert_eq!(
         run_default_collision(
-            &BodyColl::MARIO,
-            &BodyColl::MARIO,
+            &BodyColl::mario(),
+            &BodyColl::mario(),
             Vec3::new(104.91, -6.0, 0.0),
             above,
             || [floor]

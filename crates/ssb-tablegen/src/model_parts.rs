@@ -11,14 +11,15 @@
 //! `crates/ssb-rom/tests/model_parts.rs`, `fighter_fidelity.rs` and
 //! `texture_parts.rs` check the generated tables against them.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
 use crate::archive::File;
+#[cfg(feature = "std")]
 use crate::figatree_order::HiddenPart;
 use crate::fighters::FIGHTERS;
 use crate::matanim::{MaterialJoint, TRACK_TEXTURE_ID_CURRENT};
 use crate::source::{be_u32, OverlayData, OVL2};
-use crate::{emit, Error, Result, Source};
+use crate::{Error, Result, Source};
 
 /// `FTAttributes::setup_parts` (`u32 *`, two flag words).
 pub const SETUP_PARTS_OFFSET: u32 = 0x29C;
@@ -140,6 +141,7 @@ fn hidden_parts(main: &File, attributes: u32, count: u8, dl: u64) -> Result<Vec<
 }
 
 /// What `figatree_order::figatree_order` builds a fighter's tree from.
+#[cfg(feature = "std")]
 pub struct Skeleton {
     /// Every high-detail `DObjDesc`'s `id & 0xFFF`, to the `DOBJ_ARRAY_MAX`
     /// entry.
@@ -153,6 +155,7 @@ pub struct Skeleton {
 /// Fighter `k`'s [`Skeleton`]: `lbCommonSetupFighterPartsDObjs` builds the
 /// tree from `commonparts[0].dobjdesc` and `setup_parts`, and
 /// `ftMainUpdateHiddenPartID` inserts `hiddenparts[i]` (RE-432).
+#[cfg(feature = "std")]
 pub fn skeleton(rom: &Source, k: usize) -> Result<Skeleton> {
     let f = &FIGHTERS[k];
     let main = rom.file(f.main_file)?;
@@ -335,132 +338,106 @@ fn costume_count(ovl2: &OverlayData, k: usize) -> Result<u32> {
     Ok(u32::from(ovl2.u8(at + k as u32 * 8 + 7)?) + 1)
 }
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut joints = Vec::with_capacity(FIGHTERS.len());
-    let mut locks = Vec::with_capacity(FIGHTERS.len());
-    let mut hidden = Vec::with_capacity(FIGHTERS.len());
-    let mut textures = Vec::with_capacity(FIGHTERS.len());
-    let mut made_rows = Vec::with_capacity(FIGHTERS.len());
-    let ovl2 = OverlayData::new(rom, OVL2);
-    for (k, f) in FIGHTERS.iter().enumerate() {
-        let (setup, dl, lock, parts, texture, made) = match rom {
-            Some(rom) => {
-                let main = rom.file(f.main_file)?;
-                let setup = flag_pair(&main, f.attributes + SETUP_PARTS_OFFSET)?;
-                let dl = dl_mask(rom, &main, f.attributes)?;
-                let lock = flag_pair(&main, f.attributes + ANIMLOCK_OFFSET)?;
-                let parts = hidden_parts(&main, f.attributes, HIDDEN_PART_COUNTS[k], dl)?;
-                let parts = if NO_HIDDEN_PARTS.contains(&k) {
-                    Vec::new()
-                } else {
-                    parts
-                };
-                let texture = texture_parts(&main, f.attributes)?;
-                let made = match &texture {
-                    Some(t) => {
-                        texture_part_made(rom, &main, f.attributes, t, costume_count(&ovl2, k)?)?
-                    }
-                    None => Default::default(),
-                };
-                (setup, dl & setup, lock, parts, texture, made)
-            }
-            None => (0, 0, 0, Vec::new(), None, Default::default()),
-        };
-        let cells: Vec<String> = made
-            .iter()
-            .map(|([hi, lo], desc)| format!("([{hi}, {lo}], {desc})"))
-            .collect();
-        made_rows.push(format!("    [{}], // {}", cells.join(", "), f.name));
-        joints.push(format!("    (0x{setup:x}, 0x{dl:x}), // {}", f.name));
-        locks.push(format!("    0x{lock:x}, // {}", f.name));
-        let cells: Vec<String> = parts
-            .iter()
-            .map(|(i, root, dl)| format!("({i}, {root}, {dl})"))
-            .collect();
-        hidden.push(format!("    &[{}], // {}", cells.join(", "), f.name));
-        textures.push(match texture {
-            Some(t) => {
-                let cells: Vec<String> = t
-                    .iter()
-                    .map(|(joint, [hi, lo])| format!("({joint}, [{hi}, {lo}])"))
-                    .collect();
-                format!("    Some([{}]), // {}", cells.join(", "), f.name)
-            }
-            None => format!("    None, // {}", f.name),
-        });
+/// Most hidden parts any fighter has ([`HIDDEN_PART_COUNTS`]).
+pub const HIDDEN_PARTS_MAX: usize = 13;
+const _: () = {
+    let mut k = 0;
+    while k < HIDDEN_PART_COUNTS.len() {
+        assert!(HIDDEN_PART_COUNTS[k] as usize <= HIDDEN_PARTS_MAX);
+        k += 1;
     }
-    let mut out = emit::header("each fighter's setup_parts, display-list and animlock joint masks");
-    out.push_str(
-        "/// Per `FTKind`: `(setup_parts, setup_parts & has a display list)`, bit\n\
-         /// `n` for descriptor `n`.\n",
-    );
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub const JOINT_MASKS: [(u64, u64); {}] = [\n{}\n];\n",
-        joints.len(),
-        joints.join("\n")
-    );
-    out.push_str("/// Per `FTKind`: `FTAttributes::animlock`, bit `n` for descriptor `n`.\n");
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub const ANIMLOCK_MASKS: [u64; {}] = [\n{}\n];\n",
-        locks.len(),
-        locks.join("\n")
-    );
-    out.push_str(
-        "/// Per `FTKind`: `FTAttributes::hiddenparts` whose root is joint 4 or\n\
-         /// later, as `(index, root joint, high-detail descriptor has a display\n\
-         /// list)`; empty for Master Hand.\n",
-    );
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub static HIDDEN_PARTS: [&[(u8, u8, bool)]; {}] = [\n{}\n];\n",
-        hidden.len(),
-        hidden.join("\n")
-    );
-    out.push_str(
-        "/// Per `FTKind`: `FTAttributes::textureparts_container`, each part's\n\
-         /// `(joint, [high-detail MObj, low-detail MObj])`; `None` when NULL.\n",
-    );
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub const TEXTURE_PARTS: [Option<[(u8, [u8; 2]); {TEXTURE_PARTS}]>; {}] = [\n{}\n];",
-        textures.len(),
-        textures.join("\n")
-    );
-    out.push_str(
-        "\n/// Per `FTKind` and texture part: the `TextureIDCurrent` its costume\n\
-         /// script gives the part's `MObj` when the `FTCommonPart` chain makes\n\
-         /// it, at high and low detail, and whether the part's joint has an\n\
-         /// `FTModelPartDesc` (whose parts carry their own scripts).\n",
-    );
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub const TEXTURE_PART_MADE: [[([i8; 2], bool); {TEXTURE_PARTS}]; {}] = [\n{}\n];",
-        made_rows.len(),
-        made_rows.join("\n")
-    );
+};
+/// Bytes per fighter in the `HiddenParts` table: the count, then
+/// `(index, root joint, has a display list)` per part.
+pub const HIDDEN_PART_BYTES: usize = 1 + 3 * HIDDEN_PARTS_MAX;
+/// Words per fighter in the `JointMasks` table: `setup_parts`,
+/// `setup_parts & has a display list` and `animlock`, each as `(low, high)`
+/// halves of the 64-bit mask.
+pub const JOINT_MASK_WORDS: usize = 6;
+/// Bytes per fighter in the `TextureParts` table: present, then `(joint,
+/// high-detail MObj, low-detail MObj)` per part, then one pad byte.
+pub const TEXTURE_PART_BYTES: usize = 8;
+/// Bytes per fighter in the `TexturePartMade` table: `(high, low, has an
+/// FTModelPartDesc)` per part (`i8` ids as bits), then two pad bytes.
+pub const TEXTURE_PART_MADE_BYTES: usize = 8;
+
+/// The `JointMasks` table, in `FIGHTERS` (`FTKind`) order.
+pub fn joint_masks_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut words = Vec::with_capacity(FIGHTERS.len() * JOINT_MASK_WORDS);
+    for f in FIGHTERS.iter() {
+        let main = c.rom.file(f.main_file)?;
+        let setup = flag_pair(&main, f.attributes + SETUP_PARTS_OFFSET)?;
+        let dl = dl_mask(c.rom, &main, f.attributes)?;
+        let lock = flag_pair(&main, f.attributes + ANIMLOCK_OFFSET)?;
+        for mask in [setup, dl & setup, lock] {
+            words.extend([mask as u32, (mask >> 32) as u32]);
+        }
+    }
+    Ok(crate::tables::le_words(&words))
+}
+
+/// The `HiddenParts` table: `hiddenparts` whose root is joint 4 or later;
+/// none for [`NO_HIDDEN_PARTS`].
+pub fn hidden_parts_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(FIGHTERS.len() * HIDDEN_PART_BYTES);
+    for (k, f) in FIGHTERS.iter().enumerate() {
+        let mut row = [0u8; HIDDEN_PART_BYTES];
+        if !NO_HIDDEN_PARTS.contains(&k) {
+            let main = c.rom.file(f.main_file)?;
+            let dl = dl_mask(c.rom, &main, f.attributes)?;
+            let parts = hidden_parts(&main, f.attributes, HIDDEN_PART_COUNTS[k], dl)?;
+            row[0] = parts.len() as u8;
+            for (cell, &(i, root, dl)) in row[1..].as_chunks_mut::<3>().0.iter_mut().zip(&parts) {
+                cell.copy_from_slice(&[i, root, u8::from(dl)]);
+            }
+        }
+        out.extend_from_slice(&row);
+    }
+    Ok(out)
+}
+
+/// The `TextureParts` table: `textureparts_container`, absent when NULL.
+pub fn texture_parts_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(FIGHTERS.len() * TEXTURE_PART_BYTES);
+    for f in FIGHTERS.iter() {
+        let main = c.rom.file(f.main_file)?;
+        let mut row = [0u8; TEXTURE_PART_BYTES];
+        if let Some(parts) = texture_parts(&main, f.attributes)? {
+            row[0] = 1;
+            for (cell, &(joint, [hi, lo])) in
+                row[1..7].as_chunks_mut::<3>().0.iter_mut().zip(&parts)
+            {
+                cell.copy_from_slice(&[joint, hi, lo]);
+            }
+        }
+        out.extend_from_slice(&row);
+    }
+    Ok(out)
+}
+
+/// The `TexturePartMade` table ([`texture_part_made`]); zeros for a fighter
+/// without texture parts.
+pub fn texture_part_made_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let ovl2 = OverlayData::new(Some(c.rom), OVL2);
+    let mut out = Vec::with_capacity(FIGHTERS.len() * TEXTURE_PART_MADE_BYTES);
+    for (k, f) in FIGHTERS.iter().enumerate() {
+        let main = c.rom.file(f.main_file)?;
+        let mut row = [0u8; TEXTURE_PART_MADE_BYTES];
+        if let Some(parts) = texture_parts(&main, f.attributes)? {
+            let costumes = costume_count(&ovl2, k)?;
+            let made = texture_part_made(c.rom, &main, f.attributes, &parts, costumes)?;
+            for (cell, ([hi, lo], desc)) in row[..6].as_chunks_mut::<3>().0.iter_mut().zip(made) {
+                cell.copy_from_slice(&[hi as u8, lo as u8, u8::from(desc)]);
+            }
+        }
+        out.extend_from_slice(&row);
+    }
     Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stub_tables_are_empty() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("pub static HIDDEN_PARTS: [&[(u8, u8, bool)]; 27]"));
-        assert_eq!(text.matches("    &[], //").count(), 27);
-        assert!(text.contains("pub const TEXTURE_PARTS: [Option<[(u8, [u8; 2]); 2]>; 27]"));
-        assert_eq!(text.matches("    None, //").count(), 27);
-        assert!(text.contains("pub const TEXTURE_PART_MADE: [[([i8; 2], bool); 2]; 27]"));
-        assert_eq!(
-            text.matches("    [([0, 0], false), ([0, 0], false)], //")
-                .count(),
-            27
-        );
-    }
 
     #[test]
     fn hidden_part_counts_follow_fighters() {

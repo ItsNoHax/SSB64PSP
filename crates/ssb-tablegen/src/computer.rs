@@ -1,9 +1,8 @@
 //! The CPU's input scripts and attack tables (`ft/ftcomputer.c`), for
 //! `ssb_game::computer::scripts`.
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
-use crate::emit::{self, f32_lit};
 use crate::source::OVL3;
 use crate::{Result, Source};
 
@@ -21,6 +20,7 @@ pub const FIGHTERS: [&str; 12] = [
 ];
 
 /// `FTComputerInputKind`'s names, in enum order, as constants.
+#[cfg(feature = "std")]
 pub const INPUT_KINDS: [&str; 49] = [
     "STICK_N",
     "MOVE_AUTO",
@@ -102,138 +102,97 @@ fn input_script(rom: &Source, at: u32) -> Result<Vec<u8>> {
     }
 }
 
-struct Attack {
-    input: i32,
-    start: i32,
-    end: i32,
-    box_: [f32; 4],
-}
+/// Bytes in all input scripts, each up to and including its `END`.
+pub const INPUT_SCRIPT_BYTES: usize = 429;
+/// Most grounded and aerial rows any attack table holds.
+pub const GROUND_ATTACKS_MAX: usize = 11;
+pub const AIR_ATTACKS_MAX: usize = 7;
+/// Words per `ComputerAttacks` row: `input_kind`, the two frames and the
+/// four floats' bits, as in the ROM.
+pub const ATTACK_WORDS: usize = 7;
+/// Words per fighter in the `ComputerAttacks` table: the grounded and
+/// aerial row counts, then [`GROUND_ATTACKS_MAX`] grounded and
+/// [`AIR_ATTACKS_MAX`] aerial rows (unused ones zero).
+pub const FIGHTER_ATTACK_WORDS: usize = 2 + (GROUND_ATTACKS_MAX + AIR_ATTACKS_MAX) * ATTACK_WORDS;
 
-fn attack(rom: &Source, at: u32) -> Result<Attack> {
-    Ok(Attack {
-        input: rom.u32(at)? as i32,
-        start: rom.u32(at + 4)? as i32,
-        end: rom.u32(at + 8)? as i32,
-        box_: [
-            rom.f32(at + 12)?,
-            rom.f32(at + 16)?,
-            rom.f32(at + 20)?,
-            rom.f32(at + 24)?,
-        ],
-    })
-}
-
-fn emit_rows(out: &mut String, label: &str, rows: &[Attack]) {
-    let _ = writeln!(
-        out,
-        "#[rustfmt::skip]\npub static {label}: [Attack; {}] = [",
-        rows.len()
-    );
-    for r in rows {
-        let _ = writeln!(
-            out,
-            "    Attack {{ input: {}, hit_start_frame: {}, hit_end_frame: {}, detect_near_x: {}, \
-             detect_far_x: {}, detect_near_y: {}, detect_far_y: {} }},",
-            r.input,
-            r.start,
-            r.end,
-            f32_lit(r.box_[0]),
-            f32_lit(r.box_[1]),
-            f32_lit(r.box_[2]),
-            f32_lit(r.box_[3]),
-        );
-    }
-    out.push_str("];\n\n");
-}
-
-fn screaming(name: &str) -> String {
-    name.to_uppercase()
-}
-
-pub fn generate(rom: Option<&Source>) -> Result<String> {
-    let mut w = emit::header("the CPU's input scripts and attack tables (ft/ftcomputer.c)");
-    // The scripts in pointer-table order; each is named by its place among
-    // the scripts in memory, which is the decompilation's numbering.
+/// Every input script, in pointer-table order (which swaps scripts 24 and
+/// 25 of the memory order).
+fn input_scripts(rom: &Source) -> Result<Vec<Vec<u8>>> {
     let (table, count) = INPUT_SCRIPT_TABLE;
-    let mut scripts: Vec<(usize, Vec<u8>)> = Vec::new();
-    if let Some(rom) = rom {
-        let ptrs: Vec<u32> = (0..count as u32)
-            .map(|i| rom.u32(table + i * 4))
-            .collect::<Result<_>>()?;
-        let mut sorted = ptrs.clone();
-        sorted.sort_unstable();
-        for p in &ptrs {
-            let at = OVL3.rom_of(*p).expect("input script outside ovl3");
-            let number = sorted.iter().position(|q| q == p).expect("sorted");
-            scripts.push((number, input_script(rom, at)?));
+    let scripts = (0..count as u32)
+        .map(|i| {
+            let p = rom.u32(table + i * 4)?;
+            input_script(rom, OVL3.rom_of(p).expect("input script outside ovl3"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        scripts.iter().map(Vec::len).sum::<usize>(),
+        INPUT_SCRIPT_BYTES
+    );
+    Ok(scripts)
+}
+
+/// The `InputScripts` table: every script's bytes back to back.
+pub fn input_scripts_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    Ok(input_scripts(c.rom)?.concat())
+}
+
+/// The `InputScriptOffsets` table: each script's first byte in
+/// `InputScripts`, then [`INPUT_SCRIPT_BYTES`].
+pub fn input_script_offsets_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut offsets = Vec::with_capacity(INPUT_SCRIPT_TABLE.1 + 1);
+    let mut at = 0u16;
+    for script in input_scripts(c.rom)? {
+        offsets.push(at);
+        at += script.len() as u16;
+    }
+    offsets.push(at);
+    Ok(crate::tables::le_bytes(&offsets, u16::to_le_bytes))
+}
+
+/// The `ComputerAttacks` table: `dFTComputerAttackList`'s first twelve
+/// tables, in `nFTKind` order. Each holds the grounded rows, an
+/// `input_kind == -1` row, then the aerial ones and another -1 row.
+pub fn attacks_bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
+    let mut words = Vec::with_capacity(FIGHTERS.len() * FIGHTER_ATTACK_WORDS);
+    for (i, name) in FIGHTERS.iter().enumerate() {
+        let ptr = c.rom.u32(ATTACK_LIST + 4 * i as u32)?;
+        let mut at = OVL3.rom_of(ptr).expect("attack table outside ovl3");
+        let mut halves = [Vec::new(), Vec::new()];
+        for rows in &mut halves {
+            loop {
+                let row: Vec<u32> = (0..ATTACK_WORDS as u32)
+                    .map(|w| c.rom.u32(at + 4 * w))
+                    .collect::<Result<_>>()?;
+                at += ATTACK_SIZE;
+                if row[0] as i32 == -1 {
+                    break;
+                }
+                assert!(rows.len() < 64, "{name}: attack table has no separator");
+                rows.push(row);
+            }
         }
-    } else {
-        scripts = (0..count).map(|i| (i, Vec::new())).collect();
+        let [ground, air] = halves;
+        assert!(ground.len() <= GROUND_ATTACKS_MAX && air.len() <= AIR_ATTACKS_MAX);
+        words.extend([ground.len() as u32, air.len() as u32]);
+        for (rows, max) in [(ground, GROUND_ATTACKS_MAX), (air, AIR_ATTACKS_MAX)] {
+            let n = rows.len();
+            words.extend(rows.into_iter().flatten());
+            words.extend(core::iter::repeat_n(0, (max - n) * ATTACK_WORDS));
+        }
     }
-    w.push_str("/// `dFTComputerPlayerInputScripts`, in pointer-table order (which swaps\n");
-    w.push_str("/// scripts 24 and 25).\n#[rustfmt::skip]\n");
-    let _ = writeln!(w, "pub static INPUT_SCRIPTS: [&[u8]; {count}] = [");
-    for (n, bytes) in &scripts {
-        let cells: Vec<String> = bytes.iter().map(|b| format!("0x{b:02X}")).collect();
-        let _ = writeln!(w, "    &[{}], // Script{n}", cells.join(", "));
-    }
-    w.push_str("];\n\n");
-    w.push_str("/// `nFTComputerInput*`: [`INPUT_SCRIPTS`] indices by name.\npub mod input {\n");
+    Ok(crate::tables::le_words(&words))
+}
+
+/// `ssb_game::computer::scripts`' layout: the `nFTComputerInput*` names.
+#[cfg(feature = "std")]
+pub fn layout_rs() -> String {
+    use std::fmt::Write;
+    let mut w = crate::emit::header("the CPU's input script names (layout only)");
+    w.push_str("/// `nFTComputerInput*`: input script indices by name.\npub mod input {\n");
     for (i, name) in INPUT_KINDS.iter().enumerate() {
         let _ = writeln!(w, "    pub const {name}: usize = {i};");
     }
-    w.push_str("}\n\n");
-
-    w.push_str(
-        "/// One `FTComputerAttack` row: the input script, the hitbox's active\n\
-         /// frames and the box around the fighter where it connects.\n\
-         #[derive(Debug, Clone, Copy, PartialEq)]\n\
-         pub struct Attack {\n    pub input: usize,\n    pub hit_start_frame: i32,\n\
-         \x20   pub hit_end_frame: i32,\n    pub detect_near_x: f32,\n    pub detect_far_x: f32,\n\
-         \x20   pub detect_near_y: f32,\n    pub detect_far_y: f32,\n}\n\n",
-    );
-    // Each table holds the grounded attacks, an `input_kind == -1` row, then
-    // the aerial ones and another -1 row. The tables are emitted in memory
-    // order (the decompilation's source order).
-    let mut tables: Vec<(u32, &str, Vec<Attack>, Vec<Attack>)> = Vec::new();
-    for (i, name) in FIGHTERS.iter().enumerate() {
-        let (mut ground, mut air, mut addr) = (Vec::new(), Vec::new(), i as u32);
-        if let Some(rom) = rom {
-            let ptr = rom.u32(ATTACK_LIST + 4 * i as u32)?;
-            addr = ptr;
-            let mut at = OVL3.rom_of(ptr).expect("attack table outside ovl3");
-            for rows in [&mut ground, &mut air] {
-                loop {
-                    let row = attack(rom, at)?;
-                    at += ATTACK_SIZE;
-                    if row.input == -1 {
-                        break;
-                    }
-                    assert!(rows.len() < 64, "{name}: attack table has no separator");
-                    rows.push(row);
-                }
-            }
-        }
-        tables.push((addr, name, ground, air));
-    }
-    let mut by_address: Vec<&(u32, &str, Vec<Attack>, Vec<Attack>)> = tables.iter().collect();
-    by_address.sort_by_key(|t| t.0);
-    for (_, name, ground, air) in by_address {
-        let up = screaming(name);
-        let _ = writeln!(w, "/// `dFTComputerAttacks{name}`, grounded rows.");
-        emit_rows(&mut w, &format!("ATTACKS_{up}_GROUND"), ground);
-        let _ = writeln!(w, "/// `dFTComputerAttacks{name}`, aerial rows.");
-        emit_rows(&mut w, &format!("ATTACKS_{up}_AIR"), air);
-    }
-    w.push_str(
-        "/// `dFTComputerAttackList` for the twelve playable fighters, in `nFTKind`\n\
-         /// order: the grounded and aerial rows.\n#[rustfmt::skip]\n\
-         pub static ATTACKS: [(&[Attack], &[Attack]); 12] = [\n",
-    );
-    for name in FIGHTERS {
-        let up = screaming(name);
-        let _ = writeln!(w, "    (&ATTACKS_{up}_GROUND, &ATTACKS_{up}_AIR),");
-    }
-    w.push_str("];\n");
-    Ok(w)
+    w.push_str("}\n");
+    w
 }

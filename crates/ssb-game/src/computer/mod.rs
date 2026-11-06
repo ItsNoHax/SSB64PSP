@@ -12,10 +12,88 @@
 pub mod attack;
 pub mod behave;
 mod sight;
-/// The CPU's input scripts and attack tables, generated at build time from
-/// the user's ROM by `crates/ssb-tablegen` (never committed).
-mod scripts {
-    include!(concat!(env!("OUT_DIR"), "/computer_scripts.rs"));
+/// The CPU's input scripts and attack tables (`ft/ftcomputer.c`), read
+/// from the user's ROM into the pack's `TABLES` section by
+/// `crates/ssb-tablegen` (`computer.rs`); the `input` names are generated
+/// layout.
+pub(crate) mod scripts {
+    #[allow(clippy::all)]
+    mod layout {
+        include!(concat!(env!("OUT_DIR"), "/computer_layout.rs"));
+    }
+    pub use layout::input;
+
+    use ssb_tables::{Hot, Table, TableId};
+
+    /// `dFTComputerPlayerInputScripts`' count.
+    const SCRIPTS: usize = 49;
+    /// `TableId::InputScripts`: every script back to back, each up to and
+    /// including its `FTCOMPUTER_COMMAND_END`.
+    static INPUT_BYTES: Table<[u8; 429]> = Table::new(TableId::InputScripts);
+    /// `TableId::InputScriptOffsets`: each script's first byte, then the
+    /// byte count.
+    static INPUT_OFFSETS: Table<[u16; SCRIPTS + 1]> = Table::new(TableId::InputScriptOffsets);
+
+    /// `dFTComputerPlayerInputScripts`, in pointer-table order (which swaps
+    /// scripts 24 and 25), indexed by [`input`]. Read every CPU frame, so a
+    /// [`Hot`] (RE-589); each entry is a slice of the store.
+    pub static INPUT_SCRIPTS: Hot<[&[u8]; SCRIPTS]> = Hot::new([&[]; SCRIPTS], || {
+        let (bytes, offsets) = (INPUT_BYTES.get(), INPUT_OFFSETS.get());
+        core::array::from_fn(|i| {
+            let end = usize::from(offsets[i + 1]).min(bytes.len());
+            &bytes[usize::from(offsets[i]).min(end)..end]
+        })
+    });
+
+    /// One `FTComputerAttack` row: the input script, the hitbox's active
+    /// frames and the box around the fighter where it connects.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Attack {
+        pub input: usize,
+        pub hit_start_frame: i32,
+        pub hit_end_frame: i32,
+        pub detect_near_x: f32,
+        pub detect_far_x: f32,
+        pub detect_near_y: f32,
+        pub detect_far_y: f32,
+    }
+
+    /// Grounded and aerial rows per table (`ssb_tablegen`'s
+    /// `computer::GROUND_ATTACKS_MAX`, `AIR_ATTACKS_MAX`).
+    const GROUND_MAX: usize = 11;
+    const AIR_MAX: usize = 7;
+    /// `TableId::ComputerAttacks`' words per fighter: the two counts, then
+    /// the rows, seven ROM words each.
+    const FIGHTER_WORDS: usize = 2 + (GROUND_MAX + AIR_MAX) * 7;
+    static ATTACK_WORDS: Table<[[u32; FIGHTER_WORDS]; 12]> = Table::new(TableId::ComputerAttacks);
+
+    type Rows = (&'static [Attack], &'static [Attack]);
+
+    /// One fighter's grounded and aerial rows.
+    fn decode_attacks(w: &[u32; FIGHTER_WORDS]) -> Rows {
+        let rows = |at: usize, n: usize| -> &'static [Attack] {
+            ssb_tables::hot_rows(w[at..].as_chunks::<7>().0.iter().take(n).map(|r| Attack {
+                input: r[0] as usize,
+                hit_start_frame: r[1] as i32,
+                hit_end_frame: r[2] as i32,
+                detect_near_x: f32::from_bits(r[3]),
+                detect_far_x: f32::from_bits(r[4]),
+                detect_near_y: f32::from_bits(r[5]),
+                detect_far_y: f32::from_bits(r[6]),
+            }))
+        };
+        let (ground, air) = (
+            (w[0] as usize).min(GROUND_MAX),
+            (w[1] as usize).min(AIR_MAX),
+        );
+        (rows(2, ground), rows(2 + GROUND_MAX * 7, air))
+    }
+
+    /// `dFTComputerAttackList` for the twelve playable fighters, in
+    /// `nFTKind` order: the grounded and aerial rows. A [`Hot`] (RE-589).
+    pub static ATTACKS: Hot<[Rows; 12]> = Hot::new([(&[], &[]); 12], || {
+        ATTACK_WORDS.get().each_ref().map(decode_attacks)
+    });
 }
 
 use ssb_engine::input::{ControllerState, N64Buttons};

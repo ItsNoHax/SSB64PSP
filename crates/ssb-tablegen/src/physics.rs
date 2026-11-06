@@ -1,5 +1,5 @@
 //! Mario's `FTAttributes` physics head (`fttypes.h`), for
-//! `ssb_game::physics::PhysicsAttributes::MARIO`, the roster's reference
+//! `ssb_game::physics::PhysicsAttributes::mario`, the roster's reference
 //! values that `PhysicsAttributes::default` and the gameplay tests use.
 //!
 //! The head is a run of `f32` words from the struct's start (`size` at word
@@ -8,11 +8,11 @@
 //! [`FIGHTERS`](crate::fighters::FIGHTERS)' Mario entry (`dMarioMain_attr`,
 //! file 203).
 
-use std::fmt::Write;
+use alloc::vec::Vec;
 
 use crate::fighters::FIGHTERS;
 use crate::source::be_u32;
-use crate::{emit, Result, Source};
+use crate::Result;
 
 /// `PhysicsAttributes` fields and their `FTAttributes` word.
 pub const FIELDS: [(&str, usize); 24] = [
@@ -42,54 +42,25 @@ pub const FIELDS: [(&str, usize); 24] = [
     ("walkfast_anim_length", 3),
 ];
 /// `FTAttributes::jumps_max`, the head's one integer.
-const JUMPS_MAX: usize = 25;
+pub const JUMPS_MAX: usize = 25;
 /// `FTAttributes::map_coll`: `top`, `center`, `bottom`, `width`.
 const MAP_COLL: usize = 39;
 
-pub fn generate(rom: Option<&Source>) -> Result<String> {
+/// The `MarioPhysics` table: [`FIELDS`]' words in their order, then
+/// `map_coll`'s four (`f32` bits; `jumps_max` an `s32`).
+pub fn bytes(c: &crate::tables::Ctx) -> Result<Vec<u8>> {
     let mario = &FIGHTERS[0];
     assert_eq!(mario.name, "Mario", "FIGHTERS is in FTKind order");
-    let data = match rom {
-        Some(rom) => Some(rom.file(mario.main_file)?.data),
-        None => None,
-    };
-    let mut w = emit::header("Mario's `FTAttributes` physics (`dMarioMain_attr`)");
-    w.push_str("/// Mario's `FTAttributes` physics head.\npub const MARIO: PhysicsAttributes = PhysicsAttributes {\n");
-    for (field, index) in FIELDS {
-        let bits = match &data {
-            Some(d) => be_u32(d, mario.attributes as usize + 4 * index)?,
-            None => 0,
-        };
-        let value = if index == JUMPS_MAX {
-            (bits as i32).to_string()
-        } else {
-            emit::f32_lit(f32::from_bits(bits))
-        };
-        let _ = writeln!(w, "    {field}: {value},");
-    }
-    w.push_str("};\n\n/// Mario's `FTAttributes::map_coll`: top, center, bottom, width.\npub const MARIO_MAP_COLL: [f32; 4] = [");
-    let mut cells = Vec::new();
-    for i in 0..4 {
-        let bits = match &data {
-            Some(d) => be_u32(d, mario.attributes as usize + 4 * (MAP_COLL + i))?,
-            None => 0,
-        };
-        cells.push(emit::f32_lit(f32::from_bits(bits)));
-    }
-    let _ = writeln!(w, "{}];", cells.join(", "));
-    Ok(w)
+    let data = c.rom.file(mario.main_file)?.data;
+    let word = |index: usize| be_u32(&data, mario.attributes as usize + 4 * index);
+    let words = FIELDS
+        .iter()
+        .map(|&(_, index)| index)
+        .chain(MAP_COLL..MAP_COLL + 4)
+        .map(word)
+        .collect::<Result<Vec<u32>>>()?;
+    Ok(crate::tables::le_words(&words))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stub_is_zero() {
-        let text = generate(None).unwrap();
-        assert!(text.contains("    gravity: 0.0,\n"));
-        assert!(text.contains("    jumps_max: 0,\n"));
-        assert_eq!(text.matches(": 0").count(), FIELDS.len());
-        assert!(text.contains("MARIO_MAP_COLL: [f32; 4] = [0.0, 0.0, 0.0, 0.0];"));
-    }
-}
+/// Words in the `MarioPhysics` table.
+pub const WORDS: usize = FIELDS.len() + 4;

@@ -944,7 +944,7 @@ impl Computer {
         // `dFTComputerAttackList[fkind]`: Metal Mario and each Polygon use
         // their model's table, Giant Donkey Kong Donkey Kong's, Master Hand
         // none (`NULL`).
-        let Some(&(ground, air)) = ATTACKS.get(f.kind.character() as usize) else {
+        let Some(&(ground, air)) = ATTACKS.get().get(f.kind.character() as usize) else {
             return false;
         };
         let table: &[Attack] = if grounded { ground } else { air };
