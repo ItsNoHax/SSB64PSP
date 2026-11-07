@@ -43,7 +43,6 @@ crates/ssb-game/src/opening/fighters.rs	KEY_AT	layout: where each key script sta
 crates/ssb-game/src/opening/fighters.rs	SCENE_STATICS	the scenes' function-body constants (mvOpening* scene functions: name origin, viewports, fill, posed camera and spawn); each scene's d* start/end CObjDesc and key script come from the pack's OpeningCameras and OpeningKeys tables, its name letters from the generated mvOpening*MakeName offsets and pos
 crates/ssb-game/src/opening/movie.rs	PARTICLE_DISPLAYS	function-body constants: efDisplayInitAll's display links and list ids, written as immediates
 crates/ssb-game/src/opening/newcomers.rs	NEWCOMERS	link-time labels: each newcomer's FTKind, file ID and ll*DObjDesc/AnimJoint offsets that mvOpeningNewcomersMakeAll passes as immediates
-crates/ssb-game/src/opening/run.rs	FIGHTER_ANIM_JOINTS	link-time labels: the proxies' ll*AnimJoint offsets in llMVOpeningRunMainFileID, code immediates in mvOpeningRunMakeFighters
 crates/ssb-game/src/particle.rs	EMPTY	port constants: the identity matrix and the empty pool slot
 crates/ssb-game/src/particle.rs	IDENTITY	port constants: the identity matrix and the empty pool slot
 crates/ssb-game/src/players_vs_layer.rs	SHUTTER_SCISSORS	function-body constants: mnPlayersVSShutter{1..4}PProcDisplay's lbCommonSetSpriteScissor immediates

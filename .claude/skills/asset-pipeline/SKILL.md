@@ -19,5 +19,7 @@ Code: `crates/ssb-rom/src/{archive,vpk0,pack,texture,psp_texture,mesh}.rs`, `too
 ROM code-segment tables ([D-048](../../../docs/decisions/D-048.md)):
 
 - Tables: motion, colour-animation and CPU scripts, status flags, animation table
-- Generated at build time by `crates/ssb-tablegen` into `OUT_DIR`
-- Dump generated Rust: `cargo run -p ssb-tablegen -- DIR`
+- Read by `crates/ssb-tablegen` into the pack's `TABLES` section; read at run time by `ssb-tables`
+- Build scripts write layout only (names, ids, offsets) into `OUT_DIR`; no ROM at build time
+- Dump the layout files: `cargo run -p ssb-tablegen -- DIR`
+- Binaries carry no ROM data: `python3 tools/rom_data_scan.py --rom ROM <ELF or EBOOT.PBP>...`

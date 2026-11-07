@@ -1,21 +1,21 @@
-//! Build-time generation of the tables `ssb-game`, `ssb-engine` and `ssb-rom` read from
-//! the original game's data: fighter motion scripts, colour-animation
-//! scripts, CPU input scripts, status flags, the fighters' joint masks, the
-//! fighter animation table and the `gSYSinTable` sine table.
+//! The tables `ssb-game`, `ssb-engine` and `ssb-rom` read from the original
+//! game's data (motion, colour-animation and CPU scripts, status flags,
+//! joint masks, the fighter animation table, the decomp's `d*` arrays, ...):
+//! where each is in the ROM, how it is laid out, and how to read it.
 //!
-//! The values live in the user's ROM, so they are never committed. The build
-//! scripts of `ssb-game`, `ssb-engine` and `ssb-rom` call [`build_script`], which finds the
-//! ROM (`SSB64_ROM`, else the one `.z64` in `rom/`), verifies it, reads the
-//! tables and writes Rust source into Cargo's `OUT_DIR` for the crates to
-//! `include!`. What is committed here is only *where* each table is and how
-//! it is laid out (`layout` modules): ROM offsets, record sizes, counts and
-//! the identifiers the port gives each entry.
-//!
-//! Without a ROM the build fails with a message saying how to supply one.
-//! `SSB64_STUB_TABLES=1` instead writes empty tables of the same types and
-//! sets `cfg(ssb64_stub_tables)`, so CI, which has no ROM, can type-check,
-//! lint and run every test that does not need ROM data. A stub build is not
-//! a playable game.
+//! - Values: [`tables_section`] reads them from the user's ROM into the
+//!   pack's `TABLES` section (`romtool pack` on a PC, `ssb-pack` on the
+//!   PSP); `ssb-tables` reads the section at run time. No binary holds them
+//!   (D-048).
+//! - Layout: the build scripts of `ssb-game` and `ssb-rom` call
+//!   [`build_script`], which writes Rust naming each table's entries and
+//!   ids into Cargo's `OUT_DIR` for the crates to `include!`. It reads no
+//!   ROM: the workspace builds without one.
+//! - `SSB64_STUB_TABLES=1` sets `cfg(ssb64_stub_tables)` ([`declare_stub_cfg`]):
+//!   host tests that need the ROM's tables are ignored, and `ssb-tables`'
+//!   `host-rom` fallback installs the empty section (every table zeros)
+//!   instead of reading the ROM. For CI, which has no ROM; never for a
+//!   game build.
 //!
 //! Without the default `std` feature only the `TABLES` section's reader is
 //! built ([`tables_section`], [`Source`]): the portable packer
@@ -110,8 +110,6 @@ mod colanim;
 mod computer;
 mod d_arrays;
 mod effect_life;
-#[cfg(feature = "std")]
-mod emit;
 mod ending_data;
 mod fighters;
 mod ground;
@@ -160,26 +158,16 @@ pub fn fighter_main_files() -> Vec<(&'static str, u32, u32)> {
         .collect()
 }
 
-/// The crate whose tables a build script generates.
+/// The crate whose layout files a build script writes.
 #[cfg(feature = "std")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Crate {
-    /// `ssb-game`: motion, colour-animation and CPU scripts, status flags,
-    /// joint masks and hidden/texture parts, hurtboxes, Falcon Dive's
-    /// capture offsets, the items' `ITAttributes`, the item weapons'
-    /// `WPAttributes` and the Smog's scale, Mario's `FTAttributes` physics,
-    /// Kirby's copy table, the quakes' and Thunder Shock's lives and the
-    /// stage ambient effects' flight cycles.
+    /// `ssb-game`: the colour-animation and CPU script names and ids, and
+    /// its `d*` array views.
     Game,
-    /// `ssb-rom`: the fighter animation table, the offsets the stage
-    /// clear's and staff roll's data arrays hold, the stage clear's pictures,
-    /// each fighter's main file, the loading-break transitions and the
-    /// manager effects' objects and animations.
+    /// `ssb-rom`: the fighter animation table's slots, the names and counts
+    /// of the tables it reads from code, and its `d*` array views.
     Rom,
-    /// `ssb-engine`: none; its tables (`gSYSinTable`,
-    /// `dLBCommonSinLookup`) are in the pack's `TABLES` section
-    /// ([`tables`]).
-    Engine,
 }
 
 /// One generated file: its name in `OUT_DIR` and its Rust source.
@@ -189,28 +177,23 @@ pub struct Generated {
     pub text: String,
 }
 
-/// Generates `krate`'s layout files. Every value is in the pack's `TABLES`
-/// section now: `rom` is not read.
+/// `krate`'s layout files: names, ids, counts and offsets into the pack's
+/// `TABLES` section. Committed layout only; no ROM is read.
 #[cfg(feature = "std")]
-pub fn generate(krate: Crate, _rom: Option<&Source>) -> Result<Vec<Generated>> {
-    Ok(match krate {
-        Crate::Game => {
-            // Layout only: the values are in the pack's `TABLES` section.
-            let mut files = vec![
-                Generated {
-                    name: "colanim_layout.rs",
-                    text: colanim::layout_rs(),
-                },
-                Generated {
-                    name: "computer_layout.rs",
-                    text: computer::layout_rs(),
-                },
-            ];
-            files.push(d_arrays::generate_game());
-            files
-        }
+pub fn generate(krate: Crate) -> Vec<Generated> {
+    match krate {
+        Crate::Game => vec![
+            Generated {
+                name: "colanim_layout.rs",
+                text: colanim::layout_rs(),
+            },
+            Generated {
+                name: "computer_layout.rs",
+                text: computer::layout_rs(),
+            },
+            d_arrays::generate_game(),
+        ],
         Crate::Rom => {
-            // Layout only: the values are in the pack's `TABLES` section.
             let mut files = vec![Generated {
                 name: "anim_layout.rs",
                 text: anim_table::layout_rs(),
@@ -219,24 +202,21 @@ pub fn generate(krate: Crate, _rom: Option<&Source>) -> Result<Vec<Generated>> {
             files.push(d_arrays::generate_rom());
             files
         }
-        // Its tables are in the pack's `TABLES` section ([`tables`]).
-        Crate::Engine => Vec::new(),
-    })
+    }
 }
 
 /// Environment variable naming the ROM (the convention `romtool` and the
 /// ROM-backed tests share).
 pub const ROM_ENV: &str = "SSB64_ROM";
-/// Environment variable that selects empty stub tables when no ROM is
-/// available (CI).
+/// Environment variable that selects the stub (empty) `TABLES` section for
+/// host tests when no ROM is available (CI).
 pub const STUB_ENV: &str = "SSB64_STUB_TABLES";
-/// `cfg` set on a crate built with stub tables.
+/// `cfg` [`declare_stub_cfg`] sets under `SSB64_STUB_TABLES=1`.
 pub const STUB_CFG: &str = "ssb64_stub_tables";
 
-/// For a crate that only *uses* the generated tables (`romtool`): declares
-/// `cfg(ssb64_stub_tables)` and sets it when `SSB64_STUB_TABLES=1`, as the
-/// generating crates' build scripts do, so its ROM-table tests are ignored
-/// in a stub build too.
+/// Declares `cfg(ssb64_stub_tables)` and sets it when `SSB64_STUB_TABLES=1`:
+/// the crate's tests that need the ROM's tables are then ignored. Every
+/// crate whose tests read the tables calls it from its build script.
 #[cfg(feature = "std")]
 pub fn declare_stub_cfg() {
     println!("cargo::rustc-check-cfg=cfg({STUB_CFG})");
@@ -291,68 +271,14 @@ pub fn test_rom(manifest_dir: &str) -> Option<PathBuf> {
     locate_rom(&Path::new(manifest_dir).join("../..")).unwrap_or_else(|e| panic!("{e}"))
 }
 
-/// The build-script entry point for `krate`, whose manifest directory is
-/// `CARGO_MANIFEST_DIR`. Writes the generated files into `OUT_DIR` and
-/// prints Cargo's rerun and `cfg` directives. Panics, with instructions,
-/// when no ROM is available and stubs were not asked for.
+/// The build-script entry point for `krate`: writes its layout files
+/// ([`generate`]) into `OUT_DIR` and declares the stub `cfg`
+/// ([`declare_stub_cfg`]). Reads no ROM.
 #[cfg(feature = "std")]
 pub fn build_script(krate: Crate) {
-    let manifest =
-        PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    declare_stub_cfg();
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
-    // crates/<name> -> the repository root.
-    let repo = manifest
-        .parent()
-        .and_then(Path::parent)
-        .expect("crate directory sits two levels below the repository root")
-        .to_path_buf();
-
-    println!("cargo::rustc-check-cfg=cfg({STUB_CFG})");
-    println!("cargo::rerun-if-env-changed={ROM_ENV}");
-    println!("cargo::rerun-if-env-changed={STUB_ENV}");
-    println!("cargo::rerun-if-changed={}", repo.join("rom").display());
-
-    let stub = std::env::var_os(STUB_ENV).is_some_and(|v| v == "1");
-    let rom = match locate_rom(&repo) {
-        Ok(rom) => rom,
-        Err(e) => panic!("\n\nssb-tablegen: {e}\n\n"),
-    };
-    let source = match (rom, stub) {
-        (Some(path), false) => {
-            println!("cargo::rerun-if-changed={}", path.display());
-            match Source::open(&path) {
-                Ok(source) => Some(source),
-                Err(e) => panic!(
-                    "\n\nssb-tablegen: {} is not a usable Super Smash Bros. (USA) ROM: {e}\n\
-                     The build reads its tables from a verified US ROM (SHA-1 {}).\n\n",
-                    path.display(),
-                    rom::Region::Us.sha1()
-                ),
-            }
-        }
-        (_, true) => None,
-        (None, false) => panic!(
-            "\n\nssb-tablegen: no ROM found.\n\
-             This crate's tables are generated at build time from your own legally\n\
-             obtained Super Smash Bros. (USA) ROM (SHA-1 {}); none are committed.\n\
-             Put it in {}/ or set {ROM_ENV}=/path/to/rom.z64, then rebuild.\n\
-             (CI only: {STUB_ENV}=1 builds empty stub tables that type-check but\n\
-             do not run the game.)\n\n",
-            rom::Region::Us.sha1(),
-            repo.join("rom").display()
-        ),
-    };
-    if source.is_none() {
-        println!("cargo::rustc-cfg={STUB_CFG}");
-        println!(
-            "cargo::warning={STUB_ENV}=1: building {krate:?} with empty stub tables; this build cannot run the game"
-        );
-    }
-    let files = match generate(krate, source.as_ref()) {
-        Ok(files) => files,
-        Err(e) => panic!("\n\nssb-tablegen: reading the ROM's tables failed: {e}\n\n"),
-    };
-    for file in files {
+    for file in generate(krate) {
         let path = out.join(file.name);
         // Leave an unchanged file's timestamp alone.
         if std::fs::read_to_string(&path).ok().as_deref() != Some(file.text.as_str()) {

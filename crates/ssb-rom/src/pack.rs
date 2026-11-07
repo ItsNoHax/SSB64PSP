@@ -534,7 +534,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 147 adds `TABLES` entries: the fighters' motion scripts, motion descs,
 // `END_BLOCKS`, combat attributes and demo scripts (`ssb_tablegen::motion`).
 // Everything outside the section is unchanged.
-pub const VERSION: u32 = 147;
+// 148 adds `mvOpeningRunMakeFighters`' `offsets` to `ssb-game`'s `d*`
+// arrays (`DArrU32` grows by 32 bytes; RE-589 item 9). Everything outside
+// the section is unchanged.
+pub const VERSION: u32 = 148;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

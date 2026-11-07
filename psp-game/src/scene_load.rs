@@ -92,10 +92,13 @@ pub fn scene_roots(s: Scene) -> Vec<u32> {
         Some((pulled, dropped)) => [12, pulled as u32, dropped as u32],
         None => [12; 3],
     };
+    // The Run's and Clash's eight, by immediates in the same order as
+    // `mvOpeningRunMakeFighters`' `fkinds` (a ROM table, in the pack).
+    let run_kinds: [u32; 8] = ssb_game::opening::run::KINDS.map(|k| k as u32);
     let opening_kinds: &[u32] = match s {
         // With its figures once picked (RE-476).
         Scene::Opening(Kind::Room) => &room_kinds,
-        Scene::Opening(Kind::Run | Kind::Clash) => &[0, 1, 2, 3, 5, 6, 8, 9],
+        Scene::Opening(Kind::Run | Kind::Clash) => &run_kinds,
         Scene::Opening(Kind::Yoster) => &[6],
         Scene::Opening(Kind::Cliff) => &[5],
         Scene::Opening(Kind::Standoff) => &[0, 8],

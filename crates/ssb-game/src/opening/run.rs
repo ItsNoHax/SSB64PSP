@@ -15,8 +15,9 @@ use ssb_engine::math::Vec3;
 /// `llMVOpeningRunFileID` and its symbols.
 pub const FILE: u32 = 0x37;
 pub const WALLPAPER: u32 = 0x58A0;
-/// The fighters' proxy `AnimJoint`s, in [`KINDS`] order.
-pub const FIGHTER_ANIM_JOINTS: [u32; 8] = [0x4, 0xB4, 0x124, 0x184, 0x224, 0x334, 0x3A4, 0x484];
+/// The fighters' proxy `AnimJoint`s, in [`KINDS`] order
+/// (`mvOpeningRunMakeFighters`' `offsets`).
+pub use crate::d_arrays::MV_OPENING_RUN_MAKE_FIGHTERS_OFFSETS as FIGHTER_ANIM_JOINTS;
 /// `llMVOpeningRunMainFileID`: its camera animation is at the file's start.
 pub const FILE_MAIN: u32 = 0x3C;
 /// `llMVOpeningRunCrashFileID` and `llMVOpeningRunCrashDObjDesc`.

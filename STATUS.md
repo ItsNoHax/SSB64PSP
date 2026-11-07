@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v147 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v148 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 286 of 286 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |

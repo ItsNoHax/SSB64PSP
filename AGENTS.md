@@ -26,7 +26,7 @@
 | `crates/ssb-rom` | ROM, archive, formats, asset pack | PSP code |
 | `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests | PSP code, scene behaviour |
 | `crates/ssb-pose` | Portable fighter tick, joint sampling, spawn placement: shared by `psp-runtime` and host tests ([D-052](docs/decisions/D-052.md)) | PSP code, gameplay rules |
-| `crates/ssb-tablegen` | Build-time generation of the tables read from the ROM: their ROM layout and decoders; the pack `TABLES` section's ids, format and writer | Data values from the ROM |
+| `crates/ssb-tablegen` | The tables read from the ROM: their ROM layout and decoders; the pack `TABLES` section's ids, format and writer; layout files for build scripts (no ROM read) | Data values from the ROM |
 | `crates/ssb-tables` | Run-time reader of the pack's `TABLES` section: `install`, `Table<T>` statics; `host-rom` fallback for host tests ([D-048](docs/decisions/D-048.md)) | PSP code, data values from the ROM |
 | `crates/ssb-pack` | Portable pack build from ROM bytes (`no_std + alloc`): converters, `build`, `PackOptions`, `PackLog`, `PackObserver`; `romtool pack` wraps it ([RE-588](docs/evidence/re/RE-588.md), [D-046](docs/decisions/D-046.md)) | PSP code, file I/O |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
@@ -134,10 +134,13 @@ Workflow:
 - Never commit anything read or rendered from the ROM
   ([D-048](docs/decisions/D-048.md)):
   - no assets, packs, saves, generated tables, screenshots;
-  - ROM tables: generated at build time by `crates/ssb-tablegen` into
-    `OUT_DIR`; commit only layout (offsets, sizes, counts, names);
+  - ROM tables: read by `crates/ssb-tablegen` into the pack's `TABLES`
+    section, never compiled in; commit only layout (offsets, sizes, counts,
+    names);
   - goldens: pixel hashes in `tests/golden/hashes.tsv`;
   - enforced by `tools/docs/validate_docs.py`.
+- Never compile ROM data into a binary: `tools/rom_data_scan.py` on both
+  release builds when tables or embedded constants change.
 - Test needs ROM-generated tables →
   `#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]`.
   CI: `SSB64_STUB_TABLES=1`, no ROM.

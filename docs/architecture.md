@@ -15,7 +15,7 @@ psp-asset-viewer ─┘    (PSP only)    ├──> crates/ssb-engine  math, coo
                                      ├──> crates/ssb-pose    fighter tick and pose (also host tests)
                                      └──> crates/ssb-capture golden-capture scene specs
 
-crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT_DIR
+crates/ssb-tablegen: ROM -> pack TABLES section; table layout into OUT_DIR (build scripts, no ROM)
 ```
 
 | Component | Role |
@@ -65,7 +65,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 ### Gameplay
 
 - `ssb-game` mirrors decomp modules `ft/`, `wp/`, `it/`, `ef/`, `gr/`, `gm/`, `if/`, `mn/`, `sc/`
-- Code-segment data of the original, read from the user's ROM at build time by `crates/ssb-tablegen`, never committed ([D-048](decisions/D-048.md)):
+- Code-segment data of the original, read from the user's ROM into the pack's `TABLES` section by `crates/ssb-tablegen`, never committed or compiled in ([D-048](decisions/D-048.md)):
   - motion scripts, colour-animation scripts, CPU input scripts
   - status tables, animation file tables
 - Archive data, from the pack: models, animations, `FTAttributes`, collision, sprites
@@ -85,7 +85,7 @@ crates/ssb-tablegen: build scripts of ssb-game and ssb-rom, ROM -> tables in OUT
 
 - `romtool pack`: reads ROM, decompresses VPK0, relocates archive files, writes the pack
 - Pack contents: shared region, each archive file's bytes, audio section, `TABLES` section
-- `TABLES` section: ROM-derived tables read at boot instead of compiled in ([D-048](decisions/D-048.md)); ids and writer `ssb_tablegen::tables`, reader `ssb-tables` (`Table<T>` statics), boot `psp_runtime::tables::load`; host tests build it from the ROM (`ssb-tables` feature `host-rom`). Holds `ssb-engine`'s two sine tables; the other generated tables are still `include!`d from `OUT_DIR`
+- `TABLES` section: ROM-derived tables read at boot instead of compiled in ([D-048](decisions/D-048.md)); ids and writer `ssb_tablegen::tables`, reader `ssb-tables` (`Table<T>` statics), boot `psp_runtime::tables::load`; host tests build it from the ROM (`ssb-tables` feature `host-rom`). Holds every `ssb-tablegen` table; build scripts `include!` only layout (names, ids, section offsets) from `OUT_DIR`
 - Version: `ssb-rom/src/pack.rs`; current in [STATUS.md](../STATUS.md)
 - Paletted textures stay paletted ([D-003](decisions/D-003.md))
 - ROM-backed audits in `romtool`: `verify`, `scene-deps`, `residuals`, `matcolors`, `texgen`

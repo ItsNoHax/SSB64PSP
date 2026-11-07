@@ -13,6 +13,15 @@ pub const GAME: &[DArray] = &[
         Elem::I32,
         &[8],
     ),
+    // mv/mvopening/mvopeningrun.c:111.
+    DArray::local(
+        "MV_OPENING_RUN_MAKE_FIGHTERS_OFFSETS",
+        "mvOpeningRunMakeFighters offsets",
+        OVL44,
+        0x8013_2630,
+        Elem::X32,
+        &[8],
+    ),
 ];
 
 pub const ROM: &[DArray] = &[

@@ -42,8 +42,9 @@ cargo +nightly-2026-08-26 install --git https://github.com/ItsNoHax/rust-psp --r
 ## Build
 
 - ROM location: `rom/`, or `SSB64_ROM`
-- Every build reads the ROM: build scripts of `ssb-game` and `ssb-rom` verify SHA-1, generate tables (`crates/ssb-tablegen`)
-- No ROM → build stops, prints how to supply one
+- Builds need no ROM; binaries carry no ROM data ([D-048](docs/decisions/D-048.md))
+- The pack needs the ROM: `romtool pack` reads assets and tables (`crates/ssb-tablegen`) into `ssb64.pak`
+- Host tests read the ROM's tables from it (`SSB64_ROM` or `rom/`)
 
 ```bash
 # 1. The ROM
@@ -63,9 +64,10 @@ cargo test --workspace
 #    -> <crate>/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
-- `cargo run -p ssb-tablegen -- DIR`: writes generated tables into `DIR` for inspection
-- `SSB64_STUB_TABLES=1`: builds empty stub tables; CI type-checks and tests without a ROM
-- Stub build cannot run the game
+- `cargo run -p ssb-tablegen -- DIR`: writes the tables' generated layout files into `DIR` for inspection
+- `SSB64_STUB_TABLES=1`: host tests without a ROM (CI): tests needing the ROM's tables ignored, the rest read empty tables
+- Without it and without a ROM: tests reading a table fail
+- `python3 tools/rom_data_scan.py --rom ROM <ELF or EBOOT.PBP>...`: checks a build carries no ROM data
 
 ## Run
 

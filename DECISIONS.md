@@ -58,7 +58,7 @@
 - [D-032](docs/decisions/D-032.md): VFPU After Profiling
 - [D-033](docs/decisions/D-033.md): ROM and Generated Assets Gitignored (extended by D-048)
 - [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
-- [D-048](docs/decisions/D-048.md): Nothing Read From the ROM Is Committed — Tables Are Generated at Build Time, Goldens Are Pixel Hashes (extends D-033)
+- [D-048](docs/decisions/D-048.md): Nothing Read From the ROM Is Committed or Compiled In — Tables Live in the Pack, Goldens Are Pixel Hashes (extends D-033)
 
 ## Testing & Validation
 

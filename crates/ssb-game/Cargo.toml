@@ -13,7 +13,8 @@ ssb-engine = { workspace = true }
 ssb-tables = { workspace = true }
 
 [build-dependencies]
-# Writes the tables read from the user's ROM into OUT_DIR (`build.rs`).
+# Writes the tables' layout (no ROM data) into OUT_DIR and declares the
+# `ssb64_stub_tables` cfg (`build.rs`).
 ssb-tablegen = { workspace = true }
 
 [features]
