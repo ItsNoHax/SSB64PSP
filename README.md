@@ -60,8 +60,13 @@ cargo test --workspace
 
 # 4. The PSP applications (each is its own cargo-psp crate)
 (cd psp-game && cargo psp --release)          # the game
+(cd psp-installer && cargo psp --release)     # first-launch pack builder (INSTALL.PBP)
 (cd psp-asset-viewer && cargo psp --release)  # debug and render-validation viewer
 #    -> <crate>/target/mipsel-sony-psp/release/EBOOT.PBP
+
+# Game + installer in one folder
+tools/psp-release.sh
+#    -> target/psp-release/ssb64/{EBOOT.PBP,INSTALL.PBP}
 ```
 
 - `cargo run -p ssb-tablegen -- DIR`: writes the tables' generated layout files into `DIR` for inspection
@@ -71,7 +76,10 @@ cargo test --workspace
 
 ## Run
 
-- PSP: copy `EBOOT.PBP` and `ssb64.pak` into one `PSP/GAME/<folder>/`
+- PSP, ROM only: copy `EBOOT.PBP`, `INSTALL.PBP` and your `rom.z64`/`.v64`/`.n64` into one `PSP/GAME/<folder>/`
+  - First launch builds `ssb64.pak` (about 9 min), then returns to the XMB
+  - Launch again to play
+- PSP, with a pack: `EBOOT.PBP` and `ssb64.pak` (from `romtool pack`) in one folder
 - Save: `ssb64.sav` beside them
 - Pack needs 64 MiB mode (PSP-2000 or later)
 - PPSSPP:

@@ -4473,6 +4473,62 @@ pub fn resident_len(head: &[u8]) -> Option<usize> {
     Some(u32_at(head, 20) as usize + u32_at(head, 104) as usize)
 }
 
+/// What a file at a pack search path holds, from its first
+/// [`Header::SIZE`] bytes and its length: the boot's gate in front of the
+/// first-launch installer (RE-588), read without allocating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackState {
+    /// This build's version, every section inside the file.
+    Ok,
+    /// No pack magic.
+    NotAPack,
+    /// Another build's pack.
+    Stale { version: u32 },
+    /// Shorter than its header says: a copy cut short.
+    Truncated { len: u64, expected: u64 },
+}
+
+/// The file length a pack's header implies: the end of its last section
+/// (blob, audio, `TABLES`). `None` for another version's header.
+pub fn pack_len(head: &[u8]) -> Option<u64> {
+    if head.len() < Header::SIZE || u32_at(head, 0) != MAGIC || u32_at(head, 4) != VERSION {
+        return None;
+    }
+    let end = |at: usize| u64::from(u32_at(head, at)) + u64::from(u32_at(head, at + 4));
+    Some(end(20).max(end(116)).max(end(124)))
+}
+
+/// [`PackState`] of a file of `file_len` bytes starting with `head` (up
+/// to [`Header::SIZE`] bytes).
+pub fn pack_state(head: &[u8], file_len: u64) -> PackState {
+    let short = PackState::Truncated {
+        len: file_len,
+        expected: Header::SIZE as u64,
+    };
+    if head.len() < 8 {
+        return if head.len() >= 4 && u32_at(head, 0) != MAGIC {
+            PackState::NotAPack
+        } else {
+            short
+        };
+    }
+    if u32_at(head, 0) != MAGIC {
+        return PackState::NotAPack;
+    }
+    let version = u32_at(head, 4);
+    if version != VERSION {
+        return PackState::Stale { version };
+    }
+    match pack_len(head) {
+        None => short,
+        Some(expected) if file_len < expected => PackState::Truncated {
+            len: file_len,
+            expected,
+        },
+        Some(_) => PackState::Ok,
+    }
+}
+
 /// Where the pack's audio section lies in the file: `(offset, len)`, read
 /// from a header buffer like [`resident_len`]. The section is loaded once at
 /// boot and stays resident (D-049). `None` for another version's header or
@@ -6613,6 +6669,61 @@ mod tests {
         let bytes = w.finish();
         assert_eq!(tables_range(&bytes), None);
         assert_eq!(Pack::open(&bytes).unwrap().tables(), None);
+    }
+
+    /// The installer's gate (RE-588): a whole pack is `Ok` for every
+    /// section layout; a cut copy, another version and a stranger file are
+    /// not, from the header bytes alone.
+    #[test]
+    fn pack_state_reads_version_and_length_from_the_header() {
+        for (audio, tables) in [
+            (Vec::new(), Vec::new()),
+            (alloc::vec![7u8; 5], Vec::new()),
+            (alloc::vec![7u8; 5], (0..40u8).collect::<Vec<u8>>()),
+        ] {
+            let mut w = PackWriter::new();
+            w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
+            w.set_audio(audio);
+            if !tables.is_empty() {
+                w.set_tables(tables);
+            }
+            let bytes = w.finish();
+            let len = bytes.len() as u64;
+            let head = &bytes[..Header::SIZE];
+            assert_eq!(pack_len(head), Some(len));
+            assert_eq!(pack_state(head, len), PackState::Ok);
+            assert_eq!(
+                pack_state(head, len - 1),
+                PackState::Truncated {
+                    len: len - 1,
+                    expected: len
+                }
+            );
+            // A short header is a cut copy, never a pass.
+            assert!(matches!(
+                pack_state(&head[..Header::SIZE - 1], len),
+                PackState::Truncated { .. }
+            ));
+            assert!(matches!(
+                pack_state(&head[..6], 6),
+                PackState::Truncated { .. }
+            ));
+            let mut old = head.to_vec();
+            old[4..8].copy_from_slice(&(VERSION - 1).to_le_bytes());
+            assert_eq!(
+                pack_state(&old, len),
+                PackState::Stale {
+                    version: VERSION - 1
+                }
+            );
+            assert_eq!(pack_len(&old), None);
+        }
+        assert_eq!(
+            pack_state(&[0x80, 0x37, 0x12, 0x40, 0, 0, 0, 0], 8),
+            PackState::NotAPack
+        );
+        assert_eq!(pack_state(b"ROM!", 4), PackState::NotAPack);
+        assert!(matches!(pack_state(&[], 0), PackState::Truncated { .. }));
     }
 
     /// The header's `blob_len`.

@@ -18,19 +18,16 @@
 
 ## Current work
 
-- Landed (batch 185): on-PSP pack build at PSP-1000 memory: paged ROM, blob spill, streamed audio; host peak 41.9 to 10.3 MB; PSP-2000 with 16.5 MB ballast 8.77 min, pack identical, lowest free 4.37 MB (RE-588 item 14).
+- Landed (batch 186): first-launch installer: separate `INSTALL.PBP`, started from the game by LoadExec; PSP-2000 at the PSP-1000 start budget (22.4 MB) 8.78 min, pack identical, lowest free 9.78 MB; 64-byte-aligned sink (writes 129 to 16.5 s) (D-053, RE-588 item 15).
+- Landed (batch 185): on-PSP pack build at PSP-1000 memory: paged ROM, blob spill (RE-588 item 14).
 - Landed (batch 181): tables batch E: 10 motion tables (scripts, motion descs, combat attributes, demo scripts) from the pack (v147, 456 KB section); every generator `no_std`; motion lookups out of line (inlined: +0.15 ms from `.text` pins); PSP mean +0.04 ms (RE-589 item 8). On-PSP pack build 6.20 min, pack identical, lowest free 9.0 MB, after an FPU-trap fix and no file cache on the PSP (RE-588 item 13).
-- Landed (batch 180): tables batch D: 12 hot tables (hurtboxes, joint masks, colour-animation and computer scripts, Mario physics) from the pack (v146); decoded rows in a `.bss` arena, not the heap (heap shift cost +0.12 ms); PSP mean +0.03 ms, r12 16.89 (RE-589 item 7).
-- Landed (batch 179): tables batch C: 32 warm tables (items, weapons, throws, hazards, stat flags) from the pack (v145, 208 KB section); PSP mean -0.04 ms, r12 16.78 (RE-589 item 6).
-- Landed (batch 178): tables batch B: 24 cold `ssb-game` tables (HUD, menus, 1P, staff roll, opening) from the pack (v144, 188 KB section). Electric r12 regression bisected to pack content of batch 172, not code; cause below texture level (RE-589 item 5).
-- Landed (batch 172): texture compensation only for the owner's 37 textures; coverage and fits skipped for the rest; host `romtool pack` 122 to 4.3 s; 55 goldens rebaselined (owner-approved; RE-588 item 8).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Open: real N64 VS menu boot. Gaps in `PLAN.md`.
 
 ## Next
 
 1. Electric `vs4@2170` r12 16.84 ms, over the 16.7 target: 0.33 ms from batch 172 pack content, cause not found (RE-589 items 5, 7, 8). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
-2. ROM-free release (PLAN, RE-588): first-launch installer (z64/v64/n64, XMB exit, PSP-1000).
+2. Owner hardware tests: XMB hand-off EBOOT -> INSTALL.PBP, HOME mid-build, NoSpace screen, PSP-1000 run (RE-588 item 15 pending list).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -41,14 +38,14 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 185 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 186 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
 | `cargo test --workspace` with `SSB64_ROM` | pass |
 | `cargo test --workspace`, `SSB64_STUB_TABLES=1`, no ROM | pass |
 | `cargo +1.98.0 clippy -D warnings`, `cargo fmt --all --check` | pass |
-| Both PSP release builds | compile |
+| Three PSP release builds (game, installer, viewer) | compile |
 | Goldens | full matrix 286 of 286, verify --twice |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
 | Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |

@@ -56,6 +56,7 @@ crates/ssb-game/src/spgame/setup_tests.rs	N64_STAGE_START	test fixture: N64 meas
 crates/ssb-game/src/spgame/staffroll.rs	CAMERA_EYE	function-body constants: scStaffrollMakeCamera's eye (scstaffroll.c:2177-2180); the dGCPerspDefault projection it names is not copied
 crates/ssb-game/src/stage/zebes.rs	ACID_STEPS	layout: decodes the pack's ZebesAcid table (ssb_tablegen::battle_data); its literals are the row shape
 crates/ssb-game/src/wpeffect.rs	CLASH_FX_MAX	port constant: a queue capacity computed from the weapon-pair count
+crates/ssb-pack/src/install.rs	PHASES	port constant: the installer's progress phases, weighted by their PSP-2000 times (RE-588)
 crates/ssb-rom/src/audio.rs	SBK	layout: the cartridge ROM range of S1_music.sbk (the linker section symbol that dSYAudioPublicSettings.sbk_start points at) and its size
 crates/ssb-rom/src/bonus1.rs	MODEL	link-time labels: llITBonus1ObjectFileID and the target tree's DObjDesc offset in it; the module doc names dSC1PBonusStageTargetDescs, which bonus1_courses.rs generates
 crates/ssb-rom/src/campaign.rs	CLEAR	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
@@ -80,7 +81,6 @@ crates/ssb-rom/src/filter_compensation.rs	COMPENSATED	layout: archive file IDs a
 crates/ssb-rom/src/ground_obj.rs	ANIMS	link-time labels: ll*AnimJoint offsets that the grJungle/grYamabuki/grZebes/grInishie/grCastle/itMonster/itPakkun functions pass as immediates, ordered and named by the port; the dGRPupupuWhispy* entries are indices into the generated arrays
 crates/ssb-rom/src/ground_obj.rs	OBJECTS	link-time labels (ll*DObjDesc offsets that grPupupuInitAll, grJungleMakeTaruCann, ... pass as immediates) plus port fields (display link, instance count, build kind) that no d* array holds; follow-up: derive the object list from the stage init functions
 crates/ssb-rom/src/menu_pack.rs	BACKUP_CLEAR	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
-crates/ssb-rom/src/menu_pack.rs	CHARACTERS	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/menu_pack.rs	MAIN	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/menu_pack.rs	ONE_P	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/menu_pack.rs	OPTION	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
@@ -112,7 +112,7 @@ crates/ssb-rom/src/sprite.rs	ITEM_ARROW	layout: a SpriteFile manifest (the file 
 crates/ssb-rom/src/sprite.rs	MN_MAPS	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
 crates/ssb-rom/src/sprite.rs	ORTHO	port constants: neighbour offsets for the sprite edge fill
 crates/ssb-rom/src/sprite.rs	PLAYERS_1P_MODE	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
-crates/ssb-rom/src/sprite.rs	PLAYERS_COMMON	layout: a SpriteFile manifest (the file ID and its ll*Sprite offsets from reloc_data.us.h), which the pack builder walks; no d* array holds it
+crates/ssb-rom/src/sprite.rs	PLAYERS_COMMON_LABELS	layout: the ll*Sprite offsets (reloc_data.us.h) mnplayersvs.c names as code immediates; its local arrays' labels are read from the ROM
 crates/ssb-rom/src/sprite.rs	SELECT_COMMON	link-time labels: llMNSelectCommonFileID and llMNSelectCommonStoneBackgroundSprite, which the mnPlayers* scenes pass as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
 crates/ssb-rom/src/sprite.rs	STOCKS_ZAKO	link-time labels: llFTStocksZakoFileID and llFTStocksZakoSprite, which mnPlayers1PGame passes as code immediates; the d*FileIDs array is named as the scene loader that loads the file, not copied
 crates/ssb-rom/src/sprite.rs	TRAINING_TABLES	layout: offsets, counts and strides of the Training sprite tables in their file

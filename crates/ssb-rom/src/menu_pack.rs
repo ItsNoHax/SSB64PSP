@@ -94,7 +94,7 @@ impl MenuScene {
             MenuScene::BackupClear => &[BACKUP_CLEAR, BACKUP_CLEAR_HEADER],
             MenuScene::Data => &[COMMON_TABS, COMMON_DECALS, DATA],
             MenuScene::VsRecord => &[VS_RECORD, DATA_COMMON],
-            MenuScene::Characters => &[CHARACTERS, DATA_COMMON],
+            MenuScene::Characters => CHARACTERS_SPRITES.get(),
             MenuScene::Title => &[TITLE, TITLE_FIRE],
             MenuScene::ModeSelect => &[MAIN],
             MenuScene::OnePMode => &[COMMON_TABS, COMMON_DECALS, COMMON_GAME_MODE, ONE_P],
@@ -388,17 +388,35 @@ pub const VS_RECORD: SpriteFile = SpriteFile {
     ],
 };
 
-/// File 0x10, `MNCharacters`: every sprite `mncharacters.c` names.
-pub const CHARACTERS: SpriteFile = SpriteFile {
-    file: 0x10,
-    offsets: &[
-        0x630, 0x1230, 0x28F0, 0x2F98, 0x33A0, 0x4290, 0x4910, 0x4F78, 0x5398, 0x58F8, 0x6828,
-        0x6E48, 0x7628, 0x82E0, 0x8828, 0xACA8, 0xD128, 0xF5A8, 0x11A28, 0x13EA8, 0x16328, 0x187A8,
-        0x1AC28, 0x1D0A8, 0x1F528, 0x219A8, 0x23E28, 0x25058, 0x25AB8, 0x26518, 0x26F78, 0x279D8,
-        0x28438, 0x28E98, 0x298F8, 0x2A358, 0x2ADB8, 0x2B818, 0x2C278, 0x2CCD8, 0x2CDA8, 0x2CE78,
-        0x2CF48, 0x2D088, 0x2D1C8, 0x2D308, 0x2D448, 0x2D588, 0x2D6C8, 0x2D808, 0x2D948, 0x2DA88,
-        0x2DBC8, 0x2DD08, 0x2DE48, 0x2DF88, 0x2E0C8, 0x2E208, 0x2E348, 0x2E488, 0x2E5C8, 0x2E740,
-        0x2E888, 0x2E9C8, 0x2EB08, 0x2EC48, 0x2ED88, 0x2EEC8, 0x2F008, 0x2F148, 0x2F288, 0x2F3C8,
-        0x2F508, 0x2F648, 0x2F788, 0x2F8C8, 0x2FA08, 0x30888,
-    ],
-};
+/// File 0x10, `MNCharacters`: every sprite `mncharacters.c` names, in the
+/// file's label order.
+///
+/// - Its local arrays, read from the ROM (D-048):
+///   `mnCharactersMakeName` `offsets`, `mnCharactersMakeStory` `offsets`,
+///   `mnCharactersMakeWorks` `offsets`, `mnCharactersUpdateMotionName`
+///   `motion_names` (Mario's and Luigi's rows share two) and
+///   `motion_inputs`.
+/// - The code's immediates ([`CHARACTERS_LABELS`]).
+pub static CHARACTERS: ssb_tables::Decoded<SpriteFile> = ssb_tables::Decoded::new(|| {
+    use crate::d_arrays as d;
+    SpriteFile {
+        file: 0x10,
+        offsets: crate::sprite::in_label_order(&[
+            &CHARACTERS_LABELS,
+            &*d::MN_CHARACTERS_MAKE_NAME_OFFSETS,
+            &*d::MN_CHARACTERS_MAKE_STORY_OFFSETS,
+            &*d::MN_CHARACTERS_MAKE_WORKS_OFFSETS,
+            d::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_NAMES.as_flattened(),
+            &*d::MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_INPUTS,
+        ]),
+    }
+});
+
+/// [`CHARACTERS`]' labels the code names directly (`reloc_data.us.h`):
+/// `Label`, `NameTagDefault`, `NameTagTall`, `WorksWallpaper`,
+/// `StoryWallpaper`.
+const CHARACTERS_LABELS: [u32; 5] = [0x630, 0x1230, 0x28F0, 0x25058, 0x30888];
+
+/// [`MenuScene::Characters`]' sprites.
+static CHARACTERS_SPRITES: ssb_tables::Decoded<[SpriteFile; 2]> =
+    ssb_tables::Decoded::new(|| [*CHARACTERS, DATA_COMMON]);

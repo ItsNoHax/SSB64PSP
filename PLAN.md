@@ -123,7 +123,7 @@ the Media Engine (batch 159), started by the game's own kernel module
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Owner's 37 compensated textures (RE-588 item 8). Portable packer `ssb-pack` (`no_std`), every `ssb-tablegen` table in the pack, builds without a ROM, EBOOT scan clean (RE-589); PSP-1000 budget (16.5 MB ballast): 8.77 min, identical, lowest free 4.4 MB (RE-588 item 14). Remaining: first-launch installer (builds the pack on first launch, accepts z64/v64/n64, exits to the XMB, runs on a PSP-1000). Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
+| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Owner's 37 compensated textures (RE-588 item 8). Portable packer `ssb-pack` (`no_std`), every `ssb-tablegen` table in the pack, builds without a ROM, EBOOT scan clean (RE-589); first-launch installer `INSTALL.PBP` ([D-053](docs/decisions/D-053.md)): PSP-2000 at the PSP-1000 start budget 8.78 min, identical, lowest free 9.8 MB (RE-588 item 15). Remaining: owner XMB hand-off test (EBOOT -> INSTALL.PBP), HOME mid-build, NoSpace screen, a real PSP-1000 run. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
 
 ## Completed
 

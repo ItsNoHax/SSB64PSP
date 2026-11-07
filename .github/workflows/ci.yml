@@ -138,6 +138,54 @@ jobs:
           path: psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP
           if-no-files-found: error
 
+  psp_installer:
+    name: PSP installer build (INSTALL.PBP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Do not rely on directory discovery here: the release toolchain needs
+      # to be reproducible even when a prior action changes the root override.
+      # rust-psp reaches into unstable core internals and only builds on a
+      # narrow band of nightlies.
+      - name: Install pinned nightly
+        run: |
+          rustup toolchain install "$PSP_NIGHTLY" --profile minimal --component rust-src
+          rustup run "$PSP_NIGHTLY" rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: psp-installer
+
+      - name: Install pinned cargo-psp from the project fork
+        run: cargo +${{ env.PSP_NIGHTLY }} install --git https://github.com/ItsNoHax/rust-psp --rev "$RUST_PSP_REV" cargo-psp --locked
+
+      - name: Build EBOOT.PBP
+        working-directory: psp-installer
+        # rust-psp's linker emits benign abicalls warnings, so -D warnings
+        # would fail the build for no reason here. Unset rather than empty:
+        # any RUSTFLAGS hides `.cargo/config.toml`'s link arguments (RE-471).
+        run: env -u RUSTFLAGS cargo +${{ env.PSP_NIGHTLY }} psp --release
+
+      - name: Verify the artifact is a real PBP
+        working-directory: psp-installer
+        run: |
+          PBP=target/mipsel-sony-psp/release/EBOOT.PBP
+          test -f "$PBP" || { echo "::error::EBOOT.PBP not produced"; exit 1; }
+          # PBP files start with 0x00 'P' 'B' 'P' == 00504250.
+          magic=$(head -c 4 "$PBP" | xxd -p)
+          if [ "$magic" != "00504250" ]; then
+            echo "::error::unexpected PBP magic: $magic (expected 00504250)"
+            exit 1
+          fi
+          ls -la "$PBP"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: psp-installer-EBOOT.PBP
+          path: psp-installer/target/mipsel-sony-psp/release/EBOOT.PBP
+          if-no-files-found: error
+
   # Guard against ever committing copyrighted material. The docs job's
   # validate_docs.py (check 9) also rejects tracked images outside the XMB
   # artwork, packs, saves and generated tables.

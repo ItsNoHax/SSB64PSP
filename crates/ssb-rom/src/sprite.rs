@@ -511,17 +511,52 @@ pub const ITEM_ARROW: SpriteFile = SpriteFile {
 /// `GreenLabel`, `BlueLabel`, `ArrowL`, `ArrowR`, `ReadyToFightText`,
 /// `ReadyBanner` and `BackButton`. `RedCard` is packed once per gate LUT
 /// ([`GATE_LUTS`]).
-pub const PLAYERS_COMMON: SpriteFile = SpriteFile {
-    file: 17,
-    offsets: &[
-        0x878, 0xA58, 0xC38, 0xE18, 0xFF8, 0x1108, 0x1218, 0x1378, 0x14D8, 0x1838, 0x1B18, 0x1FF8,
-        0x2358, 0x25B8, 0x28E8, 0x2BA0, 0x2ED8, 0x32F8, 0x35B0, 0x3998, 0x3DB8, 0x3EF0, 0x48B0,
-        0x5270, 0x5388, 0x5440, 0x5558, 0x5668, 0x5778, 0x5888, 0x5998, 0x5AA8, 0x5BB8, 0x5CC8,
-        0x6048, 0x63C8, 0x6748, 0x6F88, 0x76E8, 0x8168, 0x8268, 0x8368, 0x8468, 0x8568, 0x9048,
-        0x9B28, 0xA608, 0xB0E8, 0xBBC8, 0xCDB0, 0xDFA0, 0xE3C8, 0xE7E8, 0xEC08, 0xECE8, 0xEDC8,
-        0xF448, 0xF530, 0x115C8,
-    ],
-};
+///
+/// - The labels `mnplayersvs.c` lists in its local arrays are read from
+///   the ROM (D-048): `mnPlayersVSMakePlayerKind` `offsets` (1P to 4P),
+///   `mnPlayersVSMakeNameAndEmblem` `name_offsets`,
+///   `mnPlayersVSMakeGameRuleNumber` `offsets` (the dark digits),
+///   `mnPlayersVSUpdatePlayerKindSelect` `offsets` (the labels),
+///   `mnPlayersVSUpdateCursor` `cursor_offsets` and `num_offsets`,
+///   `mnPlayersVSUpdatePuck` `offsets`.
+/// - The rest are the code's immediates ([`PLAYERS_COMMON_LABELS`]).
+pub static PLAYERS_COMMON: ssb_tables::Decoded<SpriteFile> = ssb_tables::Decoded::new(|| {
+    use crate::d_arrays as d;
+    SpriteFile {
+        file: 17,
+        offsets: in_label_order(&[
+            &PLAYERS_COMMON_LABELS,
+            &*d::MN_PLAYERS_VS_MAKE_PLAYER_KIND_OFFSETS,
+            &*d::MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_NAME_OFFSETS,
+            &*d::MN_PLAYERS_VS_MAKE_GAME_RULE_NUMBER_OFFSETS,
+            &*d::MN_PLAYERS_VS_UPDATE_PLAYER_KIND_SELECT_OFFSETS,
+            &*d::MN_PLAYERS_VS_UPDATE_CURSOR_CURSOR_OFFSETS,
+            &*d::MN_PLAYERS_VS_UPDATE_CURSOR_NUM_OFFSETS,
+            &*d::MN_PLAYERS_VS_UPDATE_PUCK_OFFSETS,
+        ]),
+    }
+});
+
+/// [`PLAYERS_COMMON`]'s labels the code names directly
+/// (`reloc_data.us.h`): `CPText`, `HandicapText`, `CPLevelText`,
+/// `StartText`, `PressText`, `InfinityDark`, `TimeSelector`,
+/// `StockSelector`, `SmashLogoCardLeft`, `...Right`, `RedLabel`,
+/// `GreenLabel`, `BlueLabel`, `ArrowL`, `ArrowR`, `ReadyToFightText`,
+/// `ReadyBanner`, `BackButton`.
+const PLAYERS_COMMON_LABELS: [u32; 18] = [
+    0xFF8, 0x1108, 0x1218, 0x1378, 0x14D8, 0x3EF0, 0x48B0, 0x5270, 0xCDB0, 0xDFA0, 0xE3C8, 0xE7E8,
+    0xEC08, 0xECE8, 0xEDC8, 0xF448, 0xF530, 0x115C8,
+];
+
+/// `parts` as one sprite list in the file's label order (ascending
+/// offsets, as `reloc_data.us.h` lists them), each offset once (a local
+/// array may name a sprite twice).
+pub(crate) fn in_label_order(parts: &[&[u32]]) -> &'static [u32] {
+    let mut v: Vec<u32> = parts.iter().flat_map(|p| p.iter().copied()).collect();
+    v.sort_unstable();
+    v.dedup();
+    v.leak()
+}
 
 /// File 17's `RedCardSprite`, the player panel `mnPlayersVSMakeGate` makes.
 pub const GATE_CARD: u32 = 0x104B0;
@@ -731,7 +766,7 @@ pub static FILES: ssb_tables::Decoded<alloc::vec::Vec<SpriteFile>> =
             *DIGITS,
             *PLAYER_TAGS,
             ITEM_ARROW,
-            PLAYERS_COMMON,
+            *PLAYERS_COMMON,
             *MN_COMMON,
             *PORTRAITS,
             *EMBLEM_SPRITES,

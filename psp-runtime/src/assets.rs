@@ -125,16 +125,89 @@ impl LoadError {
     }
 }
 
-/// Paths tried, in order.
+/// Paths tried, in order: [`PACK_NAME`] in each of [`SEARCH_ROOTS`].
 ///
 /// A loose EBOOT run from PPSSPP resolves relative paths against its own
-/// directory; an installed game lives under `ms0:/PSP/GAME`. Trying both means
-/// the same build works in the emulator and on a real memory stick.
+/// directory (rust-psp's start-up changes to the EBOOT's directory); an
+/// installed game lives under `ms0:/PSP/GAME`. Trying both means the same
+/// build works in the emulator and on a real memory stick.
 const SEARCH_PATHS: &[&str] = &[
     "ssb64.pak\0",
     "ms0:/PSP/GAME/ssb64/ssb64.pak\0",
     "ms0:/ssb64.pak\0",
 ];
+
+/// The directories of [`SEARCH_PATHS`], in order: the EBOOT's own
+/// (relative), the standard install, the stick's root. The first-launch
+/// installer looks for the ROM in them too (RE-588).
+pub const SEARCH_ROOTS: [&str; 3] = ["", "ms0:/PSP/GAME/ssb64/", "ms0:/"];
+
+/// The pack's file name in each root.
+pub const PACK_NAME: &str = "ssb64.pak";
+
+const _: () = {
+    // Each search path is its root, the pack's name and a NUL.
+    const fn joins(path: &str, root: &str, name: &str) -> bool {
+        let (p, r, n) = (path.as_bytes(), root.as_bytes(), name.as_bytes());
+        if p.len() != r.len() + n.len() + 1 || p[p.len() - 1] != 0 {
+            return false;
+        }
+        let mut i = 0;
+        while i < p.len() - 1 {
+            let want = if i < r.len() { r[i] } else { n[i - r.len()] };
+            if p[i] != want {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+    let mut i = 0;
+    while i < SEARCH_ROOTS.len() {
+        assert!(joins(SEARCH_PATHS[i], SEARCH_ROOTS[i], PACK_NAME));
+        i += 1;
+    }
+    assert!(SEARCH_PATHS.len() == SEARCH_ROOTS.len());
+};
+
+/// The pack file [`load_pack`] would open: the first search path that
+/// opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackFile {
+    /// Index into [`SEARCH_ROOTS`].
+    pub root: usize,
+    pub len: u64,
+    pub state: ssb_rom::pack::PackState,
+}
+
+/// The boot's gate in front of the first-launch installer (RE-588): the
+/// pack [`load_pack`] would open and what its header says, or `None` when
+/// no search path opens. Reads the header only; allocates nothing.
+pub fn pack_status() -> Option<PackFile> {
+    for (root, path) in SEARCH_PATHS.iter().enumerate() {
+        // SAFETY: path is a NUL-terminated literal.
+        let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777) };
+        if fd.0 < 0 {
+            continue;
+        }
+        let mut head = [0u8; ssb_rom::pack::Header::SIZE];
+        // SAFETY: an open descriptor; `head` outlives the read.
+        let (len, n) = unsafe {
+            let len = sys::sceIoLseek(fd, 0, sys::IoWhence::End);
+            sys::sceIoLseek(fd, 0, sys::IoWhence::Set);
+            let n = sys::sceIoRead(
+                fd,
+                head.as_mut_ptr() as *mut core::ffi::c_void,
+                head.len() as u32,
+            );
+            sys::sceIoClose(fd);
+            (len.max(0) as u64, n.max(0) as usize)
+        };
+        let state = ssb_rom::pack::pack_state(&head[..n.min(head.len())], len);
+        return Some(PackFile { root, len, state });
+    }
+    None
+}
 
 /// Where [`read_capture_scene`] looks for `capture_scene.txt`: the same
 /// three locations, in the same order, as the pack.

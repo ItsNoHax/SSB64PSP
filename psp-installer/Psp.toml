@@ -1,0 +1,6 @@
+title = "SSB64PSP setup"
+
+# Started by the game (`ssb_psp_runtime::launch`), never from the XMB: no
+# XMB artwork. MEMSIZE=1 as the game: the most memory on a PSP-2000 or
+# later; a PSP-1000 ignores it (RE-288).
+memsize = 1

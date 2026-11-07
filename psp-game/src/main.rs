@@ -2001,22 +2001,29 @@ fn stack_set() -> usize {
     unsafe { core::ptr::read_volatile(&STACK_SET[1]) as usize }
 }
 
-#[cfg_attr(any(feature = "fcr31_probe", feature = "pack_probe"), allow(unreachable_code))]
+#[cfg_attr(feature = "fcr31_probe", allow(unreachable_code))]
 fn psp_main() {
     ssb_psp_runtime::fpu::init_thread(ssb_psp_runtime::fpu::GameThread::Main);
     #[cfg(feature = "fcr31_probe")]
     ssb_psp_runtime::fcr31_probe::run();
-    // A test build takes away the memory a smaller launch lacks (RE-475):
-    // before the pack probe too, which runs at that launch's budget
-    // (RE-588: the PSP-1000).
+    // A test build takes away the memory a smaller launch lacks (RE-475).
     #[cfg(feature = "memory_ballast")]
     if let Some(target) = ssb_psp_runtime::memory::ballast_target() {
         let held = ssb_psp_runtime::memory::hold_ballast(target);
         boot_log::log_args(format_args!("ballast target={target} held={held}"));
     }
-    // Before anything the game allocates, so the build has the whole heap.
-    #[cfg(feature = "pack_probe")]
-    ssb_psp_runtime::pack_probe::run();
+    // No valid pack (missing, another version, cut short): LoadExec the
+    // first-launch installer (`psp-installer`, its own EBOOT beside this
+    // one), which builds it from the ROM and quits to the XMB.
+    if !matches!(
+        ssb_psp_runtime::assets::pack_status(),
+        Some(ssb_psp_runtime::assets::PackFile {
+            state: ssb_rom::pack::PackState::Ok,
+            ..
+        })
+    ) {
+        ssb_psp_runtime::launch::start_installer();
+    }
     #[cfg(not(feature = "boot_log"))]
     boot_log::log("psp_main");
     // The stack before the pin (RE-583).

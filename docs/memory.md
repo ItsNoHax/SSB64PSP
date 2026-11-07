@@ -20,7 +20,8 @@
   - `battle` and `opening` scenes: fighter figatrees stream per status; 20 pinned slots per kind plus a lazy 64 KiB LRU slab per anim kind, sync sector-superset read on a miss (`stream_pool.rs`, `scene_files.rs` `stream_miss`; RE-572, RE-573)
 - Scene peaks, boot and XMB free bytes (PSP-2000): RE-475
   - XMB launch: 4 MiB less than PSPLink
-- On-PSP pack build (`pack_probe`): `PagedRom` 16 KiB x 16 and blob spill file keep the build under the PSP-1000 budget; lowest free 4.37 MB at a 16.5 MB ballast (RE-588 item 14)
+- On-PSP pack build (`psp-installer`, separate EBOOT, [D-053](decisions/D-053.md)): `PagedRom` 16 KiB x 16 and blob spill file keep the build under the PSP-1000 budget; lowest free 4.37 MB at a 16.5 MB ballast (RE-588 items 14, 15)
+- Installer budget: PSP-1000 start free about 22.4 MB; lowest free 9.78 MB (RE-588 item 15)
 - Feature `memory_ballast`: reproduces any budget under PSPLink or PPSSPP
 - `MEMSIZE=1` stays set
 - PSP-1000:

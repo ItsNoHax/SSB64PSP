@@ -51,6 +51,7 @@
 - [D-049](docs/decisions/D-049.md): The N64 Audio System Is Ported Whole and Synthesized at Run Time on Its Own Thread
 - [D-050](docs/decisions/D-050.md): FPU Trap Enables Stay As the PSP Arms Them; Every Trap Is a Bug Fixed With the N64's Result
 - [D-052](docs/decisions/D-052.md): One Portable Fighter Tick in crates/ssb-pose, Run by psp-runtime and the Host Tests
+- [D-053](docs/decisions/D-053.md): The First-Launch Pack Build Is a Separate Installer EBOOT, Started by LoadExec
 
 ## Engineering Process
 

@@ -107,18 +107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ssb-pack"
-version = "0.1.0"
-dependencies = [
- "libm",
- "ssb-engine",
- "ssb-game",
- "ssb-rom",
- "ssb-tablegen",
- "ssb-tables",
-]
-
-[[package]]
 name = "ssb-pose"
 version = "0.1.0"
 dependencies = [
@@ -135,7 +123,6 @@ dependencies = [
  "psp",
  "ssb-engine",
  "ssb-game",
- "ssb-pack",
  "ssb-pose",
  "ssb-rom",
  "ssb-tables",

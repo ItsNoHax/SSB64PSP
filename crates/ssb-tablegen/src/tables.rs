@@ -682,7 +682,7 @@ pub const IDS: &[TableDesc] = &[
     TableDesc {
         name: "AltWarning",
         kind: Kind::I16,
-        len: Len::Exact(41),
+        len: Len::Exact(crate::ground::GROUNDS),
         doc: "`MPGroundData::alt_warning` by `GRKind`.",
         read: crate::ground::alt_warning_bytes,
     },
@@ -921,7 +921,7 @@ const _: () = {
     );
     assert!(b::ZEBES_ACID.1 == 16 && b::SECTOR_MAP_POSITIONS_X.1 == 3);
     assert!(b::SECTOR_LASER_COUNTS.1 == 8 && b::SECTOR_PILOT_IDS.1 == 56);
-    assert!(b::SECTOR_PILOT_WINDOWS.1 == 6 && crate::ground::GROUND_FILE_INFOS.len() == 41);
+    assert!(b::SECTOR_PILOT_WINDOWS.1 == 6 && crate::ground::GROUNDS == 41);
     assert!(crate::ground_effect::DESC_COUNT == 24);
     assert!(crate::fighters::FIGHTERS.len() == 27 && crate::computer::FIGHTERS.len() == 12);
     assert!(crate::colanim::SCRIPTS.len() == 93 && crate::colanim::DESCS.1 == 86);

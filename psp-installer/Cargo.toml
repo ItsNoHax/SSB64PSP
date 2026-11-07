@@ -1,0 +1,34 @@
+[package]
+name = "ssb64-psp-installer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Layer C: the first-launch installer, `INSTALL.PBP` beside the game's EBOOT: builds `ssb64.pak` from the user's ROM on the PSP (RE-588)."
+
+# Deliberately outside the root workspace, for the same reason as
+# `psp-game/`: this crate targets mipsel-sony-psp, is no_std, and is built
+# with `cargo psp`. See the root Cargo.toml.
+[workspace]
+
+[dependencies]
+psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "6c3f2c338d93e6fbe346dae0610ac7e11eadf61f" }
+# The installer itself (`ssb_psp_runtime::installer`), which runs
+# `ssb-pack`'s build.
+ssb-psp-runtime = { path = "../psp-runtime", features = ["installer"] }
+ssb-pack = { path = "../crates/ssb-pack", default-features = false }
+
+[features]
+# Holds the memory that leaves `ballast.txt`'s byte count free at the
+# installer's start, so a PPSSPP or PSPLink run sees a PSP-1000's budget
+# (`ssb_psp_runtime::memory::hold_ballast`, RE-475, RE-588). Off by default.
+memory_ballast = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# No debug info in the shipped EBOOT, as `psp-game`.
+debug = false
+
+[profile.dev]
+opt-level = 1

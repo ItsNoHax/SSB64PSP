@@ -88,6 +88,26 @@ pub const GAME: &[&[DArray]] = &[
     lbcommon::GAME,
 ];
 
+/// [`GAME`] arrays `ssb-rom`'s `d_arrays.rs` also has a view of: the same
+/// bytes of the `TABLES` section, so the pack does not grow. Their
+/// `&ll*Sprite` labels are part of a file's sprite list
+/// (`ssb_rom::sprite::PLAYERS_COMMON`, `ssb_rom::menu_pack::CHARACTERS`).
+#[cfg(feature = "std")]
+pub const ROM_VIEWS: &[&str] = &[
+    "MN_CHARACTERS_MAKE_STORY_OFFSETS",
+    "MN_CHARACTERS_MAKE_NAME_OFFSETS",
+    "MN_CHARACTERS_MAKE_WORKS_OFFSETS",
+    "MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_NAMES",
+    "MN_CHARACTERS_UPDATE_MOTION_NAME_MOTION_INPUTS",
+    "MN_PLAYERS_VS_MAKE_PLAYER_KIND_OFFSETS",
+    "MN_PLAYERS_VS_MAKE_NAME_AND_EMBLEM_NAME_OFFSETS",
+    "MN_PLAYERS_VS_MAKE_GAME_RULE_NUMBER_OFFSETS",
+    "MN_PLAYERS_VS_UPDATE_PLAYER_KIND_SELECT_OFFSETS",
+    "MN_PLAYERS_VS_UPDATE_CURSOR_CURSOR_OFFSETS",
+    "MN_PLAYERS_VS_UPDATE_CURSOR_NUM_OFFSETS",
+    "MN_PLAYERS_VS_UPDATE_PUCK_OFFSETS",
+];
+
 /// Into `ssb-rom`'s `d_arrays.rs`.
 pub const ROM: &[&[DArray]] = &[
     mncharacters::ROM,

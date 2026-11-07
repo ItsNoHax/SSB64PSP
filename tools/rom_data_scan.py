@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Scan built binaries for ROM data (D-048: the EBOOT carries none).
 
-usage: rom_data_scan.py --rom ROM [--files DIR] [--min N] [--text-min N] BINARY...
+usage: rom_data_scan.py --rom ROM [--files DIR] [--min N] [--text-min N] [BINARY...]
 
 - Corpus: the whole ROM (code, overlays, compressed archive) and every
   decompressed archive file (`romtool extract ROM --out DIR` -> DIR/files;
   run here into a temporary directory without --files), each as stored,
   16-bit swapped and 32-bit swapped (a table converted to the PSP's
   little-endian words still matches).
-- BINARY: an ELF or PRX (its allocated PROGBITS sections, hits named by
-  symbol), an EBOOT.PBP (DATA.PSP as a PRX, PARAM.SFO and the XMB files
+- BINARY: default `DEFAULT_TARGETS` that exist (the release ELFs of the
+  game, the installer and the asset viewer, and `romtool`); an ELF or PRX
+  (its allocated PROGBITS sections, hits named by symbol), an EBOOT.PBP (DATA.PSP as a PRX, PARAM.SFO and the XMB files
   whole) or any other file (whole).
 - Hit: a run the binary shares with the corpus, of at least `--min` bytes
   (default 32) in data, `--text-min` (default 64) in code (MIPS idioms the
@@ -78,12 +79,14 @@ def progression(run, width):
 def trivial(run):
     """Fewer than 8 distinct byte values, periodic with a period of 16 bytes
     or less (zeros, 0xFF fill, a repeated word), or an arithmetic
-    progression of 16- or 32-bit words."""
+    progression of 16- or 32-bit words, alone or between zero fill (an
+    index ramp 0, 1, 2, ... after the zero padding before it)."""
     if len(set(run)) < 8:
         return True
     if any(run[p:] == run[:-p] for p in range(1, 17)):
         return True
-    return progression(run, 4) or progression(run, 2)
+    core = run.strip(b"\0")
+    return any(progression(r, w) for r in (run, core) for w in (4, 2))
 
 
 def swapped(data, width):
@@ -263,6 +266,18 @@ def load_corpus(rom, files_dir):
 KNOWN = [
     ("rom", 0x1AC410, 0x1AC410 + 0x800,
      "rust-psp psp::debug MSX_FONT: the same 8x8 MSX glyphs as the ROM's"),
+    ("rom", 0x3DA4C, 0x3DA84,
+     "Rust core's f32 powers of ten 1e0..1e10 (dec2flt fast path, romtool): "
+     "the same eleven floats as the N64 main segment's, with their zero fill"),
+]
+
+
+# The release binaries scanned when none is named (each one that exists).
+DEFAULT_TARGETS = [
+    "psp-game/target/mipsel-sony-psp/release/ssb64-psp-game",
+    "psp-installer/target/mipsel-sony-psp/release/ssb64-psp-installer",
+    "psp-asset-viewer/target/mipsel-sony-psp/release/ssb64-psp-asset-viewer",
+    "target/release/romtool",
 ]
 
 
@@ -279,8 +294,13 @@ def main():
     ap.add_argument("--files", help="romtool extract's files/ directory")
     ap.add_argument("--min", type=int, default=32)
     ap.add_argument("--text-min", type=int, default=64)
-    ap.add_argument("binaries", nargs="+")
+    ap.add_argument("binaries", nargs="*")
     args = ap.parse_args()
+    if not args.binaries:
+        args.binaries = [p for p in (os.path.join(ROOT, t) for t in DEFAULT_TARGETS)
+                         if os.path.exists(p)]
+        if not args.binaries:
+            sys.exit("no binary named and no default target built")
     if min(args.min, args.text_min) < 31:
         sys.exit("--min and --text-min must be at least 31 (16-byte anchors)")
 

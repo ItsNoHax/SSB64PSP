@@ -165,7 +165,19 @@ pub fn build_with<'r>(
     let ground_graphs = ground_layer1_graphs(&loaded);
     let transition_graphs = lb_transition_graphs();
 
+    // The installer's progress line: decompressed bytes, which follow the
+    // phase's time more closely than file ids (most of the time goes to
+    // the first fifth of the ids).
+    let words = |id: u32| {
+        archive
+            .entry(id)
+            .map_or(0, |e| usize::from(e.decompressed_words))
+    };
+    let total_words: usize = (0..archive.len() as u32).map(words).sum();
+    let mut done_words = 0;
     for id in 0..archive.len() as u32 {
+        ctx.log.progress(done_words, total_words);
+        done_words += words(id);
         if only_file.is_some_and(|f| f != id) {
             continue;
         }

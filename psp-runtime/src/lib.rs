@@ -24,12 +24,13 @@ pub mod heap;
 #[cfg(all(feature = "profile_hw", target_os = "psp"))]
 pub mod hwcount;
 pub mod input;
+pub mod launch;
+#[cfg(all(feature = "installer", target_os = "psp"))]
+pub mod installer;
 pub mod memory;
 pub mod me;
 pub mod meshdraw;
 pub mod movie;
-#[cfg(all(feature = "pack_probe", target_os = "psp"))]
-pub mod pack_probe;
 pub mod particles;
 pub mod profile;
 pub mod reverb_vfpu;

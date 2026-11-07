@@ -39,20 +39,6 @@ const LAUNCH_FLAG: &[u8] = b"fcr31_launch.txt\0";
 /// The watchdog's delay before it relaunches PSPLink.
 const WATCHDOG_US: u32 = 10_000_000;
 
-/// `struct SceKernelLoadExecVSHParam` (pspsdk `psploadexec_kernel.h`).
-#[repr(C)]
-struct LoadExecVshParam {
-    size: u32,
-    args: u32,
-    argp: *const c_void,
-    key: *const u8,
-    vshmain_args_size: u32,
-    vshmain_args: *const c_void,
-    configfile: *const u8,
-    unk4: u32,
-    unk5: u32,
-}
-
 /// Records the FCR31 values, appends them to [`LOG`] and LoadExecs the
 /// next role's EBOOT; retries until the watchdog relaunches PSPLink.
 pub fn run() -> ! {
@@ -84,7 +70,12 @@ fn probe_thread() -> u32 {
         fpu::init_thread(GameThread::Audio);
         0
     }
-    let id = spawn(b"ssb_audio\0", entry, crate::audio::PRIORITY, crate::audio::STACK_BYTES);
+    let id = spawn(
+        b"ssb_audio\0",
+        entry,
+        crate::audio::PRIORITY,
+        crate::audio::STACK_BYTES,
+    );
     if id.0 >= 0 {
         let mut timeout: u32 = 1_000_000;
         // SAFETY: waits on the thread just started, with a timeout.
@@ -133,35 +124,16 @@ fn spawn(
 }
 
 /// `sctrlKernelLoadExecVSHMs2(path)` as the XMB launches an EBOOT (key
-/// `game`, argv = the path); `sceKernelLoadExec` if that returns. Logs
-/// each failure; returns only if both fail.
+/// `game`, argv = the path); `sceKernelLoadExec` if that returns
+/// (`crate::launch::load_exec`). Logs each failure; returns only if both
+/// fail.
 fn load_exec(path: &'static [u8]) {
-    let param = LoadExecVshParam {
-        size: core::mem::size_of::<LoadExecVshParam>() as u32,
-        args: path.len() as u32,
-        argp: path.as_ptr() as *const c_void,
-        key: b"game\0".as_ptr(),
-        vshmain_args_size: 0,
-        vshmain_args: core::ptr::null(),
-        configfile: core::ptr::null(),
-        unk4: 0,
-        unk5: 0,
-    };
-    // SAFETY: NUL-terminated static path; the param outlives the call.
-    let rc = unsafe { sctrl::sctrlKernelLoadExecVSHMs2(path.as_ptr(), &param) };
+    let (rc, rc2) = crate::launch::load_exec(path);
     let mut line = Line::new();
     line.push(b"fcr31 vshms2 failed rc=");
     line.hex(rc as u32);
     line.push(b"\n");
     append(&line);
-    let mut fallback = sys::SceKernelLoadExecParam {
-        size: core::mem::size_of::<sys::SceKernelLoadExecParam>(),
-        args: path.len(),
-        argp: path.as_ptr() as *mut c_void,
-        key: core::ptr::null(),
-    };
-    // SAFETY: as above.
-    let rc2 = unsafe { sys::sceKernelLoadExec(path.as_ptr(), &mut fallback) };
     let mut line = Line::new();
     line.push(b"fcr31 loadexec failed rc=");
     line.hex(rc2 as u32);
@@ -203,7 +175,10 @@ struct Line {
 
 impl Line {
     fn new() -> Self {
-        Self { buf: [0; 96], len: 0 }
+        Self {
+            buf: [0; 96],
+            len: 0,
+        }
     }
 
     fn push(&mut self, s: &[u8]) {
@@ -221,21 +196,5 @@ impl Line {
         for shift in (0..8).rev() {
             self.push(&[DIGITS[((v >> (shift * 4)) & 0xF) as usize]]);
         }
-    }
-}
-
-// The import of ARK's `SystemCtrlForUser` `sctrlKernelLoadExecVSHMs2`
-// (NID 0xABA7F1B0, the SHA-1 of the name; listed by `pspsh -e modexp` on
-// the PSP-2000's SystemControl).
-mod sctrl {
-    use super::LoadExecVshParam;
-
-    psp::psp_extern! {
-        #![name = "SystemCtrlForUser"]
-        #![flags = 0x4001]
-        #![version = (0x00, 0x00)]
-
-        #[psp(0xABA7F1B0)]
-        pub fn sctrlKernelLoadExecVSHMs2(path: *const u8, param: *const LoadExecVshParam) -> i32;
     }
 }

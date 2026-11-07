@@ -71,6 +71,46 @@ impl ssb_rom::pack::PackSink for Discard {
     }
 }
 
+/// The installer's progress line (`ssb_pack::install::Progress`), fed as
+/// the PSP feeds it: never down, steps only inside a phase, 1000 at the
+/// end. Allocates nothing (the peak counts every byte).
+#[derive(Default)]
+struct Track {
+    progress: core::cell::Cell<ssb_pack::install::Progress>,
+    last: core::cell::Cell<u32>,
+    steps: core::cell::Cell<usize>,
+    fell: core::cell::Cell<bool>,
+}
+
+impl Track {
+    fn check(&self) {
+        let now = self.progress.get().per_mille();
+        if now < self.last.get() {
+            self.fell.set(true);
+        }
+        self.last.set(now);
+    }
+}
+
+impl ssb_pack::PackLog for Track {
+    fn line(&self, _args: core::fmt::Arguments<'_>) {}
+
+    fn phase(&self, name: &str) {
+        let mut p = self.progress.get();
+        p.phase_ended(name);
+        self.progress.set(p);
+        self.check();
+    }
+
+    fn progress(&self, done: usize, total: usize) {
+        let mut p = self.progress.get();
+        p.step(done, total);
+        self.progress.set(p);
+        self.steps.set(self.steps.get() + 1);
+        self.check();
+    }
+}
+
 /// One build's peak live heap above the bytes live before it, and the
 /// pack's length.
 fn peak_of(
@@ -80,15 +120,23 @@ fn peak_of(
     let before = CUR.load(Relaxed);
     PEAK.store(before, Relaxed);
     let mut sink = Discard(0);
+    let track = Track::default();
     ssb_pack::build_with(
         rom,
         &ssb_pack::PackOptions::default(),
-        &ssb_pack::NoLog,
+        &track,
         &ssb_pack::NoObserver,
         &mut sink,
         spill,
     )
     .unwrap();
+    assert!(!track.fell.get(), "the installer's progress went down");
+    assert_eq!(track.progress.get().per_mille(), 1000, "every phase ended");
+    assert!(
+        track.steps.get() > 100,
+        "{} mesh-phase steps",
+        track.steps.get()
+    );
     // The test harness's own live bytes are not the build's.
     (PEAK.load(Relaxed) - before, sink.0)
 }

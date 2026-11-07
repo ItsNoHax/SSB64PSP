@@ -394,7 +394,8 @@ fn layout_rs(game: bool) -> String {
          // small `d*` arrays in the pack's TABLES section. Layout only; never edit.\n\n",
     );
     for (s, a, at) in layout() {
-        if (s < GAME_SETS) != game {
+        let viewed = !game && local::ROM_VIEWS.contains(&a.name);
+        if (s < GAME_SETS) != game && !viewed {
             continue;
         }
         let doc = match a.symbol.split_once(' ') {
@@ -444,10 +445,20 @@ pub fn generate_rom() -> Generated {
 /// `ssb-engine`'s array `name` ([`engine::LIST`]) as raw words, for the
 /// pack's `TABLES` section ([`crate::tables`]); zeros for a stub.
 pub fn engine_words(name: &str, rom: Option<&Source>) -> Result<Vec<u32>> {
-    let a = engine::LIST
+    list_words(engine::LIST, name, rom)
+}
+
+/// `ssb-rom`'s array `name` ([`rom::LIST`]) as raw words, for a table
+/// read from it ([`crate::ground`]).
+pub fn rom_words(name: &str, rom: &Source) -> Result<Vec<u32>> {
+    list_words(rom::LIST, name, Some(rom))
+}
+
+fn list_words(list: &[DArray], name: &str, rom: Option<&Source>) -> Result<Vec<u32>> {
+    let a = list
         .iter()
         .find(|a| a.name == name)
-        .unwrap_or_else(|| panic!("no engine d_array {name}"));
+        .unwrap_or_else(|| panic!("no d_array {name}"));
     let d = OverlayData::new(rom, a.overlay);
     // The last element lies in the overlay, even for a stub.
     d.bytes(
@@ -480,7 +491,7 @@ mod tests {
     #[test]
     fn every_array_has_a_distinct_name_and_lies_in_its_overlay() {
         // Distinct within each crate's module (`ssb-game`'s sets, then
-        // `ssb-rom`'s); both crates may view one array.
+        // `ssb-rom`'s, with its `ROM_VIEWS`); both crates may view one array.
         let mut seen = HashSet::new();
         for (s, a, _) in layout() {
             let krate = s < GAME_SETS;
@@ -489,6 +500,13 @@ mod tests {
                 "duplicate d_arrays name {}",
                 a.name
             );
+            if krate && local::ROM_VIEWS.contains(&a.name) {
+                assert!(
+                    seen.insert((false, a.name)),
+                    "{} is viewed and listed in ssb-rom",
+                    a.name
+                );
+            }
             let d = OverlayData::new(None, a.overlay);
             let last = *a.addresses().last().unwrap();
             d.bytes(last, a.elem.size()).unwrap();
@@ -504,7 +522,7 @@ mod tests {
             sets.iter().flat_map(|s| s.iter()).map(|l| l.len()).sum()
         };
         assert_eq!(n(&game), lists(&SETS[..GAME_SETS]));
-        assert_eq!(n(&rom), lists(&SETS[GAME_SETS..]));
+        assert_eq!(n(&rom), lists(&SETS[GAME_SETS..]) + local::ROM_VIEWS.len());
         for g in [Group::U8, Group::U16, Group::U32, Group::I32, Group::F32] {
             let end = layout()
                 .iter()

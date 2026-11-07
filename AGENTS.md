@@ -31,6 +31,7 @@
 | `crates/ssb-pack` | Portable pack build from ROM bytes (`no_std + alloc`): converters, `build`, `PackOptions`, `PackLog`, `PackObserver`; `romtool pack` wraps it ([RE-588](docs/evidence/re/RE-588.md), [D-046](docs/decisions/D-046.md)) | PSP code, file I/O |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
 | `psp-game` | Thin game application: orchestration only | Gameplay or PSP backend code |
+| `psp-installer` | First-launch pack build application | Gameplay, rendering |
 | `psp-kcall` | Kernel module: runs one function of the game in kernel mode at load ([RE-479](docs/evidence/re/RE-479.md)) | Anything else; it unloads itself |
 | `psp-asset-viewer` | Debug and render-validation tool | Game logic, match state, player features |
 

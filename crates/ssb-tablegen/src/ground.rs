@@ -3,32 +3,15 @@
 
 use alloc::vec::Vec;
 
+use crate::d_arrays::rom_words;
 use crate::source::be_u16;
 use crate::tables::{le_bytes, Ctx};
 use crate::Result;
 
-/// `dMPCollisionGroundFileInfos` (`mp/mpcollision.c`), in `GRKind` order:
-/// each ground's `ll*MapFileID` and `ll*MapMapHeader`
-/// (`include/reloc_data.us.h`).
-#[rustfmt::skip]
-pub const GROUND_FILE_INFOS: [(u32, u32); 41] = [
-    (0x103, 0x14), (0x106, 0x14), (0x105, 0x14), (0x101, 0x14), (0x109, 0x14),
-    (0x107, 0x14), (0x0FF, 0x14), (0x108, 0x14), (0x104, 0x14), // VS
-    (0x100, 0x14), // PupupuSmall
-    (0x102, 0x14), // PupupuTest
-    (0x10B, 0x00), // Explain
-    (0x10E, 0x14), // YosterSmall
-    (0x10D, 0x14), // Metal
-    (0x10C, 0x14), // Zako
-    (0x127, 0x00), // Bonus3
-    (0x10A, 0x00), // Last
-    // Bonus1 (Break the Targets), Mario..Ness.
-    (0x10F, 0), (0x110, 0), (0x111, 0), (0x112, 0), (0x113, 0), (0x114, 0),
-    (0x115, 0), (0x116, 0), (0x117, 0), (0x118, 0), (0x119, 0), (0x11A, 0),
-    // Bonus2 (Board the Platforms), Mario..Ness.
-    (0x11B, 0), (0x11C, 0), (0x11D, 0), (0x11E, 0), (0x11F, 0), (0x120, 0),
-    (0x121, 0), (0x122, 0), (0x123, 0), (0x124, 0), (0x125, 0), (0x126, 0),
-];
+/// `GRKind`'s grounds: the rows of `dMPCollisionGroundFileInfos`
+/// (`mp/mpcollision.c`), each ground's `ll*MapFileID` and `ll*MapMapHeader`,
+/// read from the ROM (`MP_COLLISION_GROUND_FILE_INFOS_*`, D-048).
+pub const GROUNDS: usize = 41;
 
 /// `MPGroundData::alt_warning`'s offset: after `bgm_id` (0x7C),
 /// `map_nodes` and `item_weights`.
@@ -36,8 +19,11 @@ pub const ALT_WARNING_OFFSET: usize = 0x88;
 
 /// `TableId::AltWarning`: `MPGroundData::alt_warning` by `GRKind`.
 pub fn alt_warning_bytes(c: &Ctx) -> Result<Vec<u8>> {
-    let mut alts = Vec::with_capacity(GROUND_FILE_INFOS.len());
-    for (file, header) in GROUND_FILE_INFOS {
+    let files = rom_words("MP_COLLISION_GROUND_FILE_INFOS_FILE_ID", c.rom)?;
+    let headers = rom_words("MP_COLLISION_GROUND_FILE_INFOS_OFFSET", c.rom)?;
+    assert_eq!(files.len(), GROUNDS);
+    let mut alts = Vec::with_capacity(GROUNDS);
+    for (file, header) in files.into_iter().zip(headers) {
         let f = c.rom.file(file)?;
         alts.push(be_u16(&f.data, header as usize + ALT_WARNING_OFFSET)? as i16);
     }

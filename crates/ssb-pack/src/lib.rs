@@ -40,6 +40,7 @@ mod convert_tests;
 mod effect_assets;
 pub mod filter_coverage;
 mod graph_seeds;
+pub mod install;
 mod loaded;
 mod mat_anims;
 mod menus;
@@ -149,6 +150,12 @@ pub trait PackLog {
     /// allocator reports its live and peak bytes here). Prints nothing by
     /// default.
     fn phase(&self, _name: &str) {}
+
+    /// Progress inside the running phase: `done` of `total` steps (the
+    /// meshes phase, about 55% of a PSP build, reports one step per archive
+    /// file: the installer's progress line, RE-588). Does nothing by
+    /// default.
+    fn progress(&self, _done: usize, _total: usize) {}
 }
 
 /// The log that drops every line.
