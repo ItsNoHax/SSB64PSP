@@ -84,7 +84,6 @@
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
-| `sGCDetailLevel` | Trace how it is chosen | RE-011 |
 
 Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479): DSP runs on
 the Media Engine (batch 159), started by the game's own kernel module
@@ -112,7 +111,6 @@ the Media Engine (batch 159), started by the game's own kernel module
 | Yoshi | Effect-room flag0 breakout fallback unported by design | RE-337, RE-417, RE-432, RE-466, RE-468, RE-552, RE-567 |
 | Window matanim blobs | Script packs whole source file; window the blob (pack format, MS8 size only) | RE-010, RE-378, RE-381 |
 | CPU | Real menu boot (part B) infeasible | RE-568 |
-| `WPAttributes` pairing | Revisit if another case like Link's boomerang appears | RE-058 |
 
 ### Front end and 1P (`MS6`)
 
