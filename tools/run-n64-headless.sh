@@ -3,12 +3,23 @@
 # inside the M64Py flatpak sandbox. See .claude/skills/n64-emulator/SKILL.md.
 #
 #   tools/run-n64-headless.sh [--no-build] [--visible] [--rom PATH]
+#                              [--rmg] [--scratch DIR] [--script NAME]
 #                              [--frames N] [--route SPEC]
 #                              [--screenshot-every N] [--final-screenshot]
-#                              [--audio-dump PATH]
+#                              [--audio-dump PATH] [--rsp NAME] [--gfx NAME]
 #
-# --route/--screenshot-every/--final-screenshot/--audio-dump are forwarded
-# to n64_driver.py verbatim; see that file's --help for the route grammar.
+# Every other argument is forwarded to the script verbatim (default
+# n64_driver.py; --script NAME runs tools/n64-headless/NAME instead, e.g.
+# record_audio_ref.py); see its --help (route grammar, --rsp, --gfx).
+#
+# --rmg: run in the RMG flatpak (com.github.Rosalie241.RMG) with its core
+# (--core /app/lib/RMG/Core/libmupen64plus.so): ParaLLEl-RDP through a
+# headless Vulkan surface, rsp-parallel (LLE) by default. /app is per-flatpak,
+# so the RMG libs are reachable only from that sandbox; this grants it the
+# repo (read-only) and --scratch (default ~/ppsspp-test, read-write) for this
+# run only. n64_driver.py then gets --config-dir/--data-dir under
+# SCRATCH/n64-rmg unless given; record_audio_ref.py uses OUT.n64/. LLE audio
+# reference recipe: tools/n64-headless/record_audio_ref.py docstring.
 # --audio-dump swaps audio-sdl for n64_audio_dump.so and writes the game's
 # exact AI PCM (raw s16le stereo, L,R) to PATH plus a sidecar PATH.txt with
 # the DAC rate and per-buffer video-frame/length records. PATH must be
@@ -43,6 +54,10 @@ TOOLDIR="$REPO/tools/n64-headless"
 ROM="$REPO/rom/Super Smash Bros. (USA).z64"
 BUILD=1
 SDL_DRIVER=offscreen
+APP=net.sourceforge.m64py.M64Py
+RMG=0
+SCRATCH="$HOME/ppsspp-test"
+SCRIPT=n64_driver.py
 DRIVER_ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -50,13 +65,17 @@ while [ $# -gt 0 ]; do
     --no-build) BUILD=0; shift ;;
     --visible) SDL_DRIVER=""; shift ;;
     --rom) ROM="$2"; shift 2 ;;
+    --rmg) RMG=1; APP=com.github.Rosalie241.RMG; shift ;;
+    --scratch) SCRATCH="$2"; shift 2 ;;
+    --script) SCRIPT="$2"; shift 2 ;;
     *) DRIVER_ARGS+=("$1"); shift ;;
   esac
 done
 
 [ -f "$ROM" ] || { echo "ROM not found: $ROM" >&2; exit 1; }
-flatpak info net.sourceforge.m64py.M64Py >/dev/null 2>&1 || {
-  echo "flatpak net.sourceforge.m64py.M64Py is not installed" >&2
+[ -f "$TOOLDIR/$SCRIPT" ] || { echo "script not found: $TOOLDIR/$SCRIPT" >&2; exit 1; }
+flatpak info "$APP" >/dev/null 2>&1 || {
+  echo "flatpak $APP is not installed" >&2
   exit 1
 }
 
@@ -64,11 +83,11 @@ SO="$TOOLDIR/build/n64_input.so"
 AUDIO_SO="$TOOLDIR/build/n64_audio_dump.so"
 if [ "$BUILD" = 1 ]; then
   mkdir -p "$TOOLDIR/build"
-  for name in n64_input n64_audio_dump; do
+  for name in n64_input n64_audio_dump n64_srand; do
     out="$TOOLDIR/build/$name.so"
     if [ ! -f "$out" ] || [ "$TOOLDIR/$name.c" -nt "$out" ]; then
       echo "==> building $name.so" >&2
-      gcc -shared -fPIC -O2 -I"$TOOLDIR/include" "$TOOLDIR/$name.c" -o "$out"
+      gcc -shared -fPIC -O2 -I"$TOOLDIR/include" "$TOOLDIR/$name.c" -o "$out" -ldl
     fi
   done
 fi
@@ -77,6 +96,24 @@ fi
 ENV_ARGS=()
 [ -n "$SDL_DRIVER" ] && ENV_ARGS=(--env=SDL_VIDEODRIVER="$SDL_DRIVER")
 
-exec flatpak run "${ENV_ARGS[@]}" --command=python3 net.sourceforge.m64py.M64Py \
-  "$TOOLDIR/n64_driver.py" --rom "$ROM" --input-so "$SO" --audio-dump-so "$AUDIO_SO" \
+if [ "$RMG" = 1 ]; then
+  mkdir -p "$SCRATCH"
+  SCRATCH="$(cd "$SCRATCH" && pwd)"
+  ENV_ARGS+=(--filesystem="$REPO":ro --filesystem="$SCRATCH")
+  ROM_DIR="$(cd "$(dirname "$ROM")" && pwd)"
+  case "$ROM_DIR/" in
+    "$REPO"/*|"$SCRATCH"/*) ;;
+    *) ENV_ARGS+=(--filesystem="$ROM_DIR":ro) ;;
+  esac
+  DRIVER_ARGS=(--core /app/lib/RMG/Core/libmupen64plus.so "${DRIVER_ARGS[@]}")
+  if [ "$SCRIPT" = n64_driver.py ]; then
+    case " ${DRIVER_ARGS[*]} " in *" --config-dir "*) ;;
+      *) DRIVER_ARGS+=(--config-dir "$SCRATCH/n64-rmg/cfg") ;; esac
+    case " ${DRIVER_ARGS[*]} " in *" --data-dir "*) ;;
+      *) DRIVER_ARGS+=(--data-dir "$SCRATCH/n64-rmg/data") ;; esac
+  fi
+fi
+
+exec flatpak run "${ENV_ARGS[@]}" --command=python3 "$APP" \
+  "$TOOLDIR/$SCRIPT" --rom "$ROM" --input-so "$SO" --audio-dump-so "$AUDIO_SO" \
   "${DRIVER_ARGS[@]}"

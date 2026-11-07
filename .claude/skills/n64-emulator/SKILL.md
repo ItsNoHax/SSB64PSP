@@ -17,6 +17,7 @@ description: Need to observe or navigate the original N64 game live (not just re
 - Input: frame-exact scripted P1, no GUI automation
 - Harness records: RE-151, RE-216, RE-274
 - Window: none by default (`--env=SDL_VIDEODRIVER=offscreen`); `--visible` only to watch a route
+- `--rmg`: RMG flatpak profile (ParaLLEl-RDP, LLE RSP); `--script NAME`: run another `tools/n64-headless/` script (e.g. `record_audio_ref.py`) with the same `--rom`/plugin args
 
 ```
 tools/run-n64-headless.sh --frames 120                      # idle smoke test
@@ -53,6 +54,25 @@ tools/run-n64-headless.sh --route "60:start;30:;10:a" \
   - writes fresh-cartridge default (Stereo) into RDRAM after frame 1
   - logs route steps, scenes, How to Play hits beside the dump
 
+### LLE audio reference (RE-479, `audio::n64ref`)
+
+```
+tools/run-n64-headless.sh --rmg --script record_audio_ref.py \
+    --preset b_menu --out ~/ppsspp-test/x/menu_par.raw     # c_attract: --preset c_attract
+python3 tools/n64-headless/capture_frames.py ~/ppsspp-test/x/menu_par.raw
+python3 tools/n64-headless/capture_frames.py ATT.raw --first-frames 3115
+```
+
+| Item | Detail |
+|---|---|
+| Profile | RMG core, `mupen64plus-rsp-parallel` (LLE, reference of record), ParaLLEl-RDP, `n64_audio_dump.so`; `--rsp cxd4` = second LLE core; `--rsp hle` is no reference |
+| Seed | core calls `srand(time(NULL))` at ROM start; `RandomizeInterrupt` (default on) draws PI/SI delays from `rand()` → LLE frame schedule and PCM change run to run. `--seed N` preloads `n64_srand.so` and pins it; presets carry their capture's seed |
+| Presets | route + seed + `--force-stereo`; `b_menu` = whole clip (860 advances), `c_attract` = first 3115 audio frames (3200 advances) |
+| SRAM | `--sram fresh` (default): empty `OUT.n64/save` via `SaveSRAMPath`; `shared` = RMG flatpak's `~/.var/app/com.github.Rosalie241.RMG/data/mupen64plus/save`; `FILE` = seeded copy; presets do not depend on it |
+| Config | `OUT.n64/cfg/mupen64plus.cfg` written each run: `[Core] Version` (keeps emulation defaults) + `SaveSRAMPath`, `[Video-Parallel]` native 640x480, no VSync |
+| `capture_frames.py` | frames (552/368 split from the sidecar), `short_runs` as in `n64ref.rs`, FNV-1a hash; `--frames-out`, `--adv-out` |
+| Outputs | `.raw`, sidecars, `OUT.n64/`: ROM-derived, never in the repo (D-048) |
+
 ### RDRAM access and custom steps
 
 - Import `Mupen64PlusHarness` from `tools/n64-headless/n64_driver.py`
@@ -71,15 +91,15 @@ tools/run-n64-headless.sh --route "60:start;30:;10:a" \
 
 | Gotcha | Rule |
 |---|---|
-| Flatpak required | core and plugins only in `/app/lib` of `net.sourceforge.m64py.M64Py`; never bare `python3` |
+| Flatpak required | core and plugins only in `/app/lib` of `net.sourceforge.m64py.M64Py` (or `com.github.Rosalie241.RMG` with `--rmg`); never bare `python3` |
 | `DISPLAY`/Xvfb | does not hide window: `mupen64plus-video-rice.so` opens via SDL2 (prefers Wayland; socket always mounted); only `--env=SDL_VIDEODRIVER=offscreen` (script default) hides it; screenshots and RDRAM still work |
 | `ctypes` `argtypes` | mandatory: Core API calls taking a dynlib handle or pointer need explicit `c_void_p`, else the 64-bit handle truncates and `PluginStartup` segfaults (RE-216; see `n64_driver.py` `start()`) |
 | angrylion-plus | segfaults in `PluginStartup` for the same reason as ParaLLEl below (RTLD_GLOBAL symbol clash); not retried (RE-276) |
-| ParaLLEl-RDP | coverage-exact RDP; RMG flatpak `com.github.Rosalie241.RMG`: core `/app/lib/RMG/Core/libmupen64plus.so`, `mupen64plus-video-parallel.so`, `mupen64plus-rsp-parallel.so`, `RMG-Audio.so`; `dlopen` core and plugins `RTLD_LOCAL`; `CoreOverrideVidExt` with a headless Vulkan surface (`VK_EXT_headless_surface`); read RDRAM framebuffers, screenshots are VI-filtered (RE-564) |
+| ParaLLEl-RDP | coverage-exact RDP; `--rmg` (RMG flatpak `com.github.Rosalie241.RMG`): core `/app/lib/RMG/Core/libmupen64plus.so`, `mupen64plus-video-parallel.so`, `mupen64plus-rsp-parallel.so`, `RMG-Audio.so`; `dlopen` core and plugins `RTLD_LOCAL`; `CoreOverrideVidExt` with a headless Vulkan surface (`VK_EXT_headless_surface`, `vidext.py`); read RDRAM framebuffers, screenshots are VI-filtered (RE-564) |
 | Sandbox filesystem | needs read on repo, write on scratch dir |
 | Opening-room figures | Picked from `osGetTime()&0xFF` (`mvopeningroom.c:1134`); PSP captures pin Pikachu + DK (`room_time`). Compare the figure only when the N64 draw matches |
 | Rice inset Z fills | Rice skips `func_8001663C` viewport-inset clears: depth order between clearing cameras is wrong; use ParaLLEl |
-| RMG flatpak files | no filesystem access by default: pass `--filesystem=/home/alberto/ppsspp-test` to `flatpak run` |
+| RMG flatpak files | `/app/lib/RMG` exists only inside that flatpak (not M64Py's); no filesystem access by default: `--rmg` passes `--filesystem` for the repo (ro) and `--scratch` (default `~/ppsspp-test`) per run, no override |
 | Software approximation | Rice is not a physical N64; treat RDP/RSP filtering differences as PPSSPP-vs-hardware |
 | ROM identity | SHA-1 `e2929e10fccc0aa84e5776227e798abc07cedabf`, MD5 `F7C52568A31AADF26E14DC2B6416B2ED` |
 

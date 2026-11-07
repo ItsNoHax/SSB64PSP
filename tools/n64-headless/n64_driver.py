@@ -14,6 +14,13 @@ dependencies (SDL2, Qt/KDE runtime libs). Use tools/run-n64-headless.sh
 instead of invoking this directly -- it builds n64_input.so and wraps the
 flatpak invocation.
 
+RMG profile (--core other than the M64Py one; tools/run-n64-headless.sh --rmg
+runs this inside the com.github.Rosalie241.RMG flatpak instead): RMG core,
+ParaLLEl-RDP through a headless Vulkan surface (vidext.py), RMG-Audio and
+rsp-parallel by default (--rsp hle|parallel|cxd4, --gfx), plugins dlopen'ed
+RTLD_LOCAL, a private mupen64plus.cfg written into --config-dir. --seed pins
+the core's srand() seed (n64_srand.c): needed for reproducible LLE runs.
+
 Input is supplied by a small custom plugin (n64_input.so, built from
 n64_input.c in this directory) that exposes a 4-element uint32 g_buttons
 array the driver pokes directly with ctypes before each M64CMD_ADVANCE_FRAME
@@ -34,6 +41,46 @@ import time
 APP_LIB = "/app/lib"
 PLUGIN_DIR = os.path.join(APP_LIB, "mupen64plus")
 CORE_PATH = os.path.join(APP_LIB, "libmupen64plus.so.2")
+# RMG flatpak (com.github.Rosalie241.RMG) layout: <root>/Core/libmupen64plus.so,
+# <root>/Plugin/{GFX,Audio,RSP}/*.so. Any --core other than CORE_PATH selects it.
+RMG_CORE_PATH = "/app/lib/RMG/Core/libmupen64plus.so"
+RSP_NAMES = ("hle", "parallel", "cxd4")
+SRAND_ENV = "N64_SRAND"  # read by n64_srand.so (LD_PRELOAD)
+
+# RMG-profile mupen64plus.cfg, written into --config-dir on start. [Core] keeps
+# every emulation default (CountPerOp, R4300Emulator...: a missing Version
+# would make the core reset the section); SaveSRAMPath moves the cartridge
+# save out of the RMG flatpak's shared ~/.var/app/com.github.Rosalie241.RMG/
+# data/mupen64plus/save. [Video-Parallel]: native resolution, no VSync.
+RMG_CONFIG_MARK = "# n64_driver.py RMG profile config"
+RMG_CONFIG = RMG_CONFIG_MARK + """: rewritten on every start
+[Core]
+Version = 1.010000
+{sram}
+[Video-Parallel]
+Upscaling = 1
+VSync = False
+ScreenWidth = 640
+ScreenHeight = 480
+WidescreenStretch = False
+DeinterlaceMode = False
+SuperscaledReads = False
+SuperscaledDither = True
+CropOverscanLeft = 0
+CropOverscanRight = 0
+CropOverscanTop = 0
+CropOverscanBottom = 0
+CropOverscanEnable = False
+VerticalStretch = 0
+VIAA = True
+Divot = True
+GammaDither = True
+VIBilerp = True
+VIDither = True
+DownScale = 0
+NativeTextLOD = False
+NativeTextRECT = True
+"""
 
 # --- m64p_types.h enums we need -------------------------------------------------
 M64ERR_SUCCESS = 0
@@ -124,8 +171,25 @@ def _state_cb(context, param, value):
 
 class Mupen64PlusHarness:
     def __init__(self, rom_path, input_so_path, config_dir, data_dir,
-                 audio_dump_path=None, audio_dump_so_path=None):
+                 audio_dump_path=None, audio_dump_so_path=None,
+                 core_path=None, rsp=None, gfx=None, sram_dir=None):
         self.rom_path = rom_path
+        # Profile: M64Py (CORE_PATH; rice, audio-sdl, rsp-hle, RTLD_GLOBAL) or
+        # RMG (any other core; ParaLLEl-RDP through a headless Vulkan VidExt,
+        # RMG-Audio, rsp-parallel, RTLD_LOCAL: RTLD_GLOBAL clashes, RE-564).
+        self.core_path = core_path or CORE_PATH
+        self.rmg = self.core_path != CORE_PATH
+        # RMG profile only; None: the core's default, the RMG flatpak's shared save dir.
+        self.sram_dir = sram_dir
+        if self.rmg:
+            plugin_root = os.path.join(os.path.dirname(os.path.dirname(self.core_path)), "Plugin")
+            self.gfx_path = _plugin(gfx or "parallel", os.path.join(plugin_root, "GFX"), "video")
+            self.rsp_path = _plugin(rsp or "parallel", os.path.join(plugin_root, "RSP"), "rsp")
+            self.audio_path = os.path.join(plugin_root, "Audio", "RMG-Audio.so")
+        else:
+            self.gfx_path = _plugin(gfx or "rice", PLUGIN_DIR, "video")
+            self.rsp_path = _plugin(rsp or "hle", PLUGIN_DIR, "rsp")
+            self.audio_path = os.path.join(PLUGIN_DIR, "mupen64plus-audio-sdl.so")
         self.input_so_path = input_so_path
         # With audio_dump_path set, n64_audio_dump.so replaces audio-sdl and
         # writes the game's exact AI PCM there (see n64_audio_dump.c).
@@ -153,10 +217,26 @@ class Mupen64PlusHarness:
 
     # -- plugin lifecycle ---------------------------------------------------
     def _load(self, path):
-        return ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+        return ctypes.CDLL(path, mode=ctypes.RTLD_LOCAL if self.rmg else ctypes.RTLD_GLOBAL)
+
+    def _write_rmg_config(self):
+        os.makedirs(self.config_dir, exist_ok=True)
+        path = os.path.join(self.config_dir, "mupen64plus.cfg")
+        if os.path.exists(path):
+            with open(path) as f:
+                if not f.readline().startswith(RMG_CONFIG_MARK):
+                    raise RuntimeError(f"{path} was not written by this driver; use an empty --config-dir")
+        sram = ""
+        if self.sram_dir:
+            os.makedirs(self.sram_dir, exist_ok=True)
+            sram = f'SaveSRAMPath = "{os.path.abspath(self.sram_dir)}"\n'
+        with open(path, "w") as f:
+            f.write(RMG_CONFIG.format(sram=sram))
 
     def start(self):
-        self.core = self._load(CORE_PATH)
+        if self.rmg:
+            self._write_rmg_config()
+        self.core = self._load(self.core_path)
 
         # ctypes truncates plain Python ints to 32-bit C int without explicit
         # argtypes; every dynlib handle/pointer here is 64-bit, so this is not
@@ -185,6 +265,16 @@ class Mupen64PlusHarness:
         if rval != M64ERR_SUCCESS:
             raise RuntimeError(f"CoreStartup failed: {rval}")
 
+        if self.rmg:
+            import vidext  # loads libvulkan.so.1: RMG profile only
+            self._vidext = vidext.make()
+            self.core.CoreOverrideVidExt.restype = ctypes.c_int
+            self.core.CoreOverrideVidExt.argtypes = [ctypes.c_void_p]
+            rval = self.core.CoreOverrideVidExt(ctypes.byref(self._vidext))
+            sys.stderr.write(f"[driver] CoreOverrideVidExt -> {rval}\n")
+            if rval != M64ERR_SUCCESS:
+                raise RuntimeError(f"CoreOverrideVidExt failed: {rval}")
+
         with open(self.rom_path, "rb") as f:
             rom_bytes = f.read()
         rom_buf = ctypes.create_string_buffer(rom_bytes, len(rom_bytes))
@@ -192,7 +282,8 @@ class Mupen64PlusHarness:
         if rval != M64ERR_SUCCESS:
             raise RuntimeError(f"ROM_OPEN failed: {rval}")
 
-        self.gfx = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-video-rice.so"))
+        sys.stderr.write(f"[driver] core {self.core_path} gfx {self.gfx_path} rsp {self.rsp_path}\n")
+        self.gfx = self._load(self.gfx_path)
         if self.audio_dump_path:
             self.audio = self._load(self.audio_dump_so_path)
             self.audio.n64_audio_dump_set_output.restype = ctypes.c_int
@@ -202,8 +293,8 @@ class Mupen64PlusHarness:
             self._audio_frame = ctypes.c_uint32.in_dll(self.audio, "g_video_frame")
             sys.stderr.write(f"[driver] audio dump -> {self.audio_dump_path}\n")
         else:
-            self.audio = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-audio-sdl.so"))
-        self.rsp = self._load(os.path.join(PLUGIN_DIR, "mupen64plus-rsp-hle.so"))
+            self.audio = self._load(self.audio_path)
+        self.rsp = self._load(self.rsp_path)
         self.inp = self._load(self.input_so_path)
 
         for name, lib in (("gfx", self.gfx), ("audio", self.audio), ("input", self.inp), ("rsp", self.rsp)):
@@ -245,6 +336,14 @@ class Mupen64PlusHarness:
         self.core.CoreDoCommand(M64CMD_PAUSE, 0, None)
         self._wait_for_state(M64EMU_PAUSED, timeout=15.0)
         sys.stderr.write("[driver] paused\n"); sys.stderr.flush()
+        if os.environ.get(SRAND_ENV) is not None:
+            # The core seeds rand() at ROM start, before RUNNING: the shim must have seen it.
+            glob = ctypes.CDLL(None)
+            calls = ctypes.c_uint.in_dll(glob, "n64_srand_calls").value
+            last = ctypes.c_uint.in_dll(glob, "n64_srand_last").value
+            if calls == 0:
+                raise RuntimeError("n64_srand.so is loaded but the core never called srand()")
+            sys.stderr.write(f"[driver] srand seed pinned to {last} ({calls} call(s))\n")
 
     def _run_execute(self):
         self.core.CoreDoCommand(M64CMD_EXECUTE, 0, None)
@@ -380,6 +479,46 @@ class Mupen64PlusHarness:
         self.core.CoreShutdown()
 
 
+def _plugin(name, directory, kind):
+    """name: a .so path, or a short name resolved to <directory>/mupen64plus-<kind>-<name>.so."""
+    if "/" in name or name.endswith(".so"):
+        return name
+    return os.path.join(directory, f"mupen64plus-{kind}-{name}.so")
+
+
+def pin_seed(seed, shim=None):
+    """Re-exec this script with n64_srand.so preloaded and N64_SRAND=seed, so the
+    core's srand(time(NULL)) takes `seed` instead (see n64_srand.c). No-op for None
+    or once applied. Call before Mupen64PlusHarness.start()."""
+    if seed is None:
+        return
+    shim = shim or os.path.join(os.path.dirname(os.path.abspath(__file__)), "build", "n64_srand.so")
+    if os.environ.get(SRAND_ENV) == str(seed) and shim in os.environ.get("LD_PRELOAD", "").split(":"):
+        return
+    if not os.path.exists(shim):
+        raise SystemExit(f"{shim} not found: build it (tools/run-n64-headless.sh builds it)")
+    env = dict(os.environ, LD_PRELOAD=shim, **{SRAND_ENV: str(seed)})
+    sys.stderr.write(f"[driver] re-exec with {shim}, {SRAND_ENV}={seed}\n"); sys.stderr.flush()
+    os.execve(sys.executable, [sys.executable] + sys.argv, env)
+
+
+def add_core_args(ap):
+    """--core/--rsp/--gfx, shared by every script that builds a Mupen64PlusHarness."""
+    ap.add_argument("--core", default=None, metavar="PATH",
+                    help=f"libmupen64plus inside the sandbox (default {CORE_PATH}, M64Py); any other "
+                         f"path selects the RMG profile, e.g. {RMG_CORE_PATH} "
+                         "(tools/run-n64-headless.sh --rmg)")
+    ap.add_argument("--rsp", default=None, metavar="NAME|PATH",
+                    help=f"RSP plugin: {', '.join(RSP_NAMES)} or a .so path (default hle; parallel with "
+                         "the RMG profile). parallel = LLE audio reference of record (RE-479)")
+    ap.add_argument("--gfx", default=None, metavar="NAME|PATH",
+                    help="GFX plugin: mupen64plus-video-NAME.so or a .so path (default rice; parallel "
+                         "with the RMG profile)")
+    ap.add_argument("--seed", type=lambda v: int(v, 0), default=None,
+                    help="pin the core's srand() seed (n64_srand.so); default: the core's time(NULL). "
+                         "LLE runs differ run to run without it")
+
+
 def parse_route(spec):
     """spec: ';'-separated steps 'hold:p1button+button;hold:...'. Empty buttons = idle.
     'x=N'/'y=N' tokens set the analog stick (signed int8, raw N64 units)."""
@@ -424,10 +563,14 @@ def main():
                           "and a rate/per-buffer sidecar to PATH.txt")
     ap.add_argument("--audio-dump-so", default=None,
                      help="path to n64_audio_dump.so (default: build/ beside this script)")
+    add_core_args(ap)
     args = ap.parse_args()
+    pin_seed(args.seed)
 
     h = Mupen64PlusHarness(args.rom, args.input_so, args.config_dir, args.data_dir,
-                           audio_dump_path=args.audio_dump, audio_dump_so_path=args.audio_dump_so)
+                           audio_dump_path=args.audio_dump, audio_dump_so_path=args.audio_dump_so,
+                           core_path=args.core, rsp=args.rsp, gfx=args.gfx,
+                           sram_dir=os.path.join(args.data_dir, "save"))
     h.start()
     print("started; state=", h._query_state(), file=sys.stderr)
     t0 = time.time()

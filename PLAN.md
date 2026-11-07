@@ -100,7 +100,6 @@ the Media Engine (batch 159), started by the game's own kernel module
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| LLE audio harness | Land `~/ppsspp-test/b64a/lle_harness/` as `--core/--rsp` options of `tools/n64-headless` (RMG core, parallel-RSP/cxd4) so `audio::n64ref` re-records from the repo | RE-479 |
 
 ### Match systems (`MS5`)
 
