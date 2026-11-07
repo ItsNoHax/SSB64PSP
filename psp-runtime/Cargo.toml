@@ -27,6 +27,9 @@ ssb-tables = { path = "../crates/ssb-tables", default-features = false, features
 ssb-pack = { path = "../crates/ssb-pack", default-features = false, optional = true }
 
 [features]
+# GE-drawn debug text (`gu/hud_text.rs`, `Gpu::debug_text`): the 8x8 font
+# atlas and the per-frame draw. Only `psp-asset-viewer` turns it on.
+hud_text = []
 # Masks every FPU exception on the game's threads (`fpu.rs`) instead of
 # keeping the enables the system starts them with. Off by default.
 fpu_mask = []

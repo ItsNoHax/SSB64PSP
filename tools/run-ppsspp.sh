@@ -33,10 +33,9 @@
 #     window disappears. A hung `import` kept the script, and therefore PPSSPP,
 #     alive indefinitely.
 #
-#  4. **Software rasteriser by default.** PPSSPP's hardware backends do not
-#     reflect CPU writes to emulated VRAM, and `sceGuDebugFlush` paints the
-#     debug overlay exactly that way, so under OpenGL the diagnostics are
-#     computed but invisible (RE-014). Forced
+#  4. **Software rasteriser by default** (D-029). PPSSPP's hardware backends
+#     do not reflect CPU writes to emulated VRAM (RE-014); the viewer's HUD is
+#     GE geometry now and shows under `--backend opengl` too. Forced
 #     through `--appendconfig`, not `--graphics=software` -- the command-line
 #     flag was observed not to take effect.
 #
@@ -228,11 +227,8 @@ if [ "$BUILD" = 1 ]; then
   elif [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
     ( cd "$REPO/$CRATE" && cargo psp --release --features animation_audit_capture )
   elif [ "$CRATE" = psp-asset-viewer ]; then
-    # `debug_overlay` is off by default (RE-202: crashes real hardware) but
-    # this interactive PPSSPP workflow relies on the on-screen HUD, and
-    # PPSSPP itself never reproduces the hardware fault. `psp-game` has no
-    # such feature (`gu.rs`'s module doc): it never calls the crashing path,
-    # so there is nothing to opt into here.
+    # `debug_overlay` (the on-screen HUD) is off by default; this
+    # interactive workflow relies on it. `psp-game` has no HUD.
     ( cd "$REPO/$CRATE" && cargo psp --release --features debug_overlay )
   else
     ( cd "$REPO/$CRATE" && cargo psp --release )

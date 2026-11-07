@@ -18,6 +18,7 @@
 
 ## Current work
 
+- Landed (batch 188): release builds tick `scePowerTick` about once a second (`timing::keep_awake`; PSP vs4 14.35 to 14.35 ms, 1P intro 13.99 to 14.00); viewer HUD drawn by the GE (`gu/hud_text.rs`), `sceGuDebugFlush` gone; shows in PPSSPP OpenGL.
 - Landed (batch 187): Electric `vs4@2170` r12 16.75 to 16.65 ms (under 16.7): the 0.33 ms pack gap was `BIND_CACHE` slot collisions moving with texture ids; 64 victim slots; intro +0.31 ms from hot-caller codegen, other scenes ±0.05 (RE-589 item 10).
 - Landed (batch 186): first-launch installer: separate `INSTALL.PBP`, started from the game by LoadExec; PSP-2000 at the PSP-1000 start budget (22.4 MB) 8.78 min, pack identical, lowest free 9.78 MB; 64-byte-aligned sink (writes 129 to 16.5 s) (D-053, RE-588 item 15).
 - Landed (batch 185): on-PSP pack build at PSP-1000 memory: paged ROM, blob spill (RE-588 item 14).
@@ -28,14 +29,14 @@
 ## Next
 
 1. Owner hardware tests (XMB hand-off done): HOME mid-build, NoSpace screen, PSP-1000 run (RE-588 item 15 pending list).
-2. Media Engine sleep/wake and PSP-1000 audio need a person (PLAN "Audio cost").
+2. Owner: idle PSP stays awake past its auto-sleep time (attract/CPU-only); viewer `debug_overlay` runs on a PSP (RE-202 fault gone?).
+3. Media Engine sleep/wake and PSP-1000 audio need a person (PLAN "Audio cost").
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Blockers
 
 - Campaign past Race to the Finish: needs a person at the PSP.
-- Builds without `profile`/`frame_timer`: unattended PSP auto-sleeps (RE-481).
 
 ## Verification
 

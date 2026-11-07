@@ -45,3 +45,19 @@ impl Stopwatch {
 pub fn full_speed() -> i32 {
     unsafe { sys::scePowerSetClockFrequency(333, 333, 166) }
 }
+
+/// Keeps the PSP from auto-sleeping or turning the screen off while the
+/// game runs: the N64 never sleeps, and attract mode, CPU-only matches or a
+/// paused game get no input to reset the idle timers (RE-481). Resets them
+/// once every 60 calls (about a second; the shortest timer is 30 s), out of
+/// line so the frame loop's code stays as it is. Sleep from the power
+/// switch is not blocked.
+#[inline(never)]
+pub fn keep_awake() {
+    static CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    if CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % 60 != 0 {
+        return;
+    }
+    // SAFETY: no preconditions; resets the suspend and display timers.
+    unsafe { sys::scePowerTick(sys::PowerTick::All) };
+}

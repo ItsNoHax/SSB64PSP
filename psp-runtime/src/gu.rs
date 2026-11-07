@@ -13,6 +13,9 @@
 //! [`Gpu::set_viewport_pillarboxed`] once, immediately after `init`, before
 //! the first `begin_frame`.
 
+#[cfg(feature = "hud_text")]
+mod hud_text;
+
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
@@ -425,51 +428,6 @@ impl RectVertex {
             z: 0,
             _pad: 0,
         }
-    }
-}
-
-/// A stack-allocated, NUL-terminated string builder.
-///
-/// `sceGuDebugPrint` wants a C string, and formatting into the heap every frame
-/// is exactly what the "no allocation in hot paths" rule forbids. Writes past
-/// capacity are dropped rather than panicking.
-struct FixedStr<const N: usize> {
-    buf: [u8; N],
-    len: usize,
-}
-
-impl<const N: usize> FixedStr<N> {
-    fn new() -> Self {
-        FixedStr {
-            buf: [0; N],
-            len: 0,
-        }
-    }
-
-    /// Pointer to the NUL-terminated contents. The last byte is reserved for
-    /// the terminator and is never written by `write_str`.
-    fn as_c_str(&self) -> *const u8 {
-        self.buf.as_ptr()
-    }
-}
-
-impl<const N: usize> core::fmt::Write for FixedStr<N> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        // Interior NUL bytes are dropped, not copied. This builds a C string,
-        // so a single embedded NUL silently truncates everything after it --
-        // which is exactly what happened when a NUL-terminated path constant
-        // was formatted into the overlay and swallowed nine of eleven lines.
-        for &b in s.as_bytes() {
-            if b == 0 {
-                continue;
-            }
-            if self.len >= N - 1 {
-                break; // leave room for the terminator
-            }
-            self.buf[self.len] = b;
-            self.len += 1;
-        }
-        Ok(())
     }
 }
 
@@ -1222,8 +1180,7 @@ impl Gpu {
     /// overwrites the absolute top-left corner of the buffer currently being
     /// drawn into (inside the pillarbox bar and slightly beyond it, not
     /// scissored, so it is never touched by ordinary scene rendering) with
-    /// the last capture, via a plain CPU block copy -- the same direct-VRAM-
-    /// write approach `sceGuDebugFlush`'s own glyph overlay already uses.
+    /// the last capture, via a plain CPU block copy into VRAM.
     /// Only called by the `wallpaper_audit_capture` build (`main.rs`);
     /// RE-191's "Remaining scope" still blocks a real render-path caller.
     ///
@@ -1462,7 +1419,7 @@ impl Gpu {
             // The swap is this module's, not `sceGuSwapBuffers`' (see
             // `end_frame`), so the target is named every frame. Through
             // `sceGuDrawBuffer` rather than a bare list command, so
-            // `sceGuDebugFlush` writes into the same buffer.
+            // PSPSDK's own draw-buffer state names the same buffer.
             sys::sceGuDrawBuffer(
                 DisplayPixelFormat::Psm8888,
                 if self.draw_is_fbp0 { self.fbp0_rel } else { self.fbp1_rel },
@@ -1483,6 +1440,12 @@ impl Gpu {
     /// Submits the frame and swaps buffers on vblank.
     pub fn end_frame(&mut self) {
         debug_assert!(self.frame_open, "end_frame without begin_frame");
+        // Over everything else, still inside the list (`hud_text`).
+        #[cfg(feature = "hud_text")]
+        {
+            self.draw_debug_text();
+            self.apply_viewport();
+        }
         self.frame_open = false;
         self.frames += 1;
         unsafe {
@@ -1491,19 +1454,6 @@ impl Gpu {
             sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
             crate::profile::stop(crate::profile::Span::GeSync, t);
             GE_LIST_OPEN.store(false, core::sync::atomic::Ordering::Relaxed);
-            // Debug text must be painted *here*, not earlier. sceGuDebugFlush
-            // writes glyphs straight into the draw buffer rather than queueing
-            // a GE command, so flushing before the sync would just get erased
-            // by the sceGuClear that is still sitting in the display list.
-            //
-            // Called unconditionally, with no glyphs queued unless a caller
-            // used `debug_text` this frame: RE-202 found the real hardware
-            // crash lives in `sceGuDebugPrint`/`sceGuDebugFlush`'s own state
-            // once glyphs are actually written, not in an unconditional
-            // `sceGuDebugFlush` call against an empty buffer -- the fix
-            // gates the `debug_text` call (`debug_overlay` feature), not
-            // this one.
-            sys::sceGuDebugFlush();
             if self.capture_requested {
                 self.capture_requested = false;
                 self.capture_transition_photo();
@@ -1943,36 +1893,6 @@ impl Gpu {
             sys::sceGumStoreMatrix(&mut m);
         }
         m
-    }
-
-    /// Queues a block of debug text for this frame. Embedded `\n` starts a new
-    /// line. Call **once** per frame.
-    ///
-    /// Two hard-won constraints are encoded here:
-    ///
-    /// * Do not use `psp::dprintln!` per-frame. It re-runs `sceDisplaySetMode`
-    ///   on every call; measured under PPSSPP it took a 4-triangle scene from
-    ///   60 FPS to 2 FPS.
-    /// * Call this once with newlines rather than once per line. rust-psp's
-    ///   `sceGuDebugPrint` always writes from the start of its internal
-    ///   character buffer while still advancing the "used" counter, so
-    ///   successive calls overwrite each other and render garbage. A single
-    ///   call sidesteps that entirely.
-    ///
-    /// The text is copied immediately, so the caller's buffer need not outlive
-    /// the call. It is painted onto the draw buffer by [`Gpu::end_frame`],
-    /// after the GE has finished — see there for why.
-    ///
-    /// RE-202: sustained per-frame use of this method reliably crashes real
-    /// PSP hardware, content-independent. Callers must gate it behind an
-    /// off-by-default feature the way `psp-asset-viewer`'s `debug_overlay`
-    /// does; a front end shipping this unconditionally would carry the same
-    /// fault.
-    pub fn debug_text(&mut self, x: i32, y: i32, color: u32, args: core::fmt::Arguments<'_>) {
-        let mut text: FixedStr<512> = FixedStr::new();
-        // Truncated diagnostics beat a panic in a no_std frame loop.
-        let _ = core::fmt::Write::write_fmt(&mut text, args);
-        unsafe { sys::sceGuDebugPrint(x, y, color, text.as_c_str()) }
     }
 
     /// Draws untextured, vertex-coloured triangles.

@@ -2229,21 +2229,9 @@ unsafe fn run() -> ! {
         } else {
             "SSB64-PSP  M4 scene viewer"
         };
-        // Never drawn at all under `regression_capture`, from frame 0 --
-        // not just hidden once frozen. Two narrower fixes were tried and
-        // both failed for reasons specific to `sceGuDebugPrint` (RE-123,
-        // RE-125): it is a PPSSPP-only debug overlay, not real GE drawing,
-        // and it does not fully clear between calls. Pinning `cpu`/`frame`/
-        // `tick` to `0` once frozen left old, longer digits ghosted behind
-        // a shorter string; pinning them to the real last-seen values fixed
-        // the width but not the content, since `cpu`/`frame` are genuine
-        // wall-clock timing measurements that differ between runs by
-        // design; and a hardcoded, safely-wide sentinel still ghosted,
-        // meaning the corruption is not simply about string width at all.
-        // Never calling `sceGuDebugPrint` in a `regression_capture` build
-        // sidesteps whatever PPSSPP-internal state causes it, rather than
-        // trying to out-guess it, and a developer diagnostic overlay was
-        // never part of the golden scene R0.17 wants captured anyway.
+        // Never drawn under `regression_capture`, from frame 0: `cpu` and
+        // `frame` are wall-clock measurements that differ between runs, and
+        // the HUD is not part of any golden scene (RE-123, RE-125).
         if cfg!(feature = "effect_animation_audit_capture") {
             gpu.debug_text(
                 8,

@@ -217,3 +217,4 @@ crates/ssb-game/src/ground_effect.rs	STAGE_FILES	layout: each battle gkind's Sta
 crates/ssb-rom/tests/scene_roots.rs	COPY_SPECIALS	fixture: per fighter kind, which FTData special slots (0-3) a Kirby copy reads, read from the decomp makers; slot indices, not ROM values
 crates/ssb-capture/src/script.rs	SLOTS	fixture: VS stage-select cursor slot after each scripted move (capture route), not ROM data
 crates/ssb-rom/src/scan/root_offsets.rs	ROOT_DL_OFFSETS	layout: archive file IDs and the byte offsets of their root display lists, the scan's result (RE-588)
+psp-runtime/src/gu/hud_text.rs	FONT	third-party: rust-psp sceGu debug font debugfont.bin (MIT), no ROM data

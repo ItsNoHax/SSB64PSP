@@ -79,8 +79,6 @@
 | I-cache locality | 16 KB I + 16 KB D; per-mesh path of `draw_object_posed_nodes` dominates misses. Outline only cold blocks. Rejected: shared mesh-path footprint cut (code shrink shifts the trained layout; model mispredicted vs4; RE-585 item 30), per-primitive outlining, `opt-level = "s"`, `#[optimize(size)]`, shadowed render-state table; LTO re-inlines single-call helpers | RE-481, RE-487, RE-488, RE-493, RE-495 |
 | Stack depth | Deepest 127 KB of 512 KiB (`set_damage_detect_size` 29 KB leaf) | RE-469 |
 | `run` branch range | Keep within 128 KiB MIPS reach | RE-431 |
-| Debug HUD | `sceGuDebugFlush` (PPSSPP software rasterizer only; faults on PSP) → GE geometry | RE-014, RE-202 |
-| Auto-sleep | Unattended release builds (no `profile`/`frame_timer`) auto-sleep → keep PSP awake or document why not | RE-481 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |

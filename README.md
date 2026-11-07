@@ -147,6 +147,7 @@ Local use: clone into gitignored `refs/`.
 ## License
 
 - MIT OR Apache-2.0, code in this repository only
+- `psp-runtime/src/gu/hud_text.rs` `FONT`: rust-psp's sceGu debug font (`debugfont.bin`), MIT, © 2020 Marko Mijalkovic
 - No rights to Nintendo intellectual property granted
 - Super Smash Bros.: trademark of Nintendo
 

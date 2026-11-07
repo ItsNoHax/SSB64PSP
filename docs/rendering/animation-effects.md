@@ -170,7 +170,7 @@ RE-302. `ftShadowProcDisplay` draws a floor-conforming strip, not a blob:
 ## UI
 
 - `SObj` sprites draw through the GE (RE-392 onwards).
-- Developer overlay uses `sceGuDebugFlush` (RE-014, RE-202).
+- Developer overlay: GE-drawn 8x8 text, `psp-runtime/src/gu/hud_text.rs` (replaced the `sceGuDebugFlush` path of RE-014, RE-202).
 
 ### Sprites
 

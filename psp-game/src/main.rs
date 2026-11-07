@@ -5847,6 +5847,7 @@ unsafe fn run() -> ! {
         }
         ssb_psp_runtime::audio::dump_flush(false);
         profile::frame_end(ssb_psp_runtime::thread::stack_free_bytes);
+        ssb_psp_runtime::timing::keep_awake();
         #[cfg(any(feature = "frame_timer", all(feature = "capture_scene_file", not(feature = "profile"))))]
         ssb_psp_runtime::frame_timer::frame_end(deterministic_capture_frozen(capture_spec, sim_frame_index));
         #[cfg(feature = "headless_capture")]

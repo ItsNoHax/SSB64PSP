@@ -52,7 +52,7 @@ crates/ssb-tablegen: ROM -> pack TABLES section; table layout into OUT_DIR (buil
 | Textures | Sampled from the pack in main RAM; large and repeated textures copied into the idle VRAM photo region (RE-539, [memory](memory.md#vram)) | Per-scene VRAM residency where it measurably helps |
 | Audio | N64 audio system ported whole, synthesized on its own thread ([D-049](decisions/D-049.md)) | Same, within the PSP-2000's CPU budget |
 | Optimization | Scalar math, GE state cache | VFPU and state batching only where profiling shows a cost ([D-032](decisions/D-032.md), [D-036](decisions/D-036.md)) |
-| Debug HUD | `sceGuDebugFlush` (PPSSPP software renderer only) | GE geometry |
+| Debug HUD | GE-drawn 8x8 text (`Gpu::debug_text`, viewer only) | Same |
 
 ## Major Subsystems
 
