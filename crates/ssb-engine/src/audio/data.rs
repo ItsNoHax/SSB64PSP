@@ -213,10 +213,22 @@ impl<'a> Section<'a> {
     /// parts in order, then the music tbl on a [`stream::PAGE`] boundary
     /// and the sfx tbl right after it ([`Self::stream_layout`]).
     pub fn build(parts: &[&[u8]; PART_COUNT]) -> Vec<u8> {
-        let mut out = alloc::vec![0u8; SECTION_HEADER];
-        out[0..4].copy_from_slice(&SECTION_MAGIC.to_le_bytes());
-        out[4..8].copy_from_slice(&SECTION_VERSION.to_le_bytes());
-        out[8..12].copy_from_slice(&(PART_COUNT as u32).to_le_bytes());
+        let (ranges, total) = Self::layout(&parts.map(<[u8]>::len));
+        let mut out = alloc::vec![0u8; total];
+        out[..SECTION_HEADER].copy_from_slice(&Self::header(&ranges));
+        for (p, &(at, len)) in parts.iter().zip(&ranges) {
+            out[at..at + len].copy_from_slice(p);
+        }
+        out
+    }
+
+    /// [`Self::build`]'s layout for parts of these lengths (in [`Part`]
+    /// order): each part's `(offset, len)`, and the section's length. Lets
+    /// a writer stream the section without assembling it (the on-device
+    /// pack build, RE-588).
+    pub fn layout(lens: &[usize; PART_COUNT]) -> ([(usize, usize); PART_COUNT], usize) {
+        let mut ranges = [(0, 0); PART_COUNT];
+        let mut end = SECTION_HEADER;
         let resident =
             (0..PART_COUNT).filter(|i| !STREAMED_PARTS.iter().any(|&p| p as usize == *i));
         let streamed = STREAMED_PARTS.iter().map(|&p| p as usize);
@@ -226,12 +238,22 @@ impl<'a> Section<'a> {
             } else {
                 PART_ALIGN
             };
-            let p = parts[i];
-            let at = out.len().next_multiple_of(align);
-            out.resize(at, 0);
+            let at = end.next_multiple_of(align);
+            ranges[i] = (at, lens[i]);
+            end = at + lens[i];
+        }
+        (ranges, end)
+    }
+
+    /// The section header for [`Self::layout`]'s `ranges`.
+    pub fn header(ranges: &[(usize, usize); PART_COUNT]) -> [u8; SECTION_HEADER] {
+        let mut out = [0u8; SECTION_HEADER];
+        out[0..4].copy_from_slice(&SECTION_MAGIC.to_le_bytes());
+        out[4..8].copy_from_slice(&SECTION_VERSION.to_le_bytes());
+        out[8..12].copy_from_slice(&(PART_COUNT as u32).to_le_bytes());
+        for (i, &(at, len)) in ranges.iter().enumerate() {
             out[12 + i * 8..16 + i * 8].copy_from_slice(&(at as u32).to_le_bytes());
-            out[16 + i * 8..20 + i * 8].copy_from_slice(&(p.len() as u32).to_le_bytes());
-            out.extend_from_slice(p);
+            out[16 + i * 8..20 + i * 8].copy_from_slice(&(len as u32).to_le_bytes());
         }
         out
     }

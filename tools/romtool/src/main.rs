@@ -140,8 +140,11 @@ gitignored -- no extracted asset is ever committed."
 
 type Res = Result<(), Box<dyn std::error::Error>>;
 
+/// Reads a dump in any cartridge byte order (`.z64`, `.v64`, `.n64`),
+/// swapped to big-endian `.z64` before the SHA-1 check.
 fn load_rom(path: &Path) -> Result<(Vec<u8>, rom::RomInfo), Box<dyn std::error::Error>> {
-    let data = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut data = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    rom::normalize(&mut data)?;
     let info = rom::identify(&data)?;
     Ok((data, info))
 }

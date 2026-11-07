@@ -3717,7 +3717,7 @@ struct Entry {
 }
 
 struct Tables<'a> {
-    rom: &'a Source,
+    rom: &'a Source<'a>,
     lengths: &'a Lengths,
     common: Vec<i16>,
     demo: Vec<u32>,

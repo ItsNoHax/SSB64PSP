@@ -2006,6 +2006,14 @@ fn psp_main() {
     ssb_psp_runtime::fpu::init_thread(ssb_psp_runtime::fpu::GameThread::Main);
     #[cfg(feature = "fcr31_probe")]
     ssb_psp_runtime::fcr31_probe::run();
+    // A test build takes away the memory a smaller launch lacks (RE-475):
+    // before the pack probe too, which runs at that launch's budget
+    // (RE-588: the PSP-1000).
+    #[cfg(feature = "memory_ballast")]
+    if let Some(target) = ssb_psp_runtime::memory::ballast_target() {
+        let held = ssb_psp_runtime::memory::hold_ballast(target);
+        boot_log::log_args(format_args!("ballast target={target} held={held}"));
+    }
     // Before anything the game allocates, so the build has the whole heap.
     #[cfg(feature = "pack_probe")]
     ssb_psp_runtime::pack_probe::run();
@@ -2020,12 +2028,6 @@ fn psp_main() {
     // A fatal screen writes the lines `boot_log` still holds.
     #[cfg(feature = "boot_log")]
     ssb_psp_runtime::memory::on_fatal(boot_log::flush);
-    // A test build takes away the memory a smaller launch lacks (RE-475).
-    #[cfg(feature = "memory_ballast")]
-    if let Some(target) = ssb_psp_runtime::memory::ballast_target() {
-        let held = ssb_psp_runtime::memory::hold_ballast(target);
-        boot_log::log_args(format_args!("ballast target={target} held={held}"));
-    }
     ssb_psp_runtime::memory::sample();
     psp::enable_home_button();
     ssb_psp_runtime::timing::full_speed();

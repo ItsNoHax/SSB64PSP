@@ -2395,6 +2395,12 @@ impl Out<'_> {
     }
 }
 
+impl PackSink for Out<'_> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), SinkError> {
+        Out::write(self, bytes)
+    }
+}
+
 /// The header and tables' small writes, buffered onto an [`Out`]: the
 /// tables are never whole in memory.
 struct TableOut<'o, 's> {
@@ -2503,8 +2509,9 @@ pub struct PackWriter {
     /// the blob.
     audio: Vec<u8>,
     /// The `TABLES` section (`ssb_tablegen::tables_section`), written after
-    /// the audio section.
-    tables: Vec<u8>,
+    /// the audio section; borrowed when the build installed it (RE-588:
+    /// one copy).
+    tables: alloc::borrow::Cow<'static, [u8]>,
     /// [`Self::set_audio_later`]'s length.
     late_audio: Option<usize>,
 }
@@ -2540,8 +2547,8 @@ impl PackWriter {
     }
 
     /// Declares an audio section of `len` bytes that `finish_to`'s
-    /// `make_audio` makes after the blob is written (RE-588: the section
-    /// and the blob are never in memory together).
+    /// `make_audio` writes after the blob (RE-588: the section is streamed,
+    /// never in memory with the blob).
     pub fn set_audio_later(&mut self, len: usize) {
         self.audio = Vec::new();
         self.late_audio = Some(len);
@@ -2549,8 +2556,20 @@ impl PackWriter {
 
     /// Sets the `TABLES` section `finish` appends after the audio section
     /// (D-048, `ssb-tables`).
-    pub fn set_tables(&mut self, section: Vec<u8>) {
-        self.tables = section;
+    pub fn set_tables(&mut self, section: impl Into<alloc::borrow::Cow<'static, [u8]>>) {
+        self.tables = section.into();
+    }
+
+    /// Spills the blob's full pages to `spill` (the on-device build,
+    /// RE-588): set before anything is added.
+    pub fn set_blob_spill(&mut self, spill: alloc::boxed::Box<dyn crate::blob_store::BlobSpill>) {
+        assert!(self.chunks.is_empty(), "blob spill set after a push");
+        self.blob = crate::blob_store::BlobStore::with_spill(spill);
+    }
+
+    /// The blob spill's traffic so far.
+    pub fn spill_stats(&self) -> crate::blob_store::SpillStats {
+        self.blob.spill_stats()
     }
 
     /// Appends bytes to the blob, aligned, returning their offset.
@@ -3889,7 +3908,7 @@ impl PackWriter {
     /// The pack's bytes, in a `Vec` (tests and small packs).
     pub fn finish(self) -> Vec<u8> {
         let mut out = Vec::new();
-        self.finish_to(&mut out, &mut || unreachable!("no late audio"))
+        self.finish_to(&mut out, &mut |_| unreachable!("no late audio"))
             .expect("a Vec sink cannot fail");
         out
     }
@@ -3899,13 +3918,17 @@ impl PackWriter {
     /// the audio and `TABLES` sections. Never holds a second blob or the
     /// whole output.
     ///
-    /// After [`Self::set_audio_later`], `make_audio` makes the audio section
-    /// once the blob is written and dropped.
+    /// After [`Self::set_audio_later`], `make_audio` writes the audio
+    /// section to its sink once the blob is written and dropped, and
+    /// returns its length.
     pub fn finish_to(
         mut self,
         sink: &mut dyn PackSink,
-        make_audio: &mut dyn FnMut() -> Result<Vec<u8>, SinkError>,
+        make_audio: &mut dyn FnMut(&mut dyn PackSink) -> Result<usize, SinkError>,
     ) -> Result<usize, SinkError> {
+        if let Some(e) = self.blob.take_error() {
+            return Err(e);
+        }
         let layout = self.relayout();
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
@@ -4293,7 +4316,7 @@ impl PackWriter {
         out.resize(blob_offset, 0);
         out.finish()?;
         // Only the blob and the sections are left to write (RE-588).
-        let blob = core::mem::take(&mut self.blob);
+        let mut blob = core::mem::take(&mut self.blob);
         let audio = core::mem::take(&mut self.audio);
         let tables = core::mem::take(&mut self.tables);
         let late_audio = self.late_audio;
@@ -4314,15 +4337,19 @@ impl PackWriter {
             blob.read_chunk(i as usize, &mut chunk);
             sink.write(&chunk)?;
         }
+        if let Some(e) = blob.take_error() {
+            return Err(e);
+        }
         sink.pad_to(blob_offset + blob_len)?;
         drop((blob, chunk, placed));
         if audio_len != 0 {
             sink.pad_to(audio_offset)?;
             match late_audio {
                 Some(len) => {
-                    let audio = make_audio()?;
-                    assert_eq!(audio.len(), len, "late audio section length");
-                    sink.write(&audio)?;
+                    let start = sink.pos;
+                    let written = make_audio(&mut sink)?;
+                    assert_eq!(written, len, "late audio section length");
+                    assert_eq!(sink.pos - start, len, "late audio bytes written");
                 }
                 None => sink.write(&audio)?,
             }

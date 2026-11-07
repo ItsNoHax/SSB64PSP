@@ -1,5 +1,6 @@
 //! The verified ROM image the tables are read from.
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::collections::HashMap;
@@ -10,20 +11,33 @@ use std::sync::Mutex;
 
 use crate::archive::{Archive, File};
 use crate::rom::{self, Region};
+use crate::rom_read::RomRef;
 use crate::{Error, Result};
 
-/// A verified Super Smash Bros. (USA) ROM, read once.
-pub struct Source {
-    rom: Vec<u8>,
+/// A verified Super Smash Bros. (USA) ROM: owned bytes, or a slice or
+/// paged reader the caller holds (`ssb-pack` on the PSP, RE-588).
+pub struct Source<'a> {
+    rom: Rom<'a>,
+    /// [`Source::over`]'s archive, its file table parsed once: a paged ROM
+    /// would copy the 26 KB table for every file (RE-588).
+    archive: Option<Archive<'a>>,
+    /// `None`: no cache ([`Source::over`]).
     #[cfg(feature = "std")]
-    files: Mutex<HashMap<u32, File>>,
+    files: Option<Mutex<HashMap<u32, File>>>,
 }
 
-impl Source {
-    /// Reads and verifies the ROM at `path` (size, byte order and SHA-1).
+enum Rom<'a> {
+    Owned(Vec<u8>),
+    Borrowed(RomRef<'a>),
+}
+
+impl Source<'static> {
+    /// Reads and verifies the ROM at `path` (size, SHA-1); a `.v64` or
+    /// `.n64` dump is swapped to `.z64` first.
     #[cfg(feature = "std")]
     pub fn open(path: &Path) -> std::result::Result<Self, String> {
-        let rom = std::fs::read(path).map_err(|e| e.to_string())?;
+        let mut rom = std::fs::read(path).map_err(|e| e.to_string())?;
+        rom::normalize(&mut rom).map_err(|e| e.to_string())?;
         Self::from_bytes(rom).map_err(|e| e.to_string())
     }
 
@@ -31,28 +45,51 @@ impl Source {
     pub fn from_bytes(rom: Vec<u8>) -> Result<Self> {
         rom::identify(&rom)?;
         Ok(Self {
-            rom,
+            rom: Rom::Owned(rom),
+            archive: None,
             #[cfg(feature = "std")]
-            files: Default::default(),
+            files: Some(Default::default()),
         })
+    }
+}
+
+impl<'a> Source<'a> {
+    /// Reads `rom`, which the caller has verified (`rom::identify_reader`):
+    /// a paged ROM is not read twice for its SHA-1. No file cache, also
+    /// with `std`: the pack build runs as on the PSP (RE-588).
+    pub fn over(rom: RomRef<'a>) -> Self {
+        Self {
+            rom: Rom::Borrowed(rom),
+            // An error here is the first `file` call's.
+            archive: Archive::open(rom, Region::Us).ok(),
+            #[cfg(feature = "std")]
+            files: None,
+        }
+    }
+
+    fn rom(&self) -> RomRef<'_> {
+        match &self.rom {
+            Rom::Owned(bytes) => RomRef::Bytes(bytes),
+            Rom::Borrowed(rom) => *rom,
+        }
     }
 
     /// `len` bytes of the cartridge image at ROM offset `at` (code and data
     /// segments outside the archive).
-    pub fn bytes(&self, at: u32, len: usize) -> Result<&[u8]> {
-        rom::slice(&self.rom, at as usize, len)
+    pub fn bytes(&self, at: u32, len: usize) -> Result<Cow<'_, [u8]>> {
+        self.rom().read(at as usize, len)
     }
 
     pub fn u32(&self, at: u32) -> Result<u32> {
-        rom::read_u32(&self.rom, at as usize)
+        self.rom().u32(at as usize)
     }
 
     pub fn u16(&self, at: u32) -> Result<u16> {
-        rom::read_u16(&self.rom, at as usize)
+        self.rom().u16(at as usize)
     }
 
     pub fn u8(&self, at: u32) -> Result<u8> {
-        Ok(self.bytes(at, 1)?[0])
+        self.rom().u8(at as usize)
     }
 
     pub fn f32(&self, at: u32) -> Result<f32> {
@@ -63,19 +100,23 @@ impl Source {
     /// Intern pointer slots hold file-relative byte offsets; extern slots
     /// are zero (`archive::Archive::load`).
     ///
-    /// The host (`std`) caches every file it decodes. Without `std` (the
-    /// packer on the PSP) each call decodes again: a cache held 1,899 files
+    /// The host (`std`) caches every file it decodes, but for a
+    /// [`Source::over`]. Without `std` (the packer on the PSP) each call
+    /// decodes again: a cache held 1,899 files
     /// (6 MB) through the tables phase, and their freed blocks stranded
     /// 7.4 MB of small-heap chunks, so the PSP-2000's pack build ran out of
     /// memory (RE-588). A recent-files cache does not help: a 256-file one
     /// misses 5,500 of 7,400 reads.
     #[cfg(feature = "std")]
     pub fn file(&self, id: u32) -> Result<File> {
-        let mut files = self.files.lock().expect("file cache");
+        let Some(files) = &self.files else {
+            return self.load(id);
+        };
+        let mut files = files.lock().expect("file cache");
         if let Some(file) = files.get(&id) {
             return Ok(file.clone());
         }
-        let file = Archive::open(&self.rom, Region::Us)?.load(id)?;
+        let file = self.load(id)?;
         files.insert(id, file.clone());
         Ok(file)
     }
@@ -83,7 +124,15 @@ impl Source {
     /// See the `std` [`Source::file`]: no cache.
     #[cfg(not(feature = "std"))]
     pub fn file(&self, id: u32) -> Result<File> {
-        Archive::open(&self.rom, Region::Us)?.load(id)
+        self.load(id)
+    }
+
+    /// Decodes file `id`, no cache.
+    fn load(&self, id: u32) -> Result<File> {
+        match &self.archive {
+            Some(archive) => archive.load(id),
+            None => Archive::open(self.rom(), Region::Us)?.load(id),
+        }
     }
 }
 
@@ -135,12 +184,12 @@ impl Overlay {
 /// generators run the same code with and without a ROM.
 #[derive(Clone, Copy)]
 pub struct OverlayData<'a> {
-    pub rom: Option<&'a Source>,
+    pub rom: Option<&'a Source<'a>>,
     pub overlay: Overlay,
 }
 
 impl<'a> OverlayData<'a> {
-    pub fn new(rom: Option<&'a Source>, overlay: Overlay) -> Self {
+    pub fn new(rom: Option<&'a Source<'a>>, overlay: Overlay) -> Self {
         Self { rom, overlay }
     }
 

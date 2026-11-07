@@ -357,13 +357,24 @@ pub fn build_heads(banks: [&Bank; 2], tbls: [&[u8]; 2]) -> Vec<u8> {
 /// [`build_heads`] with another head length (for sizing).
 pub fn build_heads_with(banks: [&Bank; 2], tbls: [&[u8]; 2], head: usize) -> Vec<u8> {
     let mut out = Vec::new();
-    for (bank, tbl) in banks.into_iter().zip(tbls) {
-        for wt in &bank.wavetables {
-            let base = wt.base as usize;
-            out.extend_from_slice(&tbl[base..base + head_len(wt, head)]);
-        }
+    for (bank, base, len) in head_windows(banks, head) {
+        out.extend_from_slice(&tbls[bank][base..base + len]);
     }
     out
+}
+
+/// The tbl windows [`build_heads_with`] copies, in order: `(bank, offset
+/// in its tbl, len)`. A writer can read them from the ROM one by one
+/// (the on-device pack build, RE-588).
+pub fn head_windows(
+    banks: [&Bank; 2],
+    head: usize,
+) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+    banks.into_iter().enumerate().flat_map(move |(k, bank)| {
+        bank.wavetables
+            .iter()
+            .map(move |wt| (k, wt.base as usize, head_len(wt, head)))
+    })
 }
 
 /// Streamed samples: the resident heads and the page cache.

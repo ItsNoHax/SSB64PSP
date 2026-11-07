@@ -32,6 +32,7 @@ use alloc::{
 };
 use core::cell::{Cell, RefCell};
 use core::fmt;
+use ssb_rom::rom_read::RomRef;
 
 mod build;
 #[cfg(test)]
@@ -45,6 +46,7 @@ mod menus;
 mod mesh_pack;
 pub mod observe;
 pub mod residual_fixes;
+mod rom_bridge;
 pub mod solver;
 mod texture_convert;
 

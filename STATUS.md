@@ -18,6 +18,7 @@
 
 ## Current work
 
+- Landed (batch 185): on-PSP pack build at PSP-1000 memory: paged ROM, blob spill, streamed audio; host peak 41.9 to 10.3 MB; PSP-2000 with 16.5 MB ballast 8.77 min, pack identical, lowest free 4.37 MB (RE-588 item 14).
 - Landed (batch 181): tables batch E: 10 motion tables (scripts, motion descs, combat attributes, demo scripts) from the pack (v147, 456 KB section); every generator `no_std`; motion lookups out of line (inlined: +0.15 ms from `.text` pins); PSP mean +0.04 ms (RE-589 item 8). On-PSP pack build 6.20 min, pack identical, lowest free 9.0 MB, after an FPU-trap fix and no file cache on the PSP (RE-588 item 13).
 - Landed (batch 180): tables batch D: 12 hot tables (hurtboxes, joint masks, colour-animation and computer scripts, Mario physics) from the pack (v146); decoded rows in a `.bss` arena, not the heap (heap shift cost +0.12 ms); PSP mean +0.03 ms, r12 16.89 (RE-589 item 7).
 - Landed (batch 179): tables batch C: 32 warm tables (items, weapons, throws, hazards, stat flags) from the pack (v145, 208 KB section); PSP mean -0.04 ms, r12 16.78 (RE-589 item 6).
@@ -29,7 +30,7 @@
 ## Next
 
 1. Electric `vs4@2170` r12 16.84 ms, over the 16.7 target: 0.33 ms from batch 172 pack content, cause not found (RE-589 items 5, 7, 8). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
-2. ROM-free release (PLAN, RE-588): on-PSP build 6.20 min (limit 10); next tables batch F (text emitters out, EBOOT scan), then the installer.
+2. ROM-free release (PLAN, RE-588): first-launch installer (z64/v64/n64, XMB exit, PSP-1000).
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -40,7 +41,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 181 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 185 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|

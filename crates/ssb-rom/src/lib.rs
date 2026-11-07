@@ -60,6 +60,7 @@ pub mod psp_texture;
 pub mod reloc_link;
 pub mod residency;
 pub mod rom;
+pub mod rom_read;
 pub mod scan;
 pub mod scene;
 pub mod scene_deps;

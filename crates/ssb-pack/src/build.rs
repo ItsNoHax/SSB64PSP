@@ -61,12 +61,27 @@ pub struct PackStats {
 ///
 /// Writes the pack to `sink` in order (`PackWriter::finish_to`): the whole
 /// pack is never in memory at once (RE-588).
-pub fn build(
-    rom: &[u8],
+pub fn build<'r>(
+    rom: impl Into<RomRef<'r>>,
     opts: &PackOptions,
     log: &dyn PackLog,
     observer: &dyn PackObserver,
     sink: &mut dyn ssb_rom::pack::PackSink,
+) -> PackResult<PackStats> {
+    build_with(rom.into(), opts, log, observer, sink, None)
+}
+
+/// [`build`], with the blob's compressed pages spilled to `spill` when
+/// given (the on-device build: RE-588, the PSP-1000's memory). `rom` may
+/// be a paged reader (`ssb_rom::rom_read::PagedRom`) in any byte order.
+/// The pack's bytes depend on neither.
+pub fn build_with<'r>(
+    rom: impl Into<RomRef<'r>>,
+    opts: &PackOptions,
+    log: &dyn PackLog,
+    observer: &dyn PackObserver,
+    sink: &mut dyn ssb_rom::pack::PackSink,
+    spill: Option<Box<dyn ssb_rom::blob_store::BlobSpill>>,
 ) -> PackResult<PackStats> {
     use ssb_rom::{mesh, pack as fmt};
 
@@ -74,40 +89,46 @@ pub fn build(
     let ctx = PackCtx::new(opts, log, observer);
     let ctx = &ctx;
 
-    let data = rom;
-    let info = ssb_rom::rom::identify(data)?;
-    let archive = ssb_rom::archive::Archive::open(data, info.region)?;
+    let rom: RomRef<'r> = rom.into();
+    let info = ssb_rom::rom::identify_reader(rom)?;
+    let archive = ssb_rom::archive::Archive::open(rom, info.region)?;
 
     // The TABLES section (D-048, `ssb-tables`), installed before anything
     // reads a table: the packer reads `ssb_engine::math`'s sines.
-    let source =
-        ssb_tablegen::Source::from_bytes(data.to_vec()).map_err(|e| format!("tables: {e}"))?;
+    // Read through the ROM reader, never copied (RE-588).
+    let bridge = crate::rom_bridge::Bridge(rom);
+    let source = ssb_tablegen::Source::over((&bridge).into());
     let tables = ssb_tablegen::tables_section(Some(&source)).map_err(|e| format!("tables: {e}"))?;
     drop(source);
+    // Leaked once: the installed section is also the one the pack writes
+    // (RE-588: one copy).
+    let tables: &'static [u8] = Box::leak(tables.into_boxed_slice());
     // `unsafe` in a runtime's `eager` build (the PSP): no table is read yet,
     // on any thread; the block is unused in the host's checked build.
     #[allow(unused_unsafe)]
     // SAFETY: nothing has read a table before this point in the build.
-    let installed = unsafe { ssb_tables::install(Vec::leak(tables.clone())) };
+    let installed = unsafe { ssb_tables::install(tables) };
     match installed {
         // SAFETY: just installed; no hot value has been read yet.
         Ok(_) => unsafe { ssb_game::tables::fill() },
         // A host process that read a table first (its `host-rom`
         // fallback, or an earlier build) holds this ROM's section already.
         Err(ssb_tables::InstallError::AlreadyInstalled)
-            if ssb_tables::installed().is_some_and(|s| s.bytes() == tables.as_slice()) => {}
+            if ssb_tables::installed().is_some_and(|s| s.bytes() == tables) => {}
         Err(e) => return Err(format!("tables section: {e}").into()),
     }
 
     // The audio section: sequences, both banks, the FGM files and the
-    // synthesizer's constant tables, loaded once at boot (D-049). Made
-    // here for its length and again after the blob is written (RE-588: the
-    // section and the blob are never in memory together).
-    let make_audio =
-        || ssb_rom::audio::build_section(data).map_err(|e| format!("audio section: {e:?}"));
-    let audio_len = make_audio()?.len();
+    // synthesizer's constant tables, loaded once at boot (D-049). Checked
+    // and sized here; streamed from the ROM after the blob (RE-588: never
+    // held whole).
+    let audio_len =
+        ssb_rom::audio::section_len(rom).map_err(|e| format!("audio section: {e:?}"))?;
     ctx.log.phase("tables");
     let mut writer = fmt::PackWriter::new();
+    if let Some(spill) = spill {
+        writer.set_blob_spill(spill);
+    }
     // The same texture (image *and* palette, RE-098) is bound by many
     // primitives; upload each once.
     let mut tex_index: BTreeMap<TexKey, u32> = BTreeMap::new();
@@ -2972,7 +2993,9 @@ pub fn build(
     let mut particle_textures = 0usize;
     let mut particle_frames = 0usize;
     for &spec in ssb_rom::particle::BANKS {
-        let (scripts, textures) = ssb_rom::particle::decode_bank(data, spec)
+        let scripts = rom.read(spec.scripts_lo, spec.scripts_hi - spec.scripts_lo)?;
+        let textures = rom.read(spec.textures_lo, spec.textures_hi - spec.textures_lo)?;
+        let (scripts, textures) = ssb_rom::particle::decode_bank_parts(&scripts, &textures)
             .map_err(|error| format!("{}: {error:?}", spec.name))?;
         let mut frames = Vec::with_capacity(textures.len());
         for texture in &textures {
@@ -3104,7 +3127,11 @@ pub fn build(
 
     // The staff roll's credits tables: `ovl59`'s `.data`, which no archive
     // file holds (`ssb_game::spgame::staffroll::Credits`).
-    let credits = ssb_rom::ending::credits_bytes(data).ok_or("ROM too short for ovl59")?;
+    let (at, len) = ssb_rom::ending::credits_range();
+    let credits = rom
+        .read(at, len)
+        .map_err(|e| format!("ovl59's credits: {e}"))?;
+    let credits = &credits[..];
     if ssb_game::spgame::staffroll::Credits::parse(credits).is_none() {
         return Err("ovl59's credits tables do not parse".into());
     }
@@ -3542,13 +3569,18 @@ pub fn build(
     writer.set_tables(tables);
     ctx.log.phase("audio");
     let (held, raw) = writer.blob_held();
+    let spill = writer.spill_stats();
     pack_log!(
         ctx,
-        "  blob store  {held} bytes held for {raw} raw ({} chunks, RE-588)",
-        writer.chunk_count()
+        "  blob store  {held} bytes held for {raw} raw ({} chunks, RE-588); \
+         spilled {} bytes in {} pages, {} reads",
+        writer.chunk_count(),
+        spill.bytes_written,
+        spill.appends,
+        spill.reads
     );
     writer
-        .finish_to(sink, &mut || Ok(make_audio()?))
+        .finish_to(sink, &mut |out| ssb_rom::audio::write_section(rom, out))
         .map_err(|e| format!("pack write: {e}"))?;
     ctx.log.phase("finish");
     let stats = PackStats {

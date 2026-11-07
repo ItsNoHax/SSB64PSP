@@ -808,7 +808,7 @@ pub fn demo_words(rom: &Source, f: &Fighter) -> Result<(u32, Vec<u32>)> {
     );
     let data = rom.bytes(start, (end - start) as usize)?;
     let words = (0..data.len() / 4)
-        .map(|i| be_u32(data, i * 4))
+        .map(|i| be_u32(&data, i * 4))
         .collect::<Result<_>>()?;
     Ok((blob.vram, words))
 }

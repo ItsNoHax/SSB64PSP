@@ -254,9 +254,14 @@ pub const OVL59_VRAM: u32 = 0x8013_1b00;
 
 /// The staff roll's credits tables in a US ROM.
 pub fn credits_bytes(rom: &[u8]) -> Option<&[u8]> {
+    let (at, len) = credits_range();
+    rom.get(at..at + len)
+}
+
+/// [`credits_bytes`]'s ROM range: `(offset, len)`.
+pub fn credits_range() -> (usize, usize) {
     use ssb_game_layout::{DATA_LEN, DATA_VRAM};
-    let at = OVL59_ROM + (DATA_VRAM - OVL59_VRAM) as usize;
-    rom.get(at..at + DATA_LEN)
+    (OVL59_ROM + (DATA_VRAM - OVL59_VRAM) as usize, DATA_LEN)
 }
 
 /// The tables' place, as `ssb_game::spgame::staffroll` reads them; kept

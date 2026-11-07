@@ -116,7 +116,7 @@ impl TableDesc {
 /// What the readers share while one section is built: the ROM, and the
 /// intermediate results more than one table is read from, made once.
 pub struct Ctx<'a> {
-    pub rom: &'a Source,
+    pub rom: &'a Source<'a>,
     pub(crate) anim: core::cell::OnceCell<crate::anim_table::Rows>,
     pub(crate) motion: core::cell::OnceCell<crate::motion::Tables>,
     /// The figatree lengths `anim_table` and `motion` both read.
@@ -124,7 +124,7 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(rom: &'a Source) -> Self {
+    pub fn new(rom: &'a Source<'a>) -> Self {
         Self {
             rom,
             anim: core::cell::OnceCell::new(),

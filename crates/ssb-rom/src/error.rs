@@ -10,13 +10,16 @@
 pub enum Error {
     /// The file is not the expected size for an N64 cartridge dump.
     BadRomSize(usize),
-    /// The ROM is byte-swapped (`.v64`) or little-endian (`.n64`) rather than
-    /// big-endian `.z64`.
+    /// The ROM is not in big-endian `.z64` order where a reader needs it
+    /// (a byte-swapped `.v64` or little-endian `.n64` slice not yet
+    /// [`crate::rom::normalize`]d), or its first word is no known order.
     WrongByteOrder { detected: &'static str },
     /// The ROM's SHA-1 does not match any revision we support.
     UnsupportedRevision { sha1: alloc::string::String },
     /// A read ran past the end of the ROM.
     OutOfBounds { offset: usize, len: usize },
+    /// Reading the ROM file failed (`rom_read::RawFile`'s error code).
+    RomIo { offset: usize, code: i32 },
     /// VPK0 stream was malformed.
     Vpk0(&'static str),
     /// A relocation chain pointed outside its file.
@@ -38,6 +41,9 @@ impl core::fmt::Display for Error {
             }
             Error::OutOfBounds { offset, len } => {
                 write!(f, "read of {len} bytes at 0x{offset:X} is out of bounds")
+            }
+            Error::RomIo { offset, code } => {
+                write!(f, "ROM file read at 0x{offset:X} failed ({code:#x})")
             }
             Error::Vpk0(m) => write!(f, "malformed vpk0 stream: {m}"),
             Error::BadRelocation { file, offset } => {

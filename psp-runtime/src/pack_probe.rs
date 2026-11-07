@@ -2,9 +2,13 @@
 //! (RE-588: the ROM-free release builds the pack on the device). Replaces
 //! the game: [`run`] never returns.
 //!
-//! - Reads [`ROM`] into one allocation, builds the pack with the default
+//! - Reads the first of [`ROMS`] through a [`ROM_PAGES`]-page cache of
+//!   [`ROM_PAGE`] bytes (`ssb_rom::rom_read::PagedRom`, any byte order),
+//!   never whole; spills the blob's compressed pages to [`SPILL`], removed
+//!   after the build; builds the pack with the default
 //!   [`ssb_pack::PackOptions`] (the shipped pack, as `romtool pack`) and
-//!   writes it to [`PACK`] through a [`SINK_BYTES`] `.bss` buffer.
+//!   writes it to [`PACK`] through a [`SINK_BYTES`] `.bss` buffer. The
+//!   working set fits a PSP-1000 (RE-588).
 //! - Appends to [`LOG`], one open/write/close per line so a crash keeps
 //!   every line before it: each build line, and at each phase the time,
 //!   the sink's and the log's own time, free memory, the small-block heap
@@ -19,7 +23,6 @@
 //!   exception with the last phase in the log.
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::fmt::{self, Write};
@@ -32,16 +35,24 @@ use crate::{heap, memory, thread, timing};
 
 /// The probe's directory (created if missing).
 const DIR: &[u8] = b"ms0:/PSP/GAME/ssb64probe\0";
-/// The ROM the build reads (big-endian `.z64`).
-const ROM: &[u8] = b"ms0:/PSP/GAME/ssb64probe/rom.z64\0";
+/// The ROM the build reads: the first that opens, in any byte order.
+const ROMS: [&[u8]; 3] = [
+    b"ms0:/PSP/GAME/ssb64probe/rom.z64\0",
+    b"ms0:/PSP/GAME/ssb64probe/rom.v64\0",
+    b"ms0:/PSP/GAME/ssb64probe/rom.n64\0",
+];
+/// The blob's spilled pages: beside the pack, removed after the build.
+const SPILL: &[u8] = b"ms0:/PSP/GAME/ssb64probe/pack.tmp\0";
 /// The pack the build writes (replaced each run).
 const PACK: &[u8] = b"ms0:/PSP/GAME/ssb64probe/ssb64.pak\0";
 /// The log, appended to: each run starts with a `start` line.
 const LOG: &[u8] = b"ms0:/PSP/GAME/ssb64probe/packlog.txt\0";
 /// The pack sink's buffer: one `sceIoWrite` per this many bytes.
 const SINK_BYTES: usize = 256 * 1024;
-/// One `sceIoRead` per this many ROM bytes.
-const READ_BYTES: usize = 1024 * 1024;
+/// The ROM's page cache: 16 pages of 16 KiB, the fewest file reads per
+/// byte held of the host's sweep (RE-588 item 14).
+const ROM_PAGE: usize = 16 * 1024;
+const ROM_PAGES: usize = 16;
 /// The keep-awake thread's period.
 const TICK_US: u32 = 1_000_000;
 /// Above the main thread's 32, so a CPU-bound build cannot starve it.
@@ -57,6 +68,10 @@ static SINK_WRITTEN: AtomicUsize = AtomicUsize::new(0);
 static SINK_CALLS: AtomicU32 = AtomicU32::new(0);
 /// Microseconds spent writing [`LOG`].
 static LOG_US: AtomicU32 = AtomicU32::new(0);
+/// Microseconds in the ROM's `sceIoRead`s.
+static ROM_US: AtomicU32 = AtomicU32::new(0);
+/// Microseconds in the spill's `sceIoWrite`s and `sceIoRead`s.
+static SPILL_US: AtomicU32 = AtomicU32::new(0);
 /// The last phase's name, for the fatal hook.
 static PHASE: PhaseName = PhaseName(UnsafeCell::new([0; 32]), AtomicUsize::new(0));
 
@@ -145,41 +160,79 @@ pub fn run() -> ! {
     }
 }
 
-/// Reads the ROM, runs the build and logs its end.
+/// Opens the ROM and the spill, runs the build and logs its end.
 fn build() {
-    let t0 = elapsed();
-    let rom = match read_rom() {
+    let (rom, path) = match RomFile::open() {
         Ok(rom) => rom,
         Err(e) => {
             log(format_args!("error t={} rom: {e}", elapsed()));
             return;
         }
     };
-    let read_us = elapsed().wrapping_sub(t0).max(1);
+    let len = rom.len;
+    let rom = match ssb_rom::rom_read::PagedRom::new(rom, len, ROM_PAGE, ROM_PAGES) {
+        Ok(rom) => rom,
+        Err(e) => {
+            log(format_args!("error t={} rom: {e}", elapsed()));
+            return;
+        }
+    };
     log(format_args!(
-        "rom bytes={} us={read_us} kbps={} free={} max={}",
-        rom.len(),
-        rom.len() as u64 * 1000 / read_us as u64,
+        "rom path={} bytes={len} order={} page={ROM_PAGE} pages={ROM_PAGES} free={} max={}",
+        core::str::from_utf8(&path[..path.len() - 1]).unwrap_or("?"),
+        rom.order().name(),
         memory::free(),
         memory::max_block(),
     ));
     let probe = Probe;
     probe.phase_line("rom");
 
+    let spill = match IoSpill::create() {
+        Ok(spill) => spill,
+        Err(e) => {
+            log(format_args!("error t={} spill: {e}", elapsed()));
+            return;
+        }
+    };
+    let spill_fd = spill.fd;
     let mut sink = match FileSink::create() {
         Ok(sink) => sink,
         Err(e) => {
             log(format_args!("error t={} pack: {e}", elapsed()));
+            close_spill(spill_fd);
             return;
         }
     };
     let build_t0 = elapsed();
     let opts = ssb_pack::PackOptions::default();
-    let result = ssb_pack::build(&rom, &opts, &probe, &ssb_pack::NoObserver, &mut sink);
+    let result = ssb_pack::build_with(
+        &rom,
+        &opts,
+        &probe,
+        &ssb_pack::NoObserver,
+        &mut sink,
+        Some(alloc::boxed::Box::new(spill)),
+    );
     let build_us = elapsed().wrapping_sub(build_t0);
     let flushed = sink.flush();
     sink.close();
-    drop(rom);
+    close_spill(spill_fd);
+    let reads = rom.stats();
+    let RomFile { fd, .. } = rom.into_file();
+    // SAFETY: the ROM's open descriptor, closed once.
+    unsafe { sys::sceIoClose(fd) };
+    log(format_args!(
+        "rom_reads reads={} bytes={} misses={} direct={} file_reads={} file_bytes={} rom_us={} \
+         spill_us={}",
+        reads.reads,
+        reads.bytes,
+        reads.misses,
+        reads.direct,
+        reads.raw_reads,
+        reads.raw_bytes,
+        ROM_US.load(Ordering::Relaxed),
+        SPILL_US.load(Ordering::Relaxed),
+    ));
     probe.phase_line("closed");
     match (result, flushed) {
         (Ok(stats), Ok(())) => {
@@ -216,43 +269,152 @@ fn build() {
     }
 }
 
-/// The whole ROM in one allocation.
-fn read_rom() -> Result<Vec<u8>, String> {
-    // SAFETY: NUL-terminated path.
-    let fd = unsafe { sys::sceIoOpen(ROM.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0) };
-    if fd.0 < 0 {
-        return Err(alloc::format!("open {:#x}", fd.0));
-    }
-    // SAFETY: an open descriptor; closed on every path below.
-    let size = unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::End) };
-    // SAFETY: as above.
-    unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::Set) };
-    if !(1..=64 << 20).contains(&size) {
-        // SAFETY: as above.
-        unsafe { sys::sceIoClose(fd) };
-        return Err(alloc::format!("size {size}"));
-    }
-    let size = size as usize;
-    let mut rom = Vec::<u8>::with_capacity(size);
-    let mut done = 0;
-    while done < size {
-        let want = (size - done).min(READ_BYTES);
-        // SAFETY: `done + want <= size` bytes of `rom`'s capacity.
-        let got =
-            unsafe { sys::sceIoRead(fd, rom.as_mut_ptr().add(done) as *mut c_void, want as u32) };
-        if got <= 0 {
-            // SAFETY: as above.
-            unsafe { sys::sceIoClose(fd) };
-            return Err(alloc::format!("read {got:#x} at {done}"));
+/// The ROM file: `ssb_rom::rom_read::PagedRom`'s reads, timed into
+/// [`ROM_US`].
+struct RomFile {
+    fd: sys::SceUid,
+    len: usize,
+}
+
+impl RomFile {
+    /// The first of [`ROMS`] that opens, and its path.
+    fn open() -> Result<(Self, &'static [u8]), String> {
+        let mut last = 0;
+        for path in ROMS {
+            // SAFETY: NUL-terminated path.
+            let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0) };
+            if fd.0 < 0 {
+                last = fd.0;
+                continue;
+            }
+            // SAFETY: an open descriptor.
+            let size = unsafe { sys::sceIoLseek(fd, 0, sys::IoWhence::End) };
+            if !(1..=64 << 20).contains(&size) {
+                // SAFETY: as above, closed once.
+                unsafe { sys::sceIoClose(fd) };
+                return Err(alloc::format!("size {size}"));
+            }
+            let len = size as usize;
+            return Ok((Self { fd, len }, path));
         }
-        done += got as usize;
-        tick();
+        Err(alloc::format!("open {last:#x}"))
     }
-    // SAFETY: as above.
-    unsafe { sys::sceIoClose(fd) };
-    // SAFETY: the reads filled all `size` bytes.
-    unsafe { rom.set_len(size) };
-    Ok(rom)
+}
+
+impl ssb_rom::rom_read::RawFile for RomFile {
+    fn read_raw(&mut self, at: u64, out: &mut [u8]) -> Result<usize, i32> {
+        let t = now();
+        let n = seek_read(self.fd, at, out);
+        ROM_US.fetch_add(now().wrapping_sub(t), Ordering::Relaxed);
+        tick();
+        n
+    }
+}
+
+/// `out.len()` bytes or fewer at `at`; the error code on failure.
+fn seek_read(fd: sys::SceUid, at: u64, out: &mut [u8]) -> Result<usize, i32> {
+    // SAFETY: an open descriptor.
+    let pos = unsafe { sys::sceIoLseek(fd, at as i64, sys::IoWhence::Set) };
+    if pos != at as i64 {
+        return Err(if pos < 0 { pos as i32 } else { -1 });
+    }
+    // SAFETY: as above; `out` outlives the call.
+    let n = unsafe { sys::sceIoRead(fd, out.as_mut_ptr() as *mut c_void, out.len() as u32) };
+    if n < 0 {
+        return Err(n);
+    }
+    Ok(n as usize)
+}
+
+/// The blob's spill file, [`SPILL`] (`ssb_rom::blob_store::BlobSpill`).
+struct IoSpill {
+    fd: sys::SceUid,
+    len: u64,
+}
+
+impl IoSpill {
+    /// Creates [`SPILL`], empty.
+    fn create() -> Result<Self, String> {
+        // SAFETY: NUL-terminated path.
+        let fd = unsafe {
+            sys::sceIoOpen(
+                SPILL.as_ptr(),
+                sys::IoOpenFlags::RD_WR | sys::IoOpenFlags::CREAT | sys::IoOpenFlags::TRUNC,
+                0o777,
+            )
+        };
+        if fd.0 < 0 {
+            return Err(alloc::format!("open {:#x}", fd.0));
+        }
+        Ok(Self { fd, len: 0 })
+    }
+}
+
+impl ssb_rom::blob_store::BlobSpill for IoSpill {
+    fn append(&mut self, bytes: &[u8]) -> Result<u64, ssb_rom::pack::SinkError> {
+        let t = now();
+        let at = self.len;
+        // SAFETY: an open descriptor.
+        let pos = unsafe { sys::sceIoLseek(self.fd, at as i64, sys::IoWhence::Set) };
+        let mut result = Ok(at);
+        if pos != at as i64 {
+            result = Err(alloc::format!("spill seek {pos:#x}").into());
+        } else {
+            let mut rest = bytes;
+            while !rest.is_empty() {
+                // SAFETY: as above; `rest` outlives the call.
+                let n =
+                    unsafe { sys::sceIoWrite(self.fd, rest.as_ptr() as *const c_void, rest.len()) };
+                if n <= 0 {
+                    result = Err(alloc::format!("spill write {n:#x}").into());
+                    break;
+                }
+                rest = &rest[n as usize..];
+            }
+            self.len += bytes.len() as u64;
+        }
+        SPILL_US.fetch_add(now().wrapping_sub(t), Ordering::Relaxed);
+        tick();
+        result
+    }
+
+    fn read_at(&mut self, at: u64, out: &mut [u8]) -> Result<(), ssb_rom::pack::SinkError> {
+        let t = now();
+        let mut done = 0;
+        let mut result = Ok(());
+        while done < out.len() {
+            match seek_read(self.fd, at + done as u64, &mut out[done..]) {
+                Ok(0) => {
+                    result = Err(alloc::format!("spill short read at {}", at + done as u64).into());
+                    break;
+                }
+                Ok(n) => done += n,
+                Err(code) => {
+                    result = Err(alloc::format!("spill read {code:#x}").into());
+                    break;
+                }
+            }
+        }
+        SPILL_US.fetch_add(now().wrapping_sub(t), Ordering::Relaxed);
+        result
+    }
+}
+
+/// Closes and removes [`SPILL`] (the build owns the `IoSpill` itself and
+/// drops it without closing).
+fn close_spill(fd: sys::SceUid) {
+    // SAFETY: the spill's open descriptor, closed once; a NUL-terminated
+    // path.
+    let removed = unsafe {
+        sys::sceIoClose(fd);
+        sys::sceIoRemove(SPILL.as_ptr())
+    };
+    if removed < 0 {
+        log(format_args!(
+            "error t={} spill remove {removed:#x}",
+            elapsed()
+        ));
+    }
 }
 
 /// The build's [`ssb_pack::PackLog`].

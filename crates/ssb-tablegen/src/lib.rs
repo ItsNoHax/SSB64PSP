@@ -37,6 +37,8 @@ pub mod error;
 #[path = "../../ssb-rom/src/rom.rs"]
 #[allow(dead_code)]
 pub mod rom;
+#[path = "../../ssb-rom/src/rom_read.rs"]
+pub mod rom_read;
 #[path = "../../ssb-rom/src/vpk0.rs"]
 pub mod vpk0;
 // `ssb-rom`'s sprite manifests, for the tables that name a sprite by its

@@ -32,7 +32,8 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use crate::rom::{self, Region};
+use crate::rom::Region;
+use crate::rom_read::RomRef;
 use crate::{vpk0, Error, Result};
 
 /// Terminator for both relocation chains.
@@ -126,22 +127,24 @@ pub struct InternReloc {
 
 /// Reader over the `relocData` archive of a validated ROM image.
 pub struct Archive<'a> {
-    rom: &'a [u8],
+    rom: RomRef<'a>,
     table_lo: usize,
     table_hi: usize,
     entries: Vec<TableEntry>,
 }
 
 impl<'a> Archive<'a> {
-    /// Parses the archive's file table.
-    pub fn open(rom_data: &'a [u8], region: Region) -> Result<Self> {
+    /// Parses the archive's file table. `rom` is a slice or a reader
+    /// (`rom_read::RomRef`).
+    pub fn open(rom: impl Into<RomRef<'a>>, region: Region) -> Result<Self> {
+        let rom = rom.into();
         let table_lo = region.reloc_table_offset();
         let count = region.reloc_file_count() as usize;
         // The table carries one extra sentinel entry; the original uses it to
         // find where the last file's extern-id list ends.
         let table_hi = table_lo + (count + 1) * TABLE_ENTRY_SIZE;
 
-        let raw = rom::slice(rom_data, table_lo, (count + 1) * TABLE_ENTRY_SIZE)?;
+        let raw = rom.read(table_lo, (count + 1) * TABLE_ENTRY_SIZE)?;
         let entries = raw
             .as_chunks::<TABLE_ENTRY_SIZE>()
             .0
@@ -150,11 +153,16 @@ impl<'a> Archive<'a> {
             .collect();
 
         Ok(Archive {
-            rom: rom_data,
+            rom,
             table_lo,
             table_hi,
             entries,
         })
+    }
+
+    /// The ROM image the archive reads.
+    pub fn rom(&self) -> RomRef<'a> {
+        self.rom
     }
 
     /// Number of real files (excluding the trailing sentinel).
@@ -196,15 +204,18 @@ impl<'a> Archive<'a> {
             })?;
 
         let data_at = self.table_hi + entry.data_offset as usize;
+        // One read: the payload, then the extern target IDs up to the next
+        // file (`lbRelocGetExternBytesNum`'s bound); a paged ROM reads each
+        // file once (RE-588).
+        let next_at = self.table_hi + self.entries[id as usize + 1].data_offset as usize;
+        let span = next_at.saturating_sub(data_at).max(entry.rom_size());
+        let bytes = self.rom.read(data_at, span)?;
+        let payload = &bytes[..entry.rom_size()];
 
         let mut data = if entry.compressed {
-            let stream = self.rom.get(data_at..).ok_or(Error::OutOfBounds {
-                offset: data_at,
-                len: 0,
-            })?;
-            vpk0::decompress(stream)?
+            vpk0::decompress(payload)?
         } else {
-            rom::slice(self.rom, data_at, entry.rom_size())?.to_vec()
+            payload.to_vec()
         };
 
         // An uncompressed file's on-ROM size is already its full size; a
@@ -215,7 +226,13 @@ impl<'a> Archive<'a> {
 
         // Extern target IDs live in ROM right after the payload.
         let extern_ids_at = data_at + entry.rom_size();
-        let extern_relocs = self.walk_extern(&mut data, id, entry.reloc_extern, extern_ids_at)?;
+        let extern_relocs = self.walk_extern(
+            &mut data,
+            id,
+            entry.reloc_extern,
+            extern_ids_at,
+            &bytes[entry.rom_size()..],
+        )?;
 
         Ok(File {
             id,
@@ -256,13 +273,15 @@ impl<'a> Archive<'a> {
     }
 
     /// Walks the extern chain, pairing each slot with a target file ID read
-    /// from the ROM-side ID list.
+    /// from the ROM-side ID list at `ids_at`, whose first bytes are `ids`
+    /// (a chain longer than the gap reads on from the ROM).
     fn walk_extern(
         &self,
         data: &mut [u8],
         id: u32,
         head: u16,
         mut ids_at: usize,
+        mut ids: &[u8],
     ) -> Result<Vec<ExternReloc>> {
         let mut out = Vec::new();
         let mut cursor = head;
@@ -275,7 +294,13 @@ impl<'a> Archive<'a> {
             let next = u16::from_be_bytes([slot[0], slot[1]]);
             let target_word = u16::from_be_bytes([slot[2], slot[3]]);
 
-            let target_file = rom::read_u16(self.rom, ids_at)?;
+            let target_file = match ids {
+                [hi, lo, rest @ ..] => {
+                    ids = rest;
+                    u16::from_be_bytes([*hi, *lo])
+                }
+                _ => self.rom.u16(ids_at)?,
+            };
             ids_at += 2;
 
             // Zero the slot: its value is meaningless until the target file's
@@ -304,7 +329,7 @@ impl<'a> Archive<'a> {
         let next = *self.entry(id + 1).ok_or_else(missing)?;
         let start = self.table_hi + entry.data_offset as usize + entry.rom_size();
         let end = self.table_hi + next.data_offset as usize;
-        let bytes = rom::slice(self.rom, start, end.saturating_sub(start))?;
+        let bytes = self.rom.read(start, end.saturating_sub(start))?;
         Ok(bytes
             .as_chunks::<2>()
             .0

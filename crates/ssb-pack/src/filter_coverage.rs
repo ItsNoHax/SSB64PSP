@@ -103,7 +103,7 @@ const VALIDATE_PER_CELL: usize = 48;
 const MAX_TRAIN: usize = 4096;
 const MAX_VALIDATION: usize = 16384;
 
-fn evenly_spaced(samples: &[[i32; 2]], limit: usize) -> Vec<[i32; 2]> {
+fn evenly_spaced<P: Copy>(samples: &[P], limit: usize) -> Vec<P> {
     if samples.len() <= limit {
         return samples.to_vec();
     }
@@ -128,28 +128,81 @@ fn sort_dedup(points: &mut Vec<[i32; 2]>) {
         points.dedup();
         return;
     };
+    radix_sort_dedup(&mut keys);
+    points.clear();
+    points.extend(keys.iter().map(|&k| k.pair()));
+}
+
+/// Sorts and deduplicates `keys` by a four-pass byte radix sort.
+fn radix_sort_dedup(keys: &mut Vec<u32>) {
     let mut scratch = vec![0u32; keys.len()];
     for shift in [0, 8, 16, 24] {
         let mut start = [0usize; 257];
-        for &k in &keys {
+        for &k in keys.iter() {
             start[(k >> shift & 0xFF) as usize + 1] += 1;
         }
         for i in 1..start.len() {
             start[i] += start[i - 1];
         }
-        for &k in &keys {
+        for &k in keys.iter() {
             let slot = &mut start[(k >> shift & 0xFF) as usize];
             scratch[*slot] = k;
             *slot += 1;
         }
-        core::mem::swap(&mut keys, &mut scratch);
+        core::mem::swap(keys, &mut scratch);
     }
+    drop(scratch);
     keys.dedup();
-    points.clear();
-    points.extend(
-        keys.iter()
-            .map(|&k| [(k >> 16) as i32 - 0x8000, (k & 0xFFFF) as i32 - 0x8000]),
-    );
+}
+
+/// A coverage point as [`build`] collects it: an S10.5 pair, or its 32-bit
+/// key when every UV is an `i16` (the authored vertex stream's range). The
+/// key's order is the pair's, so sorting, deduplication and searches give
+/// the same points; a key halves the raw holdout's memory (RE-588: up to
+/// ~800,000 points per primitive, the build's peak).
+trait Point: Copy + Ord {
+    fn from_pair(p: [i32; 2]) -> Self;
+    fn pair(self) -> [i32; 2];
+    fn sort_dedup(points: &mut Vec<Self>);
+}
+
+impl Point for [i32; 2] {
+    fn from_pair(p: [i32; 2]) -> Self {
+        p
+    }
+    fn pair(self) -> [i32; 2] {
+        self
+    }
+    fn sort_dedup(points: &mut Vec<Self>) {
+        sort_dedup(points)
+    }
+}
+
+/// Whether an S10.5 coordinate fits a `u32` key's half.
+fn fits_key(v: i32) -> bool {
+    (-0x8000..=0x7FFF).contains(&v)
+}
+
+/// The key: `(s + 0x8000) << 16 | (t + 0x8000)`.
+impl Point for u32 {
+    fn from_pair(p: [i32; 2]) -> Self {
+        debug_assert!(fits_key(p[0]) && fits_key(p[1]));
+        ((p[0] + 0x8000) as u32) << 16 | ((p[1] + 0x8000) as u32 & 0xFFFF)
+    }
+    fn pair(self) -> [i32; 2] {
+        [
+            (self >> 16) as i32 - 0x8000,
+            (self & 0xFFFF) as i32 - 0x8000,
+        ]
+    }
+    fn sort_dedup(keys: &mut Vec<Self>) {
+        if keys.len() < 4096 {
+            keys.sort_unstable();
+            keys.dedup();
+        } else {
+            radix_sort_dedup(keys);
+        }
+    }
 }
 
 fn inside(uv: &[[i32; 2]; 3], p: [i32; 2]) -> bool {
@@ -212,12 +265,12 @@ fn touched(uv: &[[i32; 2]; 3], x: i32, y: i32) -> bool {
     true
 }
 
-fn add_cell(
+fn add_cell<P: Point>(
     uv: &[[i32; 2]; 3],
     x: i32,
     y: i32,
-    train: &mut Vec<[i32; 2]>,
-    validation: &mut Vec<[i32; 2]>,
+    train: &mut Vec<P>,
+    validation: &mut Vec<P>,
 ) {
     // The closed triangle is convex: a cell whose four lattice corners
     // are inside it has every S10.5 point inside, so the per-point test
@@ -252,12 +305,12 @@ impl CellSet {
 }
 
 /// [`add_cell`]'s probe pattern for any footprint predicate.
-fn add_cell_where(
+fn add_cell_where<P: Point>(
     inside: impl Fn([i32; 2]) -> bool,
     x: i32,
     y: i32,
-    train: &mut Vec<[i32; 2]>,
-    validation: &mut Vec<[i32; 2]>,
+    train: &mut Vec<P>,
+    validation: &mut Vec<P>,
 ) {
     let base = [x * 32, y * 32];
     let mut local_train = Vec::new();
@@ -345,27 +398,48 @@ fn add_cell_where(
         }
     }
     local_validation.retain(|p| !train_set.contains(p[0] - base[0], p[1] - base[1]));
-    train.extend(local_train.into_iter().take(TRAIN_PER_CELL));
-    validation.extend(local_validation.into_iter().take(VALIDATE_PER_CELL));
+    train.extend(
+        local_train
+            .into_iter()
+            .take(TRAIN_PER_CELL)
+            .map(P::from_pair),
+    );
+    validation.extend(
+        local_validation
+            .into_iter()
+            .take(VALIDATE_PER_CELL)
+            .map(P::from_pair),
+    );
 }
 
 pub fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
-    let mut result = Coverage::default();
-    let mut base = Vec::new();
+    // Every point lies in its triangle's UV box, so `i16` vertices give
+    // `i16` points: collected as `u32` keys (RE-588).
+    if triangles.iter().flatten().flatten().all(|&v| fits_key(v)) {
+        build_in::<u32>(triangles)
+    } else {
+        build_in::<[i32; 2]>(triangles)
+    }
+}
+
+/// [`build`] over one point representation; the same coverage from either.
+fn build_in<P: Point>(triangles: &[[[i32; 2]; 3]]) -> Coverage {
+    let (mut train, mut validation) = (Vec::<P>::new(), Vec::<P>::new());
+    let mut base = Vec::<P>::new();
     for uv in triangles {
         // Preserve the original N=8 lattice as broad coverage.
         for a in 0..=BARYCENTRIC_N {
             for b in 0..=BARYCENTRIC_N - a {
                 let c = BARYCENTRIC_N - a - b;
-                base.push([
+                base.push(P::from_pair([
                     (uv[0][0] * a + uv[1][0] * b + uv[2][0] * c) / BARYCENTRIC_N,
                     (uv[0][1] * a + uv[1][1] * b + uv[2][1] * c) / BARYCENTRIC_N,
-                ]);
+                ]));
             }
         }
         // The vertices are the exact UV extrema and must survive even when
         // a thin triangle has no interior S10.5 coordinate in some cells.
-        base.extend(*uv);
+        base.extend(uv.iter().map(|&p| P::from_pair(p)));
         let min_x = uv.iter().map(|p| p[0]).min().unwrap().div_euclid(32);
         let max_x = uv.iter().map(|p| p[0]).max().unwrap().div_euclid(32);
         let min_y = uv.iter().map(|p| p[1]).min().unwrap().div_euclid(32);
@@ -373,35 +447,38 @@ pub fn build(triangles: &[[[i32; 2]; 3]]) -> Coverage {
         for y in min_y..=max_y {
             for x in min_x..=max_x {
                 if touched(uv, x, y) {
-                    add_cell(uv, x, y, &mut result.train, &mut result.validation);
+                    add_cell(uv, x, y, &mut train, &mut validation);
                 }
             }
         }
     }
-    result.train.extend(&base);
-    sort_dedup(&mut result.train);
-    if result.train.len() > MAX_TRAIN {
-        sort_dedup(&mut base);
+    train.extend(&base);
+    P::sort_dedup(&mut train);
+    if train.len() > MAX_TRAIN {
+        P::sort_dedup(&mut base);
         // The N=8 lattice and UV extrema are immutable broad coverage. A
         // stretched primitive gets a deterministic spread of extra probes
         // within the remaining training budget.
-        let extras: Vec<_> = result
-            .train
+        let extras: Vec<_> = train
             .iter()
             .copied()
             .filter(|p| base.binary_search(p).is_err())
             .collect();
         let extra_limit = MAX_TRAIN.saturating_sub(base.len());
         base.extend(evenly_spaced(&extras, extra_limit));
-        sort_dedup(&mut base);
-        result.train = base;
+        P::sort_dedup(&mut base);
+        train = base;
+    } else {
+        drop(base);
     }
-    sort_dedup(&mut result.validation);
-    result
-        .validation
-        .retain(|p| result.train.binary_search(p).is_err());
-    result.validation = evenly_spaced(&result.validation, MAX_VALIDATION);
-    result
+    P::sort_dedup(&mut validation);
+    validation.retain(|p| train.binary_search(p).is_err());
+    let validation = evenly_spaced(&validation, MAX_VALIDATION);
+    Coverage {
+        train: train.into_iter().map(P::pair).collect(),
+        validation: validation.into_iter().map(P::pair).collect(),
+        ..Coverage::default()
+    }
 }
 
 /// One texgen primitive, in exactly the terms the runtime generator reads.
@@ -794,6 +871,46 @@ mod tests {
             sort_dedup(&mut points);
             assert_eq!(points, expected, "len {len} span {span}");
         }
+    }
+
+    /// The `u32`-key coverage equals the pair coverage: the same points,
+    /// sorted the same, sampled the same (RE-588).
+    #[test]
+    fn key_coverage_matches_pair_coverage() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        // Small, stretched (over both caps) and edge-of-range meshes.
+        for (count, span, centre) in [
+            (4, 200, 0),
+            (40, 3000, -500),
+            (3, 0x6000, 0),
+            (6, 2000, 0x7FFF - 2000),
+            (6, 2000, -0x8000 + 2000),
+        ] {
+            let tris: Vec<[[i32; 2]; 3]> = (0..count)
+                .map(|_| {
+                    core::array::from_fn(|_| {
+                        let v = next();
+                        let c = |b: u64| centre + (b % (2 * span as u64)) as i32 - span;
+                        [
+                            c(v).clamp(-0x8000, 0x7FFF),
+                            c(v >> 32).clamp(-0x8000, 0x7FFF),
+                        ]
+                    })
+                })
+                .collect();
+            let keys = build_in::<u32>(&tris);
+            assert_eq!(keys, build_in::<[i32; 2]>(&tris), "span {span}");
+            assert!(!keys.train.is_empty() && !keys.validation.is_empty());
+        }
+        // Out of the key's range: the pair path.
+        let wide = [[[-40_000, 0], [40_000, 64], [0, 9000]]];
+        assert_eq!(build(&wide), build_in::<[i32; 2]>(&wide));
     }
     use ssb_rom::{n64_filter, texture::Rgba8};
 

@@ -1,22 +1,100 @@
-//! The pack writer's blob held compressed in RAM (RE-588): the on-device
-//! build cannot hold the raw blob, so each chunk is compressed as it is
-//! pushed and decompressed when `PackWriter::finish_to` streams it out.
-//! Lossless and private to the writer: the pack's bytes do not change.
+//! The pack writer's blob held compressed (RE-588): the on-device build
+//! cannot hold the raw blob, so each chunk is compressed as it is pushed
+//! and decompressed when `PackWriter::finish_to` streams it out. Lossless
+//! and private to the writer: the pack's bytes do not change.
 //!
 //! - Codec: byte-oriented LZ77 (LZ4-like sequences), one independent block
 //!   per chunk, so any chunk reads back alone.
 //! - Storage: 64 KiB pages (no doubling slack, no large reallocation); a
 //!   chunk larger than a quarter page gets a block of its own.
+//! - Spill ([`BlobSpill`]): with one set, every page but the open one goes
+//!   to it (the PSP: a scratch file on the Memory Stick, so the compressed
+//!   blob is not held either); reads come back through a small page cache.
+//!   Without one, every page stays in RAM (`romtool pack`).
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::pack::align_up;
+use crate::pack::{align_up, SinkError};
 
 /// Compressed-stream page size.
 const PAGE: usize = 64 * 1024;
 const MIN_MATCH: usize = 4;
 const MAX_OFFSET: usize = 0xFFFF;
 const HASH_BITS: u32 = 14;
+/// Spilled shared pages kept after a read ([`BlobStore::read_chunk`]).
+const CACHE_PAGES: usize = 8;
+
+/// Where a [`BlobStore`] puts its full pages: append-only bytes read back
+/// at the offsets [`BlobSpill::append`] returned.
+pub trait BlobSpill {
+    /// Appends `bytes`, returning their offset in the spill.
+    fn append(&mut self, bytes: &[u8]) -> Result<u64, SinkError>;
+    /// Reads `out.len()` bytes at offset `at`.
+    fn read_at(&mut self, at: u64, out: &mut [u8]) -> Result<(), SinkError>;
+}
+
+/// A [`BlobSpill`] in RAM (tests: the spilled store's code path).
+#[derive(Default)]
+pub struct MemSpill(pub Vec<u8>);
+
+impl BlobSpill for MemSpill {
+    fn append(&mut self, bytes: &[u8]) -> Result<u64, SinkError> {
+        let at = self.0.len() as u64;
+        self.0.extend_from_slice(bytes);
+        Ok(at)
+    }
+
+    fn read_at(&mut self, at: u64, out: &mut [u8]) -> Result<(), SinkError> {
+        let at = at as usize;
+        let src = self
+            .0
+            .get(at..at + out.len())
+            .ok_or("blob spill read out of range")?;
+        out.copy_from_slice(src);
+        Ok(())
+    }
+}
+
+/// A [`BlobSpill`] over a seekable file (host tests and tools).
+#[cfg(feature = "std")]
+pub struct FileSpill<F: std::io::Read + std::io::Write + std::io::Seek> {
+    file: F,
+    len: u64,
+}
+
+#[cfg(feature = "std")]
+impl<F: std::io::Read + std::io::Write + std::io::Seek> FileSpill<F> {
+    /// Spills to `file` from its start (its old bytes are overwritten).
+    pub fn new(file: F) -> Self {
+        Self { file, len: 0 }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<F: std::io::Read + std::io::Write + std::io::Seek> BlobSpill for FileSpill<F> {
+    fn append(&mut self, bytes: &[u8]) -> Result<u64, SinkError> {
+        let at = self.len;
+        self.file.seek(std::io::SeekFrom::Start(at))?;
+        self.file.write_all(bytes)?;
+        self.len += bytes.len() as u64;
+        Ok(at)
+    }
+
+    fn read_at(&mut self, at: u64, out: &mut [u8]) -> Result<(), SinkError> {
+        self.file.seek(std::io::SeekFrom::Start(at))?;
+        Ok(self.file.read_exact(out)?)
+    }
+}
+
+/// A spilled store's traffic (RE-588: the PSP's Memory Stick time).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpillStats {
+    pub appends: usize,
+    pub bytes_written: usize,
+    pub reads: usize,
+    pub bytes_read: usize,
+}
 
 /// One stored chunk.
 #[derive(Clone, Copy)]
@@ -29,13 +107,19 @@ struct Stored {
     compressed: bool,
 }
 
+/// One page: in RAM, or in the spill at `(offset, len)`.
+enum Page {
+    Ram(Vec<u8>),
+    Spilled(u64, u32),
+}
+
 /// The blob: chunk `i` is the `i`-th [`BlobStore::push`].
 #[derive(Default)]
 pub struct BlobStore {
     /// The raw blob's length, alignment padding included.
     len: usize,
     raw_bytes: usize,
-    pages: Vec<Vec<u8>>,
+    pages: Vec<Page>,
     /// The page small chunks fill.
     open: Option<usize>,
     chunks: Vec<Stored>,
@@ -43,9 +127,26 @@ pub struct BlobStore {
     table: Vec<u32>,
     base: u32,
     scratch: Vec<u8>,
+    spill: Option<Box<dyn BlobSpill>>,
+    /// Spilled shared pages read back, least recently used first.
+    cache: Vec<(u32, Vec<u8>)>,
+    /// A spilled solo chunk read back.
+    solo: Vec<u8>,
+    /// The first spill failure: later pages are dropped and reads come
+    /// back empty; [`Self::take_error`] reports it.
+    error: Option<SinkError>,
+    stats: SpillStats,
 }
 
 impl BlobStore {
+    /// A store that spills its full pages to `spill`.
+    pub fn with_spill(spill: Box<dyn BlobSpill>) -> Self {
+        Self {
+            spill: Some(spill),
+            ..Self::default()
+        }
+    }
+
     /// The raw blob's length.
     pub fn len(&self) -> usize {
         self.len
@@ -55,17 +156,37 @@ impl BlobStore {
         self.len == 0
     }
 
-    /// Bytes held: pages' capacity plus the chunk records.
+    /// Bytes held in RAM: pages' and caches' capacity plus the chunk
+    /// records.
     pub fn held(&self) -> usize {
-        self.pages.iter().map(Vec::capacity).sum::<usize>()
+        self.pages
+            .iter()
+            .map(|p| match p {
+                Page::Ram(v) => v.capacity(),
+                Page::Spilled(..) => 0,
+            })
+            .sum::<usize>()
+            + self.pages.capacity() * core::mem::size_of::<Page>()
             + self.chunks.capacity() * core::mem::size_of::<Stored>()
             + self.table.capacity() * 4
             + self.scratch.capacity()
+            + self.cache.iter().map(|(_, v)| v.capacity()).sum::<usize>()
+            + self.solo.capacity()
     }
 
     /// The chunks' raw bytes (no padding).
     pub fn raw_bytes(&self) -> usize {
         self.raw_bytes
+    }
+
+    /// The spill's traffic so far.
+    pub fn spill_stats(&self) -> SpillStats {
+        self.stats
+    }
+
+    /// The first spill failure, if any.
+    pub fn take_error(&mut self) -> Option<SinkError> {
+        self.error.take()
     }
 
     /// Appends `bytes` at the next aligned offset, returning it.
@@ -86,8 +207,7 @@ impl BlobStore {
         self.base += bytes.len() as u32 + 1;
         let compressed = scratch.len() < bytes.len();
         let data = if compressed { &scratch[..] } else { bytes };
-        let (page, at_in_page) = self.reserve(data.len());
-        self.pages[page].extend_from_slice(data);
+        let (page, at_in_page) = self.store(data);
         self.chunks.push(Stored {
             page: page as u32,
             at: at_in_page as u32,
@@ -97,7 +217,7 @@ impl BlobStore {
         });
         self.scratch = scratch;
         #[cfg(debug_assertions)]
-        {
+        if self.error.is_none() {
             let mut back = Vec::new();
             self.read_chunk(self.chunks.len() - 1, &mut back);
             debug_assert!(back == bytes, "blob store round trip");
@@ -105,25 +225,138 @@ impl BlobStore {
         at as u32
     }
 
-    /// A page with room for `n` more bytes, and where they go in it.
-    fn reserve(&mut self, n: usize) -> (usize, usize) {
+    /// `bytes` to the spill as one page (or dropped after a failure).
+    fn spill_page(&mut self, bytes: &[u8]) -> Page {
+        let spill = self.spill.as_mut().expect("spilling store");
+        if self.error.is_none() {
+            match spill.append(bytes) {
+                Ok(at) => {
+                    self.stats.appends += 1;
+                    self.stats.bytes_written += bytes.len();
+                    return Page::Spilled(at, bytes.len() as u32);
+                }
+                Err(e) => self.error = Some(e),
+            }
+        }
+        Page::Spilled(u64::MAX, bytes.len() as u32)
+    }
+
+    /// Stores `data` in a page, returning the page and where in it.
+    fn store(&mut self, data: &[u8]) -> (usize, usize) {
+        let n = data.len();
         if n > PAGE / 4 {
-            self.pages.push(Vec::with_capacity(n));
+            let page = if self.spill.is_some() {
+                self.spill_page(data)
+            } else {
+                Page::Ram(data.to_vec())
+            };
+            self.pages.push(page);
             return (self.pages.len() - 1, 0);
         }
-        if self.open.is_none_or(|p| self.pages[p].len() + n > PAGE) {
-            self.pages.push(Vec::with_capacity(PAGE));
+        let full = self.open.is_none_or(|p| match &self.pages[p] {
+            Page::Ram(v) => v.len() + n > PAGE,
+            Page::Spilled(..) => true,
+        });
+        if full {
+            let mut buf = Vec::new();
+            if let Some(p) = self.open.filter(|_| self.spill.is_some()) {
+                // Spill the full page and fill its buffer again.
+                let Page::Ram(old) = core::mem::replace(&mut self.pages[p], Page::Spilled(0, 0))
+                else {
+                    unreachable!("the open page is in RAM");
+                };
+                self.pages[p] = self.spill_page(&old);
+                buf = old;
+                buf.clear();
+            }
+            if buf.capacity() < PAGE {
+                buf = Vec::with_capacity(PAGE);
+            }
+            self.pages.push(Page::Ram(buf));
             self.open = Some(self.pages.len() - 1);
         }
         let page = self.open.expect("open page");
-        (page, self.pages[page].len())
+        let Page::Ram(v) = &mut self.pages[page] else {
+            unreachable!("the open page is in RAM");
+        };
+        let at = v.len();
+        v.extend_from_slice(data);
+        (page, at)
     }
 
-    /// Chunk `i`'s raw bytes into `out` (replacing its contents).
-    pub fn read_chunk(&self, i: usize, out: &mut Vec<u8>) {
+    /// A spilled shared page's index in [`Self::cache`], read if absent.
+    fn cached(&mut self, page: u32, at: u64, len: u32) -> Result<usize, SinkError> {
+        if let Some(k) = self.cache.iter().position(|(p, _)| *p == page) {
+            let entry = self.cache.remove(k);
+            self.cache.push(entry);
+            return Ok(self.cache.len() - 1);
+        }
+        let mut buf = if self.cache.len() >= CACHE_PAGES {
+            self.cache.remove(0).1
+        } else {
+            Vec::with_capacity(PAGE)
+        };
+        buf.clear();
+        buf.resize(len as usize, 0);
+        self.read_spill(at, &mut buf)?;
+        self.cache.push((page, buf));
+        Ok(self.cache.len() - 1)
+    }
+
+    fn read_spill(&mut self, at: u64, out: &mut [u8]) -> Result<(), SinkError> {
+        if at == u64::MAX {
+            return Err("blob spill page was not written".into());
+        }
+        let spill = self.spill.as_mut().expect("spilling store");
+        spill.read_at(at, out)?;
+        self.stats.reads += 1;
+        self.stats.bytes_read += out.len();
+        Ok(())
+    }
+
+    /// Chunk `c`'s stored bytes, reading a spilled page back if need be.
+    fn stored_bytes(&mut self, c: Stored) -> Result<&[u8], SinkError> {
+        let (from, to) = (c.at as usize, (c.at + c.stored) as usize);
+        let spilled = match &self.pages[c.page as usize] {
+            Page::Ram(_) => None,
+            &Page::Spilled(at, len) => Some((at, len)),
+        };
+        match spilled {
+            None => {
+                let Page::Ram(v) = &self.pages[c.page as usize] else {
+                    unreachable!("checked above");
+                };
+                Ok(&v[from..to])
+            }
+            // A solo page: read just this chunk.
+            Some((at, len)) if len as usize > PAGE / 4 && c.at == 0 && c.stored == len => {
+                let mut solo = core::mem::take(&mut self.solo);
+                solo.clear();
+                solo.resize(len as usize, 0);
+                let read = self.read_spill(at, &mut solo);
+                self.solo = solo;
+                read?;
+                Ok(&self.solo[..])
+            }
+            Some((at, len)) => {
+                let k = self.cached(c.page, at, len)?;
+                Ok(&self.cache[k].1[from..to])
+            }
+        }
+    }
+
+    /// Chunk `i`'s raw bytes into `out` (replacing its contents). After a
+    /// spill failure ([`Self::take_error`]) `out` may come back empty.
+    pub fn read_chunk(&mut self, i: usize, out: &mut Vec<u8>) {
         let c = self.chunks[i];
-        let data = &self.pages[c.page as usize][c.at as usize..(c.at + c.stored) as usize];
         out.clear();
+        let data = match self.stored_bytes(c) {
+            Ok(data) => data,
+            Err(e) => {
+                self.error.get_or_insert(e);
+                return;
+            }
+        };
         if c.compressed {
             decompress(data, c.raw as usize, out).expect("blob store chunk corrupt");
         } else {
@@ -363,5 +596,51 @@ mod tests {
             s.read_chunk(i, &mut out);
             assert_eq!(&out, w, "chunk {i}");
         }
+    }
+
+    /// Chunks of a spilled store read back the same, in any order, and the
+    /// RAM it holds stays near one page and the cache.
+    #[test]
+    fn spilled_store_reads_back_every_chunk() {
+        let (mut ram, mut spilled) = (
+            BlobStore::default(),
+            BlobStore::with_spill(Box::new(MemSpill::default())),
+        );
+        let mut x = 7u32;
+        let mut want = Vec::new();
+        for k in 0..3_000usize {
+            let n = [0usize, 3, 40, 900, 5_000, 20_000, 70_000][k % 7] + k % 13;
+            let chunk: Vec<u8> = (0..n)
+                .map(|j| {
+                    x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    if j % 5 < 2 {
+                        (x >> 24) as u8
+                    } else {
+                        (j / 7) as u8
+                    }
+                })
+                .collect();
+            assert_eq!(ram.push(&chunk), spilled.push(&chunk));
+            want.push(chunk);
+        }
+        assert!(spilled.take_error().is_none());
+        assert!(
+            spilled.held() < ram.held() / 4,
+            "spilled store holds {} of {}",
+            spilled.held(),
+            ram.held()
+        );
+        let mut out = Vec::new();
+        // Forward, backward and strided: cache hits, misses and evictions.
+        let order = (0..want.len())
+            .chain((0..want.len()).rev())
+            .chain((0..want.len()).map(|i| i * 37 % want.len()));
+        for i in order {
+            spilled.read_chunk(i, &mut out);
+            assert_eq!(out, want[i], "chunk {i}");
+        }
+        assert!(spilled.take_error().is_none());
+        let stats = spilled.spill_stats();
+        assert!(stats.appends > 0 && stats.reads > 0, "{stats:?}");
     }
 }

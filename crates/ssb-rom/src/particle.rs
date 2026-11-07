@@ -369,6 +369,15 @@ pub fn decode_bank<'a>(
     let textures = rom
         .get(spec.textures_lo..spec.textures_hi)
         .ok_or(ParticleError::Truncated)?;
+    decode_bank_parts(scripts, textures)
+}
+
+/// [`decode_bank`] over the bank's two ROM ranges, read by the caller
+/// (a paged ROM: RE-588).
+pub fn decode_bank_parts<'a>(
+    scripts: &'a [u8],
+    textures: &'a [u8],
+) -> Result<(Vec<Script<'a>>, Vec<Texture<'a>>), ParticleError> {
     let scripts = decode_scripts(scripts)?;
     let textures = decode_textures(textures)?;
     if scripts
