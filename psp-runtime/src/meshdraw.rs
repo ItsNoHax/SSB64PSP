@@ -1241,6 +1241,12 @@ unsafe fn bind_texture_uncached(pack: &Pack<'_>, index: u32, t: &TextureDesc, pa
     #[cfg(not(feature = "texture_probe"))]
     {
         let cache = &mut *core::ptr::addr_of_mut!(BIND_CACHE);
+        // The `bind_texture_cached` miss before this call validated the
+        // cache; the victim slot is looked at only on that miss.
+        if let Some(block) = cache.find_victim(index, palette) {
+            block.replay();
+            return;
+        }
         let generation = ssb_rom::residency::generation();
         let from = sys::sceGuCheckList();
         if bind_texture_live(pack, t, palette) {
@@ -1256,6 +1262,12 @@ const BIND_BLOCK_WORDS: usize = 17;
 /// Slots in [`BIND_CACHE`]; a power of two. A four-player battle binds about
 /// 100 distinct pairs a frame.
 const BIND_CACHE_SLOTS: usize = 1024;
+/// Victim slots in [`BIND_CACHE`]; a power of two. Slot `s`'s evicted bind
+/// goes to victim `s % BIND_VICTIM_SLOTS`.
+const BIND_VICTIM_SLOTS: usize = 64;
+/// Bytes that round the victim slots up to 8 KiB, the D-cache way, so the
+/// statics after [`BIND_CACHE`] keep their cache sets.
+const BIND_VICTIM_PAD: usize = 8192 - BIND_VICTIM_SLOTS * core::mem::size_of::<BindBlock>();
 /// The `TextureMapEnable` word `sceGuEnable(Texture2D)` writes.
 const TEXTURE_ENABLE_WORD: u32 = (sys::GeCommand::TextureMapEnable as u32) << 24 | 1;
 
@@ -1287,7 +1299,15 @@ impl BindBlock {
     }
 }
 
-/// [`bind_texture`]'s recorded binds, direct-mapped by `(texture, palette)`.
+/// [`bind_texture`]'s recorded binds, direct-mapped by `(texture, palette)`,
+/// with a victim slot per 16 primary slots for the bind a record evicts.
+///
+/// The hash is a lottery over texture ids, which move with unrelated pack
+/// content: two hot pairs in one primary slot evict each other every frame
+/// (four Pikachus on Saffron City: 14 misses a frame against 3, +0.29 ms).
+/// The victim slot keeps both recorded. It is looked at only after a
+/// primary miss, so a scene whose hot pairs do not collide runs the same
+/// code on the same blocks (RE-589 item 10).
 ///
 /// Valid for one pack buffer, one [`ssb_rom::residency::generation`] and
 /// one [`crate::gu::texture_pool_epoch`]: `valid_for` is `None` until the
@@ -1296,11 +1316,15 @@ impl BindBlock {
 struct BindCache {
     valid_for: Option<(*const u8, u32, u32)>,
     blocks: [BindBlock; BIND_CACHE_SLOTS],
+    victims: [BindBlock; BIND_VICTIM_SLOTS],
+    _pad: [u8; BIND_VICTIM_PAD],
 }
 
 static mut BIND_CACHE: BindCache = BindCache {
     valid_for: None,
     blocks: [BindBlock::EMPTY; BIND_CACHE_SLOTS],
+    victims: [BindBlock::EMPTY; BIND_VICTIM_SLOTS],
+    _pad: [0; BIND_VICTIM_PAD],
 };
 
 impl BindCache {
@@ -1322,11 +1346,18 @@ impl BindCache {
         (b.len != 0 && b.texture == texture && b.palette == palette).then_some(b)
     }
 
+    /// The recorded bind of `(texture, palette)` its primary slot evicted,
+    /// if it is still in the victim slot. Only after a [`Self::find`] miss.
+    fn find_victim(&self, texture: u32, palette: u32) -> Option<&BindBlock> {
+        let b = &self.victims[Self::slot(texture, palette) % BIND_VICTIM_SLOTS];
+        (b.len != 0 && b.texture == texture && b.palette == palette).then_some(b)
+    }
+
     #[cold]
     #[inline(never)]
     fn invalidate(&mut self, now: (*const u8, u32, u32)) {
         self.valid_for = Some(now);
-        for b in self.blocks.iter_mut() {
+        for b in self.blocks.iter_mut().chain(self.victims.iter_mut()) {
             b.len = 0;
         }
     }
@@ -1350,7 +1381,12 @@ impl BindCache {
         if words.read_volatile() != TEXTURE_ENABLE_WORD {
             return;
         }
-        let b = &mut self.blocks[Self::slot(texture, palette)];
+        let slot = Self::slot(texture, palette);
+        let b = &mut self.blocks[slot];
+        if b.len != 0 && (b.texture != texture || b.palette != palette) {
+            self.victims[slot % BIND_VICTIM_SLOTS] = *b;
+        }
+        let b = &mut self.blocks[slot];
         for (k, w) in b.words[..n - 1].iter_mut().enumerate() {
             *w = words.add(1 + k).read_volatile();
         }

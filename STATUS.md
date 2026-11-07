@@ -12,12 +12,13 @@
 | PPSSPP | 60 FPS | RE-469–RE-471 |
 | PSP-2000 opening (busy, ms0) | opening 1-39 7.58 ms (Room 12.80, Run 13.35, Yoster 11.69-11.73, Clash 10.98-11.00 at batch 82) | RE-578, RE-579, RE-585 |
 | PSP-2000 `vs4@2400` | 14.43 ms busy (Zebes 10.52 at batch 180; batch 181) | RE-585, RE-589 |
-| PSP-2000 1P intro | 13.81 ms (timer build); 1P battle 12.83 ms; `vs4@2170` electric no-hit r18 16.02, shock r12 16.84 (batch 181) | RE-479, RE-585, RE-589 |
+| PSP-2000 1P intro | 14.01 ms (timer build); 1P battle 12.68 ms; `vs4@2170` electric no-hit r18 15.78, shock r12 16.65 (batch 187) | RE-479, RE-585, RE-589 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
 
 ## Current work
 
+- Landed (batch 187): Electric `vs4@2170` r12 16.75 to 16.65 ms (under 16.7): the 0.33 ms pack gap was `BIND_CACHE` slot collisions moving with texture ids; 64 victim slots; intro +0.31 ms from hot-caller codegen, other scenes ±0.05 (RE-589 item 10).
 - Landed (batch 186): first-launch installer: separate `INSTALL.PBP`, started from the game by LoadExec; PSP-2000 at the PSP-1000 start budget (22.4 MB) 8.78 min, pack identical, lowest free 9.78 MB; 64-byte-aligned sink (writes 129 to 16.5 s) (D-053, RE-588 item 15).
 - Landed (batch 185): on-PSP pack build at PSP-1000 memory: paged ROM, blob spill (RE-588 item 14).
 - Landed (batch 181): tables batch E: 10 motion tables (scripts, motion descs, combat attributes, demo scripts) from the pack (v147, 456 KB section); every generator `no_std`; motion lookups out of line (inlined: +0.15 ms from `.text` pins); PSP mean +0.04 ms (RE-589 item 8). On-PSP pack build 6.20 min, pack identical, lowest free 9.0 MB, after an FPU-trap fix and no file cache on the PSP (RE-588 item 13).
@@ -26,8 +27,8 @@
 
 ## Next
 
-1. Electric `vs4@2170` r12 16.84 ms, over the 16.7 target: 0.33 ms from batch 172 pack content, cause not found (RE-589 items 5, 7, 8). Media Engine sleep/wake and PSP-1000 need a person (PLAN "Audio cost").
-2. Owner hardware tests: XMB hand-off EBOOT -> INSTALL.PBP, HOME mid-build, NoSpace screen, PSP-1000 run (RE-588 item 15 pending list).
+1. Owner hardware tests (XMB hand-off done): HOME mid-build, NoSpace screen, PSP-1000 run (RE-588 item 15 pending list).
+2. Media Engine sleep/wake and PSP-1000 audio need a person (PLAN "Audio cost").
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
@@ -38,7 +39,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 186 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 187 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
