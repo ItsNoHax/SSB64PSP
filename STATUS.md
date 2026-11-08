@@ -29,8 +29,7 @@
 ## Next
 
 1. Owner hardware tests (XMB hand-off done): HOME mid-build, NoSpace screen, PSP-1000 run (RE-588 item 15 pending list).
-2. Owner: idle PSP stays awake past its auto-sleep time (attract/CPU-only); PSPLink never sleeps, so XMB launch only.
-3. Media Engine sleep/wake and PSP-1000 audio need a person (PLAN "Audio cost").
+2. Media Engine sleep/wake and PSP-1000 audio need a person (PLAN "Audio cost").
 
 PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
