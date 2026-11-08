@@ -7,8 +7,9 @@
 //! - Bring-up: [`bring_up`] loads the game's own kernel module
 //!   (`psp-kcall/`, built and embedded by `build.rs`) from a file it writes
 //!   next to the game, and its `module_start` runs [`k_me_reset`] in
-//!   kernel mode: the reset handler copied to the ME reset vector, then a
-//!   reset pulse.
+//!   kernel mode: `SceMeRpc` out of the system's event handlers (a
+//!   suspend otherwise waits forever on our program), the reset handler
+//!   copied to the ME reset vector, then a reset pulse.
 //! - Coherence: the ME starts each command with an empty D-cache and ends
 //!   it with an index writeback-invalidate of the whole cache; everything it
 //!   writes ([`Dsp`], the reverb's buffers, [`Pcm`]) is 64-byte aligned and
@@ -21,8 +22,8 @@
 //!   (a tight poll slows the SC's memory, RE-479).
 //! - Fallback: an emulator, the module refused, the ME not up within 5 ms, or
 //!   no ACK within 20 ms: the SC runs the same list (same PCM). A missed
-//!   ACK resets the ME (the watchdog: a sleep/wake loses the ME's program;
-//!   untested); three failed bring-ups in a row end ME use.
+//!   ACK resets the ME (the watchdog; a sleep/wake loses the ME's
+//!   program); three failed bring-ups in a row end ME use.
 //! - Code the ME runs makes no system call: [`Dsp::set_profiled`] is off
 //!   while the ME owns the DSP, and nothing on the run path allocates.
 
@@ -263,10 +264,50 @@ fn bring_up() -> Result<(), u32> {
     Ok(())
 }
 
-/// Kernel mode: copies the reset handler to the ME reset vector, writes
-/// back and invalidates the SC's D-cache, and pulses the ME's reset.
-/// Makes no system call: it runs on the kernel module's start thread.
-extern "C" fn k_me_reset() -> i32 {
+/// The kernel functions `psp-kcall` passes to [`k_me_reset`]; the same
+/// layout as its `KernelFns`.
+#[repr(C)]
+struct KernelFns {
+    refer_sysevent: unsafe extern "C" fn() -> *mut SysEventHandler,
+    unregister_sysevent: unsafe extern "C" fn(*mut SysEventHandler) -> i32,
+}
+
+/// The head of `SceSysEventHandler` (uOFW `sysmem_sysevent.h`).
+#[repr(C)]
+struct SysEventHandler {
+    size: i32,
+    name: *const u8,
+    type_mask: i32,
+    handler: usize,
+    gp: i32,
+    busy: i32,
+    next: *mut SysEventHandler,
+}
+
+/// Kernel mode: takes `SceMeRpc` out of the system's event handlers, then
+/// copies the reset handler to the ME reset vector, writes back and
+/// invalidates the SC's D-cache, and pulses the ME's reset. Runs on the
+/// kernel module's start thread; its only calls are `fns`.
+///
+/// `SceMeRpc` (`me_wrapper`) answers the suspend event by posting a save
+/// command to the system's ME program and spinning until it answers; ours
+/// never does, so the PSP never slept (RE-479). Without it the suspend
+/// leaves the ME alone and the watchdog brings our program back after the
+/// wake; snes9xTYL's ME module does the same. The game's exit reboots the
+/// kernel, which restores both.
+extern "C" fn k_me_reset(fns: &KernelFns) -> i32 {
+    // SAFETY: kernel mode; the list is the system's, read with interrupts
+    // as the thread has them before the one call that changes it.
+    unsafe {
+        let mut h = (fns.refer_sysevent)();
+        while !h.is_null() {
+            if cstr_eq((*h).name, b"SceMeRpc\0") {
+                (fns.unregister_sysevent)(h);
+                break;
+            }
+            h = (*h).next;
+        }
+    }
     // SAFETY: kernel mode; the handler is position-independent words.
     unsafe {
         let s = core::ptr::addr_of!(ssb_me_handler_start) as *const u32;
@@ -281,6 +322,22 @@ extern "C" fn k_me_reset() -> i32 {
         sync();
     }
     0
+}
+
+/// `a`, a NUL-terminated string, equals `b` (NUL included).
+///
+/// # Safety
+/// `a` is null or readable up to its NUL or `b.len()` bytes.
+unsafe fn cstr_eq(a: *const u8, b: &[u8]) -> bool {
+    if a.is_null() {
+        return false;
+    }
+    for (i, &c) in b.iter().enumerate() {
+        if *a.add(i) != c {
+            return false;
+        }
+    }
+    true
 }
 
 /// Brings the ME up (again): `true` once its loop answers.

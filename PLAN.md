@@ -87,8 +87,7 @@ Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479): DSP runs on
 the Media Engine (batch 159), started by the game's own kernel module
 (batch 160). Remaining:
 
-1. Sleep/wake with a person at the PSP: watchdog re-bring-up, no lost audio.
-2. PSP-1000: ME path, memory.
+1. PSP-1000: ME path, memory.
 
 ### Gameplay math, tables and goldens
 

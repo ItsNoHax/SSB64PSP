@@ -10,8 +10,8 @@ description = "Layer C: the game's kernel-mode PRX: runs one function of the gam
 # `psp-runtime/build.rs` builds it with the invoking build's pinned
 # toolchain (`-Z build-std`, as `cargo psp`), runs `prxgen` on it and
 # embeds the PRX in the game. No
-# dependencies: the module imports no library and exports only its
-# `module_start`.
+# dependencies: the module imports only `sceSysEventForKernel` (hand-written
+# stubs) and exports only its `module_start`.
 [workspace]
 
 [profile.release]

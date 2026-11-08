@@ -4,9 +4,11 @@
 //! - `module_info` attribute 0x1000: the system loads the module into the
 //!   kernel partition and runs `module_start` on a kernel-mode thread.
 //! - `sceKernelStartModule(id, 4, &func, ..)`: [`kcall_start`] calls
-//!   `func` (an `extern "C" fn() -> i32` in the game) on that thread and
-//!   returns 1 (`SCE_KERNEL_NO_RESIDENT`), so the system unloads the module
-//!   again. One load and start per call; no exports, no imports, no state.
+//!   `func` (an `extern "C" fn(&KernelFns) -> i32` in the game) on that
+//!   thread and returns 1 (`SCE_KERNEL_NO_RESIDENT`), so the system unloads
+//!   the module again. One load and start per call; no exports, no state.
+//! - Imports: [`KernelFns`], kernel functions the game cannot import as a
+//!   user module (non-randomized NIDs, uOFW `sysmem/exports.exp`).
 //! - Interrupts stay as the thread has them: `func` may make system calls.
 //! - Built and embedded by `psp-runtime/build.rs`; loaded from memory by
 //!   `psp-runtime/src/me.rs` (`bring_up`).
@@ -152,20 +154,81 @@ core::arch::global_asm!(
     "#
 );
 
-/// Kernel mode: calls the function whose address is `argp`'s first word.
+/// The kernel functions passed to the game's function; the same layout as
+/// `KernelFns` in `psp-runtime/src/me.rs`.
+#[repr(C)]
+pub struct KernelFns {
+    /// `sceKernelReferSysEventHandler`: the head of the handler list.
+    refer_sysevent: unsafe extern "C" fn() -> *mut c_void,
+    /// `sceKernelUnregisterSysEventHandler`.
+    unregister_sysevent: unsafe extern "C" fn(*mut c_void) -> i32,
+}
+
+extern "C" {
+    fn ssb_k_refer_sysevent() -> *mut c_void;
+    fn ssb_k_unregister_sysevent(handler: *mut c_void) -> i32;
+}
+
+/// Kernel mode: calls the function whose address is `argp`'s first word
+/// with the [`KernelFns`].
 #[no_mangle]
 extern "C" fn kcall_start(args: usize, argp: *const u32) -> i32 {
     if args >= 4 && !argp.is_null() {
+        let fns = KernelFns {
+            refer_sysevent: ssb_k_refer_sysevent,
+            unregister_sysevent: ssb_k_unregister_sysevent,
+        };
         // SAFETY: the system copied the caller's 4 argument bytes, the
-        // address of an `extern "C" fn() -> i32` in the game.
-        let func: extern "C" fn() -> i32 =
+        // address of an `extern "C" fn(&KernelFns) -> i32` in the game.
+        let func: extern "C" fn(&KernelFns) -> i32 =
             unsafe { core::mem::transmute(argp.read_unaligned() as usize) };
-        func();
+        func(&fns);
     }
     NO_RESIDENT
 }
 
-// The bounds of the (empty) import and export tables, as rust-psp
+// The import of `sceSysEventForKernel`, in the form `psp-fixup-imports`
+// leaves pspsdk's `IMPORT_START`/`IMPORT_FUNC`: attribute 0x0001 (pspsdk's
+// kernel libraries), 5-word entry, 2 functions. The loader writes a jump to
+// each function over its 8-byte stub. "R" (retain): nothing references
+// the table, and the link would drop it.
+core::arch::global_asm!(
+    r#"
+        .section .rodata.ssb_k_libname, "a", @progbits
+    ssb_k_libname:
+        .asciz "sceSysEventForKernel"
+        .section .lib.stub, "aR", @progbits
+        .align 2
+        .word ssb_k_libname
+        .word 0x00010000
+        .word 0x00020005
+        .word ssb_k_nids
+        .word ssb_k_stubs
+        .section .rodata.sceNid, "aR", @progbits
+        .align 2
+    ssb_k_nids:
+        .word 0x68D55505
+        .word 0xD7D3FDCD
+        .section .sceStub.text, "ax", @progbits
+        .align 2
+        .set push
+        .set noreorder
+    ssb_k_stubs:
+    .global ssb_k_refer_sysevent
+    .type ssb_k_refer_sysevent, @function
+    ssb_k_refer_sysevent:
+        jr $ra
+        nop
+    .global ssb_k_unregister_sysevent
+    .type ssb_k_unregister_sysevent, @function
+    ssb_k_unregister_sysevent:
+        jr $ra
+        nop
+        .set pop
+    "#
+);
+
+// The bounds of the import and (empty) export tables, as rust-psp
 // defines them for user modules.
 core::arch::global_asm!(
     r#"
