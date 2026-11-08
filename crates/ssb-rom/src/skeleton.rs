@@ -1955,7 +1955,7 @@ impl MaterialAnimator {
     pub fn start(&mut self, pack: &Pack<'_>) {
         self.joints.clear();
         self.joints.extend((0..pack.mat_anim_count()).map(|i| {
-            let script = pack.mat_anim(i).map_or(0, |a| a.script);
+            let script = pack.mat_anim_script_offset(i).unwrap_or(0);
             crate::matanim::MaterialJoint::start(script, 0.0)
         }));
     }
@@ -2347,7 +2347,7 @@ impl EffectMaterialAnimator {
             if self.count >= MAX_EFFECT_MAT_ANIMS {
                 break;
             }
-            let script = pack.mat_anim(i).map_or(0, |a| a.script);
+            let script = pack.mat_anim_script_offset(i).unwrap_or(0);
             self.slots[self.count] = (i, crate::matanim::MaterialJoint::start(script, anim_frame));
             self.halted[self.count] = false;
             self.count += 1;
@@ -4607,6 +4607,29 @@ mod compose_equivalence_tests {
             assert_eq!(pack.lod_blend_inlined(i), want, "mat_anim {i}");
         }
         assert!(blends > 0, "the pack has LOD_BLEND entries");
+    }
+
+    /// The one-field readers a battle start scans with (RE-476) answer as
+    /// the full decode for every row of the shipped pack.
+    #[test]
+    #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+    fn one_field_readers_match_the_full_decode() {
+        let Some(bytes) = real_pack() else { return };
+        let pack = Pack::open(&bytes).unwrap();
+        for i in 0..pack.anim_count() + 2 {
+            assert_eq!(
+                pack.anim_fighter(i),
+                pack.anim(i).map(|a| a.fighter),
+                "anim {i}"
+            );
+        }
+        for i in 0..pack.mat_anim_count() + 2 {
+            assert_eq!(
+                pack.mat_anim_script_offset(i),
+                pack.mat_anim(i).map(|a| a.script),
+                "mat_anim {i}"
+            );
+        }
     }
 
     /// Every fighter's model, through a spread of its own clips, each a few

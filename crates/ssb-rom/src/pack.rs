@@ -5428,6 +5428,18 @@ impl<'a> Pack<'a> {
         }))
     }
 
+    /// [`Pack::anim`]`(i)`'s `fighter` alone: a scan of the whole table
+    /// for a few keys decodes only the rows it keeps (RE-476).
+    pub fn anim_fighter(&self, i: u32) -> Option<u32> {
+        if i >= self.anim_count {
+            return None;
+        }
+        Some(u32_at(
+            self.data,
+            self.anim_table() + i as usize * AnimDesc::SIZE,
+        ))
+    }
+
     /// One animation, by index into the animation table.
     pub fn anim(&self, i: u32) -> Option<AnimDesc> {
         if i >= self.anim_count {
@@ -5672,6 +5684,18 @@ impl<'a> Pack<'a> {
                 u32_at(self.data, at + 128),
             ],
         })
+    }
+
+    /// [`Pack::mat_anim`]`(i)`'s `script` alone, read from the entry's
+    /// third word (RE-476).
+    pub fn mat_anim_script_offset(&self, i: u32) -> Option<u32> {
+        if i >= self.mat_anim_count {
+            return None;
+        }
+        Some(u32_at(
+            self.data,
+            self.mat_anim_table() + i as usize * MatAnimDesc::SIZE + 8,
+        ))
     }
 
     /// The bytes of a `MatAnimDesc`'s *whole source file* — [`MatAnimDesc::

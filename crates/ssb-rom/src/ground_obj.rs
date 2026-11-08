@@ -1083,6 +1083,16 @@ impl GroundObjects {
         }
     }
 
+    /// [`Self::empty`] in place, field by field: `*self = Self::empty()`
+    /// builds the 160 KB on the stack and copies it (RE-469, RE-476).
+    fn clear(&mut self) {
+        self.target_anims = [None; 10];
+        self.objects.fill_with(|| None);
+        self.arwing = None;
+        self.anims = [None; ANIM_COUNT];
+        self.mat_anims = [None; MAT_ANIM_COUNT];
+    }
+
     /// The objects of the stage whose `MPGroundData` came from `gr_file`
     /// (`StageDesc::source_file`), at rest. The stage's packed animations
     /// name the file `map_nodes` points into; every object is the one
@@ -1096,7 +1106,7 @@ impl GroundObjects {
     /// [`Self::new`] in place: some 160 KB, too large to build on a PSP
     /// thread's stack and move (RE-469).
     pub fn load(&mut self, pack: &Pack<'_>, gr_file: u32) {
-        *self = Self::empty();
+        self.clear();
         let this = self;
         if let Some(kind) = crate::bonus2::kind(gr_file) {
             if let Some((graph, _)) = crate::bonus2::BUMPERS[kind as usize] {
@@ -1145,6 +1155,13 @@ impl GroundObjects {
         }
         let mut file = None;
         for i in 0..pack.anim_count() {
+            // Most rows are fighters'; decode only the ground's.
+            if !matches!(
+                pack.anim_fighter(i),
+                Some(AnimDesc::GROUND | AnimDesc::GROUND_MAT)
+            ) {
+                continue;
+            }
             let Some(a) = pack.anim(i) else { continue };
             let gr = if a.fighter == AnimDesc::GROUND {
                 (*ANIMS)

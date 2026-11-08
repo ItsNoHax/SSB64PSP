@@ -517,12 +517,20 @@ fn stream_scene(name: &str, roots: &[u32], slabs: bool) {
         if !groups.is_empty() {
             // `nFTKindEnumCount`: rows past it are stage, effect and item
             // clips.
-            for a in (0..pack.anim_count()).filter_map(|i| pack.anim(i)) {
-                if a.fighter < r::FIGHTER_MAIN.len() as u32 && a.script_len > 0 {
-                    let group = r::anim_kind(a.fighter);
-                    if groups.contains(&group) {
-                        table.push((a.source_file, group as u8));
-                    }
+            // Each row's fighter word first: a full decode of every row
+            // cost a battle start some ms on a PSP (RE-476).
+            for i in 0..pack.anim_count() {
+                let Some(fighter) = pack.anim_fighter(i) else { continue };
+                if fighter >= r::FIGHTER_MAIN.len() as u32 {
+                    continue;
+                }
+                let group = r::anim_kind(fighter);
+                if !groups.contains(&group) {
+                    continue;
+                }
+                let Some(a) = pack.anim(i) else { continue };
+                if a.script_len > 0 {
+                    table.push((a.source_file, group as u8));
                 }
             }
         }

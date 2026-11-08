@@ -7211,7 +7211,8 @@ fn new_display_scratch() -> alloc::boxed::Box<DisplayScratch> {
     let p = b.as_mut_ptr();
     // SAFETY: both fields are written before `assume_init`.
     unsafe {
-        ptr::addr_of_mut!((*p).anim).write(Default::default());
+        // In place: `Default::default` builds its 27 KB on the stack first.
+        ssb_rom::skeleton::StageAnimator::write_new(ptr::addr_of_mut!((*p).anim));
         ptr::addr_of_mut!((*p).materials).write(Default::default());
         b.assume_init()
     }
