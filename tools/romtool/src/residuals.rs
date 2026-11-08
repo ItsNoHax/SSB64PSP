@@ -306,7 +306,7 @@ struct Candidate {
     eval: Eval,
     /// Level-0 bytes (texels + CLUT) this candidate would occupy.
     level0_bytes: u64,
-    /// Whole pack entry bytes with the pipeline's mip chain.
+    /// Whole pack entry bytes, as the pipeline packs it.
     pack_bytes: u64,
     float_sse: Option<f64>,
     iterations: Option<usize>,
@@ -400,7 +400,7 @@ fn level0_bytes(w: u32, h: u32, psm: Psm, palette: usize) -> u64 {
 }
 
 fn direct_pack_bytes(img: &Rgba8) -> u64 {
-    psp::pack_mipped(img, Psm::Psm8888, &[], true).data.len() as u64
+    psp::pack_level0(img, Psm::Psm8888, &[], true).data.len() as u64
 }
 
 fn candidate(eval: Eval, level0: u64, pack: u64) -> Candidate {
@@ -578,12 +578,12 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     // Natural-format cost of the unmodified source (what an uncompensated
     // or nearest-filtered variant would pack).
     let src_pack = if c.source_psm.is_paletted() && !c.palette.is_empty() {
-        psp::pack_mipped(&c.source, c.source_psm, &c.palette, true)
+        psp::pack_level0(&c.source, c.source_psm, &c.palette, true)
             .data
             .len() as u64
             + c.palette.len() as u64 * 4
     } else if !c.source_psm.is_paletted() {
-        psp::pack_mipped(&c.source, c.source_psm, &[], true)
+        psp::pack_level0(&c.source, c.source_psm, &[], true)
             .data
             .len() as u64
     } else {
@@ -3029,7 +3029,7 @@ never the optimizer's training samples. Do not edit by hand: rerun the command.\
     let pk = sum(&|r| r.a.current_pack_bytes);
     let _ = writeln!(
         m,
-        "\nCurrent variants occupy {lvl0} bytes of level 0 (texels + CLUT, the only level the runtime binds) and {pk} bytes of pack texel/CLUT data including the unused mip chain."
+        "\nCurrent variants occupy {lvl0} bytes of level 0 (texels + CLUT, the only level the runtime binds) and {pk} bytes of pack texel/CLUT data."
     );
     let mut methods: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for r in rows {
@@ -3444,7 +3444,7 @@ never the optimizer's training samples. Do not edit by hand: rerun the command.\
     let _ = writeln!(m, "## 8. Memory/runtime trade-off table\n");
     let _ = writeln!(
         m,
-        "Aggregates over the materially bad variants whose intervention applies. Level-0 delta is resident texel+CLUT bytes the runtime binds; pack delta includes the mip chain the packer emits. Reduction is the summed holdout visible SSE.\n"
+        "Aggregates over the materially bad variants whose intervention applies. Level-0 delta is resident texel+CLUT bytes the runtime binds; pack delta is the packer's whole entry. Reduction is the summed holdout visible SSE.\n"
     );
     let _ = writeln!(
         m,
@@ -3991,7 +3991,7 @@ mod tests {
         for i in 0..64 {
             img.put(i, [i as u8 * 3, 255 - i as u8, (i * 7) as u8, 255]);
         }
-        let t = psp::pack_mipped(&img, Psm::Psm8888, &[], true);
+        let t = psp::pack_level0(&img, Psm::Psm8888, &[], true);
         let (padded, _) = decode_packed(&t, &[]).unwrap();
         assert_eq!(crop(&padded, 8, 8).pixels, img.pixels);
     }
@@ -4004,7 +4004,7 @@ mod tests {
         for i in 0..16 {
             img.put(i, [i as u8 * 9, 0, 255 - i as u8, 255]);
         }
-        let t = psp::pack_mipped(&img, Psm::Psm8888, &[], true);
+        let t = psp::pack_level0(&img, Psm::Psm8888, &[], true);
         assert_eq!(t.stride, 4);
         let (padded, _) = decode_packed(&t, &[]).unwrap();
         assert_eq!((padded.width, padded.height), (2, 8));

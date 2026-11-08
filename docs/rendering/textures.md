@@ -86,7 +86,7 @@ Part of [rendering.md](../rendering.md).
 
 - SSB64 never enables RDP LOD: all `TEXTLOD` = `G_TL_TILE`, all `TEXTDETAIL` = `G_TD_CLAMP` (RE-127).
 - GE binds level 0 only (`sceGuTexLevelMode(Const, 0.0)`, RE-213).
-- Generated lower levels stay in the pack, unused.
+- The pack stores level 0 only (`psp_texture::pack_level0`, RE-491).
 
 ## Filtering
 

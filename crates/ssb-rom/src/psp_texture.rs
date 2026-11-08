@@ -631,8 +631,7 @@ fn pack_rgba_at(
 ///
 /// Rows under 16 bytes cannot be swizzled; the GE wants whole 16x8-byte
 /// blocks. Packed textures never have them since RE-319
-/// ([`ge_buffer_stride`]), but mip chains still stop at a level whose
-/// unwidened row would be one.
+/// ([`ge_buffer_stride`]).
 pub fn can_swizzle(stride_bytes: usize, height: usize) -> bool {
     stride_bytes >= 16 && stride_bytes.is_multiple_of(16) && height.is_multiple_of(8)
 }
@@ -985,7 +984,7 @@ mod mip_tests {
         for i in 0..4 {
             image.put(i, [0, 0, 0, 255]);
         }
-        let packed = pack_mipped_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states);
+        let packed = pack_level0_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states);
         // Rows are 16 bytes wide (RE-319): row 1 starts at byte 16.
         assert_eq!(packed.data[0], 0x10);
         assert_eq!(packed.data[16], 0x01);
@@ -993,7 +992,7 @@ mod mip_tests {
         assert_eq!(states[1][(packed.data[0] >> 4) as usize], b[1]);
         assert_eq!(
             packed,
-            pack_mipped_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states)
+            pack_level0_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states)
         );
         assert_eq!(states, vec![a, b]);
     }
@@ -1009,52 +1008,36 @@ mod mip_tests {
             let v = ((i % 16) as u8) * 17;
             img.put(i, [v, v, v, 255]);
         }
-        let tex = pack_mipped(&img, Psm::PsmT4, &pal, false);
+        let tex = pack_level0(&img, Psm::PsmT4, &pal, false);
         // Row 0 cycles through all sixteen entries, low nibble first (RE-280).
         assert_eq!(tex.data[0], 0x10);
         assert_eq!(tex.data[7], 0xFE);
     }
 
-    /// The point of the chain: averaging a dithered pair lands between palette
-    /// entries and snaps to the shade between them, not back onto the dither.
+    /// Only level 0 is stored (RE-127: the runtime never gives the GE another
+    /// level), and swizzling still follows level 0 alone.
     #[test]
-    fn a_dithered_pair_averages_to_the_shade_between() {
-        let pal = ramp_palette();
-        // A 2x2 checker of entries 0 and 2 should reduce to entry 1.
-        let mut img = Rgba8::new(2, 2);
-        for (i, v) in [0u8, 34, 34, 0].into_iter().enumerate() {
-            img.put(i, [v, v, v, 255]);
-        }
-        let half = halve(&img);
-        assert_eq!(
-            nearest_entry(&pal, {
-                let p = &half.pixels;
-                [p[0], p[1], p[2], p[3]]
-            }),
-            1
-        );
-    }
-
-    #[test]
-    fn a_chain_stops_rather_than_lose_swizzling() {
+    fn only_level_zero_is_packed() {
         let pal = ramp_palette();
         let img = Rgba8::new(64, 64);
-        let swizzled = pack_mipped(&img, Psm::PsmT4, &pal, true);
+        let swizzled = pack_level0(&img, Psm::PsmT4, &pal, true);
         assert!(swizzled.swizzled, "64x64 CI4 must still swizzle");
-        // 16x16 at 4bpp is an 8-byte stride, below the swizzler's minimum, so
-        // the chain stops at 32x32.
-        assert_eq!(swizzled.levels, 2);
-        // Unswizzled, nothing constrains it and the chain runs to 1x1.
-        let full = pack_mipped(&img, Psm::PsmT4, &pal, false);
-        assert!(full.levels > 2);
+        assert_eq!(swizzled.levels, 1);
+        // 64 texels at 4 bpp: 32-byte rows, 64 rows.
+        assert_eq!(swizzled.data.len(), 32 * 64);
+        let plain = pack_level0(&img, Psm::PsmT4, &pal, false);
+        assert_eq!((plain.levels, plain.data.len()), (1, 32 * 64));
+        // 4 rows: under the swizzler's 8-row block.
+        let short = pack_level0(&Rgba8::new(64, 4), Psm::PsmT4, &pal, true);
+        assert!(!short.swizzled);
     }
 
     /// R2.0/P0d, end-to-end through the actual production path
-    /// (`convert_texture`'s `mipped` closure calls `pack_mipped`, not
+    /// (`convert_texture`'s `packed` closure calls `pack_level0`, not
     /// `pack_rgba`/`pack_indexed` directly): a non-power-of-two CI4 level 0
     /// pads its padding column with the repeated edge texel, not index 0.
     #[test]
-    fn pack_mipped_pads_level_zero_with_the_repeated_edge_texel() {
+    fn pack_level0_pads_level_zero_with_the_repeated_edge_texel() {
         let pal = ramp_palette();
         // 3 wide, 1 tall: texels decode to entries 0, 5, 10 (unambiguous
         // under `nearest_entry`, spaced well apart on the 16-entry ramp).
@@ -1063,7 +1046,7 @@ mod mip_tests {
             let v = entry * 17;
             img.put(i, [v, v, v, 255]);
         }
-        let tex = pack_mipped(&img, Psm::PsmT4, &pal, false);
+        let tex = pack_level0(&img, Psm::PsmT4, &pal, false);
         assert_eq!(
             tex.stride, 32,
             "3 pads to 4 texels, widened to the GE's 16-byte row (RE-319)"
@@ -1178,7 +1161,7 @@ mod tests {
                 let bits = format.bits();
                 let mut packed = alloc::vec![pack_rgba(&img, format, false)];
                 if format.is_paletted() {
-                    packed.push(pack_mipped(&img, format, &pal, false));
+                    packed.push(pack_level0(&img, format, &pal, false));
                 }
                 for tex in packed {
                     let row = (tex.stride as usize * bits).div_ceil(8);
@@ -2122,42 +2105,6 @@ mod tests {
     }
 }
 
-/// Most mip levels the GE accepts.
-pub const MAX_MIP_LEVELS: usize = 8;
-
-/// Box-filters an image to half size, rounding dimensions up so a 1-wide image
-/// stays 1 wide rather than vanishing.
-fn halve(img: &Rgba8) -> Rgba8 {
-    let w = (img.width / 2).max(1);
-    let h = (img.height / 2).max(1);
-    let mut out = Rgba8::new(w, h);
-    for y in 0..h {
-        for x in 0..w {
-            // The source footprint, clamped for an odd or already-1 dimension.
-            let (x0, y0) = (x * 2, y * 2);
-            let x1 = (x0 + 1).min(img.width - 1);
-            let y1 = (y0 + 1).min(img.height - 1);
-            let mut acc = [0u32; 4];
-            for (sx, sy) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
-                let at = ((sy * img.width + sx) * 4) as usize;
-                for (c, a) in acc.iter_mut().enumerate() {
-                    *a += img.pixels[at + c] as u32;
-                }
-            }
-            out.put(
-                (y * w + x) as usize,
-                [
-                    (acc[0] / 4) as u8,
-                    (acc[1] / 4) as u8,
-                    (acc[2] / 4) as u8,
-                    (acc[3] / 4) as u8,
-                ],
-            );
-        }
-    }
-    out
-}
-
 /// The palette entry closest to `rgba`, by squared distance over all four
 /// channels.
 ///
@@ -2267,29 +2214,23 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
     (data, stride)
 }
 
-/// Packs a texture with a full mip chain, every level generated from the
-/// decoded image.
+/// Packs a texture's one level, regenerated from the decoded image.
 ///
-/// The N64's textures are frequently *dithered* — a CI4 gradient fakes a
-/// smooth ramp out of sixteen colours — and the console resolves that with its
-/// own filtering into shading. Sampled at around one texel per pixel on a sharp
-/// display the dither instead aliases into moiré, which is what made Dream
-/// Land's tree canopy read as green noise (RE-053).
+/// Only level 0: the game never engages N64 LOD (`G_TL_TILE` always,
+/// RE-127) and the runtime gives the GE level 0 alone
+/// (`sceGuTexLevelMode(Const, 0)`), so lower levels would be pack bytes no
+/// draw reads.
 ///
 /// Level 0 is regenerated from `rgba` for ordinary textures. Animated CI
-/// textures use `pack_mipped_indices` so equal-colour entries keep their
+/// textures use `pack_level0_indices` so equal-colour entries keep their
 /// separate index identities across palette changes.
-///
-/// Swizzling is all-or-nothing across the chain, because the GE's swizzle flag
-/// is per texture and not per level.
-pub fn pack_mipped(rgba: &Rgba8, format: Psm, palette: &[u32], swizzle_it: bool) -> PspTexture {
-    pack_mipped_with_indices(rgba, format, palette, swizzle_it, None)
+pub fn pack_level0(rgba: &Rgba8, format: Psm, palette: &[u32], swizzle_it: bool) -> PspTexture {
+    pack_level0_with_indices(rgba, format, palette, swizzle_it, None)
 }
 
 /// Preserve the exact level-zero index field when animated palettes give
-/// identical colours different meanings. Lower mips choose indices against
-/// all reachable palette states rather than quantizing frame-zero colours.
-pub fn pack_mipped_indices(
+/// identical colours different meanings.
+pub fn pack_level0_indices(
     rgba: &Rgba8,
     format: Psm,
     palette: &[u32],
@@ -2300,152 +2241,54 @@ pub fn pack_mipped_indices(
     assert!(format.is_paletted());
     assert_eq!(indices.len(), (rgba.width * rgba.height) as usize);
     assert!(!states.is_empty());
-    pack_mipped_with_indices(rgba, format, palette, swizzle_it, Some((indices, states)))
+    pack_level0_with_indices(rgba, format, palette, swizzle_it, Some(indices))
 }
 
-fn pack_mipped_with_indices(
+fn pack_level0_with_indices(
     rgba: &Rgba8,
     format: Psm,
     palette: &[u32],
     swizzle_it: bool,
-    indexed: Option<(&[u8], &[Vec<u32>])>,
+    indices: Option<&[u8]>,
 ) -> PspTexture {
-    let mut levels: Vec<(Vec<u8>, u32, u32)> = Vec::new(); // data, stride, padded height
-    let mut img = rgba.clone();
-    let mut level_indices = indexed.map(|(indices, _)| indices.to_vec());
-    loop {
-        let (mut data, stride) = encode_level(&img, format, palette);
-        {
-            if let Some(indices) = level_indices.as_deref() {
-                let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
-                for y in 0..img.height as usize {
-                    for x in 0..img.width as usize {
-                        let value = indices[y * img.width as usize + x];
-                        if format == Psm::PsmT4 {
-                            let at = y * stride_bytes + x / 2;
-                            if x & 1 == 0 {
-                                data[at] = (data[at] & 0xf0) | value;
-                            } else {
-                                data[at] = (data[at] & 0x0f) | (value << 4);
-                            }
-                        } else {
-                            data[y * stride_bytes + x] = value;
-                        }
-                    }
-                }
-                let padded_h = pad_to_power_of_two(img.height);
+    let (mut data, stride) = encode_level(rgba, format, palette);
+    let padded_h = pad_to_power_of_two(rgba.height);
+    if let Some(indices) = indices {
+        let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
+        for y in 0..rgba.height as usize {
+            for x in 0..rgba.width as usize {
+                let value = indices[y * rgba.width as usize + x];
                 if format == Psm::PsmT4 {
-                    pad_edge_repeat_nibbles(&mut data, stride, padded_h, img.width, img.height);
+                    let at = y * stride_bytes + x / 2;
+                    if x & 1 == 0 {
+                        data[at] = (data[at] & 0xf0) | value;
+                    } else {
+                        data[at] = (data[at] & 0x0f) | (value << 4);
+                    }
                 } else {
-                    pad_edge_repeat(&mut data, stride, padded_h, img.width, img.height, 1);
+                    data[y * stride_bytes + x] = value;
                 }
             }
         }
-        let padded_h = pad_to_power_of_two(img.height);
-        // The GE's swizzle flag is per texture, not per level, so a chain
-        // containing one level too small to swizzle would cost the whole
-        // texture its swizzling. Small levels are also the ones that matter
-        // least — the dither is resolved by the first level or two — so the
-        // chain stops where swizzling would, rather than the other way round.
-        // Judged on the unwidened row: `ge_buffer_stride`'s 16-byte minimum
-        // (RE-319) would otherwise make every narrow level swizzlable and
-        // grow chains the runtime never samples (RE-127).
-        let natural_row_bytes =
-            (pad_to_power_of_two(img.width) as usize * format.bits()).div_ceil(8);
-        if !levels.is_empty() && swizzle_it && !can_swizzle(natural_row_bytes, padded_h as usize) {
-            break;
-        }
-        levels.push((data, stride, padded_h));
-        if levels.len() == MAX_MIP_LEVELS || (img.width == 1 && img.height == 1) {
-            break;
-        }
-        if let (Some((_, states)), Some(indices)) = (indexed, level_indices.as_deref()) {
-            level_indices = Some(halve_indices(
-                indices,
-                img.width,
-                img.height,
-                states,
-                if format == Psm::PsmT4 { 16 } else { 256 },
-            ));
-        }
-        img = halve(&img);
-    }
-
-    let swizzled = swizzle_it
-        && levels.iter().all(|(d, _, h)| {
-            let sb = d.len() / (*h as usize).max(1);
-            can_swizzle(sb, *h as usize)
-        });
-
-    let mut data = Vec::new();
-    for (d, _, h) in &levels {
-        let sb = d.len() / (*h as usize).max(1);
-        if swizzled {
-            data.extend_from_slice(&swizzle(d, sb, *h as usize));
+        if format == Psm::PsmT4 {
+            pad_edge_repeat_nibbles(&mut data, stride, padded_h, rgba.width, rgba.height);
         } else {
-            data.extend_from_slice(d);
+            pad_edge_repeat(&mut data, stride, padded_h, rgba.width, rgba.height, 1);
         }
     }
-
+    let row_bytes = data.len() / (padded_h as usize).max(1);
+    let swizzled = swizzle_it && can_swizzle(row_bytes, padded_h as usize);
+    if swizzled {
+        data = swizzle(&data, row_bytes, padded_h as usize);
+    }
     PspTexture {
         width: rgba.width,
         height: rgba.height,
-        stride: levels[0].1,
+        stride,
         format,
         data,
         swizzled,
         palette: palette.to_vec(),
-        levels: levels.len() as u32,
+        levels: 1,
     }
-}
-
-/// Downsample an animated index field by comparing the four source colours
-/// to each candidate under every palette, with equal weight per state.
-fn halve_indices(
-    indices: &[u8],
-    width: u32,
-    height: u32,
-    states: &[Vec<u32>],
-    limit: usize,
-) -> Vec<u8> {
-    let w = (width / 2).max(1);
-    let h = (height / 2).max(1);
-    let valid = limit.min(states.iter().map(Vec::len).min().unwrap());
-    let mut out = Vec::with_capacity((w * h) as usize);
-    for y in 0..h {
-        for x in 0..w {
-            let xs = [x * 2, (x * 2 + 1).min(width - 1)];
-            let ys = [y * 2, (y * 2 + 1).min(height - 1)];
-            let taps = [
-                indices[(ys[0] * width + xs[0]) as usize],
-                indices[(ys[0] * width + xs[1]) as usize],
-                indices[(ys[1] * width + xs[0]) as usize],
-                indices[(ys[1] * width + xs[1]) as usize],
-            ];
-            let mut best = (u64::MAX, 0u8);
-            for candidate in 0..valid {
-                let mut error = 0u64;
-                for palette in states {
-                    let target: [i32; 4] = core::array::from_fn(|c| {
-                        taps.iter()
-                            .map(|&i| ((palette[i as usize] >> (c * 8)) & 255) as i32)
-                            .sum::<i32>()
-                            / 4
-                    });
-                    let color = palette[candidate];
-                    error += (0..4)
-                        .map(|c| {
-                            let d = ((color >> (c * 8)) & 255) as i32 - target[c];
-                            (d * d) as u64
-                        })
-                        .sum::<u64>();
-                }
-                if error < best.0 {
-                    best = (error, candidate as u8);
-                }
-            }
-            out.push(best.1);
-        }
-    }
-    out
 }

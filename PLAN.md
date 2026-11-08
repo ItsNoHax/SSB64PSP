@@ -69,8 +69,7 @@
 | D-047 fill | Measure +19% GE fill on PSP-2000: `vs4@4000`, opening, selects (`ge` span) | RE-477 |
 | Texture residency | Cost of remaining main-RAM texel reads after photo-region pool (`texture_probe`). More resident textures need VRAM → only via 16-bit colour buffers (changes every golden) | RE-076, RE-486, RE-489–RE-492, RE-539 |
 | Read-ahead gaps | 1P next stage, intro → battle (no side-effect-free next-stage prediction); bonus select → bonus battle; Characters scene; 1P intro proceed after a clear (N64 tic 81 vs PSP 60) and tally start (11-12 VIs) | RE-501 |
-| Select clip files | Players-training entry: 10–33 scattered files (+16–18 ms). `enter` drains unrelated in-flight job (battle waits 28 ms when maps left after 13 ticks) | RE-501 |
-| Unpalettized mips | Mip levels never given to GE → drop (memory, not bandwidth) | RE-127, RE-491 |
+| Scene enter waits | `enter` drains unrelated in-flight job (battle waits 28 ms when maps left after 13 ticks) | RE-501 |
 | GE state batching | Only where profiling shows submission cost. Refs: `sf64-psp` material hash, `oot-PSP` sampler cache | RE-124, [D-036](docs/decisions/D-036.md) |
 | VFPU | Only after profiling | [D-032](docs/decisions/D-032.md) |
 | VFPU block copies | `lv.q`/`sv.q` 16-byte copies for large aligned transfers (vertex expansion, frozen picture, photo) vs rust-psp word `memcpy` | RE-471 |

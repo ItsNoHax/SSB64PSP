@@ -336,7 +336,7 @@ pub fn convert_texture(
     let plain = direct_fit.is_none()
         && !ctx.observer.enabled()
         && !listed(ctx, src.home.id, t.data_file, t.data_offset);
-    let mut mipped = |palette: Vec<u32>| {
+    let mut packed = |palette: Vec<u32>| {
         let img = decode_mirrored(&tlut)?;
         if plain {
             if psm.is_paletted() && t.format == texture::Format::Ci {
@@ -354,7 +354,7 @@ pub fn convert_texture(
                     } else {
                         core::slice::from_ref(&palette)
                     };
-                    return Some(psp::pack_mipped_indices(
+                    return Some(psp::pack_level0_indices(
                         &img, psm, &palette, swizzle, &source, states,
                     ));
                 }
@@ -364,7 +364,7 @@ pub fn convert_texture(
                 // as a texel mismatch (RE-364).
                 if let Some(source) = decode_index_field(&file, t) {
                     if source.iter().all(|&i| usize::from(i) < palette.len()) {
-                        return Some(psp::pack_mipped_indices(
+                        return Some(psp::pack_level0_indices(
                             &img,
                             psm,
                             &palette,
@@ -375,7 +375,7 @@ pub fn convert_texture(
                     }
                 }
             }
-            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+            return Some(psp::pack_level0(&img, psm, &palette, swizzle));
         }
         // RE-311: a bounded texgen primitive trains on its real-normal pose
         // coverage plus a one-point-per-texel regularization over the whole
@@ -570,7 +570,7 @@ pub fn convert_texture(
             if let Some(out) = compensated_out.as_deref_mut() {
                 *out = true;
             }
-            return Some(psp::pack_mipped(&fitted, psp::Psm::Psm8888, &[], swizzle));
+            return Some(psp::pack_level0(&fitted, psp::Psm::Psm8888, &[], swizzle));
         }
         if psm.is_paletted() && t.format == texture::Format::Ci {
             if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
@@ -717,7 +717,7 @@ pub fn convert_texture(
                             *out = true;
                         }
                     }
-                    return Some(psp::pack_mipped_indices(
+                    return Some(psp::pack_level0_indices(
                         &img, psm, &palette, swizzle, indices, states,
                     ));
                 } else {
@@ -735,7 +735,7 @@ pub fn convert_texture(
                             states: vec![palette.clone()],
                         }),
                     );
-                    return Some(psp::pack_mipped_indices(
+                    return Some(psp::pack_level0_indices(
                         &img,
                         psm,
                         &palette,
@@ -763,7 +763,7 @@ pub fn convert_texture(
         let Some(solved) = solved else {
             texgen_report(&img, false, "no-solve", None);
             record(&img, psm, "no-solve", true, None);
-            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+            return Some(psp::pack_level0(&img, psm, &palette, swizzle));
         };
         // Requirement 4: quantizing to the nearest existing palette/5551
         // entry can move a texel's alpha byte again (to whatever the
@@ -949,7 +949,7 @@ pub fn convert_texture(
                         )),
                     );
                     record(&img, psm, "no-promotion", true, None);
-                    return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+                    return Some(psp::pack_level0(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
                 direct_refined = Some(ssb_rom::filter_compensation::refine_integer(
@@ -1014,7 +1014,7 @@ pub fn convert_texture(
                         )),
                     );
                     record(&img, psm, "no-promotion", true, None);
-                    return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+                    return Some(psp::pack_level0(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
                 direct_refined = Some(ssb_rom::filter_compensation::refine_integer(
@@ -1125,7 +1125,7 @@ pub fn convert_texture(
             validation_after.max, validation_accepted);
         if !validation_accepted {
             record(&img, psm, "holdout-rejected", true, None);
-            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+            return Some(psp::pack_level0(&img, psm, &palette, swizzle));
         }
         record(
             chosen,
@@ -1147,7 +1147,7 @@ pub fn convert_texture(
         if let Some(out) = compensated_out.as_deref_mut() {
             *out = true;
         }
-        Some(psp::pack_mipped(
+        Some(psp::pack_level0(
             chosen,
             format,
             if format.is_paletted() { &palette } else { &[] },
@@ -1159,9 +1159,9 @@ pub fn convert_texture(
     // formats with their palette, direct ones -- RGBA16 as `Psm5551`, RGBA32
     // and IA as `Psm8888`, and the RE-283 bypass as `Psm8888` -- without.
     if psm.is_paletted() {
-        mipped(index_colours.clone())
+        packed(index_colours.clone())
     } else {
-        mipped(Vec::new())
+        packed(Vec::new())
     }
 }
 
