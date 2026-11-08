@@ -407,6 +407,9 @@ fn interrupt_pass<A, S, H>(
             continue;
         };
         world.items.publish(seat.fighter_mut());
+        // The effect pool as this fighter's process starts: the makers it
+        // queues are made at the flush below.
+        seat.fighter_mut().effect_room = world.effects.effect_room();
         let view = InputView {
             opponents: &opponents,
             items: world.items,
@@ -661,6 +664,7 @@ fn fighter_physics<A, S, H>(
             continue;
         };
         f.fighter_mut().occupied_cliffs = held;
+        f.fighter_mut().effect_room = world.effects.effect_room();
         hooks.begin(Span::FighterPhysics);
         f.physics(ground);
         hooks.end(Span::FighterPhysics);

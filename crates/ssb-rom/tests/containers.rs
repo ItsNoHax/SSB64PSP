@@ -496,7 +496,7 @@ fn item_scripts_and_root_lists_are_packed() {
         let o = object(offset);
         p.mesh(p.node(o.first_node + 1).unwrap().mesh).unwrap()
     };
-    let script = |prim: &ssb_rom::pack::PrimDesc| p.mat_anim(prim.mat_anim).unwrap().script;
+    let script = |prim: &ssb_rom::pack::PrimDesc| p.mat_anim_source_script(prim.mat_anim).unwrap();
 
     // The Star's two root `MObj`s flicker by `ITAttributes` table 0x15F0.
     let star = prims(root(0x1560));

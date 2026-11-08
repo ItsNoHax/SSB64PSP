@@ -160,7 +160,7 @@ psp-runtime/src/profile.rs	STATE	tooling: PSP profiling and probe state, no ROM 
 psp-runtime/src/scene.rs	CAPTAIN_FALCON_KICK_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	CAPTAIN_FALCON_PUNCH_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	DEAD_EXPLODE_EFFECT_KEY	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
-psp-runtime/src/scene.rs	DEAD_EXPLODE_MAT_SCRIPTS	layout: the blast's material script offsets in file 84 under llEFCommonEffects2DeadExplode{1..4}MatAnimJoint
+crates/ssb-rom/src/effect.rs	DEAD_EXPLODE_MAT_SCRIPTS	layout: the blast's material script offsets in file 84 under llEFCommonEffects2DeadExplode{1..4}MatAnimJoint
 psp-runtime/src/scene.rs	ENTRY_PARTS	layout: (file, ll*DObjDesc offset) keys of the entry effects, through ssb_rom::effect::slot
 psp-runtime/src/scene.rs	KIRBY_CUTTER_EFFECT_KEYS	link-time labels: (file ID, ll*DObjDesc offset), the key the port finds the effect tree by; the dEFManager*EffectDesc is named, not copied
 psp-runtime/src/scene.rs	KIRBY_CUTTER_SOURCE	link-time labels: (file ID, ll*Attributes offset), the key the port finds the mesh by

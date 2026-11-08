@@ -1030,7 +1030,10 @@ pub fn pack_mesh(
             match mat_anim_index.get(&key) {
                 Some(&i) => Some(i),
                 None => mat_anim_data.get(&key).and_then(|anim_data| {
-                    let file_bytes = src.bytes(if anim.source_file == id {
+                    // The build packs the file's script window later
+                    // (`PackWriter::place_mat_anim_file`): decline here when
+                    // its bytes are missing.
+                    src.bytes(if anim.source_file == id {
                         None
                     } else {
                         Some(anim.source_file as u16)
@@ -1163,7 +1166,6 @@ pub fn pack_mesh(
                     };
                     let i = writer.add_mat_anim(
                         anim.source_file,
-                        &file_bytes,
                         anim.script,
                         anim_data.source_offset,
                         &palettes,
@@ -1173,6 +1175,9 @@ pub fn pack_mesh(
                         anim_data.uv_tile_params,
                     );
                     writer.set_mat_anim_uv_half(i, anim_data.uv_half);
+                    for &script in &anim_data.extra_scripts {
+                        writer.add_mat_anim_root(anim.source_file, script);
+                    }
                     mat_anim_index.insert(key, i);
                     Some(i)
                 }),

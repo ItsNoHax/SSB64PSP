@@ -568,6 +568,14 @@ pub struct Fighter {
     /// them unless the switch preserves effects
     /// ([`crate::fteffect::on_set_status`]).
     pub is_effect_attach: bool,
+    /// Whether `efManagerMakeEffectForce` had a struct for this fighter as
+    /// its current process (`ftMainProcUpdateInterrupt` or
+    /// `ftMainProcPhysicsMap`) started: the match loop's snapshot of the
+    /// effect pool ([`crate::effect::HitEffectSink::effect_room`]), which
+    /// the queued makers cannot ask the same frame. Read by the egg's
+    /// `ftCommonYoshiEggMakeEffect` ([`crate::capture_yoshi::update_egg`]);
+    /// `true` where no match loop runs the fighter.
+    pub effect_room: bool,
     /// `proc_lagstart == ftParamProcPauseEffect` and `proc_lagend ==
     /// ftParamProcResumeEffect`: the status holds its attached effects
     /// through hitlag. Every status change clears both.
@@ -807,6 +815,7 @@ impl Fighter {
             slope_contour: 0,
             afterimage: AfterImage::default(),
             is_effect_attach: false,
+            effect_room: true,
             lag_pauses_effects: false,
             is_item_show: true,
             slope_pending: false,

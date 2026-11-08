@@ -2895,6 +2895,8 @@ pub fn build_with<'r>(
                     )
                 })?;
                 joints.push((Some(script), Some(*target)));
+                // `restart_materials` starts the desc on `script`.
+                writer.add_mat_anim_root(file_id, script);
             }
         }
         if joints.is_empty() {
@@ -3558,6 +3560,13 @@ pub fn build_with<'r>(
             writer.set_file_deps(id, &deps);
         }
     }
+    let windows = pack_mat_anim_windows(&mut writer, &loaded)?;
+    pack_log!(
+        ctx,
+        "  matanim windows {} files, {} restarts",
+        windows.0,
+        windows.1
+    );
     ctx.log.phase("menus+deps");
     let (hits, decodes) = loaded.files.stats();
     pack_log!(
@@ -3636,4 +3645,93 @@ pub fn build_with<'r>(
         non_owner_first: ctx.non_owner_first.get(),
     };
     Ok(stats)
+}
+
+/// Packs every material-animation file's script window (`VERSION` 149,
+/// [`ssb_rom::pack::PackWriter::place_mat_anim_file`]) once every desc is
+/// added, with the scripts the run time restarts joints on as roots (the
+/// effect constants, and each ground and boss effect's `mobj_script` rows).
+/// Returns the files and restart rows packed.
+fn pack_mat_anim_windows(
+    writer: &mut ssb_rom::pack::PackWriter,
+    loaded: &Loaded<'_>,
+) -> Result<(usize, usize), Box<dyn core::error::Error>> {
+    use ssb_rom::effect::{DEAD_EXPLODE_MAT_SCRIPTS, PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS};
+    let files = writer.unplaced_mat_anim_files();
+    // `efManagerPikachuThunderShockMakeEffect`'s and
+    // `efManagerDeadExplodeMakeEffect`'s restarts (psp-game).
+    let constants = PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS
+        .iter()
+        .map(|&s| (ssb_rom::effect::PIKACHU_THUNDER_SHOCK_KEY.0, s))
+        .chain(DEAD_EXPLODE_MAT_SCRIPTS.iter().flatten().map(|&s| (84, s)));
+    for (file, script) in constants {
+        if files.contains(&file) {
+            writer.add_mat_anim_root(file, script);
+        }
+    }
+    let first_object = |writer: &ssb_rom::pack::PackWriter, key: (u32, u32)| {
+        (0..)
+            .map_while(|i| writer.object(i))
+            .find(|o| (o.source_file, o.source_offset) == key)
+    };
+    let mut restarts = 0;
+    let mut add_restarts = |writer: &mut ssb_rom::pack::PackWriter,
+                            object: ssb_rom::pack::ObjectDesc,
+                            table: u32,
+                            subs: u32| {
+        for (f, node, sub) in writer.object_mat_anim_subs(&object) {
+            let script = loaded.files.get(f as usize).and_then(|file| {
+                ssb_rom::matanim::mobj_script(&file.data, table, subs, node as usize, sub)
+            });
+            if let Some(script) = script {
+                let row = ssb_rom::pack::MatAnimRestart {
+                    table,
+                    subs,
+                    node,
+                    sub,
+                    script,
+                };
+                writer.add_mat_anim_restart(f, row);
+                restarts += 1;
+            }
+        }
+    };
+    // The ground effects' (`efGroundMakeEffect`, psp-game's ground-effect
+    // draw: `object_keyed`).
+    {
+        use ssb_game::ground_effect as g;
+        for k in 0..g::DESC_COUNT {
+            let Some(file) = g::desc_file(k).filter(|_| g::O_MATANIM_JOINT[k] != 0) else {
+                continue;
+            };
+            let Some(object) = first_object(writer, (file, g::O_DOBJSETUP[k])) else {
+                continue;
+            };
+            add_restarts(writer, object, g::O_MATANIM_JOINT[k], g::O_MOBJSUB[k]);
+        }
+    }
+    // The boss wallpaper's (`psp_runtime::boss::start_materials`).
+    {
+        use ssb_game::spgame::boss::{EFFECT_ASSETS, EFFECT_FILE};
+        for asset in EFFECT_ASSETS.get().iter().flatten().flatten() {
+            let (Some(table), Some(subs)) = (asset.matanim_joint, asset.mobjsub) else {
+                continue;
+            };
+            let Some(object) = first_object(writer, (EFFECT_FILE, asset.graph)) else {
+                continue;
+            };
+            add_restarts(writer, object, table, subs);
+        }
+    }
+    let files = writer.unplaced_mat_anim_files();
+    for &f in &files {
+        let file = loaded
+            .files
+            .get(f as usize)
+            .ok_or_else(|| format!("material-animation file {f} missing"))?;
+        writer
+            .place_mat_anim_file(f, &file.data)
+            .map_err(|e| format!("material-animation file {f}: script window: {e:?}"))?;
+    }
+    Ok((files.len(), restarts))
 }

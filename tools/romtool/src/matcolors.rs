@@ -1203,18 +1203,16 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     let mesh_keys = mesh_keys(&pack);
     for i in 0..pack.mat_anim_count() {
         let a = pack.mat_anim(i).ok_or("missing MatAnimDesc")?;
-        let data = pack.mat_anim_file(&a).ok_or("missing script bytes")?;
+        // The reference plays the ROM file at the script's source offset;
+        // the run time plays the packed window (`VERSION` 149).
         let rom_file = archive.load(a.source_file)?;
-        if rom_file.data.as_slice() != data {
-            return Err(format!(
-                "MatAnimDesc {i}: packed file {} differs from the ROM",
-                a.source_file
-            )
-            .into());
-        }
+        let data = rom_file.data.as_slice();
+        let source = pack
+            .mat_anim_source_script(i)
+            .ok_or_else(|| format!("MatAnimDesc {i}: script 0x{:X} is no window root", a.script))?;
         let stage = stage_files.contains(&a.source_file);
 
-        let mut reference = Reference::new(data, a.script);
+        let mut reference = Reference::new(data, source);
         let mut expected = Vec::new();
         let replay = (0..TICKS).try_for_each(|_| {
             expected.push(reference.frame()?);
@@ -1223,7 +1221,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         if let Err(e) = replay {
             println!(
                 "MatAnimDesc {i}: file {} script 0x{:X}  DECLINED: {e}",
-                a.source_file, a.script
+                a.source_file, source
             );
             declined.push(i);
             continue;
@@ -1264,7 +1262,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
             "MatAnimDesc {i}: file {} MObjSub 0x{:X} script 0x{:X} {}  tracks {}{}",
             a.source_file,
             a.source_offset,
-            a.script,
+            source,
             if stage { "stage" } else { "other" },
             live.iter()
                 .map(|&t| TRACK_NAMES[t])
@@ -1323,7 +1321,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
             .collect();
             println!("  prim {p}: {}", names.join(" "));
         }
-        let mut keys = Reference::new(data, a.script);
+        let mut keys = Reference::new(data, source);
         let starts = key_frames(&mut keys, TICKS)?;
         let loop_at = starts.iter().skip(1).find(|&&f| {
             f > 1

@@ -483,18 +483,9 @@ pub fn manager_effect(pack: &Pack<'_>, key: (u32, u32)) -> Option<(ObjectDesc, s
 /// `ssb_rom::effect::MANAGER_EFFECT_KEYS` (RE-412).
 pub const DEAD_EXPLODE_EFFECT_KEY: (u32, u32) = (84, 0x53E8);
 
-/// `dEFManagerDeadExplodeMatAnimJoints[player]`: each player's material
-/// script for the blast's three drawn DObjs, as file 84 offsets
-/// (`llEFCommonEffects2DeadExplode1MatAnimJoint` at 0x58E0 for player 0,
-/// `...2...` at 0x5800, `...3...` at 0x5950 and `...4...` at 0x5870; each
-/// table's entries 1–3 name one script for the node's one MObj). The pack
-/// binds player 0's.
-pub const DEAD_EXPLODE_MAT_SCRIPTS: [[u32; 3]; 4] = [
-    [0x58F0, 0x590C, 0x5928],
-    [0x5810, 0x582C, 0x5848],
-    [0x5960, 0x597C, 0x5998],
-    [0x5880, 0x589C, 0x58B8],
-];
+/// `dEFManagerDeadExplodeMatAnimJoints[player]`, in `ssb_rom::effect`
+/// so the pack build keeps every player's script in its window.
+pub use ssb_rom::effect::DEAD_EXPLODE_MAT_SCRIPTS;
 
 /// `dEFManagerDeadExplodeEnvColor{Child,Sibling}*[player]`, generated from
 /// the ROM (`ssb_game::ko`).

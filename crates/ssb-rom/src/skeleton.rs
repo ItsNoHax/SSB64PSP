@@ -2230,6 +2230,10 @@ pub struct EffectMaterialAnimator {
     /// `mobj->anim_wait = AOBJ_ANIM_NULL`: the slot keeps its values but no
     /// longer ticks, until a restart.
     halted: [bool; MAX_EFFECT_MAT_ANIMS],
+    /// Slots [`Self::restart`]ed on a source-file script offset that the
+    /// next tick moves into the packed window ([`Pack::mat_anim_script`]),
+    /// one bit per slot.
+    pending: u16,
     count: usize,
 }
 
@@ -2307,6 +2311,7 @@ impl EffectMaterialAnimator {
                 crate::matanim::MaterialJoint::start(0, 0.0),
             ); MAX_EFFECT_MAT_ANIMS],
             halted: [false; MAX_EFFECT_MAT_ANIMS],
+            pending: 0,
             count: 0,
         }
     }
@@ -2331,6 +2336,7 @@ impl EffectMaterialAnimator {
         anim_frame: f32,
     ) {
         self.count = 0;
+        self.pending = 0;
         for i in indices {
             if i == crate::pack::TextureDesc::NO_ANIM {
                 continue;
@@ -2349,26 +2355,44 @@ impl EffectMaterialAnimator {
     }
 
     /// `gcAddMObjMatAnimJoint(mobj, script, 0)`: restarts `mat_anim`'s
-    /// joint on `script`, which may be any script in the same file as the
-    /// entry's own, and leaves every other slot as it is. Returns `false`
-    /// when `mat_anim` is new and every slot is taken.
+    /// joint on `script`, an offset in the entry's source file (not its
+    /// packed window) naming any script the pack kept as a root of that
+    /// file's window, and leaves every other slot as it is. The next tick
+    /// moves the joint into the window; one that names no root halts there.
+    /// Returns `false` when `mat_anim` is new and every slot is taken.
     pub fn restart(&mut self, mat_anim: u32, script: u32) -> bool {
         let joint = crate::matanim::MaterialJoint::start(script, 0.0);
-        if let Some(n) = self.slots[..self.count]
+        let n = match self.slots[..self.count]
             .iter()
             .position(|(i, _)| *i == mat_anim)
         {
-            self.slots[n].1 = joint;
-            self.halted[n] = false;
-            return true;
-        }
-        if self.count >= MAX_EFFECT_MAT_ANIMS {
-            return false;
-        }
-        self.slots[self.count] = (mat_anim, joint);
-        self.halted[self.count] = false;
-        self.count += 1;
+            Some(n) => n,
+            None if self.count < MAX_EFFECT_MAT_ANIMS => {
+                self.count += 1;
+                self.count - 1
+            }
+            None => return false,
+        };
+        self.slots[n] = (mat_anim, joint);
+        self.halted[n] = false;
+        self.pending |= 1 << n;
         true
+    }
+
+    /// Moves every [`Self::restart`]ed joint into its packed window.
+    #[cold]
+    fn rebase_pending(&mut self, pack: &Pack<'_>) {
+        for n in 0..self.count {
+            if self.pending & (1 << n) == 0 {
+                continue;
+            }
+            let (i, j) = &mut self.slots[n];
+            match pack.mat_anim_script(*i, j.pc() as u32) {
+                Some(script) => j.retarget(script),
+                None => self.halted[n] = true,
+            }
+        }
+        self.pending = 0;
     }
 
     /// `mobj->anim_wait = AOBJ_ANIM_NULL` on every `MObj` this player
@@ -2408,6 +2432,9 @@ impl EffectMaterialAnimator {
     /// [`Self::tick`] at an `MObj::anim_speed` other than 1
     /// (`gcSetAllAnimSpeed`).
     pub fn tick_speed(&mut self, pack: &Pack<'_>, speed: f32) {
+        if self.pending != 0 {
+            self.rebase_pending(pack);
+        }
         for (n, (i, j)) in self.slots[..self.count].iter_mut().enumerate() {
             if self.halted[n] {
                 continue;
@@ -2420,11 +2447,12 @@ impl EffectMaterialAnimator {
     }
 
     /// The state of a player with one joint, which [`Self::restore_slot`]
-    /// puts back; `None` for any other count.
+    /// puts back; `None` for any other count, or a joint restarted and not
+    /// yet ticked.
     #[inline(always)]
     pub fn save_slot(&self) -> Option<EffectMaterialSlot> {
         match (self.count, self.slots.first(), self.halted.first()) {
-            (1, Some(&slot), Some(&halted)) => Some((slot, halted)),
+            (1, Some(&slot), Some(&halted)) if self.pending == 0 => Some((slot, halted)),
             _ => None,
         }
     }
@@ -2436,6 +2464,7 @@ impl EffectMaterialAnimator {
         if let (Some(slot), Some(halted)) = (self.slots.first_mut(), self.halted.first_mut()) {
             *slot = saved.0;
             *halted = saved.1;
+            self.pending = 0;
             self.count = 1;
         }
     }
@@ -3228,18 +3257,9 @@ mod tests {
             alloc::vec![0x2222_2222u32; 16],
             alloc::vec![0x3333_3333u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(
-            105,
-            &file_bytes,
-            0,
-            0x1000,
-            &palettes,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(105, 0, 0x1000, &palettes, &[], [0; 10], 0, [0; 3]);
         w.set_texture_mat_anim(texture, mat_anim);
+        w.place_mat_anim_file(105, &file_bytes).unwrap();
         (w.finish(), mat_anim)
     }
 
@@ -3300,17 +3320,8 @@ mod tests {
             alloc::vec![0x1111_1111u32; 16],
             alloc::vec![0x2222_2222u32; 16]
         ];
-        let mat_anim = w.add_mat_anim(
-            157,
-            &file_bytes,
-            0,
-            0x8D8,
-            &palettes,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(157, 0, 0x8D8, &palettes, &[], [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(157, &file_bytes).unwrap();
         (w.finish(), mat_anim)
     }
 
@@ -3408,18 +3419,9 @@ mod tests {
             alloc::vec![0x1111_1111u32; 16],
             alloc::vec![0x2222_2222u32; 16]
         ];
-        let mat_anim = w.add_mat_anim(
-            105,
-            &file_bytes,
-            0,
-            0x1000,
-            &palettes,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(105, 0, 0x1000, &palettes, &[], [0; 10], 0, [0; 3]);
         w.set_texture_mat_anim(texture, mat_anim);
+        w.place_mat_anim_file(105, &file_bytes).unwrap();
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
         let a = pack.mat_anim(mat_anim).unwrap();
@@ -3577,17 +3579,8 @@ mod tests {
             mat_cmd(OP_END, 0, 0),
         ]);
         let palettes = alloc::vec![alloc::vec![0u32; 16]; 3];
-        let mat_anim = w.add_mat_anim(
-            105,
-            &file_bytes,
-            0,
-            0x1000,
-            &palettes,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(105, 0, 0x1000, &palettes, &[], [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(105, &file_bytes).unwrap();
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
         let a = pack.mat_anim(mat_anim).unwrap();
@@ -3640,7 +3633,6 @@ mod tests {
         let palettes = alloc::vec![alloc::vec![0x1111_1111; 16], alloc::vec![0x2222_2222; 16],];
         let anim = w.add_mat_anim(
             104,
-            &script,
             0,
             0x1200,
             &palettes,
@@ -3649,6 +3641,7 @@ mod tests {
             0,
             [0; 3],
         );
+        w.place_mat_anim_file(104, &script).unwrap();
         let pack_bytes = w.finish();
         let pack = Pack::open(&pack_bytes).unwrap();
         let mut animator = MaterialAnimator::new();
@@ -3689,6 +3682,8 @@ mod tests {
             (-0.5f32).to_bits(),
             0.6f32.to_bits(),
             mat_cmd(OP_WAIT, 0, 50),
+            // `End`: the window keeps no word past the file.
+            0,
         ]);
         let image = |byte| PspTexture {
             width: 32,
@@ -3715,17 +3710,7 @@ mod tests {
         base[4] = 4.0f32.to_bits();
         base[6] = 0.0066f32.to_bits();
         base[8] = (115.0f32 / 255.0).to_bits();
-        let anim = w.add_mat_anim(
-            104,
-            &script,
-            0,
-            0x1F78,
-            &[],
-            &current,
-            base,
-            1,
-            [384, 128, 128],
-        );
+        let anim = w.add_mat_anim(104, 0, 0x1F78, &[], &current, base, 1, [384, 128, 128]);
         let mut next_textures =
             [crate::pack::TextureDesc::NO_ANIM; crate::pack::MatAnimDesc::MAX_TEXTURES];
         next_textures[..2].copy_from_slice(&next);
@@ -3737,6 +3722,7 @@ mod tests {
             origin_delta: [0, 0],
             texel_alpha: None,
         }));
+        w.place_mat_anim_file(104, &script).unwrap();
         (w.finish(), anim, current, next)
     }
 
@@ -3860,6 +3846,8 @@ mod tests {
             mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRAU, 1),
             0.5f32.to_bits(),
             mat_cmd(OP_WAIT, 0, 10),
+            // `End`: the window keeps no word past the file.
+            0,
         ]);
         let mut base = [0u32; 10];
         base[1] = 0.25f32.to_bits();
@@ -3867,7 +3855,8 @@ mod tests {
         base[3] = 1.0f32.to_bits();
         base[4] = 0.5f32.to_bits();
         let mut w = PackWriter::new();
-        let anim = w.add_mat_anim(104, &script, 0, 0x2200, &[], &[], base, 1, [2, 64, 32]);
+        let anim = w.add_mat_anim(104, 0, 0x2200, &[], &[], base, 1, [2, 64, 32]);
+        w.place_mat_anim_file(104, &script).unwrap();
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let mut animator = MaterialAnimator::new();
@@ -3900,13 +3889,16 @@ mod tests {
             mat_cmd(SET_AFTER, 1 << TRAU, 1),
             0.5f32.to_bits(),
             mat_cmd(WAIT, 0, 20),
+            // `End`: the window keeps no word past the file.
+            0,
         ]);
         let mut base = [0u32; 10];
         base[1] = 0.25f32.to_bits();
         base[3] = 1.0f32.to_bits();
         base[4] = 1.0f32.to_bits();
         let mut writer = PackWriter::new();
-        let anim = writer.add_mat_anim(333, &script, 0, 0x100, &[], &[], base, 1, [0, 64, 32]);
+        let anim = writer.add_mat_anim(333, 0, 0x100, &[], &[], base, 1, [0, 64, 32]);
+        writer.place_mat_anim_file(333, &script).unwrap();
         let bytes = writer.finish();
         let pack = Pack::open(&bytes).unwrap();
 
@@ -3961,17 +3953,8 @@ mod tests {
             alloc::vec![0x1111_1111u32; 16],
             alloc::vec![0x2222_2222u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(
-            105,
-            &file_bytes,
-            0,
-            0x1000,
-            &palettes,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(105, 0, 0x1000, &palettes, &[], [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(105, &file_bytes).unwrap();
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
         let a = pack.mat_anim(mat_anim).unwrap();
@@ -4021,17 +4004,8 @@ mod tests {
             mat_cmd(OP_END, 0, 0),
         ]);
         let textures = alloc::vec![7u32, 9u32];
-        let mat_anim = w.add_mat_anim(
-            83,
-            &file_bytes,
-            0,
-            0x90C0,
-            &[],
-            &textures,
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(83, 0, 0x90C0, &[], &textures, [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(83, &file_bytes).unwrap();
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
 
@@ -4070,7 +4044,8 @@ mod tests {
             mat_cmd(OP_WAIT, 0, 97),
             mat_cmd(OP_END, 0, 0),
         ]);
-        let mat_anim = w.add_mat_anim(353, &file_bytes, 0, 0x12F0, &[], &[], [0; 10], 0, [0; 3]);
+        let mat_anim = w.add_mat_anim(353, 0, 0x12F0, &[], &[], [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(353, &file_bytes).unwrap();
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
 
@@ -4108,7 +4083,8 @@ mod tests {
                 mat_cmd(OP_WAIT, 0, 100),
                 0,
             ]);
-            last = w.add_mat_anim(500 + i, &file_bytes, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+            last = w.add_mat_anim(500 + i, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+            w.place_mat_anim_file(500 + i, &file_bytes).unwrap();
         }
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
@@ -4123,13 +4099,59 @@ mod tests {
         assert_eq!(m.resolved_colors(103), None, "past the pack's own count");
     }
 
+    /// `restart` names a script by its source-file offset; the first tick
+    /// plays it from the packed window, and a script the window does not
+    /// hold halts the joint rather than reading another script's words.
+    #[test]
+    fn effect_material_restart_plays_a_window_root_by_its_file_offset() {
+        const OP_EXT_VAL_BLOCK: u32 = 20;
+        const OP_WAIT: u32 = 2;
+        const TRACK_PRIM: u32 = crate::matanim::TRACK_PRIM as u32;
+        let file_bytes = mat_script(&[
+            // 0x00: the desc's own script.
+            mat_cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 0),
+            0x1122_3344,
+            mat_cmd(OP_WAIT, 0, 100),
+            0,
+            0xDEAD_BEEF,
+            // 0x14: the restart's.
+            mat_cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 0),
+            0x5566_7788,
+            mat_cmd(OP_WAIT, 0, 100),
+            0,
+        ]);
+        let mut w = PackWriter::new();
+        let mat = w.add_mat_anim(140, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+        w.add_mat_anim_root(140, 0x14);
+        w.place_mat_anim_file(140, &file_bytes).unwrap();
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        assert!(pack.mat_anim_file_at(mat).unwrap().len() < 8 + 16 + file_bytes.len());
+
+        let play = |script: u32| {
+            let mut m = EffectMaterialAnimator::new();
+            m.start(&pack, core::iter::once(mat));
+            assert!(m.restart(mat, script));
+            assert!(m.save_slot().is_none(), "a restart not yet ticked");
+            m.tick(&pack);
+            m.tick(&pack);
+            assert!(m.save_slot().is_some());
+            m.resolved_colors(mat).and_then(|c| c.prim)
+        };
+        assert_eq!(play(0x14), Some([0x55, 0x66, 0x77, 0x88]));
+        assert_eq!(play(0), Some([0x11, 0x22, 0x33, 0x44]));
+        // 0x18 is a value word of the restart's script, no root.
+        assert_eq!(play(0x18), None);
+    }
+
     #[test]
     fn effect_material_animator_deduplicates_and_caps_its_slots() {
         let mut w = PackWriter::new();
         let mut indices = alloc::vec::Vec::new();
         for i in 0..MAX_EFFECT_MAT_ANIMS as u32 + 3 {
             let file_bytes = mat_script(&[0]);
-            indices.push(w.add_mat_anim(200 + i, &file_bytes, 0, 0, &[], &[], [0; 10], 0, [0; 3]));
+            indices.push(w.add_mat_anim(200 + i, 0, 0, &[], &[], [0; 10], 0, [0; 3]));
+            w.place_mat_anim_file(200 + i, &file_bytes).unwrap();
         }
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();

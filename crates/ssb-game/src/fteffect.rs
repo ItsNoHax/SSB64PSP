@@ -109,6 +109,10 @@ pub enum FighterEffect {
     EggEscape { epoch: u32 },
     /// `ftParamProcStopEffect` for this fighter's roll egg.
     StopEggEscape,
+    /// `ftCommonYoshiEggMakeEffect`'s `efManagerYoshiEggLayMakeEffect`:
+    /// the trapped fighter's egg takes its forced struct; success sets
+    /// `is_effect_attach`.
+    YoshiEggLay,
     /// `ftParamMakeEffect`.
     Param(EffectRequest),
     /// `ftParamKirbyTryMakeMapStarEffect`'s `efManagerKirbyStarMakeEffect`.
@@ -272,7 +276,8 @@ pub(crate) fn stop_attached(f: &mut Fighter) {
     let attaching = f.effects.iter().any(|e| match e {
         FighterEffect::ThunderShock { .. }
         | FighterEffect::KirbyInhaleWind
-        | FighterEffect::CaptureKirbyStar => true,
+        | FighterEffect::CaptureKirbyStar
+        | FighterEffect::YoshiEggLay => true,
         FighterEffect::Param(r) => r.kind == kind::FIRE_SPARK,
         _ => false,
     });
@@ -347,6 +352,17 @@ pub fn flush(f: &mut Fighter, rt: &mut EffectRuntime<'_>) {
                 }
             }
             FighterEffect::StopEggEscape => rt.effects.stop_yoshi_egg_escape(f.port),
+            FighterEffect::YoshiEggLay => {
+                if rt.effects.yoshi_egg_lay(f.port) {
+                    f.is_effect_attach = true;
+                } else {
+                    // The process's own earlier makers took the last struct
+                    // its `effect_room` saw: `NULL`, so the egg tries again
+                    // on its next update.
+                    f.egg.effect_gobj = false;
+                    f.egg.effect.made = false;
+                }
+            }
             FighterEffect::Param(r) => make(f, rt, r),
             FighterEffect::KirbyStar(pos) => {
                 rt.effects

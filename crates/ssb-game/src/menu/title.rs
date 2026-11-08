@@ -101,11 +101,14 @@ pub struct DemoData {
 }
 
 impl Default for DemoData {
-    /// `dSCManagerDefaultSceneData`.
+    /// `dSCManagerDefaultSceneData`: the extended wait is on (scmanager.c:
+    /// "Extend time until auto-demo starts?" TRUE), so a title reached by
+    /// skipping the opening waits 1190 tics; the opening's own title turns
+    /// it off (`mnTitleAdvanceLayout`).
     fn default() -> Self {
         DemoData {
             is_title_anim_viewed: false,
-            is_extend_demo_wait: false,
+            is_extend_demo_wait: true,
             demo_mask_prev: 0,
             demo_fkind: [FighterKind::Mario; 2],
             demo_first_fkind: FighterKind::Mario,

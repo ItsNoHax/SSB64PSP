@@ -374,6 +374,13 @@ impl Effects {
         self.free_num >= NO_FORCE_RESERVE && self.free != NIL
     }
 
+    /// Whether `efManagerMakeEffectForce` would make a struct-holding
+    /// display effect now: `efManagerGetNextStructAlloc(TRUE)` finds a free
+    /// struct (and the port's display list a free slot).
+    pub fn force_available(&self) -> bool {
+        self.free != NIL && self.displays.iter().any(Option::is_none)
+    }
+
     /// `efManagerGetNextStructAlloc(FALSE)`.
     fn get_no_force(&mut self) -> Option<u8> {
         if self.free_num < NO_FORCE_RESERVE {
@@ -1058,6 +1065,13 @@ pub trait HitEffectSink {
         f.effects.clear();
     }
 
+    /// [`Effects::force_available`] as a fighter process starts
+    /// ([`crate::fighter::Fighter::effect_room`]); always room without a
+    /// runtime.
+    fn effect_room(&self) -> bool {
+        true
+    }
+
     /// The effect processes (priority 3).
     fn process(&mut self) {}
 
@@ -1117,6 +1131,9 @@ impl HitEffectSink for EffectRuntime<'_> {
     }
     fn mball_rays(&mut self, pos: Vec3) -> Option<u32> {
         self.effects.mball_rays(pos)
+    }
+    fn effect_room(&self) -> bool {
+        self.effects.force_available()
     }
     fn move_display(&mut self, seq: u32, pos: Vec3) {
         self.effects.move_display(seq, pos);
@@ -1305,6 +1322,13 @@ pub enum DisplayKind {
     /// `dEFManagerYoshiEggEscapeEffectDesc`: forced, attached to joint 5,
     /// no process or animation. Stopped by `ftParamProcStopEffect`.
     YoshiEggEscape,
+    /// `dEFManagerYoshiEggLayEffectDesc`: the egg a swallowed fighter is
+    /// laid in (`efManagerYoshiEggLayMakeEffect`), a forced struct whose
+    /// `fighter_gobj` is the trapped fighter. The display only holds the
+    /// struct and its `GObj`'s place until `ftParamProcStopEffect`; the
+    /// egg's animation, scale and wiggle live on the fighter, which draws
+    /// and processes it ([`crate::capture_yoshi::EggLayEffect`], RE-417).
+    YoshiEggLay,
     /// `dEFManagerMBallRaysEffectDesc`: the opened Poké Ball's rays. Its
     /// flags lack `EFFECT_FLAG_USERDATA`, so it has no struct and runs
     /// `efManagerNoStructProcUpdate` (RE-443).
@@ -1454,6 +1478,8 @@ impl DisplayKind {
             DisplayKind::FireSpark => d::EF_MANAGER_FIRE_SPARK_EFFECT_DESC_DL_LINK[0],
             DisplayKind::ThunderTrail => d::EF_MANAGER_PIKACHU_THUNDER_TRAIL_EFFECT_DESC_DL_LINK[0],
             DisplayKind::YoshiEggEscape => d::EF_MANAGER_YOSHI_EGG_ESCAPE_EFFECT_DESC_DL_LINK[0],
+            // Drawn from the fighter's egg (RE-417), never from this list.
+            DisplayKind::YoshiEggLay => 0,
             DisplayKind::MBallRays => d::EF_MANAGER_M_BALL_RAYS_EFFECT_DESC_DL_LINK[0],
             DisplayKind::ThunderShock { .. } => {
                 d::EF_MANAGER_PIKACHU_THUNDER_SHOCK_EFFECT_DESC_DL_LINK[0]
@@ -1498,6 +1524,7 @@ impl DisplayKind {
             | DisplayKind::SpawnMDust
             | DisplayKind::ThunderTrail
             | DisplayKind::YoshiEggEscape
+            | DisplayKind::YoshiEggLay
             | DisplayKind::ContainerSmash
             | DisplayKind::VulcanJab
             | DisplayKind::NessPKThunderTrail
@@ -1781,7 +1808,8 @@ impl Effects {
                 | DisplayKind::ReflectBreak
         ) {
             NIL
-        } else if kind == DisplayKind::YoshiEggEscape {
+        } else if matches!(kind, DisplayKind::YoshiEggEscape | DisplayKind::YoshiEggLay) {
+            // `efManagerMakeEffectForce`.
             self.get_force()?
         } else {
             self.get_no_force()?
@@ -1832,7 +1860,9 @@ impl Effects {
                 }
                 self.displays[i] = Some(d);
             }
-            DisplayKind::YoshiEggEscape => {}
+            // The egg's `efManagerYoshiEggLayProcUpdate` runs on the fighter
+            // (`crate::capture_yoshi::update_egg`).
+            DisplayKind::YoshiEggEscape | DisplayKind::YoshiEggLay => {}
             DisplayKind::ShockSmall
             | DisplayKind::Slash
             | DisplayKind::FlySparks
@@ -2154,6 +2184,20 @@ impl Effects {
         let d = self.display_mut(i);
         d.owner = owner;
         d.scale = Vec3::new(1.5, 1.5, 1.0);
+        true
+    }
+
+    /// `efManagerYoshiEggLayMakeEffect(fighter_gobj)`: the forced struct the
+    /// trapped fighter `owner`'s egg holds (`ep->fighter_gobj`), until its
+    /// `ftParamProcStopEffect` ([`Self::stop_attached_particles`]). `false`
+    /// as the source returns `NULL`: no struct is free.
+    pub fn yoshi_egg_lay(&mut self, owner: u8) -> bool {
+        let Some(i) = self.make_display(DisplayKind::YoshiEggLay) else {
+            return false;
+        };
+        let d = self.display_mut(i);
+        d.owner = owner;
+        d.fighter = Some(owner);
         true
     }
 

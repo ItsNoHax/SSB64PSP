@@ -120,7 +120,16 @@ fn start_waits_for_the_animation_on_a_first_boot() {
 
 #[test]
 fn the_title_goes_to_its_demos_after_650_or_1190_tics() {
-    let mut demo = DemoData::default();
+    // A boot starts with the extended wait (`dSCManagerDefaultSceneData`):
+    // a title reached by skipping the opening is still up at tic 650.
+    let mut boot = DemoData::default();
+    assert!(boot.is_extend_demo_wait);
+    assert_eq!(run_title(&mut Title::new(0), &mut boot, 484), None);
+    // Without it (the opening's title turns it off): from tic 170 to 650.
+    let mut demo = DemoData {
+        is_extend_demo_wait: false,
+        ..DemoData::default()
+    };
     let mut t = Title::new(0);
     // From tic 170 to 650.
     assert_eq!(run_title(&mut t, &mut demo, 481), None);

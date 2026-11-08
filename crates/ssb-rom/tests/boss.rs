@@ -300,11 +300,15 @@ fn the_pack_binds_the_boss_wallpaper_materials() {
             let mut joints: Vec<(u32, MaterialJoint)> = Vec::new();
             for &&(n, p) in &animated {
                 let desc = pack.mat_anim(p.mat_anim).unwrap();
-                let file = pack.mat_anim_file(&desc).unwrap();
-                assert_eq!(file, &f.data[..]);
                 let script =
-                    ssb_rom::matanim::mobj_script(file, table, subs, n, desc.source_offset)
+                    ssb_rom::matanim::mobj_script(&f.data, table, subs, n, desc.source_offset)
                         .unwrap_or_else(|| panic!("w{w} e{e} n{n}: no script"));
+                // The run time's query, resolved at pack time (`VERSION` 149).
+                assert_eq!(
+                    pack.mat_anim_restart(p.mat_anim, table, subs, n),
+                    Some(script),
+                    "w{w} e{e} n{n}"
+                );
                 assert_eq!(table_scripts[n][0], Some(script), "w{w} e{e} n{n}");
                 mats.restart(p.mat_anim, script);
                 if !joints.iter().any(|(i, _)| *i == p.mat_anim) {

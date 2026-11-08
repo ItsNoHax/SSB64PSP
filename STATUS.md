@@ -6,7 +6,7 @@
 
 | Item | Value | Refs |
 |---|---|---|
-| Pack | v148 | `crates/ssb-rom/src/pack.rs` |
+| Pack | v149 | `crates/ssb-rom/src/pack.rs` |
 | Goldens | 286 of 286 goldens match by pixel hash | `tests/golden/hashes.tsv` |
 | Toolchains | Host Rust 1.98.0; PSP crates pinned nightly | [D-026](docs/decisions/D-026.md) |
 | PPSSPP | 60 FPS | RE-469–RE-471 |
@@ -18,13 +18,13 @@
 
 ## Current work
 
-- Landed (batch 188): release builds tick `scePowerTick` about once a second (`timing::keep_awake`; PSP vs4 14.35 to 14.35 ms, 1P intro 13.99 to 14.00); viewer HUD drawn by the GE (`gu/hud_text.rs`), `sceGuDebugFlush` gone; shows in PPSSPP OpenGL.
+- Landed (batch 188): vs-four RE-511 change attributed (release z plus TopN display); Yoshi egg holds a forced effect struct, no-room break 16 frames (RE-552); real-menu VS boot seed matches the N64, idle title demo at tic 1190 (RE-568); stage material scripts packed as per-script windows (pack v149, -1.23 MB pack and resident, RE-010); release builds tick `scePowerTick` about once a second (`timing::keep_awake`; PSP vs4 14.35 to 14.35 ms, 1P intro 13.99 to 14.00); viewer HUD drawn by the GE (`gu/hud_text.rs`), `sceGuDebugFlush` gone; shows in PPSSPP OpenGL.
 - Landed (batch 187): Electric `vs4@2170` r12 16.75 to 16.65 ms (under 16.7): the 0.33 ms pack gap was `BIND_CACHE` slot collisions moving with texture ids; 64 victim slots; intro +0.31 ms from hot-caller codegen, other scenes ±0.05 (RE-589 item 10).
 - Landed (batch 186): first-launch installer: separate `INSTALL.PBP`, started from the game by LoadExec; PSP-2000 at the PSP-1000 start budget (22.4 MB) 8.78 min, pack identical, lowest free 9.78 MB; 64-byte-aligned sink (writes 129 to 16.5 s) (D-053, RE-588 item 15).
 - Landed (batch 185): on-PSP pack build at PSP-1000 memory: paged ROM, blob spill (RE-588 item 14).
 - Landed (batch 181): tables batch E: 10 motion tables (scripts, motion descs, combat attributes, demo scripts) from the pack (v147, 456 KB section); every generator `no_std`; motion lookups out of line (inlined: +0.15 ms from `.text` pins); PSP mean +0.04 ms (RE-589 item 8). On-PSP pack build 6.20 min, pack identical, lowest free 9.0 MB, after an FPU-trap fix and no file cache on the PSP (RE-588 item 13).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
-- Open: real N64 VS menu boot. Gaps in `PLAN.md`.
+- Gaps in `PLAN.md`.
 
 ## Next
 

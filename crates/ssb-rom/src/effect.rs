@@ -52,8 +52,22 @@ pub const PIKACHU_THUNDER_SHOCK_ANIM_SLOT: u32 = 0x106;
 /// Node 3's one `MObj` script under each spark animation
 /// (`llPikachuSpecial2ThunderShock{0,1,2}MatAnimJoint` at 0x1A80, 0x1AC0
 /// and 0x1B10, through their inner lists at 0x1ABC, 0x1B04 and 0x1B54),
-/// as file 347 offsets. The pack binds 0's.
+/// as file 347 offsets. The pack binds 0's; all three are roots of file
+/// 347's script window.
 pub const PIKACHU_THUNDER_SHOCK_MAT_SCRIPTS: [u32; 3] = [0x1A90, 0x1AD0, 0x1B20];
+
+/// `dEFManagerDeadExplodeMatAnimJoints[player]`: each player's material
+/// script for the blast's three drawn DObjs, as file 84 offsets
+/// (`llEFCommonEffects2DeadExplode1MatAnimJoint` at 0x58E0 for player 0,
+/// `...2...` at 0x5800, `...3...` at 0x5950 and `...4...` at 0x5870; each
+/// table's entries 1–3 name one script for the node's one MObj). The pack
+/// binds player 0's; every player's is a root of file 84's script window.
+pub const DEAD_EXPLODE_MAT_SCRIPTS: [[u32; 3]; 4] = [
+    [0x58F0, 0x590C, 0x5928],
+    [0x5810, 0x582C, 0x5848],
+    [0x5960, 0x597C, 0x5998],
+    [0x5880, 0x589C, 0x58B8],
+];
 
 /// `dEFManagerFoxReflectorEffectDesc`'s tree in file 346
 /// (`llFoxSpecial2ReflectorDObjDesc`), whose `EFDesc` carries the Start

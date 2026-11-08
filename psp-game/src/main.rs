@@ -7185,6 +7185,7 @@ fn display_asset(kind: ssb_game::effect::DisplayKind) -> Option<usize> {
         | K::Quake { .. }
         | K::ThunderTrail
         | K::YoshiEggEscape
+        | K::YoshiEggLay
         | K::ContainerSmash
         | K::ThunderShock { .. }
         | K::NessPKThunderTrail
@@ -8131,18 +8132,13 @@ fn draw_ground_effect(
                 else {
                     continue;
                 };
-                let Some(desc) = p.mat_anim(prim.mat_anim) else {
-                    continue;
-                };
-                let script = p.mat_anim_file(&desc).and_then(|f| {
-                    ssb_rom::matanim::mobj_script(
-                        f,
-                        g::O_MATANIM_JOINT[k],
-                        g::O_MOBJSUB[k],
-                        n as usize,
-                        desc.source_offset,
-                    )
-                });
+                // `mobj_script`, resolved at pack time (`VERSION` 149).
+                let script = p.mat_anim_restart(
+                    prim.mat_anim,
+                    g::O_MATANIM_JOINT[k],
+                    g::O_MOBJSUB[k],
+                    n as usize,
+                );
                 if let Some(script) = script {
                     scratch.materials.restart(prim.mat_anim, script);
                 }

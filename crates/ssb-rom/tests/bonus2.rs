@@ -142,7 +142,7 @@ fn all_six_platform_trees_replay_original_joint_streams_and_restart_when_boarded
             let mut refs: Vec<_> = slots
                 .into_iter()
                 .map(|i| {
-                    let script = p.mat_anim(i).unwrap().script;
+                    let script = p.mat_anim_source_script(i).unwrap();
                     assert!(source.iter().flatten().any(|s| *s == Some(script)));
                     (i, ssb_rom::matanim::MaterialJoint::start(script, 0.0))
                 })

@@ -48,21 +48,24 @@ fn pokemon_status_materials_and_conditional_meshes_are_bound_in_the_pack() {
         let m = p.mesh(p.node(o.first_node + node).unwrap().mesh).unwrap();
         let bound: Vec<_> = (0..m.prim_count)
             .filter_map(|i| p.prim(m.first_prim + i))
-            .filter_map(|pr| p.mat_anim(pr.mat_anim))
+            .filter_map(|pr| Some((p.mat_anim(pr.mat_anim)?, pr.mat_anim)))
             .collect();
         assert!(!bound.is_empty(), "{kind:?}");
         assert!(
-            bound
-                .iter()
-                .all(|a| (a.source_file, a.script) == (86, script)),
+            bound.iter().all(|&(a, i)| {
+                (a.source_file, p.mat_anim_source_script(i)) == (86, Some(script))
+            }),
             "{kind:?}"
         );
     }
     let ball = mesh(0x9520);
-    let a = p
-        .mat_anim(p.prim(ball.first_prim).unwrap().mat_anim)
-        .unwrap();
-    assert_eq!((a.source_file, a.script, a.texture_count), (86, 0x9520, 8));
+    let i = p.prim(ball.first_prim).unwrap().mat_anim;
+    let a = p.mat_anim(i).unwrap();
+    let script = p.mat_anim_source_script(i);
+    assert_eq!(
+        (a.source_file, script, a.texture_count),
+        (86, Some(0x9520), 8)
+    );
     for key in [asset::KABIGON_FALL_MESH, asset::PIPPI_XLU_MESH] {
         let m = mesh(key);
         for pr in (0..m.prim_count).map(|i| p.prim(m.first_prim + i).unwrap()) {

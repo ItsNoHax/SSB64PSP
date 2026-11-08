@@ -11,7 +11,7 @@
 ### Main RAM
 
 - Pack loading (`psp_runtime::scene_files`; RE-475, [D-046](decisions/D-046.md)):
-  - boot: header, tables, shared region
+  - boot: header, tables, shared region (stage material scripts: per-script windows, 104 KB for 38 files, RE-010)
   - boot: pack `TABLES` section (`psp_runtime::tables::load`), read once into a leaked buffer and copied into `ssb-tables`' fixed `.bss` store (feature `eager`, `STORE_SIZE`, 444 KiB of tables today); the read buffer (445 KiB) stays allocated; host builds keep one zero-filled table of the largest size (`MAX_SIZE`) in `.rodata` for tables not yet installed (RE-589)
   - boot: `ssb_game::tables::fill` decodes the hot tables' rows into a fixed 32 KiB `.bss` arena (`ssb_tables::hot_rows`, 26 KiB used), not the heap: the heap layout does not move with the tables (RE-589 item 7)
   - tick 2 of boot: audio heads + 48-slot page cache (1.94 MB), never freed; samples stream from the pack ([D-049](decisions/D-049.md), RE-573, RE-582)

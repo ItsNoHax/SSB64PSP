@@ -537,7 +537,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 148 adds `mvOpeningRunMakeFighters`' `offsets` to `ssb-game`'s `d*`
 // arrays (`DArrU32` grows by 32 bytes; RE-589 item 9). Everything outside
 // the section is unchanged.
-pub const VERSION: u32 = 148;
+// 149 packs each material-animation file as a script window: only the words
+// its scripts reach, jumps rebased, with its roots and pre-resolved
+// `mobj_script` restarts (`MatAnimWindowHeader`); `MatAnimDesc::script`
+// names the window.
+pub const VERSION: u32 = 149;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1527,16 +1531,13 @@ impl AnimJoint {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MatAnimDesc {
-    /// Byte offset into the blob of the driving script's *whole source file*
-    /// bytes — deduplicated per archive file, the same convention
-    /// `AnimDesc::script_offset` uses for joint animation. `script` below is
-    /// an offset within this, not within the blob directly, matching how
-    /// [`crate::matanim::MaterialJoint::tick`] is already built to run
-    /// against a whole file's bytes rather than a pre-sliced script.
+    /// Byte range in the blob of the source file's script window
+    /// ([`MatAnimWindowHeader`]), one per archive file: only the words its
+    /// scripts reach, jump targets rebased (`VERSION` 149).
     pub file_offset: u32,
     pub file_len: u32,
-    /// Byte offset of the driving script itself, within the file bytes named
-    /// by `file_offset`/`file_len` above (RE-087/RE-089).
+    /// Byte offset of the driving script within that window (RE-087/RE-089);
+    /// [`crate::matanim::MaterialJoint::tick`] runs on the window's bytes.
     pub script: u32,
     /// First entry in the [`MatAnimPalette`] table, and how many follow —
     /// the exact count [`crate::mobj::read_palettes`]'s bound produced, not
@@ -1573,6 +1574,59 @@ impl MatAnimDesc {
     /// Measured maximum across manager-effect material streams.
     pub const MAX_TEXTURES: usize = 8;
     pub const SIZE: usize = 132;
+}
+
+/// The head of a material-animation script window (`VERSION` 149): every
+/// [`MatAnimDesc`] of one archive file shares it. Little-endian:
+///
+/// - `root_count`, `restart_count`;
+/// - `root_count` × (source offset, window offset), by source offset: each
+///   script a joint can start on ([`Pack::mat_anim_script`]);
+/// - `restart_count` × [`MatAnimRestart`], by key;
+/// - the reached script words, big-endian as in the file, jump targets
+///   rebased to window offsets ([`crate::matanim::script_window`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatAnimWindowHeader {
+    pub root_count: u32,
+    pub restart_count: u32,
+}
+
+impl MatAnimWindowHeader {
+    pub const SIZE: usize = 8;
+    pub const ROOT_SIZE: usize = 8;
+
+    pub fn read(window: &[u8]) -> Option<Self> {
+        Some(Self {
+            root_count: le32(window, 0)?,
+            restart_count: le32(window, 4)?,
+        })
+    }
+
+    /// Where the restart rows start.
+    fn restarts_at(&self) -> usize {
+        Self::SIZE + self.root_count as usize * Self::ROOT_SIZE
+    }
+}
+
+/// One `mobj_script(file, table, subs, node, sub)` resolved at pack time
+/// (`crate::matanim::mobj_script`): the source-file script a ground or boss
+/// effect restarts its material joint on, so the run time reads no pointer
+/// table from the file (`VERSION` 149).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MatAnimRestart {
+    /// `MObjSub`-chain pointer-table offset (the effect's matanim joint).
+    pub table: u32,
+    /// The effect's `MObjSub ***` offset.
+    pub subs: u32,
+    pub node: u32,
+    /// The `MObjSub` offset, as the desc's `source_offset`.
+    pub sub: u32,
+    /// The script, as a source-file offset.
+    pub script: u32,
+}
+
+impl MatAnimRestart {
+    pub const SIZE: usize = 20;
 }
 
 /// One resolved palette variant of an animated texture — the same shape as
@@ -2483,9 +2537,12 @@ pub struct PackWriter {
     fighter_shades: Vec<FighterShade>,
     mat_anims: Vec<MatAnimDesc>,
     mat_anim_palettes: Vec<MatAnimPalette>,
-    /// Source files already in the blob for [`Self::add_mat_anim`], the same
-    /// dedup shape as `anim_files`.
-    mat_anim_files: alloc::collections::BTreeMap<u32, (u32, u32)>,
+    /// Each [`MatAnimDesc`]'s script as an offset in its source file, until
+    /// [`Self::place_mat_anim_file`] moves `script` into the window.
+    mat_anim_sources: Vec<u32>,
+    /// Per source file, the scripts its window must hold and its restart
+    /// rows ([`MatAnimWindow`]).
+    mat_anim_windows: alloc::collections::BTreeMap<u32, MatAnimWindow>,
     costume_overrides: Vec<CostumeOverride>,
     particle_banks: Vec<ParticleBankDesc>,
     particle_scripts: Vec<ParticleScriptDesc>,
@@ -2514,6 +2571,17 @@ pub struct PackWriter {
     tables: alloc::borrow::Cow<'static, [u8]>,
     /// [`Self::set_audio_later`]'s length.
     late_audio: Option<usize>,
+}
+
+/// One source file's material-animation window while the pack is built:
+/// every script a joint can start on, and the `mobj_script` rows.
+#[derive(Debug, Default)]
+struct MatAnimWindow {
+    roots: alloc::collections::BTreeSet<u32>,
+    /// `(table, subs, node, sub)` to the script, as [`MatAnimRestart`].
+    restarts: alloc::collections::BTreeMap<(u32, u32, u32, u32), u32>,
+    /// Whether [`PackWriter::place_mat_anim_file`] has packed it.
+    placed: bool,
 }
 
 /// Whose bytes a blob range holds (RE-475).
@@ -2759,12 +2827,9 @@ impl PackWriter {
     /// [`PackWriter::set_texture_mat_anim`] call should give the texture
     /// this animates.
     ///
-    /// `source_file`/`file_bytes` are the *whole* source archive file, not
-    /// just the script — deduplicated per file the same way [`Self::add_anim`]
-    /// deduplicates joint-animation files, since [`crate::matanim::
-    /// MaterialJoint::tick`] is already built to run against a whole file's
-    /// bytes rather than a pre-sliced script, and a script's own end is not
-    /// knowable without decoding it.
+    /// `script` is an offset in archive file `source_file`. The desc names
+    /// no bytes until [`Self::place_mat_anim_file`] packs that file's
+    /// script window and rebases `script` into it (`VERSION` 149).
     // This mirrors the serialized material-animation record. Grouping the
     // fields just to satisfy a lint would make the pack writer's callers less
     // explicit without changing the on-disk representation.
@@ -2772,7 +2837,6 @@ impl PackWriter {
     pub fn add_mat_anim(
         &mut self,
         source_file: u32,
-        file_bytes: &[u8],
         script: u32,
         source_offset: u32,
         palettes: &[Vec<u32>],
@@ -2781,17 +2845,9 @@ impl PackWriter {
         uv_mode: u8,
         uv_tile_params: [u16; 3],
     ) -> u32 {
-        let (file_offset, file_len) = match self.mat_anim_files.get(&source_file) {
-            Some(&at) => at,
-            None => {
-                let at = (
-                    self.push_blob(file_bytes, ChunkOwner::File(source_file)),
-                    file_bytes.len() as u32,
-                );
-                self.mat_anim_files.insert(source_file, at);
-                at
-            }
-        };
+        self.add_mat_anim_root(source_file, script);
+        self.mat_anim_sources.push(script);
+        let (file_offset, file_len) = (0, 0);
         let first_palette = self.mat_anim_palettes.len() as u32;
         for p in palettes {
             let bytes: Vec<u8> = p.iter().flat_map(|c| c.to_le_bytes()).collect();
@@ -2834,6 +2890,118 @@ impl PackWriter {
             uv_half: [0; 3],
         });
         (self.mat_anims.len() - 1) as u32
+    }
+
+    /// Adds a script of `source_file` that a run-time restart can start a
+    /// joint on (`EffectMaterialAnimator::restart`): its window keeps it
+    /// and [`Pack::mat_anim_script`] translates it.
+    pub fn add_mat_anim_root(&mut self, source_file: u32, script: u32) {
+        let w = self.mat_anim_windows.entry(source_file).or_default();
+        assert!(
+            !w.placed,
+            "material-animation file {source_file} gains script 0x{script:X} after its window was packed"
+        );
+        w.roots.insert(script);
+    }
+
+    /// Records one `mobj_script(file, table, subs, node, sub)` result of
+    /// `source_file` ([`MatAnimRestart`]) and keeps its script in the
+    /// window.
+    pub fn add_mat_anim_restart(&mut self, source_file: u32, restart: MatAnimRestart) {
+        self.add_mat_anim_root(source_file, restart.script);
+        let w = self.mat_anim_windows.entry(source_file).or_default();
+        let key = (restart.table, restart.subs, restart.node, restart.sub);
+        let old = w.restarts.insert(key, restart.script);
+        assert!(
+            old.is_none_or(|o| o == restart.script),
+            "material-animation file {source_file}: restart {key:X?} resolves two ways"
+        );
+    }
+
+    /// The run time's restart queries for `object`'s animated `MObj`s
+    /// (`lbCommonAddTreeDObjsAnimAll` on a ground or boss effect): per node
+    /// `n` and per primitive with a [`MatAnimDesc`], `(desc's source file,
+    /// n, desc's source_offset)`, which [`Pack::mat_anim_restart`] looks up
+    /// as `(table, subs, n, sub)`. The caller resolves each with
+    /// `mobj_script` and adds it with [`Self::add_mat_anim_restart`].
+    pub fn object_mat_anim_subs(&self, object: &ObjectDesc) -> Vec<(u32, u32, u32)> {
+        let mut out = Vec::new();
+        for n in 0..object.node_count {
+            let Some(mesh) = self
+                .nodes
+                .get((object.first_node + n) as usize)
+                .and_then(|node| self.meshes.get(node.mesh as usize))
+            else {
+                continue;
+            };
+            for j in 0..mesh.prim_count {
+                if let Some(desc) = self
+                    .prims
+                    .get((mesh.first_prim + j) as usize)
+                    .and_then(|prim| self.mat_anims.get(prim.mat_anim as usize))
+                {
+                    out.push((desc.source_file, n, desc.source_offset));
+                }
+            }
+        }
+        out
+    }
+
+    /// Source files with material-animation scripts whose window
+    /// [`Self::place_mat_anim_file`] has not packed yet, ascending.
+    pub fn unplaced_mat_anim_files(&self) -> Vec<u32> {
+        self.mat_anim_windows
+            .iter()
+            .filter(|(_, w)| !w.placed)
+            .map(|(&f, _)| f)
+            .collect()
+    }
+
+    /// Packs `source_file`'s script window (`bytes` is the whole archive
+    /// file): the [`MatAnimWindowHeader`] tables, then every word its
+    /// scripts reach ([`crate::matanim::script_window`]), and points each
+    /// of its descs at it.
+    pub fn place_mat_anim_file(
+        &mut self,
+        source_file: u32,
+        bytes: &[u8],
+    ) -> Result<(), crate::matanim::WindowError> {
+        let w = self
+            .mat_anim_windows
+            .get_mut(&source_file)
+            .expect("a file with material-animation scripts");
+        assert!(
+            !w.placed,
+            "material-animation file {source_file} packed twice"
+        );
+        let base = (MatAnimWindowHeader::SIZE
+            + w.roots.len() * MatAnimWindowHeader::ROOT_SIZE
+            + w.restarts.len() * MatAnimRestart::SIZE) as u32;
+        let window = crate::matanim::script_window(bytes, w.roots.iter().copied(), base)?;
+        let mut out = Vec::with_capacity(base as usize + window.bytes.len());
+        out.extend_from_slice(&(w.roots.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(w.restarts.len() as u32).to_le_bytes());
+        for &root in &w.roots {
+            let packed = window.translate(root).expect("a root is reached");
+            out.extend_from_slice(&root.to_le_bytes());
+            out.extend_from_slice(&packed.to_le_bytes());
+        }
+        for (&(table, subs, node, sub), &script) in &w.restarts {
+            for v in [table, subs, node, sub, script] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&window.bytes);
+        w.placed = true;
+        let file_offset = self.push_blob(&out, ChunkOwner::File(source_file));
+        for (a, &script) in self.mat_anims.iter_mut().zip(&self.mat_anim_sources) {
+            if a.source_file == source_file {
+                a.file_offset = file_offset;
+                a.file_len = out.len() as u32;
+                a.script = window.translate(script).expect("a root is reached");
+            }
+        }
+        Ok(())
     }
 
     /// Sets [`MatAnimDesc::uv_half`] on an entry added via
@@ -3929,6 +4097,11 @@ impl PackWriter {
         if let Some(e) = self.blob.take_error() {
             return Err(e);
         }
+        let unplaced = self.unplaced_mat_anim_files();
+        assert!(
+            unplaced.is_empty(),
+            "material-animation files {unplaced:?} have no packed script window"
+        );
         let layout = self.relayout();
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
@@ -4680,6 +4853,27 @@ fn shell_sort_by_key<T: Copy, K: Ord>(rows: &mut [T], key: impl Fn(T) -> K) {
             rows[j] = row;
         }
     }
+}
+
+/// A little-endian word, `None` past the end.
+fn le32(d: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(d.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// Restart row `k` of a [`MatAnimWindowHeader`] window.
+fn mat_anim_restart_row(
+    window: &[u8],
+    h: &MatAnimWindowHeader,
+    k: usize,
+) -> Option<MatAnimRestart> {
+    let at = h.restarts_at() + k * MatAnimRestart::SIZE;
+    Some(MatAnimRestart {
+        table: le32(window, at)?,
+        subs: le32(window, at + 4)?,
+        node: le32(window, at + 8)?,
+        sub: le32(window, at + 12)?,
+        script: le32(window, at + 16)?,
+    })
 }
 
 // One bounds check per word rather than one per byte: these reads are in
@@ -5496,6 +5690,77 @@ impl<'a> Pack<'a> {
         }
         let at = self.mat_anim_table() + i as usize * MatAnimDesc::SIZE;
         self.blob(u32_at(self.data, at), u32_at(self.data, at + 4) as usize)
+    }
+
+    /// The window offset of the script at source-file offset `source` of
+    /// mat anim `i`'s file: every script a joint can start on is a root of
+    /// its window ([`MatAnimWindowHeader`]); `None` for any other offset.
+    pub fn mat_anim_script(&self, i: u32, source: u32) -> Option<u32> {
+        let window = self.mat_anim_file_at(i)?;
+        let h = MatAnimWindowHeader::read(window)?;
+        let root = |k: usize| le32(window, MatAnimWindowHeader::SIZE + k * 8);
+        let (mut lo, mut hi) = (0, h.root_count as usize);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            match root(mid)?.cmp(&source) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => {
+                    return le32(window, MatAnimWindowHeader::SIZE + mid * 8 + 4);
+                }
+            }
+        }
+        None
+    }
+
+    /// `mobj_script(file, table, subs, node, sub)` of mat anim `i`'s file,
+    /// resolved at pack time ([`MatAnimRestart`]), with `sub` its desc's
+    /// `source_offset`: the source-file offset of the script node `node`'s
+    /// `MObj` restarts on, or `None` where `mobj_script` gives `None`.
+    pub fn mat_anim_restart(&self, i: u32, table: u32, subs: u32, node: usize) -> Option<u32> {
+        let sub = self.mat_anim(i)?.source_offset;
+        let window = self.mat_anim_file_at(i)?;
+        let h = MatAnimWindowHeader::read(window)?;
+        let key = (table, subs, u32::try_from(node).ok()?, sub);
+        let row = |k: usize| mat_anim_restart_row(window, &h, k);
+        let (mut lo, mut hi) = (0, h.restart_count as usize);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let r = row(mid)?;
+            match (r.table, r.subs, r.node, r.sub).cmp(&key) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => return Some(r.script),
+            }
+        }
+        None
+    }
+
+    /// Mat anim `i`'s window roots, `(source offset, window offset)`.
+    pub fn mat_anim_roots(&self, i: u32) -> impl Iterator<Item = (u32, u32)> + 'a {
+        let window = self.mat_anim_file_at(i).unwrap_or(&[]);
+        let n = MatAnimWindowHeader::read(window).map_or(0, |h| h.root_count as usize);
+        (0..n).filter_map(move |k| {
+            let at = MatAnimWindowHeader::SIZE + k * 8;
+            Some((le32(window, at)?, le32(window, at + 4)?))
+        })
+    }
+
+    /// The source-file offset of mat anim `i`'s own script
+    /// ([`MatAnimDesc::script`] is its window offset).
+    pub fn mat_anim_source_script(&self, i: u32) -> Option<u32> {
+        let script = self.mat_anim(i)?.script;
+        self.mat_anim_roots(i)
+            .find(|&(_, packed)| packed == script)
+            .map(|(source, _)| source)
+    }
+
+    /// Mat anim `i`'s window's restart rows.
+    pub fn mat_anim_restarts(&self, i: u32) -> impl Iterator<Item = MatAnimRestart> + 'a {
+        let window = self.mat_anim_file_at(i).unwrap_or(&[]);
+        let h = MatAnimWindowHeader::read(window);
+        let n = h.map_or(0, |h| h.restart_count as usize);
+        (0..n).filter_map(move |k| mat_anim_restart_row(window, h.as_ref()?, k))
     }
 
     /// One resolved palette variant, by absolute index (see
@@ -8554,7 +8819,8 @@ mod tests {
         };
         let texture = w.add_texture(&tex, false, false);
 
-        let file_bytes = alloc::vec![0x11u8; 200];
+        // Zero words: `End` everywhere.
+        let file_bytes = alloc::vec![0u8; 200];
         // File 117's real shape (RE-089/RE-090): a script cycling through
         // several distinct palettes.
         let palettes = alloc::vec![
@@ -8562,18 +8828,9 @@ mod tests {
             alloc::vec![0x2222_2222u32; 16],
             alloc::vec![0x3333_3333u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(
-            117,
-            &file_bytes,
-            0x30,
-            0x2AA8,
-            &palettes,
-            &[],
-            [0; 10],
-            1,
-            [3, 64, 32],
-        );
+        let mat_anim = w.add_mat_anim(117, 0x30, 0x2AA8, &palettes, &[], [0; 10], 1, [3, 64, 32]);
         w.set_texture_mat_anim(texture, mat_anim);
+        w.place_mat_anim_file(117, &file_bytes).unwrap();
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -8584,13 +8841,21 @@ mod tests {
         assert_eq!(t.mat_anim, mat_anim);
 
         let a = pack.mat_anim(mat_anim).unwrap();
-        assert_eq!(a.script, 0x30);
+        // The window: its two counts, one root row, then the script's one
+        // `End` word.
+        assert_eq!(a.script, 16);
+        assert_eq!(pack.mat_anim_script(mat_anim, 0x30), Some(16));
+        assert_eq!(pack.mat_anim_script(mat_anim, 0x34), None);
         assert_eq!(a.palette_count, 3);
         assert_eq!(a.source_file, 117);
         assert_eq!(a.source_offset, 0x2AA8);
         assert_eq!(a.uv_mode, 1);
         assert_eq!(a.uv_tile_params, [3, 64, 32]);
-        assert_eq!(pack.mat_anim_file(&a), Some(&file_bytes[..]));
+        let window: alloc::vec::Vec<u8> = [1u32, 0, 0x30, 16, 0]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        assert_eq!(pack.mat_anim_file(&a), Some(&window[..]));
 
         let got: alloc::vec::Vec<u32> = (0..a.palette_count)
             .map(|k| {
@@ -8626,35 +8891,16 @@ mod tests {
     }
 
     /// Mirrors `a_shared_animation_file_is_stored_once`: two animated
-    /// textures whose driving scripts live in the same archive file must not
-    /// duplicate that file's bytes in the blob.
+    /// textures whose driving scripts live in the same archive file share
+    /// one script window, holding only their scripts.
     #[test]
     fn a_shared_mat_anim_file_is_stored_once() {
         let mut w = PackWriter::new();
-        let file_bytes = alloc::vec![0x22u8; 512];
+        let file_bytes = alloc::vec![0u8; 0x300];
         let one = alloc::vec![alloc::vec![0xAAAA_AAAAu32; 16]];
-        w.add_mat_anim(
-            114,
-            &file_bytes,
-            0x100,
-            0x4F54,
-            &one,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
-        w.add_mat_anim(
-            114,
-            &file_bytes,
-            0x200,
-            0x5098,
-            &one,
-            &[],
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        w.add_mat_anim(114, 0x100, 0x4F54, &one, &[], [0; 10], 0, [0; 3]);
+        w.add_mat_anim(114, 0x200, 0x5098, &one, &[], [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(114, &file_bytes).unwrap();
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -8662,8 +8908,10 @@ mod tests {
         let b = pack.mat_anim(1).unwrap();
         assert_eq!(a.file_offset, b.file_offset, "same file, same bytes");
         assert_eq!(pack.mat_anim_file(&a), pack.mat_anim_file(&b));
-        assert_eq!(a.script, 0x100);
-        assert_eq!(b.script, 0x200);
+        // Two root rows, then each script's `End`.
+        assert_eq!(a.script, 24);
+        assert_eq!(b.script, 28);
+        assert_eq!(a.file_len, 32);
         // The animators' narrow lookup reads the same range, and the same
         // `None` past the table.
         for i in 0..3 {
@@ -8673,25 +8921,71 @@ mod tests {
         assert!(pack.mat_anim_file_at(2).is_none());
     }
 
+    /// `VERSION` 149: the restart rows and roots a file's window carries
+    /// read back by key, and only by key.
+    #[test]
+    fn a_mat_anim_window_answers_its_restarts_and_roots() {
+        let mut w = PackWriter::new();
+        let file_bytes = alloc::vec![0u8; 0x40];
+        let a = w.add_mat_anim(130, 0x10, 0x400, &[], &[], [0; 10], 0, [0; 3]);
+        let restart = MatAnimRestart {
+            table: 0x500,
+            subs: 0x600,
+            node: 2,
+            sub: 0x400,
+            script: 0x20,
+        };
+        w.add_mat_anim_restart(130, restart);
+        w.add_mat_anim_restart(
+            130,
+            MatAnimRestart {
+                node: 0,
+                script: 0x30,
+                ..restart
+            },
+        );
+        assert_eq!(w.unplaced_mat_anim_files(), alloc::vec![130]);
+        w.place_mat_anim_file(130, &file_bytes).unwrap();
+        assert!(w.unplaced_mat_anim_files().is_empty());
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        // Two counts, three root rows, two restart rows: the words start
+        // at 72, one `End` per root.
+        assert_eq!(pack.mat_anim(a).unwrap().script, 72);
+        assert_eq!(pack.mat_anim_file_at(a).unwrap().len(), 84);
+        assert_eq!(
+            pack.mat_anim_roots(a).collect::<alloc::vec::Vec<_>>(),
+            alloc::vec![(0x10, 72), (0x20, 76), (0x30, 80)]
+        );
+        assert_eq!(pack.mat_anim_restarts(a).count(), 2);
+        assert_eq!(pack.mat_anim_restart(a, 0x500, 0x600, 2), Some(0x20));
+        assert_eq!(pack.mat_anim_restart(a, 0x500, 0x600, 0), Some(0x30));
+        assert_eq!(pack.mat_anim_restart(a, 0x500, 0x600, 1), None);
+        assert_eq!(pack.mat_anim_restart(a, 0x504, 0x600, 2), None);
+        assert_eq!(pack.mat_anim_script(a, 0x20), Some(76));
+        assert_eq!(pack.mat_anim_script(a, 0x24), None);
+    }
+
+    /// Every desc's file must have its window packed before the write.
+    #[test]
+    #[should_panic(expected = "no packed script window")]
+    fn an_unplaced_mat_anim_file_fails_the_write() {
+        let mut w = PackWriter::new();
+        w.add_mat_anim(131, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+        w.finish();
+    }
+
     /// RE-175: a material animation's sprite (texture-id) variants -- up to
     /// [`MatAnimDesc::MAX_TEXTURES`], the measured maximum across every real
     /// manager-effect stream -- round-trip in full, not truncated.
     #[test]
     fn a_mat_anim_with_eight_textures_round_trips() {
         let mut w = PackWriter::new();
-        let file_bytes = alloc::vec![0x33u8; 64];
+        let file_bytes = alloc::vec![0u8; 64];
         let textures: alloc::vec::Vec<u32> = (10..18).collect();
-        let mat_anim = w.add_mat_anim(
-            120,
-            &file_bytes,
-            0x10,
-            0x2000,
-            &[],
-            &textures,
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        let mat_anim = w.add_mat_anim(120, 0x10, 0x2000, &[], &textures, [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(120, &file_bytes).unwrap();
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -8706,8 +9000,9 @@ mod tests {
     #[test]
     fn a_mat_anim_with_no_textures_round_trips_as_zero_count() {
         let mut w = PackWriter::new();
-        let file_bytes = alloc::vec![0x44u8; 32];
-        let mat_anim = w.add_mat_anim(121, &file_bytes, 0x10, 0x2000, &[], &[], [0; 10], 0, [0; 3]);
+        let file_bytes = alloc::vec![0u8; 32];
+        let mat_anim = w.add_mat_anim(121, 0x10, 0x2000, &[], &[], [0; 10], 0, [0; 3]);
+        w.place_mat_anim_file(121, &file_bytes).unwrap();
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -8724,19 +9019,8 @@ mod tests {
     #[should_panic(expected = "more than the packed format's 8 slots")]
     fn add_mat_anim_rejects_more_than_eight_textures() {
         let mut w = PackWriter::new();
-        let file_bytes = alloc::vec![0x55u8; 32];
         let textures: alloc::vec::Vec<u32> = (0..9).collect();
-        w.add_mat_anim(
-            122,
-            &file_bytes,
-            0x10,
-            0x2000,
-            &[],
-            &textures,
-            [0; 10],
-            0,
-            [0; 3],
-        );
+        w.add_mat_anim(122, 0x10, 0x2000, &[], &textures, [0; 10], 0, [0; 3]);
     }
 
     /// RE-175: a primitive's own `mat_anim` (untextured effect colour/UV
@@ -8745,11 +9029,12 @@ mod tests {
     #[test]
     fn a_primitive_mat_anim_round_trips_independent_of_its_texture() {
         let mut w = PackWriter::new();
-        let file_bytes = alloc::vec![0x66u8; 32];
-        let mat_anim = w.add_mat_anim(123, &file_bytes, 0x10, 0x2000, &[], &[], [0; 10], 0, [0; 3]);
+        let file_bytes = alloc::vec![0u8; 32];
+        let mat_anim = w.add_mat_anim(123, 0x10, 0x2000, &[], &[], [0; 10], 0, [0; 3]);
         let m = sample_mesh();
         assert!(m.primitives[0].material.texture.is_none(), "untextured");
         w.add_mesh(&m, 0, 0, |_| None, |_| Some(mat_anim));
+        w.place_mat_anim_file(123, &file_bytes).unwrap();
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -8772,8 +9057,9 @@ mod tests {
             m.primitives[0].material.lit = lit;
             m.primitives[0].material.anim_colors = all;
             let mut w = PackWriter::new();
-            let a = w.add_mat_anim(149, &[0u8; 8], 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+            let a = w.add_mat_anim(149, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
             w.add_mesh(&m, 0, 0, |_| None, move |_| with_script.then_some(a));
+            w.place_mat_anim_file(149, &[0u8; 8]).unwrap();
             let bytes = w.finish();
             Pack::open(&bytes).unwrap().prim(0).unwrap().flags
         };
@@ -8793,8 +9079,9 @@ mod tests {
             let mut m = sample_mesh();
             m.primitives[0].material.anim_texture = t;
             let mut w = PackWriter::new();
-            let a = w.add_mat_anim(107, &[0u8; 8], 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+            let a = w.add_mat_anim(107, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
             w.add_mesh(&m, 0, 0, |_| None, move |_| with_script.then_some(a));
+            w.place_mat_anim_file(107, &[0u8; 8]).unwrap();
             let bytes = w.finish();
             Pack::open(&bytes).unwrap().prim(0).unwrap()
         };

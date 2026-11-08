@@ -154,7 +154,8 @@ struct Chunk {
 /// equal), so a reference inside a chunk can only be chunk-relative. What
 /// remains is the extern slots `Archive::load` zeroed: for each chunk, its
 /// window in the source file, the slots inside it, and whether any word
-/// the chunk's readers can reach is one.
+/// the chunk's readers can reach is one. A material-animation window holds
+/// only the words its roots reach (`VERSION` 149): those words, in the file.
 #[test]
 #[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
 fn pack_readers_never_reach_an_extern_slot() {
@@ -217,21 +218,17 @@ fn pack_readers_never_reach_an_extern_slot() {
             }
         }
     }
+    // Material-animation script windows (`VERSION` 149) hold only the
+    // words their roots reach, closed up: map each back to its file.
+    let mut mat_windows: BTreeMap<u32, (u32, Vec<u32>)> = BTreeMap::new();
     for i in 0..pack.mat_anim_count() {
         let d = pack.mat_anim(i).unwrap();
-        let Some(bytes) = pack.mat_anim_file(&d).filter(|b| !b.is_empty()) else {
-            continue;
-        };
-        let c = chunks
-            .entry((d.file_offset, d.file_len))
-            .or_insert_with(|| Chunk {
-                what: alloc::format!("mat anim {i} (resident)"),
-                file: d.source_file,
-                bytes,
-                roots: Vec::new(),
-                words: Vec::new(),
-            });
-        c.roots.push(d.script);
+        mat_windows.entry(d.file_offset).or_insert_with(|| {
+            (
+                d.source_file,
+                pack.mat_anim_roots(i).map(|(s, _)| s).collect(),
+            )
+        });
     }
     let mut files: BTreeMap<u32, File> = BTreeMap::new();
     let (mut matched, mut with_externs, mut slots, mut walk_errors) = (0, 0, 0, 0);
@@ -296,6 +293,30 @@ fn pack_readers_never_reach_an_extern_slot() {
                 at + range.start
             ));
         }
+    }
+    for (file_id, roots) in mat_windows.values() {
+        let file = archive.load(*file_id).expect("a material-animation file");
+        let window = crate::matanim::script_window(&file.data, roots.iter().copied(), 0)
+            .expect("the file's scripts window as packed");
+        let ext: BTreeSet<u32> = file.extern_relocs.iter().map(|r| r.at).collect();
+        let mut reached_slots = 0;
+        for &(start, len, _) in &window.ranges {
+            for at in (start..start + len)
+                .step_by(4)
+                .filter(|at| ext.contains(at))
+            {
+                reached_slots += 1;
+                hits.push(alloc::format!(
+                    "mat anim window: file {file_id} slot {at:#x}"
+                ));
+            }
+        }
+        println!(
+            "  mat anim window: file {file_id}, {} roots, {} bytes reached, {} extern slots, {reached_slots} reached",
+            roots.len(),
+            window.bytes.len(),
+            ext.len()
+        );
     }
     println!(
         "{} chunks: {matched} matched to their source file, {unmatched} built by the converter; \

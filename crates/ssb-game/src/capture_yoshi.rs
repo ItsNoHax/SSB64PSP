@@ -19,11 +19,12 @@
 //!   first hurtbox per fighter (`dFTCommonYoshiEggDamageCollDescs`) and makes
 //!   the rest intangible; [`crate::hurtbox::yoshi_egg_coll`] is that box
 //!   (RE-332, RE-349).
-//! * **Effect room.** `ftCommonYoshiEggProcUpdate` falls back to counting
-//!   `breakout_wait` when `efManagerYoshiEggLayMakeEffect` finds no room.
-//!   The port's egg is not drawn from the effect pool, so it always has
-//!   room and that branch (`flag0 == 1`, `breakout_wait-- <= 0`, 16
-//!   frames instead of the 10-frame break) cannot run; it is not ported.
+//! * **Effect room.** The egg's forced struct is taken at the fighter's
+//!   effect flush ([`crate::fteffect::FighterEffect::YoshiEggLay`]), after
+//!   its process; the lay and the update decide from the pool as the
+//!   process started ([`Fighter::effect_room`]). Should the process's own
+//!   earlier makers take the last struct, the process runs as made and the
+//!   flush leaves the egg without its effect for the next update to retry.
 
 use ssb_engine::math::Vec3;
 
@@ -84,8 +85,9 @@ pub fn egg_effect_size(kind: crate::fighter::FighterKind) -> Option<f32> {
 }
 
 /// `efManagerYoshiEggLayMakeEffect`'s egg, as its process and the egg
-/// status's callbacks drive it (RE-417). Drawing only: the escape keeps
-/// counting [`EGG_BREAK_FRAMES`].
+/// status's callbacks drive it (RE-417). Its forced struct is
+/// [`crate::effect::DisplayKind::YoshiEggLay`]; the escape counts
+/// [`EGG_BREAK_FRAMES`] from the Break's set.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EggLayEffect {
     /// Whether `ftCommonYoshiEggMakeEffect` has made it.
@@ -157,11 +159,16 @@ pub struct CaptureYoshiState {
     pub escape_wait: i32,
     /// Motion flag 0: the wait ran out and the egg is breaking.
     pub breaking: bool,
-    /// Frames the break animation has played.
+    /// Frames the break animation has played: physics frames since the
+    /// wait ran out or, for an egg made after that, since its make.
     pub break_frames: u8,
     /// `lr` of the Yoshi that laid the egg.
     pub lr: f32,
-    /// `effect_gobj`: the egg drawn around the fighter (RE-417).
+    /// `effect_gobj != NULL`: the egg's effect holds its forced struct
+    /// ([`crate::effect::DisplayKind::YoshiEggLay`]).
+    pub effect_gobj: bool,
+    /// The egg drawn around the fighter (RE-417), from the first update
+    /// after [`Self::effect_gobj`] was set.
     pub effect: EggLayEffect,
     /// `is_damagefloor`: acid hit the egg ([`on_hit`]).
     pub is_damagefloor: bool,
@@ -271,6 +278,7 @@ fn set_egg(f: &mut Fighter) {
     f.grab.capture = None;
     f.grab.holder = None;
     f.egg.lr = lr;
+    f.egg.effect_gobj = false;
     f.egg.is_damagefloor = false;
     // `ftParamUpdate1PGameDamageStats(this_fp, capture_fp->player, ...)`
     // (`ftcommoncaptureyoshi.c:391`).
@@ -283,6 +291,7 @@ fn set_egg(f: &mut Fighter) {
         holder.stat,
         crate::spgame::bonus::DamageObject::Other,
     );
+    make_egg_effect(f);
 }
 
 /// The lay's map sweep, `(Yoshi's TopN, Yoshi's diamond)`, on the frame
@@ -306,31 +315,66 @@ pub fn tick_egg_effect(f: &mut Fighter) {
 }
 
 /// `ftCommonYoshiEggProcUpdate`: the egg ends on the frame after the break
-/// animation finishes.
+/// animation finishes or, with no effect, once the escape wait runs out.
 ///
 /// The egg effect's own process (`efManagerYoshiEggLayProcUpdate`, in the
 /// effect link after the fighters) runs here first, for the frame before,
-/// as the port's display effects do; an effect made this frame gets its
-/// first process next frame.
+/// as the port's display effects do. The port's [`EggLayEffect`] starts at
+/// the first update after its struct was taken (RE-417), which sees the
+/// effect as the source's update does: made, its make frame unprocessed.
 ///
 /// On a damaging floor the effect stops and the egg breaks at once.
 pub fn update_egg(f: &mut Fighter) {
     let is_escape = if f.egg.is_damagefloor {
-        // `ftParamProcStopEffect`.
-        f.egg.effect.made = false;
+        if f.egg.effect_gobj {
+            // `ftParamProcStopEffect`.
+            crate::fteffect::stop_attached(f);
+            f.egg.effect_gobj = false;
+            f.egg.effect.made = false;
+        }
         true
-    } else {
+    } else if f.egg.effect_gobj {
         if f.egg.effect.made {
             f.egg.effect.process();
         } else {
-            // `ftCommonYoshiEggMakeEffect`: the port's egg always has room.
             f.egg.effect.make();
+            // The Break's clock starts at this effect's first
+            // `force_index = 1`.
+            f.egg.break_frames = 0;
         }
-        f.egg.breaking && f.egg.break_frames >= EGG_BREAK_FRAMES
+        // `ep->effect_vars.yoshi_egg_lay.index == 1 && anim_frame <= 0`.
+        f.egg.effect.made && f.egg.breaking && f.egg.break_frames >= EGG_BREAK_FRAMES
+    } else {
+        make_egg_effect(f);
+        if f.egg.effect_gobj {
+            // Made now: `index` is 2 (Throw).
+            false
+        } else if f.egg.breaking {
+            // `breakout_wait-- <= 0` (`:171-176`): no effect, so the wait
+            // `ProcPhysics` reloaded counts the break instead.
+            let wait = f.egg.escape_wait;
+            f.egg.escape_wait -= 1;
+            wait <= 0
+        } else {
+            false
+        }
     };
     if is_escape {
         escape(f);
     }
+}
+
+/// `ftCommonYoshiEggMakeEffect` (`:125-138`): at the lay
+/// (`ftCommonYoshiEggSetStatus`, `:392`), then each update while
+/// `effect_gobj` is `NULL`. `efManagerYoshiEggLayMakeEffect` takes a forced
+/// struct ([`crate::fteffect::FighterEffect::YoshiEggLay`]) and returns
+/// `NULL` when none is free.
+fn make_egg_effect(f: &mut Fighter) {
+    if f.egg.effect_gobj || !f.effect_room {
+        return;
+    }
+    f.egg.effect_gobj = true;
+    f.effects.push(crate::fteffect::FighterEffect::YoshiEggLay);
 }
 
 /// The escape half of `ftCommonYoshiEggProcUpdate` (`:179-196`).
@@ -376,16 +420,23 @@ pub fn physics(f: &mut Fighter) {
             0.0
         }
     };
-    f.egg.effect.wiggle = if f.is_grounded() {
-        [lean(f.stick.x), lean(f.stick.y)]
-    } else {
-        [0.0; 2]
-    };
+    // Each effect write is guarded by `effect_gobj != NULL`: here by the
+    // port's egg, whose start resets what it would have written earlier.
+    let made = f.egg.effect.made;
+    if made {
+        f.egg.effect.wiggle = if f.is_grounded() {
+            [lean(f.stick.x), lean(f.stick.y)]
+        } else {
+            [0.0; 2]
+        };
+    }
     if !f.egg.breaking {
         let before = f.grab.breakout_wait;
         let mashed = grab::update_breakout(f);
         // `gcSetAnimSpeed` on the effect.
-        f.egg.effect.speed = if mashed { WIGGLE_ANIM_SPEED } else { 1.0 };
+        if made {
+            f.egg.effect.speed = if mashed { WIGGLE_ANIM_SPEED } else { 1.0 };
+        }
         f.egg.escape_wait -= (before - f.grab.breakout_wait) * MASH_FRAMES;
         let wait = f.egg.escape_wait;
         f.egg.escape_wait -= 1;
@@ -395,7 +446,9 @@ pub fn physics(f: &mut Fighter) {
         }
     }
     if f.egg.breaking {
-        f.egg.effect.force_index = EGG_ANIM_BREAK;
+        if made {
+            f.egg.effect.force_index = EGG_ANIM_BREAK;
+        }
         f.egg.break_frames = f.egg.break_frames.saturating_add(1);
     }
 }
@@ -892,5 +945,204 @@ mod tests {
         assert_eq!(f.damage, 5 + 5);
         assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_MAX - 20);
         assert_eq!(f.status.status, Status::YoshiEgg);
+    }
+
+    /// The match loop around an egg: the pool's room as each process
+    /// starts ([`Fighter::effect_room`]), the update, the fighter's flush,
+    /// then physics while still in the egg.
+    struct Pool {
+        e: crate::effect::Effects,
+        p: Box<crate::particle::Particles>,
+        bank: crate::particle::tests::TestBank,
+    }
+
+    impl Pool {
+        fn new() -> Pool {
+            static WAIT: &[u8] = &[0x1F, 0xFF];
+            let s = crate::particle::tests::TestBank::particle(20, 10.0, WAIT);
+            Pool {
+                e: crate::effect::Effects::new(0),
+                p: Box::new(crate::particle::Particles::new()),
+                bank: crate::particle::tests::TestBank::new(&[s; 0x80]),
+            }
+        }
+
+        /// Every struct taken by forced roll eggs: one on port 2, the rest
+        /// on port 3 (the trapped fighter is port 1).
+        fn fill(&mut self) {
+            for i in 0..crate::effect::EFFECT_ALLOC_NUM {
+                assert!(self.e.yoshi_egg_escape(if i == 0 { 2 } else { 3 }));
+            }
+            assert!(!self.e.force_available());
+        }
+
+        fn flush(&mut self, f: &mut Fighter) {
+            crate::fteffect::flush(
+                f,
+                &mut crate::effect::EffectRuntime {
+                    particles: &mut self.p,
+                    effects: &mut self.e,
+                    banks: &self.bank,
+                },
+            );
+        }
+
+        fn eggs(&self) -> usize {
+            self.e
+                .displays()
+                .filter(|d| d.kind == crate::effect::DisplayKind::YoshiEggLay)
+                .count()
+        }
+
+        /// `ftCommonYoshiEggSetStatus` from the held fighter's physics.
+        fn lay(&mut self) -> Fighter {
+            let mut f = swallowed();
+            f.egg.stage = 3;
+            f.effect_room = self.e.force_available();
+            update_held(&mut f, Vec3::ZERO);
+            self.flush(&mut f);
+            assert_eq!(f.status.status, Status::YoshiEgg);
+            f
+        }
+
+        /// One frame; whether the egg broke open.
+        fn frame(&mut self, f: &mut Fighter) -> bool {
+            f.effect_room = self.e.force_available();
+            update_egg(f);
+            self.flush(f);
+            if f.status.status != Status::YoshiEgg {
+                return true;
+            }
+            f.effect_room = self.e.force_available();
+            physics(f);
+            false
+        }
+
+        /// Frames until the egg breaks open.
+        fn frames_to_escape(&mut self, f: &mut Fighter) -> u32 {
+            for n in 1..=400 {
+                if self.frame(f) {
+                    return n;
+                }
+            }
+            panic!("the egg never broke");
+        }
+    }
+
+    /// `ftCommonYoshiEggSetStatus` ends with `ftCommonYoshiEggMakeEffect`
+    /// (`ftcommoncaptureyoshi.c:392`): `efManagerYoshiEggLayMakeEffect`
+    /// takes a forced struct (`efManagerMakeEffectForce`, `efmanager.c:5401`)
+    /// whose `fighter_gobj` is the trapped fighter, and sets
+    /// `is_effect_attach` (`:136-139`). `ftParamProcStopEffect`, from any
+    /// status change, gives it back.
+    #[test]
+    fn the_egg_holds_a_forced_effect_struct_until_it_ends() {
+        let mut pool = Pool::new();
+        let mut f = pool.lay();
+        assert!(f.egg.effect_gobj && f.is_effect_attach);
+        assert_eq!(pool.eggs(), 1, "taken at the lay");
+        assert!(
+            egg_effect(&f).is_none(),
+            "the port's egg starts next update"
+        );
+        let free = pool.e.free_num;
+        for _ in 0..30 {
+            assert!(!pool.frame(&mut f));
+        }
+        assert_eq!(pool.e.free_num, free, "made once, not per update");
+        assert_eq!(pool.eggs(), 1);
+        status::set_status(&mut f, Status::Wait, 0.0, StatusTiming::unknown());
+        pool.flush(&mut f);
+        assert_eq!(pool.e.free_num, free + 1);
+        assert_eq!(pool.eggs(), 0);
+        assert!(!f.is_effect_attach);
+        // The escape's Fall stops it too.
+        let mut f = pool.lay();
+        f.egg.escape_wait = 0;
+        assert_eq!(
+            pool.frames_to_escape(&mut f),
+            1 + u32::from(EGG_BREAK_FRAMES)
+        );
+        assert_eq!(pool.eggs(), 0);
+        assert!(!f.is_effect_attach);
+        // So does acid (`:150-157`).
+        let mut f = pool.lay();
+        assert!(!pool.frame(&mut f));
+        f.stats.damage_object = crate::spgame::bonus::DamageObject::Acid;
+        on_hit(&mut f, 10);
+        assert!(pool.frame(&mut f));
+        assert_eq!(pool.eggs(), 0);
+        assert!(!f.egg.effect_gobj && !f.is_effect_attach);
+    }
+
+    /// `ftCommonYoshiEggProcUpdate` (`:171-176`): with no free struct the
+    /// effect is `NULL`, and once the wait runs out the reloaded
+    /// `FTCOMMON_YOSHIEGG_ESCAPE_WAIT_DEFAULT` (`ProcPhysics`, `:252-255`)
+    /// counts down instead of the ten-frame Break: 16 updates, not 10.
+    #[test]
+    fn an_egg_with_no_effect_room_breaks_after_the_reloaded_wait() {
+        let mut pool = Pool::new();
+        pool.fill();
+        let mut f = pool.lay();
+        assert!(!f.egg.effect_gobj && !f.is_effect_attach);
+        f.egg.escape_wait = 0;
+        assert!(!pool.frame(&mut f));
+        assert!(f.egg.breaking);
+        assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_DEFAULT);
+        let frames = pool.frames_to_escape(&mut f);
+        assert_eq!(frames, ESCAPE_WAIT_DEFAULT as u32 + 1);
+        assert_eq!(f.egg.escape_wait, -1);
+        assert_eq!(f.status.status, Status::Fall);
+        assert_eq!(pool.eggs(), 0, "never made");
+        // With room, the Break's ten frames.
+        let mut pool = Pool::new();
+        let mut f = pool.lay();
+        f.egg.escape_wait = 0;
+        assert!(!pool.frame(&mut f));
+        assert!(f.egg.breaking);
+        assert_eq!(pool.frames_to_escape(&mut f), u32::from(EGG_BREAK_FRAMES));
+    }
+
+    /// `ftCommonYoshiEggMakeEffect` runs on every update while
+    /// `effect_gobj` is `NULL` (`:160`): a struct freed mid-break gives the
+    /// egg its effect on the next update. From then the wait stops counting
+    /// and the egg breaks as the new effect's Break ends: Throw at the make,
+    /// Break set by the next frame's effect process, ten frames.
+    #[test]
+    fn an_egg_made_late_breaks_ten_frames_after_its_break_is_set() {
+        let mut pool = Pool::new();
+        pool.fill();
+        let mut f = pool.lay();
+        f.egg.escape_wait = 0;
+        assert!(!pool.frame(&mut f));
+        assert!(f.egg.breaking);
+        for _ in 2..=11 {
+            assert!(!pool.frame(&mut f));
+            assert!(!f.egg.effect_gobj && pool.eggs() == 0);
+        }
+        assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_DEFAULT - 10);
+        pool.e.stop_yoshi_egg_escape(2);
+        assert!(pool.e.force_available());
+        // Frame 12: made, so no countdown.
+        assert!(!pool.frame(&mut f));
+        assert!(f.egg.effect_gobj && f.is_effect_attach);
+        assert_eq!(pool.eggs(), 1);
+        assert!(!pool.e.force_available());
+        assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_DEFAULT - 10);
+        // Frame 13 starts the port's egg; frame 14 plays the Break's first.
+        assert!(!pool.frame(&mut f));
+        assert_eq!(
+            (f.egg.effect.index, f.egg.effect.plays),
+            (EGG_ANIM_THROW, 1)
+        );
+        assert!(!pool.frame(&mut f));
+        assert_eq!(
+            (f.egg.effect.index, f.egg.effect.plays),
+            (EGG_ANIM_BREAK, 1)
+        );
+        // Frames 15 to 22 play on; frame 23's update escapes.
+        assert_eq!(pool.frames_to_escape(&mut f), 23 - 14);
+        assert_eq!(f.egg.escape_wait, ESCAPE_WAIT_DEFAULT - 10);
+        assert_eq!(pool.eggs(), 0);
     }
 }

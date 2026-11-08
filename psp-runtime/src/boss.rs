@@ -606,13 +606,8 @@ fn start_materials(
             if prim.mat_anim == TextureDesc::NO_ANIM {
                 continue;
             }
-            let Some(desc) = pack.mat_anim(prim.mat_anim) else {
-                continue;
-            };
-            let script = pack
-                .mat_anim_file(&desc)
-                .and_then(|file| ssb_rom::matanim::mobj_script(file, table, subs, n, desc.source_offset));
-            if let Some(script) = script {
+            // `mobj_script`, resolved at pack time (`VERSION` 149).
+            if let Some(script) = pack.mat_anim_restart(prim.mat_anim, table, subs, n) {
                 mats.restart(prim.mat_anim, script);
             }
         }

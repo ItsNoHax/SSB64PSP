@@ -43,6 +43,10 @@
 use crate::archive::File;
 use crate::figatree::{Aobj, Kind};
 
+#[path = "matanim/window.rs"]
+mod window;
+pub use window::{script_window, ScriptWindow, WindowError};
+
 /// Colour tracks, `nGCAnimTrackMaterialSubStart` onwards.
 pub const TRACK_PRIM: usize = 0;
 pub const TRACK_ENV: usize = 1;
@@ -610,6 +614,15 @@ impl MaterialJoint {
 
     pub fn ended(&self) -> bool {
         self.ended
+    }
+
+    /// Moves a joint [`Self::start`]ed on a script's offset in its source
+    /// file to the same script's offset in the packed window
+    /// ([`crate::pack::Pack::mat_anim_script`]), keeping everything else.
+    /// Only before its first tick: nothing else holds an offset yet.
+    pub fn retarget(&mut self, script: u32) {
+        self.pc = script as usize;
+        self.start = script as usize;
     }
 
     /// Whether the script has looped back to where it began.

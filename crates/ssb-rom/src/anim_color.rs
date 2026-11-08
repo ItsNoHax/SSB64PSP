@@ -516,7 +516,6 @@ mod tests {
         let mut w = PackWriter::new();
         let i = w.add_mat_anim(
             149,
-            &d,
             0,
             0,
             &[alloc::vec![0; 16], alloc::vec![1; 16]],
@@ -525,6 +524,7 @@ mod tests {
             0,
             [0; 3],
         );
+        w.place_mat_anim_file(149, &d).unwrap();
         let packed = w.finish();
         let pack = crate::pack::Pack::open(&packed).unwrap();
         let mut stage = MaterialAnimator::new();
