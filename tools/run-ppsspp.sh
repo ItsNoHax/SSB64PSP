@@ -33,7 +33,7 @@
 #     window disappears. A hung `import` kept the script, and therefore PPSSPP,
 #     alive indefinitely.
 #
-#  4. **Software rasteriser by default** (D-029). PPSSPP's hardware backends
+#  4. **Software rasteriser by default** (D-029), the golden tier. PPSSPP's hardware backends
 #     do not reflect CPU writes to emulated VRAM (RE-014); the viewer's HUD is
 #     GE geometry now and shows under `--backend opengl` too. Forced
 #     through `--appendconfig`, not `--graphics=software` -- the command-line

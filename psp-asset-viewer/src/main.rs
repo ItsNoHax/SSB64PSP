@@ -136,7 +136,7 @@ fn deterministic_capture_frozen(scene: Option<CaptureScene>, sim_frame_index: u6
 #[cfg(feature = "golden_capture")]
 const CAPTURE_EXIT_FRAMES: u32 = 2;
 
-psp::module!("ssb64_psp", 1, 0);
+psp::module!("ssb64_psp", 1, 0, 512 * 1024);
 
 /// Scratch for the texture-inspection quad. Align16 because the GE DMAs it.
 static mut TEX_QUAD: Align16<[meshdraw::TexQuadVertex; 6]> = Align16(

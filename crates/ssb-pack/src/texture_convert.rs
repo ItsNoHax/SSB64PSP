@@ -358,6 +358,22 @@ pub fn convert_texture(
                         &img, psm, &palette, swizzle, &source, states,
                     ));
                 }
+                // A static CLUT: still the ROM's own indices. Re-quantizing
+                // from colour maps an entry to the first equal one (files
+                // 111/112: ROM index 2 packed as 1), which `matcolors` reads
+                // as a texel mismatch (RE-364).
+                if let Some(source) = decode_index_field(&file, t) {
+                    if source.iter().all(|&i| usize::from(i) < palette.len()) {
+                        return Some(psp::pack_mipped_indices(
+                            &img,
+                            psm,
+                            &palette,
+                            swizzle,
+                            &source,
+                            core::slice::from_ref(&palette),
+                        ));
+                    }
+                }
             }
             return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
         }
