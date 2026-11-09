@@ -2816,44 +2816,100 @@ const CLIP_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
 /// coordinates, colour channels, normal and position in its own units.
 /// `None` for a vertex format this does not read.
 unsafe fn decode_corner(
-    (vtype, index_ptr, vertex_ptr): (i32, *const c_void, *const c_void),
+    submission: (i32, *const c_void, *const c_void),
     corner: usize,
 ) -> Option<[f32; ssb_engine::guard_clip::ATTRS]> {
-    let packed = |v: PackedVertex| {
-        // `GU_TEXTURE_16BIT` and `GU_VERTEX_16BIT` read unsigned and signed
-        // fractions of 32768.
-        (
-            [v.u as u16, v.v as u16].map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR),
-            v.color,
-            [v.nx, v.ny, v.nz],
-            [v.x, v.y, v.z],
-        )
-    };
-    let (uv, color, n, p) = if vtype == VERTEX_FORMAT.bits() {
-        let index = (index_ptr as *const u16).add(corner).read_unaligned();
+    Some(Corners::of(submission)?.decode(corner))
+}
+
+/// Where a submission's corners lie, resolved from its vertex format once
+/// per primitive, so a corner's decode is one index read and one of two
+/// vertex reads instead of a chain of format tests (RE-519 batch 197).
+#[derive(Clone, Copy)]
+struct Corners {
+    /// The index list; null for an unindexed submission.
+    index: *const u16,
+    vertex: *const u8,
+    /// Bytes per vertex.
+    stride: usize,
+    float_uv: bool,
+}
+
+impl Corners {
+    /// `None` for a vertex format [`decode_corner`] does not read.
+    fn of((vtype, index, vertex): (i32, *const c_void, *const c_void)) -> Option<Self> {
+        let (indexed, float_uv) = if vtype == VERTEX_FORMAT.bits() {
+            (true, false)
+        } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
+            (false, false)
+        } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
+            (false, true)
+        } else if vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits() {
+            (true, true)
+        } else {
+            return None;
+        };
+        Some(Self {
+            index: if indexed { index as *const u16 } else { core::ptr::null() },
+            vertex: vertex as *const u8,
+            stride: if float_uv {
+                core::mem::size_of::<FloatUvVertex>()
+            } else {
+                core::mem::size_of::<PackedVertex>()
+            },
+            float_uv,
+        })
+    }
+
+    /// Bytes from one triangle to the next: in the index list for an
+    /// indexed submission, in the vertices for an unindexed one.
+    fn triangle_stride(&self) -> usize {
+        if self.index.is_null() {
+            3 * self.stride
+        } else {
+            3 * core::mem::size_of::<u16>()
+        }
+    }
+
+    /// [`decode_corner`] of corner `corner`.
+    #[inline(always)]
+    unsafe fn decode(&self, corner: usize) -> [f32; ssb_engine::guard_clip::ATTRS] {
+        let vertex = if self.index.is_null() {
+            corner
+        } else {
+            usize::from(self.index.add(corner).read_unaligned())
+        };
         // An indexed range copy's base lies before its block
         // ([`expand_corners`]): only based reads land inside it.
-        packed(
-            (vertex_ptr as *const PackedVertex)
-                .wrapping_add(usize::from(index))
-                .read_unaligned(),
-        )
-    } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
-        packed((vertex_ptr as *const PackedVertex).add(corner).read_unaligned())
-    } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
-        let v = (vertex_ptr as *const FloatUvVertex).add(corner).read_unaligned();
-        ([v.u, v.v], v.color, [v.nx, v.ny, v.nz], [v.x, v.y, v.z])
-    } else if vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits() {
-        let index = (index_ptr as *const u16).add(corner).read_unaligned();
-        let v = (vertex_ptr as *const FloatUvVertex)
-            .wrapping_add(usize::from(index))
-            .read_unaligned();
-        ([v.u, v.v], v.color, [v.nx, v.ny, v.nz], [v.x, v.y, v.z])
-    } else {
-        return None;
-    };
+        let at = self.vertex.wrapping_add(vertex * self.stride);
+        let (uv, color, n, p) = if self.float_uv {
+            let v = (at as *const FloatUvVertex).read_unaligned();
+            ([v.u, v.v], v.color, [v.nx, v.ny, v.nz], [v.x, v.y, v.z])
+        } else {
+            let v = (at as *const PackedVertex).read_unaligned();
+            // `GU_TEXTURE_16BIT` and `GU_VERTEX_16BIT` read unsigned and
+            // signed fractions of 32768.
+            (
+                [v.u as u16, v.v as u16].map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR),
+                v.color,
+                [v.nx, v.ny, v.nz],
+                [v.x, v.y, v.z],
+            )
+        };
+        decoded(uv, color, n, p)
+    }
+}
+
+/// A corner's attributes in [`ssb_engine::guard_clip::Vertex`] order.
+#[inline(always)]
+fn decoded(
+    uv: [f32; 2],
+    color: u32,
+    n: [i8; 3],
+    p: [i16; 3],
+) -> [f32; ssb_engine::guard_clip::ATTRS] {
     let c = color.to_le_bytes();
-    Some([
+    [
         uv[0],
         uv[1],
         f32::from(c[0]),
@@ -2866,7 +2922,7 @@ unsafe fn decode_corner(
         f32::from(p[0]) / VERTEX_16BIT_DIVISOR,
         f32::from(p[1]) / VERTEX_16BIT_DIVISOR,
         f32::from(p[2]) / VERTEX_16BIT_DIVISOR,
-    ])
+    ]
 }
 
 /// Whether triangle `t` of a submission is flat
@@ -2908,9 +2964,25 @@ unsafe fn submission_flat(
     }
 }
 
+/// A corner's attributes as the GE reads them: colour channels rounded to
+/// bytes, the normal rounded half away from zero to signed bytes, both
+/// saturated.
+///
+/// Every value is a [`decode_corner`] byte or a clip point's lerp of two
+/// with `t` in `[0, 1]`, so it lies within a few units of `[-128, 255]`:
+/// truncating it to `i32` is in range, and an integer clamp after the
+/// truncation gives the float clamp's byte. Branch-free (RE-519 batch
+/// 197): saturating float casts and float clamps compile to compare and
+/// branch chains on the PSP.
+#[inline]
 fn encode_corner(a: &[f32; ssb_engine::guard_clip::ATTRS]) -> ClipVertex {
-    let byte = |x: f32| (x + 0.5).clamp(0.0, 255.0) as u8;
-    let normal = |x: f32| (x + if x < 0.0 { -0.5 } else { 0.5 }).clamp(-128.0, 127.0) as i8;
+    // SAFETY: finite and far inside `i32`'s range (above).
+    let byte = |x: f32| unsafe { (x + 0.5).to_int_unchecked::<i32>() }.clamp(0, 255) as u8;
+    // `copysign` differs from `x < 0.0` only at -0.0, which rounds to 0
+    // either way.
+    let normal = |x: f32| {
+        unsafe { (x + 0.5f32.copysign(x)).to_int_unchecked::<i32>() }.clamp(-128, 127) as i8
+    };
     ClipVertex {
         u: a[0],
         v: a[1],
@@ -3027,22 +3099,11 @@ unsafe fn rebuild_runs(
     tris: usize,
     crossing: usize,
 ) -> Option<&'static [Draw]> {
-    use ssb_engine::guard_clip::{clip_position, clip_triangle_runs, Piece, ATTRS, MAX_CLIPPED};
-    let vtype = whole.vtype;
-    // Bytes from one triangle to the next: in the index list for an
-    // indexed submission, in the vertices for an unindexed one.
-    let (indexed, stride) = if vtype == VERTEX_FORMAT.bits()
-        || vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits()
-    {
-        (true, 3 * core::mem::size_of::<u16>())
-    } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
-        (false, 3 * core::mem::size_of::<PackedVertex>())
-    } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
-        (false, 3 * core::mem::size_of::<FloatUvVertex>())
-    } else {
-        return None;
-    };
-    let submission = (vtype, whole.index, whole.vertex);
+    use ssb_engine::guard_clip::{clip_position, clip_triangle_runs, Piece, MAX_CLIPPED};
+    let submission = (whole.vtype, whole.index, whole.vertex);
+    let corners = Corners::of(submission)?;
+    let indexed = !corners.index.is_null();
+    let stride = corners.triangle_stride();
     let capacity = crossing * 3 * (MAX_CLIPPED - 2);
     // Written through the cache and written back once, before the draws
     // ([`crate::gu::cached_vertices`]): uncached stores stall per word.
@@ -3074,21 +3135,26 @@ unsafe fn rebuild_runs(
         clip.band,
         |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
         |t| submission_flat(submission, t),
-        |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
+        |c| corners.decode(c),
         |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),
         |piece| match piece {
             Piece::Fan(poly) => {
-                // Each polygon vertex encoded once, then copied into
-                // every fan triangle that uses it.
-                let mut encoded = [ClipVertex::default(); MAX_CLIPPED];
-                for (e, v) in encoded.iter_mut().zip(poly) {
-                    *e = encode_corner(&v.attrs);
-                }
-                for i in 1..poly.len() - 1 {
-                    for k in [0, i, i + 1] {
-                        out.add(n).write(encoded[k]);
-                        n += 1;
+                // Each polygon vertex encoded once, at one call site, and
+                // written into the fan triangles `(0, i - 1, i)` as it
+                // completes them.
+                let mut first = ClipVertex::default();
+                let mut prev = first;
+                for (i, v) in poly.iter().enumerate() {
+                    let e = encode_corner(&v.attrs);
+                    if i == 0 {
+                        first = e;
+                    } else if i >= 2 {
+                        out.add(n).write(first);
+                        out.add(n + 1).write(prev);
+                        out.add(n + 2).write(e);
+                        n += 3;
                     }
+                    prev = e;
                 }
             }
             Piece::Run(first, end) => {
