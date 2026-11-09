@@ -493,6 +493,47 @@ fn load(name: &'static str, extra: &[u32], held: Base) {
     enter(name, &roots, held != Base::Own, slabs);
 }
 
+/// Per anim group (`r::anim_kind`), each figatree file its rows play, with
+/// the first such row: built once ([`prepare`]). Scanning the pack's anim
+/// rows cost every fight start about 3 ms on a PSP-2000 (RE-476).
+static mut GROUP_FILES: Vec<Vec<(u32, u32)>> = Vec::new();
+
+/// Builds the tables the scene loads use, about 10 ms on a PSP-2000: at a
+/// boot's audio start, in the logo scene's held picture, not in the
+/// opening's first frame (RE-476).
+pub fn prepare() {
+    if let Some(pack) = scene_files::pack() {
+        group_files(&pack);
+    }
+}
+
+fn group_files(pack: &ssb_rom::pack::Pack<'_>) -> &'static [Vec<(u32, u32)>] {
+    // SAFETY: as `base`.
+    let cache = unsafe { &mut *core::ptr::addr_of_mut!(GROUP_FILES) };
+    if cache.is_empty() {
+        cache.resize_with(r::FIGHTER_MAIN.len(), Vec::new);
+        // `nFTKindEnumCount`: rows past it are stage, effect and item clips.
+        for i in 0..pack.anim_count() {
+            let Some(fighter) = pack.anim_fighter(i) else { continue };
+            if fighter >= r::FIGHTER_MAIN.len() as u32 {
+                continue;
+            }
+            let Some(a) = pack.anim(i) else { continue };
+            if a.script_len > 0 {
+                cache[r::anim_kind(fighter) as usize].push((i, a.source_file));
+            }
+        }
+        // Each file once, at its first row.
+        for files in cache.iter_mut() {
+            files.sort_unstable_by_key(|&(row, file)| (file, row));
+            files.dedup_by_key(|&mut (_, file)| file);
+            files.sort_unstable_by_key(|&(row, _)| row);
+            files.shrink_to_fit();
+        }
+    }
+    cache
+}
+
 /// Marks the figatrees scene `name` streams: in a battle or an opening
 /// scene, those of every fighter kind whose main file `roots` holds,
 /// grouped by the kind whose set it is (`r::anim_kind`). A file the scene
@@ -507,34 +548,25 @@ fn stream_scene(name: &str, roots: &[u32], slabs: bool) {
     let Some(pack) = scene_files::pack() else {
         return;
     };
-    let mut table: Vec<(u32, u8)> = Vec::new();
+    let mut table: Vec<(u32, u32, u8)> = Vec::new();
     if matches!(name, "battle" | "opening") {
-        let groups: Vec<u32> = (0u32..)
+        let mut groups: Vec<u32> = (0u32..)
             .zip(*r::FIGHTER_MAIN)
             .filter(|(_, main)| roots.contains(main))
             .map(|(k, _)| r::anim_kind(k))
             .collect();
-        if !groups.is_empty() {
-            // `nFTKindEnumCount`: rows past it are stage, effect and item
-            // clips.
-            // Each row's fighter word first: a full decode of every row
-            // cost a battle start some ms on a PSP (RE-476).
-            for i in 0..pack.anim_count() {
-                let Some(fighter) = pack.anim_fighter(i) else { continue };
-                if fighter >= r::FIGHTER_MAIN.len() as u32 {
-                    continue;
-                }
-                let group = r::anim_kind(fighter);
-                if !groups.contains(&group) {
-                    continue;
-                }
-                let Some(a) = pack.anim(i) else { continue };
-                if a.script_len > 0 {
-                    table.push((a.source_file, group as u8));
-                }
+        groups.sort_unstable();
+        groups.dedup();
+        for g in groups {
+            if let Some(files) = group_files(&pack).get(g as usize) {
+                table.extend(files.iter().map(|&(row, file)| (row, file, g as u8)));
             }
         }
+        // Row order across the groups, as the table always ran: a file two
+        // groups play keeps the first row's group.
+        table.sort_unstable_by_key(|&(row, ..)| row);
     }
+    let table: Vec<(u32, u8)> = table.into_iter().map(|(_, file, g)| (file, g)).collect();
     scene_files::stream_files(&table, slabs);
 }
 

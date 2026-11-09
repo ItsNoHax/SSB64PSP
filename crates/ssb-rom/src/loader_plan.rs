@@ -267,15 +267,16 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
     pub fn enter_begin(&mut self, roots: &[u32], within: bool) -> bool {
         self.closure(roots);
         // A prefetch for another scene: its reads not yet started are
-        // dropped; the one in flight, and the ones this scene wants, are
-        // waited for. Within a scene, only reads of files it wants are.
-        if within {
-            let want = &self.place.want;
-            self.jobs.iter().any(|j| (j.from..=j.last).any(|i| want[i]))
-        } else {
+        // dropped. Only reads of files this scene wants are waited for; a
+        // read in flight that holds none finishes in the background, and
+        // its files leave once it has (`safe_point`). A battle entered
+        // before the last read-ahead finished waited up to 28 ms on a
+        // PSP-2000 for files it then dropped (RE-501).
+        if !within {
             self.cancel_unwanted();
-            !self.jobs.is_empty()
         }
+        let want = &self.place.want;
+        self.jobs.iter().any(|j| (j.from..=j.last).any(|i| want[i]))
     }
 
     /// An enter's last step, after [`enter_begin`](Self::enter_begin) (and
@@ -359,7 +360,9 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
         // The registry drops them all in one pass (RE-476).
         self.starts.clear();
         for i in 0..self.files.len() {
-            if self.files[i].keep == Keep::Leaving {
+            // A file a read in flight holds leaves once the read ends
+            // (`complete`): dropped now, it would be read twice.
+            if self.files[i].keep == Keep::Leaving && !self.files[i].queued {
                 if let Some(start) = self.drop_file(i) {
                     self.starts.push(start);
                 }
@@ -651,7 +654,19 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
             }
             self.register(io, job.block, job.start, job.from, job.last, false);
         }
+        self.leave_after(&job);
         true
+    }
+
+    /// Files of a finished read that the scene entered meanwhile left
+    /// leave at the next [`safe_point`](Self::safe_point).
+    fn leave_after(&mut self, job: &Job) {
+        if self.files[job.from..=job.last]
+            .iter()
+            .any(|f| f.keep == Keep::Leaving)
+        {
+            self.leaving = true;
+        }
     }
 
     fn release_job(&mut self, job: &Job) {
@@ -667,6 +682,7 @@ impl<'p, A: BlockAlloc, E: Copy> Plan<'p, A, E> {
     fn abandon_front(&mut self) {
         if let Some(job) = self.jobs.pop_front() {
             self.release_job(&job);
+            self.leave_after(&job);
         }
     }
 }

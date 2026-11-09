@@ -5575,6 +5575,7 @@ unsafe fn run() -> ! {
     // which needs the audio system installed (`ssb_game::sound::install`).
     if !defer_audio {
         backup.apply_options();
+        scene_load::prepare();
     }
     // At boot, not in the first frame that looks a sprite up (RE-471).
     if let Some(Ok(p)) = &opened {
@@ -5655,6 +5656,7 @@ unsafe fn run() -> ! {
             }
             s.backup.apply_options();
             boot_log::log("audio_started");
+            scene_load::prepare();
         }
         pad.poll();
         let (previous_controller, controller) = if let Some(scene) = capture_scene {

@@ -5,8 +5,10 @@
 //! and miss sequences (`scene_load`'s, from the L2 simulator) and must
 //! agree after every step: held files and their keep states, queued reads,
 //! registered spans, how files share blocks and the block sizes, reads,
-//! reports, and blocks freed. One change since, in both (batch 128,
-//! RE-575): a prefetch's reads start at the next frame's safe point.
+//! reports, and blocks freed. Changes since, in both: a prefetch's reads
+//! start at the next frame's safe point (batch 128, RE-575); an enter
+//! waits only for reads of files it wants, and a file a read in flight
+//! holds leaves once that read ends (batch 193, RE-501).
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
@@ -252,12 +254,10 @@ impl<'a> Old<'a> {
 
     fn enter(&mut self, scene: &'static str, roots: &[u32], within: bool) -> Result<Report, IoErr> {
         let want = self.closure(roots);
-        let wait = if within {
-            self.jobs.iter().any(|j| (j.from..=j.last).any(|i| want[i]))
-        } else {
+        if !within {
             self.cancel_unwanted(&want);
-            !self.jobs.is_empty()
-        };
+        }
+        let wait = self.jobs.iter().any(|j| (j.from..=j.last).any(|i| want[i]));
         if wait {
             self.drain();
         }
@@ -312,7 +312,7 @@ impl<'a> Old<'a> {
         self.defer = false;
         let mut starts: Vec<u32> = Vec::new();
         for i in 0..self.files.len() {
-            if self.files[i].keep == Keep::Leaving {
+            if self.files[i].keep == Keep::Leaving && !self.files[i].queued {
                 if let Some(start) = self.drop_file(i) {
                     starts.push(start);
                 }
@@ -1172,4 +1172,72 @@ fn a_prefetch_reads_from_the_next_frame() {
     new.plan.drain(&mut new.io);
     new.safe_point();
     assert!(live.iter().all(|&f| new.plan.files()[f].block != NO_BLOCK));
+}
+
+/// An enter for another scene does not wait for a read in flight that
+/// holds none of its files (RE-501): the read ends in the background, and
+/// its files leave at the safe point after it, not before (a queued file
+/// dropped early would be read twice).
+#[test]
+#[cfg_attr(ssb64_stub_tables, ignore = "needs the ROM-generated tables")]
+fn an_enter_waits_only_for_reads_it_wants() {
+    let Some(bytes) = real_pack() else { return };
+    let pack = Pack::open(&bytes).unwrap();
+    let cfg = Config {
+        budget: 64 << 20,
+        delay: 1_000_000,
+        fail_bg: 0,
+        fail_start: 0,
+    };
+    let mut new = Planned::new(Pack::open(&bytes).unwrap(), cfg);
+    new.plan
+        .prefetch(&mut new.io, &[crate::scene_roots::FIGHTER_MAIN[0]]);
+    new.safe_point();
+    new.safe_point();
+    assert!(new.plan.in_flight() && new.plan.jobs().len() > 1);
+    let job = new.plan.jobs()[0];
+    let live: Vec<usize> = (job.from..=job.last)
+        .filter(|&i| pack.file_at(i as u32).is_some_and(|d| d.len > 0))
+        .collect();
+    let held = new.plan.held();
+
+    // A scene that wants none of the prefetch's files.
+    let roots = &*crate::scene_roots::MAPS;
+    assert!(!new.plan.enter_begin(roots, false), "no read to wait for");
+    assert!(live.iter().all(|&i| !new.plan.place.want[i]));
+    new.plan.enter_end(&mut new.io, "maps", false, 0).unwrap();
+    assert!(new.plan.in_flight());
+    assert_eq!(
+        new.plan.jobs().len(),
+        1,
+        "the reads not started are dropped"
+    );
+    let leaving = |new: &Planned<'_>| {
+        live.iter().all(|&i| {
+            let f = new.plan.files()[i];
+            f.keep == Keep::Leaving && f.queued && f.block == NO_BLOCK
+        })
+    };
+    assert!(leaving(&new));
+    // Safe points while it runs keep its files queued.
+    new.safe_point();
+    new.safe_point();
+    assert!(new.plan.in_flight() && leaving(&new));
+
+    // It ends: its files register, then leave at the next safe point.
+    new.plan.drain(&mut new.io);
+    assert!(live.iter().all(|&i| new.plan.files()[i].block != NO_BLOCK));
+    new.safe_point();
+    assert!(live.iter().all(|&i| {
+        let f = new.plan.files()[i];
+        f.keep == Keep::No && !f.queued && f.block == NO_BLOCK
+    }));
+    let d = pack.file_at(live[0] as u32).unwrap();
+    assert!(!new.io.spans.contains_key(&d.blob_start));
+    // Only the scene's files stay; no read was made twice.
+    assert!(new.plan.held().0 > held.0);
+    let mut starts: Vec<u32> = new.io.reads.iter().map(|r| r.1).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    assert_eq!(starts.len(), new.io.reads.len());
 }
