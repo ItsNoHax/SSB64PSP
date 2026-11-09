@@ -5227,6 +5227,9 @@ struct Session {
     /// The stage select's cursor slot and the ticks it has rested there,
     /// for [`Session::read_ahead_stage`].
     stage_dwell: (usize, u32),
+    /// The Bonus Practice select's fighter (`FTKind` ordinal, `u32::MAX`
+    /// none) and the ticks it has stayed: as `stage_dwell`.
+    bonus_dwell: (u32, u32),
     /// The battle's wallpaper `SObj` and its sprite (RE-419).
     wallpaper: ssb_game::wallpaper::Wallpaper,
     wallpaper_sprite: Option<ssb_rom::pack::SpriteDesc>,
@@ -5469,6 +5472,7 @@ fn new_session(backup: ssb_game::backup::Backup, save: save::Save) -> alloc::box
         stage_select_layer: None,
         stage_preview: stage_screen::start(),
         stage_dwell: (0, 0),
+        bonus_dwell: (u32::MAX, 0),
         wallpaper: ssb_game::wallpaper::Wallpaper::make(ssb_game::wallpaper::Kind::Static),
         wallpaper_sprite: None,
         lead: play::Lead::Pad,
@@ -6532,6 +6536,7 @@ fn players_1p_bonus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: 
     let fighters = s.players_1p_bonus_fighters.get_or_insert_with(players_screen::start);
     players_screen::tick_bonus(pack, select, fighters);
     let Some(outcome) = outcome else {
+        read_ahead_bonus(s, pack);
         return;
     };
     let of = |b: BonusKind| if b == BonusKind::Targets { MScene::Players1PBonus1 } else { MScene::Players1PBonus2 };
@@ -6553,6 +6558,32 @@ fn players_1p_bonus_frame(s: &mut Session, pack: Option<&Pack<'_>>, controller: 
         }
         (None, _) => {}
     }
+}
+
+/// Reads the bonus stage of the fighter the Bonus Practice select has
+/// rested on for `STAGE_DWELL_TICS` ahead: its course and the fighter's
+/// battle files (RE-501).
+fn read_ahead_bonus(s: &mut Session, pack: Option<&Pack<'_>>) {
+    use ssb_game::players_1p_bonus::BonusKind;
+    use ssb_game::spgame::{read_ahead::battle_gkind, Stage};
+    let (Some(select), Some(p)) = (s.players_1p_bonus.as_ref(), pack) else {
+        return;
+    };
+    let kind = select.saved().bonus_fkind;
+    let key = kind.map_or(u32::MAX, |k| k as u32);
+    if s.bonus_dwell.0 != key {
+        s.bonus_dwell = (key, 0);
+    }
+    if s.bonus_dwell.1 < STAGE_DWELL_TICS {
+        s.bonus_dwell.1 += 1;
+        return;
+    }
+    let Some(k) = kind else {
+        return;
+    };
+    let stage = if select.bonus == BonusKind::Targets { Stage::Bonus1 } else { Stage::Bonus2 };
+    let gkind = battle_gkind(stage, k);
+    scene_load::read_ahead("bonus-battle", u32::from(gkind), || scene_load::battle_roots(p, gkind, &[key]));
 }
 
 /// `mnPlayers1PBonus`'s frame over its default camera's black.

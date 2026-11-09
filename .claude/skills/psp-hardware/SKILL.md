@@ -189,6 +189,24 @@ Scene file lines:
 - `tools/icache/cmpaddr.py --elf`: checks a measurement build keeps searched functions at release addresses
 - `tools/icache/summ.sh`: summarises runs
 
+Link-order upkeep (RE-494, RE-585):
+
+- Re-search when `cmpaddr` shows >25% of ordered functions moved
+- Timer-only functions (`capture_*`, `scripted_*`, `frame_timer`): after the searched block; `cmpaddr --elf` release vs timer differs only in the tail
+- `core::fmt` impls whose size differs with `frame_timer` → tail
+- Training trace includes Comets and Fall (Fall from emulated 30 s)
+- Keep the `# after unlisted` block (scene-only code, padded to keep the archive code's cache sets) at the end
+- `psp-link.py` pins the stubs (`STUB_SET`)
+- Accept on a PSP-2000 five-scene interleaved round
+- After a re-search: rewrite `psp-game/link-pins.txt` with `psp-link.py --pins` (RE-585 item 48)
+
+### Measurement baseline (RE-574, RE-585)
+
+- Pack on ms0, not host0: host0 adds 0.3-1.0 ms (streamed reads over USB)
+- Build measurement PRXs from the main checkout path
+- `frame_timer` builds keep the link pins (`psp-game/link-pins.txt`): A/B layout-controlled; `profile` builds are not, span totals move with layout
+- Re-map VS report windows after any VS RNG or golden-rebaseline commit; verify the opening's report-window mapping
+
 ### Native frame evidence
 
 ```bash

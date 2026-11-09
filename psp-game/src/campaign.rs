@@ -275,11 +275,7 @@ fn enter_battle(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked>
     // The 1P manager's battle drops the last presentation scene's files.
     // `sc1PGameFuncStart`'s extras: the Kirby team's copies and the twelve
     // Polygons, whatever the roster holds now (RE-475).
-    crate::scene_load::set_base(match stage {
-        Stage::Kirby => alloc::vec::Vec::from(ssb_rom::scene_roots::KIRBY_TEAM),
-        Stage::Zako => crate::scene_load::fighter_roots(p, 14..=25),
-        _ => alloc::vec::Vec::new(),
-    });
+    crate::scene_load::set_base(crate::scene_load::campaign_extras(p, stage));
     s.enter(pack, gkind, &roster, Some(rules));
     s.scene_gkind = gkind;
     let Some(w) = s.world.as_deref_mut() else {
@@ -567,7 +563,7 @@ fn enter_bonus(s: &mut Session, pack: Option<&Pack<'_>>) -> Result<(), Blocked> 
     let which = data.stage().filter(|s| matches!(s, Stage::Bonus1 | Stage::Bonus2)).ok_or(Blocked::Scene(Scene::BonusStage))?;
     if data.player != 0 { return Err(Blocked::Assets(which)); }
     let p = pack.ok_or(Blocked::Assets(which))?;
-    let gkind = (if which == Stage::Bonus1 { 17 } else { 29 }) + data.fkind as u8;
+    let gkind = ssb_game::spgame::read_ahead::battle_gkind(which, data.fkind);
     let index = ssb_psp_runtime::scene::common_stage_index(p, gkind).ok_or(Blocked::Assets(which))?;
     let stage = p.stage(index).ok_or(Blocked::Assets(which))?;
     let kind = data.fkind as usize;

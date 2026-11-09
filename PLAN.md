@@ -51,30 +51,13 @@
 - Figures: STATUS (PSP-2000).
 - Link orders: searched with `tools/icache/`, chosen on hardware by busy time
   (`tools/hw-link-order.sh`). Hot code changes size → re-search
-  (RE-494–RE-500, RE-539, RE-577: names hash-independent).
+  (RE-494–RE-500, RE-539, RE-577: names hash-independent); upkeep and
+  measurement baseline: psp-hardware skill.
 - Stack: deepest 126,888 B measured (f1-training-fighter-select); frames over 16 KB listed in `docs/memory.md`; shrink options in RE-568.
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| Stage clip cost | Viewport clip (batch 194) vs the 2w band: vs4 15.11 to 15.84 ms busy, Zebes 10.81 to 11.29, opening 9.60 to 9.46; flat-triangle skip took back 0.63 of 1.36 ms on vs4; one-pass flat count rejected (no gain). Walk (RE-519 batch 197): Zebes 0.66 ms for 31 clipped triangles a frame after the encode and decode diet (busy -0.19 ms, vs4 -0.06). Left: `guard_clip::clip_polygon` itself, ceiling Zebes 0.66 ms | RE-519, RE-577, RE-578 |
-| Electric hit drop | `vs4@2170` 4xL9 Pikachu, PSP-2000: no-hit r18 15.57, shock r12 16.59 ms (ME audio, own kernel module). Fighters drawn staged per fighter; lean joints sample; map surface table bucketed by kind; sprite lookups memoized; `.text` pinned; plain compose; cross-fighter staging rejected (RE-585 items 36, 39-40, 44-52; VFPU reverb RE-479). Left: Link TEXTURE_GEN prims, update-side cuts (anim, AI, hit, items); edits must not recompile `draw_object_posed_nodes`. Magnifier (r9) separate | RE-584, RE-585 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v149; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
-| Baseline method | Pack on ms0, not host0 (host0 adds 0.3-1.0 ms); verify opening report-window mapping; re-map VS windows after any VS RNG or golden-rebaseline commit; build measurement PRXs from the main checkout path | RE-574, RE-585 |
-| Link-order upkeep | Re-search (RE-494) when cmpaddr shows >25% of ordered functions moved; timer-only functions (`capture_*`, `scripted_*`, `frame_timer`) after the searched block, `cmpaddr --elf` release vs timer differs only in the tail; training includes Comets and Fall traces (Fall from emulated 30 s); `core::fmt` impls whose size differs with `frame_timer` go to the tail; keep the `# after unlisted` block (scene-only code, padded to keep the archive code's cache sets) at the end; `psp-link.py` pins the stubs (`STUB_SET`); accept on a PSP-2000 five-scene interleaved round; rewrite `psp-game/link-pins.txt` with `psp-link.py --pins` after a re-search (RE-585 item 48) | RE-494, RE-585 |
-| Select NOISE cost | PSP-2000: 1.60 ms busy, select fps unaffected (vblank slack 5.4 ms); 8 CPU write-path variants no cheaper. Left: a cheaper path; acceptance: `noise` span down with the select goldens unchanged | RE-569 |
-| `vs4@2400` | Busy time back under RE-500's 13.64 ms; rise = small gameplay and draw additions | RE-533–RE-539 |
-| Opening | Profile Clash (link order no effect). Each fight's first frame 30–35 ms, `update` 16–20 ms: closure and link about 1 ms; effect players 3 ms (lazy item players cost vs4 0.25 ms) | RE-469–RE-471, RE-476, RE-532, RE-539 |
-| Other scenes | RE-469 scenes, RE-471 worst cases on PSP; explain `vs4@4000` 5.2 ms vs PPSSPP 4.5. Memory stalls 55% of cycles; draw I-cache misses dominate | RE-480, RE-481 |
-| Texture residency | Cost of remaining main-RAM texel reads after photo-region pool (`texture_probe`). More resident textures need VRAM → only via 16-bit colour buffers (changes every golden) | RE-076, RE-486, RE-489–RE-492, RE-539 |
-| Read-ahead gaps | 1P next stage, intro → battle (no side-effect-free next-stage prediction); bonus select → bonus battle; Characters scene; 1P intro proceed after a clear (N64 tic 81 vs PSP 60) and tally start (11-12 VIs) | RE-501 |
-| GE state batching | Only where profiling shows submission cost. Refs: `sf64-psp` material hash, `oot-PSP` sampler cache | RE-124, [D-036](docs/decisions/D-036.md) |
-| VFPU | Only after profiling | [D-032](docs/decisions/D-032.md) |
-| VFPU block copies | `lv.q`/`sv.q` 16-byte copies for large aligned transfers (vertex expansion, frozen picture, photo) vs rust-psp word `memcpy` | RE-471 |
-| CPU/GE overlap | Double-buffered display lists: +1 frame display latency, never a game tick. `vs4` already overlaps ≥4.8 ms GE; no bus-contention relief. Measure GE time first | RE-469, RE-486, [D-047](docs/decisions/D-047.md) |
-| `meshdraw` audit | Indexed draws, transformed-vertex reuse. sf64-psp: non-indexed rebatching beat reuse. Lit primitives stay indexed | RE-514, RE-530 |
-| I-cache locality | 16 KB I + 16 KB D; per-mesh path of `draw_object_posed_nodes` dominates misses. Outline only cold blocks. Rejected: shared mesh-path footprint cut (code shrink shifts the trained layout; model mispredicted vs4; RE-585 item 30), per-primitive outlining, `opt-level = "s"`, `#[optimize(size)]`, shadowed render-state table; LTO re-inlines single-call helpers | RE-481, RE-487, RE-488, RE-493, RE-495 |
-| Stack depth | Deepest 127 KB of 512 KiB (`set_damage_detect_size` 29 KB leaf) | RE-469 |
-| `run` branch range | Keep within 128 KiB MIPS reach | RE-431 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
 | Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |

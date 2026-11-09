@@ -29,6 +29,7 @@ pub mod intro;
 pub mod live;
 pub mod manager;
 pub mod message;
+pub mod read_ahead;
 pub mod results;
 pub mod session;
 pub mod setup;

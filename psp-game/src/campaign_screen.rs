@@ -94,6 +94,20 @@ impl Presentation {
         self.scene = Some(id);
         self.snapshot_pending = id.0 == 2;
         crate::scene_load::campaign(id.0, data.fkind as u32);
+        // The scene's next step, read while this one plays (RE-501): the
+        // intro's battle, and the stage clear's next intro.
+        match id.0 {
+            0 => crate::scene_load::read_ahead("1p-battle", id.1.into(), || {
+                crate::scene_load::campaign_battle_roots(p, session)
+            }),
+            2 if data.stage < spgame::Stage::COMMON_END => {
+                crate::scene_load::read_ahead("1p-intro", 0, || {
+                    crate::scene_load::campaign_roots(0, data.fkind as u32)
+                        .map_or_else(Vec::new, |(_, v)| v)
+                })
+            }
+            _ => {}
+        }
         self.models.clear();
         if ending::make(self, p, screen) {
             return true;

@@ -384,6 +384,13 @@ pub fn results_roots() -> Vec<u32> {
 /// challenger and unlock message, for player kind `fkind`. A battle (id 3)
 /// loads its own files.
 pub fn campaign(id: u8, fkind: u32) {
+    if let Some((name, v)) = campaign_roots(id, fkind) {
+        scene(name, v);
+    }
+}
+
+/// [`campaign`]'s scene name and files.
+pub fn campaign_roots(id: u8, fkind: u32) -> Option<(&'static str, Vec<u32>)> {
     let fighters = |v: &mut Vec<u32>| {
         v.extend(r::EF_COMMON);
         v.extend(r::FT_MANAGER);
@@ -436,9 +443,38 @@ pub fn campaign(id: u8, fkind: u32) {
             v.extend(*r::MESSAGE);
             "message"
         }
-        _ => return,
+        _ => return None,
     };
-    scene(name, v);
+    Some((name, v))
+}
+
+/// `sc1PGameFuncStart`'s extras on 1P stage `stage`: the Kirby Team's
+/// copies and the twelve Polygons, whatever the roster holds (RE-475).
+pub fn campaign_extras(pack: &Pack<'_>, stage: ssb_game::spgame::Stage) -> Vec<u32> {
+    use ssb_game::spgame::Stage;
+    match stage {
+        Stage::Kirby => Vec::from(r::KIRBY_TEAM),
+        Stage::Zako => fighter_roots(pack, 14..=25),
+        _ => Vec::new(),
+    }
+}
+
+/// The next 1P battle's files, as `campaign::enter_battle` loads them:
+/// [`campaign_extras`], then [`battle_roots`] for the kinds
+/// `spgame::read_ahead::battle_files` knows before it starts.
+pub fn campaign_battle_roots(pack: &Pack<'_>, session: &ssb_game::spgame::session::Session) -> Vec<u32> {
+    let Some((gkind, kinds)) =
+        ssb_game::spgame::read_ahead::battle_files(&session.data, &session.state)
+    else {
+        return Vec::new();
+    };
+    let mut v = match session.data.stage() {
+        Some(stage) => campaign_extras(pack, stage),
+        None => Vec::new(),
+    };
+    let kinds: Vec<u32> = kinds.iter().map(|&k| k as u32).collect();
+    v.extend(battle_roots(pack, gkind, &kinds));
+    v
 }
 
 /// Replaces the scene's own files, so the next [`battle`] holds `roots`

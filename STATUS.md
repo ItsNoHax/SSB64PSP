@@ -18,11 +18,11 @@
 
 ## Current work
 
+- Landed (batch 198): 1P read-ahead: intro → battle, stage clear → next intro, Bonus Practice select → bonus battle. PSP-2000 battle loads 26-75 to 0.9-2.5 ms, next intro 31 to 0.7 ms (RE-501). PLAN MS8 pruned to owner-gated rows; clip_polygon lever rejected (RE-519).
 - Landed (batch 197): clip path diet, bit-exact: branch-free corner encode, format resolved once per primitive. PSP-2000 busy vs4 14.90 to 14.84 ms, Zebes 10.70 to 10.52; Zebes clip walk 0.86 to 0.66 ms (RE-519).
 - Landed (batch 194): all scene draws clip at the viewport (`FRUSTRATIO_1`); flat triangles crossing only x/y draw whole. PSP-2000 busy vs4 15.11 to 15.84 ms, Zebes 10.81 to 11.29, opening 9.60 to 9.46; 172 goldens rebaselined with hardware proof (RE-519).
 - Landed (batch 193): fight first frame `update` 19-22 to 16-20 ms on PSP-2000 (figatree groups cached at boot); `enter` waits only for reads it wants (RE-476, RE-501). GE shade screen-linear (RE-519).
 - Landed (batch 192): opening fight first frame `update` 24-28 to 19-22 ms on PSP-2000: one-field pack scans, in-place clears; vs4 15.50 to 15.45 ms; lazy item players rejected, vs4 +0.25 ms (RE-476; goldens unchanged).
-- Landed (batch 191): pack stores texture level 0 only, the GE never samples mips (pack -2.85 MB, v149 unchanged, goldens unchanged, RE-491); training-select clip reads already hidden by the 1P menu read-ahead (RE-501).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Gaps in `PLAN.md`.
 
@@ -39,7 +39,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 187 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 198 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
 
 | Check | Result |
 |---|---|
