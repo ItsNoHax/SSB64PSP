@@ -39,12 +39,13 @@ use super::super::{
     animated_uv_affine, apply_fade_blend, apply_flags_state, apply_lod_blend_translucent_pass1,
     apply_texture_affine, bind_texture, bind_texture_cached, bind_texture_uncached,
     clip_submission, draw_lod_blend_pass, expand_corners, expand_float_uv_corners,
-    position_outcode, ClipVertex, Draw, DrawState, FloatUvVertex, GuardClip, LodBlendIsolate,
+    position_outcode, submission_flat, ClipVertex, Draw, DrawState, FloatUvVertex, GuardClip, LodBlendIsolate,
     TextureFuncState, CLIP_CODES, CLIP_CODES_MAX, CLIP_DRAWS, CLIP_DRAWS_MAX, CLIP_VERTEX_FORMAT,
-    FLOAT_UV_VERTEX_FORMAT, GUARD_BAND, INDEXED_FLOAT_UV_VERTEX_FORMAT, LIGHT_PREPASS,
+    FLOAT_UV_VERTEX_FORMAT, CLIP_RATIO, INDEXED_FLOAT_UV_VERTEX_FORMAT, LIGHT_PREPASS,
     LOD_BLEND_TRANSLUCENT, VERTEX_16BIT_DIVISOR, VERTEX_FORMAT,
 };
 use super::{clip_transform, Batch, BatchSize};
+use ssb_engine::guard_clip::{fate_of, Fate, PLANE_BITS};
 
 /// [`super::UNBATCHED_FLAGS`] less the paths these passes add.
 const LOD_UNBATCHED_FLAGS: u32 = flags::LIT | flags::TEXTURE_GEN | flags::TEXTURE_GEN_LINEAR;
@@ -166,7 +167,7 @@ pub(crate) unsafe fn batch_expand_lod_tag(
     batch: &mut Batch,
     objects: &[(usize, Option<&EffectMaterialAnimator>)],
 ) {
-    let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
+    let band = CLIP_RATIO;
     let size = core::mem::size_of::<PackedVertex>();
     let mut j = 0usize;
     let mut object = 0usize;
@@ -335,7 +336,7 @@ pub(crate) unsafe fn batch_submit_lod_tag(
 ) {
     // `light_prepass`, which returns at once without a fighter light.
     (*core::ptr::addr_of_mut!(LIGHT_PREPASS)).0 = 0;
-    let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
+    let band = CLIP_RATIO;
     let size = core::mem::size_of::<PackedVertex>();
     for k in first..first + count {
         let m = &*batch.meshes.add(k);
@@ -527,7 +528,9 @@ unsafe fn reclip_second_pass(
         all &= code;
         corner += 1;
         if corner == 3 {
-            crossing += usize::from(any != 0 && all == 0);
+            // At least the first pass's clipped triangles: a flat one
+            // counted here draws whole there ([`fate_of`]).
+            crossing += usize::from(any != 0 && all & PLANE_BITS == 0);
             (corner, any, all) = (0, 0, !0);
         }
     }
@@ -600,6 +603,7 @@ unsafe fn clip_float_uv(
         return clip_submission(clip, indices, whole);
     };
     // Every corner's outcode from the table, and `crossing_triangles`.
+    let submission = (whole.vtype, whole.index, whole.vertex);
     let (mut crossing, mut any, mut all) = (0usize, 0u8, !0u8);
     for c in 0..3 * tris {
         let i = usize::from(u16::from_le_bytes([
@@ -612,7 +616,8 @@ unsafe fn clip_float_uv(
         any |= code;
         all &= code;
         if c % 3 == 2 {
-            crossing += usize::from(any != 0 && all == 0);
+            let flat = || submission_flat(submission, c / 3);
+            crossing += usize::from(fate_of(any, all, flat) == Fate::Clipped);
             (any, all) = (0, !0);
         }
     }
@@ -655,9 +660,13 @@ unsafe fn clip_float_uv(
     for t in 0..=tris {
         // `Piece::Run`: the triangles before a crossing or dropped one,
         // and those at the end.
-        let (or, and) = if t < tris { tri_codes(t) } else { (1, 0) };
-        let inside = or == 0;
-        if inside {
+        let fate = if t < tris {
+            let (or, and) = tri_codes(t);
+            fate_of(or, and, || submission_flat(submission, t))
+        } else {
+            Fate::Clipped
+        };
+        if fate == Fate::Whole {
             run.get_or_insert(t);
             continue;
         }
@@ -692,7 +701,7 @@ unsafe fn clip_float_uv(
         if t == tris {
             break;
         }
-        if and != 0 {
+        if fate == Fate::Dropped {
             continue;
         }
         let k = 3 * t;
@@ -1420,6 +1429,7 @@ unsafe fn clip_float_uv_v2(
         return clip_float_uv(clip, indices, whole);
     };
     // Every corner's outcode from the table, and `crossing_triangles`.
+    let submission = (whole.vtype, whole.index, whole.vertex);
     let (mut crossing, mut any, mut all) = (0usize, 0u8, !0u8);
     for c in 0..3 * tris {
         let i = usize::from(u16::from_le_bytes([
@@ -1432,7 +1442,8 @@ unsafe fn clip_float_uv_v2(
         any |= code;
         all &= code;
         if c % 3 == 2 {
-            crossing += usize::from(any != 0 && all == 0);
+            let flat = || submission_flat(submission, c / 3);
+            crossing += usize::from(fate_of(any, all, flat) == Fate::Clipped);
             (any, all) = (0, !0);
         }
     }
@@ -1475,9 +1486,13 @@ unsafe fn clip_float_uv_v2(
     for t in 0..=tris {
         // `Piece::Run`: the triangles before a crossing or dropped one,
         // and those at the end.
-        let (or, and) = if t < tris { tri_codes(t) } else { (1, 0) };
-        let inside = or == 0;
-        if inside {
+        let fate = if t < tris {
+            let (or, and) = tri_codes(t);
+            fate_of(or, and, || submission_flat(submission, t))
+        } else {
+            Fate::Clipped
+        };
+        if fate == Fate::Whole {
             run.get_or_insert(t);
             continue;
         }
@@ -1512,7 +1527,7 @@ unsafe fn clip_float_uv_v2(
         if t == tris {
             break;
         }
-        if and != 0 {
+        if fate == Fate::Dropped {
             continue;
         }
         let k = 3 * t;

@@ -17,7 +17,9 @@
 //! triangle's at every pixel. Shade is not perspective-corrected (the RDP's;
 //! the GE's on PPSSPP), so the planes decide the shade on screen when a
 //! vertex lies far outside them: the game clips at `FRUSTRATIO_1`, the
-//! viewport edges (RE-519).
+//! viewport edges (RE-519). A flat triangle (one colour and normal) has
+//! one shade wherever its edges lie: one that crosses only the band's x or
+//! y planes and stays inside the GE's range draws whole ([`fate`]).
 
 /// Attributes carried through a clip: any per-vertex quantity a caller
 /// needs linearly interpolated (texture coordinates, colour, normal and the
@@ -48,6 +50,71 @@ pub fn outcode(clip: [f32; 4], guard: f32) -> u8 {
         | u8::from(gw - clip[1] < 0.0) << 2
         | u8::from(gw + clip[1] < 0.0) << 3
         | u8::from(clip[2] + clip[3] < 0.0) << 4
+}
+
+/// The [`outcode`] planes' bits.
+pub const PLANE_BITS: u8 = (1 << PLANES) - 1;
+
+/// The near plane's [`outcode`] bit.
+const NEAR_BIT: u8 = 1 << 4;
+
+/// [`outcode_guarded`]'s bit for a vertex outside the rasteriser's guard
+/// band `|x|, |y| <= guard * w`: a triangle with one, or one crossing the
+/// near plane, must be clipped whatever its shade.
+pub const OUTSIDE_GUARD: u8 = 1 << 7;
+
+/// [`outcode`] at `band`, plus [`OUTSIDE_GUARD`] when `clip` lies outside
+/// `|x|, |y| <= guard * w` (`guard >= band`).
+#[inline]
+pub fn outcode_guarded(clip: [f32; 4], band: f32, guard: f32) -> u8 {
+    let gw = guard * clip[3];
+    let outside =
+        (gw - clip[0] < 0.0) | (gw + clip[0] < 0.0) | (gw - clip[1] < 0.0) | (gw + clip[1] < 0.0);
+    outcode(clip, band) | u8::from(outside) << 7
+}
+
+/// What a clip does with a triangle, from its corners' codes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fate {
+    /// Drawn as it is: inside every plane, or flat and crossing only the
+    /// band's x and y planes.
+    Whole,
+    /// Every corner outside one plane: dropped.
+    Dropped,
+    /// Clipped.
+    Clipped,
+}
+
+/// The [`Fate`] of a triangle with corner codes `codes` ([`outcode`] or
+/// [`outcode_guarded`]). `flat()` says whether its corners share every
+/// attribute the rasteriser interpolates other than position and texture
+/// coordinates (colour, normal); asked only of a triangle that crosses the
+/// band's x or y planes and nothing else. A flat triangle there draws
+/// whole: its shade is one value wherever the edges lie, its texture
+/// coordinates and depth are perspective-correct on both rasterisers, so
+/// the rasteriser's own screen clip draws what the band's clip would,
+/// without the clip's work (RE-519).
+#[inline(always)]
+pub fn fate(codes: [u8; 3], flat: impl FnOnce() -> bool) -> Fate {
+    fate_of(
+        codes[0] | codes[1] | codes[2],
+        codes[0] & codes[1] & codes[2],
+        flat,
+    )
+}
+
+/// [`fate`] from the corner codes ORed, `or`, and ANDed, `and`.
+#[inline(always)]
+pub fn fate_of(or: u8, and: u8, flat: impl FnOnce() -> bool) -> Fate {
+    if or == 0 {
+        Fate::Whole
+    } else if and & PLANE_BITS != 0 {
+        Fate::Dropped
+    } else if or & (NEAR_BIT | OUTSIDE_GUARD) == 0 && flat() {
+        Fate::Whole
+    } else {
+        Fate::Clipped
+    }
 }
 
 /// `mvp * (p, 1)` for a column-major `mvp` (`mvp[column][row]`): the clip
@@ -174,16 +241,21 @@ fn clip_polygon(tri: &[Vertex; 3], guard: f32, emit: impl FnOnce(&[&Vertex])) ->
     n
 }
 
-/// How many of a list's `tris` triangles cross the guard band or the near
-/// plane: some corner outside a plane, but not all three outside the same
-/// one. `code(c)` is corner `c`'s [`outcode`]. A list with none draws as it
-/// is; [`clip_triangles`] rebuilds one with any.
+/// How many of a list's `tris` triangles are [`Fate::Clipped`] (a dropped
+/// one draws nothing either way). `code(c)` is corner `c`'s [`outcode`] or
+/// [`outcode_guarded`]; `flat(t)` is [`fate`]'s question for triangle `t`.
+/// A list with none draws as it is; [`clip_triangles`] rebuilds one with
+/// any.
 #[inline]
-pub fn crossing_triangles(tris: usize, code: impl Fn(usize) -> u8) -> usize {
+pub fn crossing_triangles(
+    tris: usize,
+    code: impl Fn(usize) -> u8,
+    flat: impl Fn(usize) -> bool,
+) -> usize {
     let mut crossing = 0;
     for t in 0..tris {
-        let (a, b, c) = (code(t * 3), code(t * 3 + 1), code(t * 3 + 2));
-        if a | b | c != 0 && a & b & c == 0 {
+        let codes = [code(t * 3), code(t * 3 + 1), code(t * 3 + 2)];
+        if fate(codes, || flat(t)) == Fate::Clipped {
             crossing += 1;
         }
     }
@@ -202,16 +274,21 @@ pub fn crossing_triangles_indexed(
     tris: usize,
     table: &[u8],
     past: impl Fn(usize) -> u8,
+    flat: impl Fn(usize) -> bool,
 ) -> usize {
     let corners = &indices[..tris * 6];
     // SAFETY: any bytes are a valid `u16`; `align_to` only reinterprets the
     // aligned middle.
     let (head, words, _) = unsafe { corners.align_to::<u16>() };
     if !head.is_empty() {
-        return crossing_triangles(tris, |c| {
-            let i = usize::from(u16::from_le_bytes([corners[2 * c], corners[2 * c + 1]]));
-            table.get(i).copied().unwrap_or_else(|| past(i))
-        });
+        return crossing_triangles(
+            tris,
+            |c| {
+                let i = usize::from(u16::from_le_bytes([corners[2 * c], corners[2 * c + 1]]));
+                table.get(i).copied().unwrap_or_else(|| past(i))
+            },
+            flat,
+        );
     }
     let code = |c: usize| {
         let i = usize::from(u16::from_le(words[c]));
@@ -231,13 +308,13 @@ pub fn crossing_triangles_indexed(
     if any == 0 && !beyond {
         return 0;
     }
-    crossing_triangles(tris, code)
+    crossing_triangles(tris, code, flat)
 }
 
 /// One piece of [`clip_triangle_runs`]' output, in draw order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Piece<'a> {
-    /// Triangles `start..end` of the list, every one inside every plane:
+    /// Triangles `start..end` of the list, every one [`Fate::Whole`]:
     /// drawn as they are, from the list itself.
     Run(usize, usize),
     /// A crossing triangle's clipped polygon, at least 3 vertices, drawn
@@ -246,9 +323,9 @@ pub enum Piece<'a> {
 }
 
 /// [`clip_triangles`] without decoding what it would re-emit unchanged:
-/// each maximal run of consecutive triangles inside every plane comes out
-/// as one [`Piece::Run`], and only a crossing triangle is decoded, clipped
-/// and emitted, as one [`Piece::Fan`]. Triangles wholly outside a plane are
+/// each maximal run of consecutive [`Fate::Whole`] triangles comes out
+/// as one [`Piece::Run`], and only a [`Fate::Clipped`] one is decoded,
+/// clipped and emitted, as one [`Piece::Fan`]. [`Fate::Dropped`] ones are
 /// dropped and end a run, as [`clip_triangles`] drops them. Expanding each
 /// run to its corners' `corner` attributes gives [`clip_triangles`]'
 /// output exactly, in the same order.
@@ -256,6 +333,7 @@ pub fn clip_triangle_runs(
     tris: usize,
     guard: f32,
     code: impl Fn(usize) -> u8,
+    flat: impl Fn(usize) -> bool,
     mut corner: impl FnMut(usize) -> [f32; ATTRS],
     clip: impl Fn(&[f32; ATTRS]) -> [f32; 4],
     mut out: impl FnMut(Piece<'_>),
@@ -263,14 +341,15 @@ pub fn clip_triangle_runs(
     let mut run = None;
     for t in 0..tris {
         let codes = [code(t * 3), code(t * 3 + 1), code(t * 3 + 2)];
-        if codes[0] | codes[1] | codes[2] == 0 {
+        let fate = fate(codes, || flat(t));
+        if fate == Fate::Whole {
             run.get_or_insert(t);
             continue;
         }
         if let Some(start) = run.take() {
             out(Piece::Run(start, t));
         }
-        if codes[0] & codes[1] & codes[2] != 0 {
+        if fate == Fate::Dropped {
             continue;
         }
         let tri = [corner(t * 3), corner(t * 3 + 1), corner(t * 3 + 2)].map(|attrs| Vertex {
@@ -287,11 +366,12 @@ pub fn clip_triangle_runs(
 /// A triangle list's `tris` triangles clipped in order, each emitted as
 /// the fan of [`clip_triangle`]'s polygon: what clipping every triangle
 /// with [`clip_triangle`] gives, without its work where the result is
-/// already known. A triangle inside every plane is its own three corners,
-/// one wholly outside a plane is dropped, and only a crossing one is
+/// already known. A [`Fate::Whole`] triangle is its own three corners, a
+/// [`Fate::Dropped`] one is dropped, and only a [`Fate::Clipped`] one is
 /// clipped.
 ///
-/// `code(c)` is corner `c`'s [`outcode`] of `clip(&corner(c))`;
+/// `code(c)` is corner `c`'s [`outcode`] or [`outcode_guarded`] of
+/// `clip(&corner(c))`; `flat(t)` is [`fate`]'s question for triangle `t`;
 /// `corner(c)` decodes its attributes, called once per corner kept;
 /// `emit` receives each output vertex's attributes. Returns the number
 /// emitted.
@@ -299,6 +379,7 @@ pub fn clip_triangles(
     tris: usize,
     guard: f32,
     code: impl Fn(usize) -> u8,
+    flat: impl Fn(usize) -> bool,
     mut corner: impl FnMut(usize) -> [f32; ATTRS],
     clip: impl Fn(&[f32; ATTRS]) -> [f32; 4],
     mut emit: impl FnMut(&[f32; ATTRS]),
@@ -307,11 +388,12 @@ pub fn clip_triangles(
     let mut emitted = 0;
     for t in 0..tris {
         let codes = [code(t * 3), code(t * 3 + 1), code(t * 3 + 2)];
-        if codes[0] & codes[1] & codes[2] != 0 {
+        let fate = fate(codes, || flat(t));
+        if fate == Fate::Dropped {
             continue;
         }
         let attrs = [corner(t * 3), corner(t * 3 + 1), corner(t * 3 + 2)];
-        if codes[0] | codes[1] | codes[2] == 0 {
+        if fate == Fate::Whole {
             attrs.iter().for_each(&mut emit);
             emitted += 3;
             continue;
@@ -572,12 +654,13 @@ mod tests {
             let corner = |c: usize| decode(&pool[indices[c]]);
             let old = clip_submission_reference(&mvp, corner, tris * 3);
             let code = |c: usize| table[indices[c]];
-            let new = (crossing_triangles(tris, code) != 0).then(|| {
+            let new = (crossing_triangles(tris, code, |_| false) != 0).then(|| {
                 let mut out = Vec::new();
                 let n = clip_triangles(
                     tris,
                     GUARD,
                     code,
+                    |_| false,
                     corner,
                     |a| clip_position(&mvp, [a[9], a[10], a[11]]),
                     |a| out.push(*a),
@@ -621,11 +704,17 @@ mod tests {
             // Some meshes keep most vertices inside, so long runs occur.
             let inside_bias = case % 3 == 0;
             let tris = 1 + rng.next() as usize % 40;
+            // Half the cases clip at the viewport with guarded codes and
+            // some triangles flat: the runs then hold flat crossing ones.
+            let viewport = case % 2 == 0;
+            let band = if viewport { 1.0 } else { GUARD };
+            let flat = |t: usize| viewport && t % 3 != 1;
             let table: Vec<u8> = pool
                 .iter()
                 .map(|v| {
-                    outcode(
+                    outcode_guarded(
                         clip_position(&mvp, v.pos.map(|c| f32::from(c) / DIVISOR)),
+                        band,
                         GUARD,
                     )
                 })
@@ -645,13 +734,13 @@ mod tests {
             let clip = |a: &[f32; ATTRS]| clip_position(&mvp, [a[9], a[10], a[11]]);
 
             let mut whole = Vec::new();
-            clip_triangles(tris, GUARD, code, corner, clip, |a| {
+            clip_triangles(tris, band, code, flat, corner, clip, |a| {
                 whole.push(a.map(f32::to_bits))
             });
 
             let mut pieces = Vec::new();
             let mut expanded = Vec::new();
-            clip_triangle_runs(tris, GUARD, code, corner, clip, |p| match p {
+            clip_triangle_runs(tris, band, code, flat, corner, clip, |p| match p {
                 Piece::Run(a, b) => {
                     pieces.push((true, a, b));
                     for c in a * 3..b * 3 {
@@ -680,7 +769,10 @@ mod tests {
             for &(is_run, a, b) in &pieces {
                 if is_run {
                     assert!(a < b);
-                    assert!((a * 3..b * 3).all(|c| code(c) == 0));
+                    assert!((a..b).all(|t| {
+                        fate([code(t * 3), code(t * 3 + 1), code(t * 3 + 2)], || flat(t))
+                            == Fate::Whole
+                    }));
                     runs += 1;
                 } else {
                     clipped += 1;
@@ -700,10 +792,14 @@ mod tests {
             };
             let short = &table[..cut];
             let past = |i: usize| table[i] ^ 0x10;
-            let reference = crossing_triangles(tris, |c| {
-                let i = indices[c];
-                short.get(i).copied().unwrap_or_else(|| past(i))
-            });
+            let reference = crossing_triangles(
+                tris,
+                |c| {
+                    let i = indices[c];
+                    short.get(i).copied().unwrap_or_else(|| past(i))
+                },
+                flat,
+            );
             let mut bytes = vec![0u8; 1 + tris * 6];
             for (c, &i) in indices.iter().enumerate() {
                 bytes[1 + 2 * c..3 + 2 * c].copy_from_slice(&(i as u16).to_le_bytes());
@@ -716,11 +812,11 @@ mod tests {
             let aligned =
                 unsafe { core::slice::from_raw_parts(aligned.as_ptr() as *const u8, tris * 6) };
             assert_eq!(
-                crossing_triangles_indexed(aligned, tris, short, past),
+                crossing_triangles_indexed(aligned, tris, short, past, flat),
                 reference
             );
             assert_eq!(
-                crossing_triangles_indexed(&bytes[1..], tris, short, past),
+                crossing_triangles_indexed(&bytes[1..], tris, short, past, flat),
                 reference
             );
         }
@@ -728,6 +824,45 @@ mod tests {
             runs > 2000 && split > 300 && clipped > 1000,
             "{runs} {split} {clipped}"
         );
+    }
+
+    /// A flat triangle crossing only the viewport's x or y planes draws
+    /// whole; one with a corner past the guard band or the near plane, or
+    /// not flat, is clipped; corners past the guard band on opposite
+    /// sides do not drop it, nor ask whether it is flat when they must
+    /// clip it anyway.
+    #[test]
+    fn fate_draws_flat_viewport_crossings_whole_and_clips_the_rest() {
+        let code = |x: f32, y: f32, z: f32| outcode_guarded([x, y, z, 1.0], 1.0, GUARD);
+        let inside = code(0.0, 0.0, 0.0);
+        let right = code(1.5, 0.0, 0.0);
+        let far_right = code(3.0, 0.0, 0.0);
+        let far_left = code(-3.0, 0.0, 0.0);
+        let behind = code(0.0, 0.0, -2.0);
+        assert_eq!(fate([inside; 3], || unreachable!()), Fate::Whole);
+        assert_eq!(fate([inside, right, inside], || true), Fate::Whole);
+        assert_eq!(fate([inside, right, inside], || false), Fate::Clipped);
+        assert_eq!(
+            fate([inside, far_right, inside], || unreachable!()),
+            Fate::Clipped
+        );
+        assert_eq!(
+            fate([inside, behind, inside], || unreachable!()),
+            Fate::Clipped
+        );
+        assert_eq!(
+            fate([right, far_right, right], || unreachable!()),
+            Fate::Dropped
+        );
+        assert_eq!(
+            fate([far_left, far_right, inside], || unreachable!()),
+            Fate::Clipped
+        );
+        assert_eq!(
+            fate([far_left, far_right, far_left], || unreachable!()),
+            Fate::Clipped
+        );
+        assert_eq!(far_right & PLANE_BITS, outcode([3.0, 0.0, 0.0, 1.0], 1.0));
     }
 
     #[test]

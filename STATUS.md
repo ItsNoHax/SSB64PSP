@@ -18,11 +18,11 @@
 
 ## Current work
 
-- Landed (batch 193): fight first frame `update` 19-22 to 16-20 ms on PSP-2000 (figatree groups cached at boot); `enter` waits only for reads it wants (RE-476, RE-501). Measured: D-047 crop fill hidden, GE idles before the CPU (RE-477); GE shade screen-linear, viewport clip next (RE-519).
+- Landed (batch 194): all scene draws clip at the viewport (`FRUSTRATIO_1`); flat triangles crossing only x/y draw whole. PSP-2000 busy vs4 15.11 to 15.84 ms, Zebes 10.81 to 11.29, opening 9.60 to 9.46; 172 goldens rebaselined with hardware proof (RE-519).
+- Landed (batch 193): fight first frame `update` 19-22 to 16-20 ms on PSP-2000 (figatree groups cached at boot); `enter` waits only for reads it wants (RE-476, RE-501). GE shade screen-linear (RE-519).
 - Landed (batch 192): opening fight first frame `update` 24-28 to 19-22 ms on PSP-2000: one-field pack scans, in-place clears; vs4 15.50 to 15.45 ms; lazy item players rejected, vs4 +0.25 ms (RE-476; goldens unchanged).
 - Landed (batch 191): pack stores texture level 0 only, the GE never samples mips (pack -2.85 MB, v149 unchanged, goldens unchanged, RE-491); training-select clip reads already hidden by the 1P menu read-ahead (RE-501).
 - Landed (batch 190): sleep with ME audio: `k_me_reset` unregisters the system's `SceMeRpc` suspend handler, whose save handshake our ME program never answered; owner: sleeps, sound after wake (RE-479).
-- Landed (batch 189): static-CLUT textures keep the ROM's indices (`matcolors` 0 texel diffs, RE-364; same pack size, goldens unchanged); viewer 512 KiB stack ends its PSP kill, GE HUD shown on hardware (RE-202); D-029 text current.
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Gaps in `PLAN.md`.
 

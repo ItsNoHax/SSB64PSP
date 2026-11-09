@@ -153,7 +153,7 @@ impl Room {
     /// Draws the room under the current camera, whose projection times view
     /// is `view_proj`: the desk only once the props are ejected.
     ///
-    /// The RSP clips the room against the near plane and the guard band
+    /// The RSP clips the room against the near plane and the viewport
     /// where the GE would drop whole triangles: in the tic-91 close-up the
     /// desk top's near corner lies far off screen, and unclipped the GE
     /// dropped the top's near triangle (RE-459, RE-519).

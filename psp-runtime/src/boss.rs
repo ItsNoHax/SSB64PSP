@@ -166,8 +166,7 @@ impl BossEffects {
         // the 3D edge and shades linearly between; unclipped, the GE spread
         // the ring's shade over the whole screen-space edge and the tunnel
         // drew much darker (RE-519).
-        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
-        st.clip_at_viewport = true;
+        let clip = st.clip_view_proj.take();
         let mut posed = [Mat4::IDENTITY; MAX_NODES];
         for i in wallpaper.draw_order(tag) {
             let Some(e) = &wallpaper.effects[i] else {
@@ -230,7 +229,7 @@ impl BossEffects {
             );
             st.color_override = None;
         }
-        (st.clip_view_proj, st.clip_at_viewport) = clip;
+        st.clip_view_proj = clip;
     }
 
     /// [`Self::draw`], each pass over every effect of the camera before the
@@ -269,8 +268,7 @@ impl BossEffects {
             self.draw_unbatched_v2(gpu, pack, st, wallpaper, tag, fade);
             return;
         }
-        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
-        st.clip_at_viewport = true;
+        let clip = st.clip_view_proj.take();
         let mut batch = None;
         let mut counts = [0usize; MAX_EFFECTS];
         let mut next = 0;
@@ -327,7 +325,7 @@ impl BossEffects {
         if let Some(b) = batch {
             b.finish();
         }
-        (st.clip_view_proj, st.clip_at_viewport) = clip;
+        st.clip_view_proj = clip;
     }
 
     /// [`Self::draw_batched`] for a frame its passes do not take: with the
@@ -368,8 +366,7 @@ impl BossEffects {
             self.draw(gpu, pack, st, wallpaper, tag, fade);
             return;
         }
-        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
-        st.clip_at_viewport = true;
+        let clip = st.clip_view_proj.take();
         let mut batch = None;
         let mut counts = [0usize; MAX_EFFECTS];
         let mut next = 0;
@@ -454,7 +451,7 @@ impl BossEffects {
         if let Some(b) = batch {
             b.finish();
         }
-        (st.clip_view_proj, st.clip_at_viewport) = clip;
+        st.clip_view_proj = clip;
     }
 
     /// [`Self::draw_batched`]'s first pass: every drawn effect's node
@@ -711,8 +708,7 @@ impl BossEffects {
             self.draw_unbatched(gpu, pack, st, wallpaper, tag, fade);
             return;
         }
-        let clip = (st.clip_view_proj.take(), st.clip_at_viewport);
-        st.clip_at_viewport = true;
+        let clip = st.clip_view_proj.take();
         let mut batch = None;
         let mut counts = [0usize; MAX_EFFECTS];
         let mut next = 0;
@@ -810,6 +806,6 @@ impl BossEffects {
         if let Some(b) = batch {
             b.finish();
         }
-        (st.clip_view_proj, st.clip_at_viewport) = clip;
+        st.clip_view_proj = clip;
     }
 }

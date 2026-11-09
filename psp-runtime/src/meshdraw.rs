@@ -398,13 +398,6 @@ pub struct DrawState {
     /// triangles the GE would discard clipped on the CPU first
     /// ([`ssb_engine::guard_clip`]). `None` draws every primitive as packed.
     pub clip_view_proj: Option<[[f32; 4]; 4]>,
-    /// Clip [`Self::clip_view_proj`]'s triangles to the viewport,
-    /// `|x|, |y| <= w`, instead of [`GUARD_BAND`]: the game's own
-    /// `gsSPClipRatio(FRUSTRATIO_1)` (`sSYRdpResetDisplayList`). The RDP
-    /// shades the clipped corners linearly in screen space, and so does the
-    /// GE on PPSSPP, so where a triangle's vertices lie far off screen the
-    /// band decides the colour on screen (RE-519).
-    pub clip_at_viewport: bool,
     /// Coordinate mapping last installed.
     ///
     /// Separate from `last_texture` because the scale depends on *both* the
@@ -692,7 +685,6 @@ impl DrawState {
         for row in self.clip_view_proj.unwrap_or([[0.0; 4]; 4]) {
             key.floats(&row);
         }
-        key.option(self.clip_at_viewport);
         let key = key.finish();
         let spoiled = foreign || self.color_override.is_some() || next == 0;
         *tape_mode() = if !spoiled
@@ -2524,8 +2516,7 @@ unsafe fn draw_mesh_vertices(
         .clip_view_proj
         .filter(|_| !replay)
         .and_then(|vp| {
-            let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
-            guard_clip(&vp, band, st.texgen_model.get()?, verts)
+            guard_clip(&vp, CLIP_RATIO, st.texgen_model.get()?, verts)
         });
     if taped && clip.is_some() {
         st.spoil_tape();
@@ -2662,11 +2653,20 @@ fn texture_part_override(pack: &Pack<'_>, mesh: u32, i: u32, ids: [i8; 2]) -> Op
     (texture != TextureDesc::NO_ANIM).then_some(texture)
 }
 
-/// The guard band [`clip_submission`] clips to, in units of `w`: twice the
-/// viewport's half extent, inside the GE's 4096-pixel screen range for any
-/// viewport up to 1024 pixels wide, and off screen for every viewport this
-/// port sets.
-const GUARD_BAND: f32 = 2.0;
+/// The bound [`clip_submission`] clips to, in units of `w`: the viewport,
+/// the game's own `gsSPClipRatio(FRUSTRATIO_1)` (`sSYRdpResetDisplayList`).
+/// The RDP and the PSP GE both shade screen-linearly (RE-519), so a clipped
+/// corner's colour, taken at its clip-space point, depends on where the
+/// edge lies: the viewport matches the N64 on screen. Inside the GE's
+/// 4096-pixel range for any viewport. A flat triangle crossing only the
+/// viewport's sides draws whole ([`ssb_engine::guard_clip::fate`]).
+const CLIP_RATIO: f32 = 1.0;
+
+/// The band, in units of `w`, a triangle the GE draws whole stays inside:
+/// past it a vertex may leave the GE's 4096-pixel range, where the GE drops
+/// the triangle (RE-519). Its corners' outcodes mark it
+/// ([`ssb_engine::guard_clip::OUTSIDE_GUARD`]).
+const GE_GUARD: f32 = 2.0;
 
 /// Most vertices a mesh's [`GuardClip`] outcode table holds. A larger mesh
 /// takes each corner's outcode from its vertex instead, with the same
@@ -2726,12 +2726,17 @@ fn vertex_outcode(mvp: &[[f32; 4]; 4], band: f32, verts: &[u8], index: usize) ->
 #[inline(always)]
 fn position_outcode(mvp: &[[f32; 4]; 4], band: f32, p: [i16; 3]) -> u8 {
     let p = p.map(|c| f32::from(c) / VERTEX_16BIT_DIVISOR);
-    ssb_engine::guard_clip::outcode(ssb_engine::guard_clip::clip_position(mvp, p), band)
+    ssb_engine::guard_clip::outcode_guarded(
+        ssb_engine::guard_clip::clip_position(mvp, p),
+        band,
+        GE_GUARD,
+    )
 }
 
 /// [`draw_mesh_vertices`]' guard clip for `verts` under `model`, when some
-/// vertex lies outside the guard band or behind the near plane and the GE
-/// could drop a triangle the N64 draws ([`ssb_engine::guard_clip`]). `None`
+/// vertex lies outside the viewport ([`CLIP_RATIO`]) or behind the near
+/// plane: the GE could drop a triangle the N64 draws, or shade its clipped
+/// corners differently ([`ssb_engine::guard_clip`]). `None`
 /// otherwise, the common case, leaving the mesh's submissions as packed.
 fn guard_clip<'a>(
     vp: &[[f32; 4]; 4],
@@ -2864,6 +2869,45 @@ unsafe fn decode_corner(
     ])
 }
 
+/// Whether triangle `t` of a submission is flat
+/// ([`ssb_engine::guard_clip::fate`]): its three corners' colour and normal
+/// as the GE reads them are the same. The GE lights no vertex and its fog
+/// here is constant, so a flat triangle's shade is one value. `false` for
+/// a vertex format [`decode_corner`] does not read.
+#[inline]
+unsafe fn submission_flat(
+    (vtype, index_ptr, vertex_ptr): (i32, *const c_void, *const c_void),
+    t: usize,
+) -> bool {
+    let shade = |corner: usize| -> Option<(u32, [i8; 3])> {
+        Some(if vtype == VERTEX_FORMAT.bits() {
+            let index = (index_ptr as *const u16).add(corner).read_unaligned();
+            let v = (vertex_ptr as *const PackedVertex)
+                .wrapping_add(usize::from(index))
+                .read_unaligned();
+            (v.color, [v.nx, v.ny, v.nz])
+        } else if vtype == UNINDEXED_VERTEX_FORMAT.bits() {
+            let v = (vertex_ptr as *const PackedVertex).add(corner).read_unaligned();
+            (v.color, [v.nx, v.ny, v.nz])
+        } else if vtype == FLOAT_UV_VERTEX_FORMAT.bits() {
+            let v = (vertex_ptr as *const FloatUvVertex).add(corner).read_unaligned();
+            (v.color, [v.nx, v.ny, v.nz])
+        } else if vtype == INDEXED_FLOAT_UV_VERTEX_FORMAT.bits() {
+            let index = (index_ptr as *const u16).add(corner).read_unaligned();
+            let v = (vertex_ptr as *const FloatUvVertex)
+                .wrapping_add(usize::from(index))
+                .read_unaligned();
+            (v.color, [v.nx, v.ny, v.nz])
+        } else {
+            return None;
+        })
+    };
+    match (shade(3 * t), shade(3 * t + 1), shade(3 * t + 2)) {
+        (Some(a), Some(b), Some(c)) => a == b && b == c,
+        _ => false,
+    }
+}
+
 fn encode_corner(a: &[f32; ssb_engine::guard_clip::ATTRS]) -> ClipVertex {
     let byte = |x: f32| (x + 0.5).clamp(0.0, 255.0) as u8;
     let normal = |x: f32| (x + if x < 0.0 { -0.5 } else { 0.5 }).clamp(-128.0, 127.0) as i8;
@@ -2922,7 +2966,7 @@ const CLIP_DRAWS_MAX: usize = 128;
 /// next primitive is clipped.
 static mut CLIP_DRAWS: [Draw; CLIP_DRAWS_MAX] = [Draw::EMPTY; CLIP_DRAWS_MAX];
 
-/// A submission whose triangles leave the guard band or cross the near
+/// A submission whose triangles leave the viewport or cross the near
 /// plane, as the draws that clip them ([`ssb_engine::guard_clip`]). The GE
 /// drops a whole triangle with a vertex in front of the near plane outside
 /// its screen range; the RSP clips it. `None` when no triangle needs it,
@@ -2931,9 +2975,10 @@ static mut CLIP_DRAWS: [Draw; CLIP_DRAWS_MAX] = [Draw::EMPTY; CLIP_DRAWS_MAX];
 /// Corner `i` of the submission is the primitive's vertex `indices[i]`: an
 /// expanded submission keeps the corner order and positions and changes
 /// only colour or texture coordinates. Each corner's outcode is therefore
-/// the mesh table's, a byte read; only a primitive with a crossing
-/// triangle is rebuilt, in [`rebuild_runs`]. Out of line, so its scan
-/// does not grow [`draw_mesh_vertices`]' loop.
+/// the mesh table's, a byte read; only a primitive with a triangle to
+/// clip is rebuilt, in [`rebuild_runs`]. Whether a triangle is flat is the
+/// submission's ([`submission_flat`]): its colours are the expanded ones.
+/// Out of line, so its scan does not grow [`draw_mesh_vertices`]' loop.
 #[inline(never)]
 unsafe fn clip_submission(
     clip: &GuardClip<'_>,
@@ -2941,19 +2986,21 @@ unsafe fn clip_submission(
     whole: &Draw,
 ) -> Option<&'static [Draw]> {
     let tris = whole.count as usize / 3;
+    let submission = (whole.vtype, whole.index, whole.vertex);
+    let flat = |t: usize| submission_flat(submission, t);
     let crossing = match clip.codes {
         Some(table) => ssb_engine::guard_clip::crossing_triangles_indexed(
             indices,
             tris,
             table,
             |i| clip.vertex_code(i),
+            flat,
         ),
-        None => ssb_engine::guard_clip::crossing_triangles(tris, |c| {
-            clip.code(usize::from(u16::from_le_bytes([
-                indices[2 * c],
-                indices[2 * c + 1],
-            ])))
-        }),
+        None => ssb_engine::guard_clip::crossing_triangles(
+            tris,
+            |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
+            flat,
+        ),
     };
     if crossing == 0 {
         return None;
@@ -3026,6 +3073,7 @@ unsafe fn rebuild_runs(
         tris,
         clip.band,
         |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
+        |t| submission_flat(submission, t),
         |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
         |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),
         |piece| match piece {
@@ -3116,6 +3164,7 @@ unsafe fn rebuild_clipped(
         tris,
         clip.band,
         |c| clip.code(usize::from(u16::from_le_bytes([indices[2 * c], indices[2 * c + 1]]))),
+        |t| submission_flat(submission, t),
         |c| decode_corner(submission, c).unwrap_or([0.0; ATTRS]),
         |a| clip_position(&clip.mvp, [a[9], a[10], a[11]]),
         |a| {

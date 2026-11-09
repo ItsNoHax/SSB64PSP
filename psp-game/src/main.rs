@@ -9853,7 +9853,7 @@ unsafe fn draw_training(
     let mut pose_cache = meshdraw::StagePoseCache::default();
     let mut stage_pass = |links: core::ops::RangeInclusive<u8>, heads, draw_state: &mut meshdraw::DrawState| {
         draw_state.heads = heads;
-        // The RSP clips the stage against the near plane and the guard band
+        // The RSP clips the stage against the near plane and the viewport
         // where the GE would drop whole triangles: Zebes' risen acid runs
         // under the camera (RE-519). Fighters and effects keep the packed
         // submissions.

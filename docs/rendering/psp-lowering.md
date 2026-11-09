@@ -11,7 +11,9 @@ Part of [rendering.md](../rendering.md).
 ## Guard-band clipping
 
 - GE drops a whole triangle when a vertex in front of the near plane projects past its 4096-pixel range; RSP clips.
-- Such triangles clipped on CPU against |x|,|y| <= 2w and z >= -w (RE-519).
+- Scene draws clipped on CPU against the viewport |x|,|y| <= w (the game's `FRUSTRATIO_1`) and z >= -w (RE-519).
+  - why: GE and RDP shade screen-linearly; a clipped corner's colour depends on where the clip edge lies.
+- Flat triangles (one colour and normal) crossing only x/y planes inside 2w draw whole; the GE's own screen clip draws the same pixels up to rasteriser rounding (RE-519).
 
 ## Shade-only combiners
 

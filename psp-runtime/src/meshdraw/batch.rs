@@ -21,7 +21,7 @@
 //! What the passes reorder, checked against the per-object path:
 //! - the skin reads the node's model matrix and the scene's light
 //!   (`active_light`, `rsp_rows`), both fixed before [`batch_pose`];
-//! - the outcodes read `clip_view_proj`, `clip_at_viewport` and the node's
+//! - the outcodes read `clip_view_proj` and the node's
 //!   model matrix, the value `set_model_matrix` gives `texgen_model`;
 //! - `expand_corners` reads `DrawState` only for linear texgen
 //!   (`texgen_object_basis`), which no batched primitive has;
@@ -56,7 +56,7 @@ use super::{
     animated_uv_affine, apply_fade_blend, apply_flags_state, apply_texture_affine,
     bind_texture_cached, bind_texture_uncached, clip_submission, compose_model_matrix,
     expand_corners, fpu_sqrt, light_rows, mat4_of, mat4_rows, tape_mode, Draw, DrawState,
-    GuardClip, TapeMode, TextureFuncState, CLIP_CODES, CLIP_CODES_MAX, GUARD_BAND,
+    GuardClip, TapeMode, TextureFuncState, CLIP_CODES, CLIP_CODES_MAX, CLIP_RATIO,
     LIGHT_MARK_OFFSET, LIGHT_MARK_SET, LIGHT_PREPASS, VERTEX_FORMAT,
 };
 
@@ -404,7 +404,7 @@ fn clip_transform(vp: &[[f32; 4]; 4], model: &ScePspFMatrix4) -> [[f32; 4]; 4] {
 /// [`batch_submit`]: nothing else may write [`CLIP_CODES`] until the last.
 #[inline(never)]
 pub(crate) unsafe fn batch_expand(pack: &Pack<'_>, st: &DrawState, batch: &mut Batch) {
-    let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
+    let band = CLIP_RATIO;
     let size = core::mem::size_of::<PackedVertex>();
     let table = &mut *core::ptr::addr_of_mut!(CLIP_CODES);
     let mut at = 0usize;
@@ -494,7 +494,7 @@ pub(crate) unsafe fn batch_submit(
 ) {
     // `light_prepass`, which returns at once without a fighter light.
     (*core::ptr::addr_of_mut!(LIGHT_PREPASS)).0 = 0;
-    let band = if st.clip_at_viewport { 1.0 } else { GUARD_BAND };
+    let band = CLIP_RATIO;
     let size = core::mem::size_of::<PackedVertex>();
     for k in first..first + count {
         let m = &*batch.meshes.add(k);
