@@ -11,7 +11,7 @@ description = "Layer C: the first-launch installer, `INSTALL.PBP` beside the gam
 [workspace]
 
 [dependencies]
-psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "6c3f2c338d93e6fbe346dae0610ac7e11eadf61f" }
+psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "781d9a9f093da8dfed75062772e37ab80aa8cd6a" }
 # The installer itself (`ssb_psp_runtime::installer`), which runs
 # `ssb-pack`'s build.
 ssb-psp-runtime = { path = "../psp-runtime", features = ["installer"] }
