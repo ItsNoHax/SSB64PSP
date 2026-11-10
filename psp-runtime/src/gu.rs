@@ -107,8 +107,86 @@ pub(crate) unsafe fn ge_vertices(bytes: usize) -> *mut u8 {
         region.1 += lines;
         return block as *mut u8;
     }
+    vertices_past_vram(bytes, lines)
+}
+
+/// [`ge_vertices`] past the VRAM region: [`vertex_overflow`]'s main memory
+/// while a list has it, else list memory (a spill). Out of line and cold,
+/// away from the path most blocks take (RE-576).
+#[cold]
+#[inline(never)]
+unsafe fn vertices_past_vram(bytes: usize, lines: usize) -> *mut u8 {
+    let over = &mut *core::ptr::addr_of_mut!(VERTEX_OVERFLOW);
+    if over.1 != 0 && lines <= over.2 - over.1 {
+        // The VRAM region takes nothing more this list: one cursor then
+        // names the region's position ([`vertex_region`]).
+        let region = &mut *core::ptr::addr_of_mut!(VRAM_VERTICES);
+        region.1 = region.2;
+        let block = over.1;
+        over.1 += lines;
+        return block as *mut u8;
+    }
     *core::ptr::addr_of_mut!(VRAM_SPILLS) += 1;
+    *core::ptr::addr_of_mut!(SPILLED_BYTES) += lines;
     cached_vertices(bytes)
+}
+
+/// Main memory that extends [`ge_vertices`]' VRAM region past its end:
+/// first line, next free line and end, cached alias; all 0 while unlent.
+static mut VERTEX_OVERFLOW: (usize, usize, usize) = (0, 0, 0);
+/// [`VERTEX_OVERFLOW`]'s allocation.
+static mut OVERFLOW_LINES: alloc::vec::Vec<CacheLineAligned<[u8; DCACHE_LINE]>> = alloc::vec::Vec::new();
+/// The largest [`VERTEX_OVERFLOW`] a draw of the current list asked for; 0:
+/// none asked.
+static mut OVERFLOW_WANTED: usize = 0;
+/// Bytes of [`ge_vertices`] blocks the current list spilled to list memory.
+static mut SPILLED_BYTES: usize = 0;
+/// [`VERTEX_OVERFLOW`] grows by what the last list spilled plus this: the
+/// VRAM region's unused tail goes with the switch to main memory.
+const OVERFLOW_SLACK: usize = 16 * 1024;
+
+/// Extends [`ge_vertices`]' region past VRAM, up to `max_bytes` of main
+/// memory, so that frozen models past the VRAM region keep their blocks
+/// from list to list ([`crate::meshdraw::VertexTape`]) instead of spilling
+/// to list memory, which each list rewrites. The next list gets as much as
+/// this one spilled; the memory is freed at the start of the first list
+/// after one that did not ask. A failed allocation leaves blocks spilling.
+///
+/// # Safety
+///
+/// Between `sceGuStart` and `sceGuFinish` of the direct list.
+pub(crate) unsafe fn vertex_overflow(max_bytes: usize) {
+    let wanted = &mut *core::ptr::addr_of_mut!(OVERFLOW_WANTED);
+    *wanted = (*wanted).max(max_bytes);
+}
+
+/// [`reset_vertex_chunk`] for [`VERTEX_OVERFLOW`]: starts it over, grown by
+/// what the last list spilled, or frees it when the last list did not ask
+/// for it. The GE has finished that list, so no draw reads the old memory.
+unsafe fn reset_vertex_overflow() {
+    let max = core::mem::replace(&mut *core::ptr::addr_of_mut!(OVERFLOW_WANTED), 0);
+    let spilled = core::mem::replace(&mut *core::ptr::addr_of_mut!(SPILLED_BYTES), 0);
+    let over = &mut *core::ptr::addr_of_mut!(VERTEX_OVERFLOW);
+    let lines = &mut *core::ptr::addr_of_mut!(OVERFLOW_LINES);
+    if max == 0 {
+        if over.0 != 0 {
+            *over = (0, 0, 0);
+            *lines = alloc::vec::Vec::new();
+        }
+        return;
+    }
+    let want = (lines.len() * DCACHE_LINE + spilled + OVERFLOW_SLACK).min(max) / DCACHE_LINE;
+    if spilled != 0 && want > lines.len() {
+        *over = (0, 0, 0);
+        *lines = alloc::vec::Vec::new();
+        if lines.try_reserve_exact(want).is_err() {
+            return;
+        }
+        lines.resize_with(want, || CacheLineAligned([0; DCACHE_LINE]));
+        let start = lines.as_mut_ptr() as usize;
+        *over = (start, start, start + want * DCACHE_LINE);
+    }
+    over.1 = over.0;
 }
 
 /// [`ge_vertices`]' VRAM region: its first line, its next free line and its
@@ -121,17 +199,24 @@ static mut VRAM_SPILLS: u32 = 0;
 
 /// Where [`ge_vertices`] stands: the direct lists started so far, the
 /// region's next free line (0 before [`Gpu::init`]) and the blocks so far
-/// that went to list memory instead.
+/// that went to list memory instead. Once a list takes
+/// [`vertex_overflow`]'s memory, its next free line names the position.
 ///
 /// A block's contents stay in VRAM until a later list allocates over it:
 /// each list starts the region over and the region is [`ge_vertices`]'
 /// alone, so the next list rewrites a line only by allocating it again.
+/// The same holds for the overflow while successive lists ask for it.
 pub(crate) fn vertex_region() -> (u32, usize, u32) {
     // SAFETY: the render thread alone touches the region and the counts.
     unsafe {
+        let over = *core::ptr::addr_of!(VERTEX_OVERFLOW);
         (
             *core::ptr::addr_of!(VRAM_LIST),
-            (*core::ptr::addr_of!(VRAM_VERTICES)).1,
+            if over.1 != over.0 {
+                over.1
+            } else {
+                (*core::ptr::addr_of!(VRAM_VERTICES)).1
+            },
             *core::ptr::addr_of!(VRAM_SPILLS),
         )
     }
@@ -166,6 +251,7 @@ fn reset_vertex_chunk() {
         *core::ptr::addr_of_mut!(STALL_PENDING) = 0;
         let region = &mut *core::ptr::addr_of_mut!(VRAM_VERTICES);
         region.1 = region.0;
+        reset_vertex_overflow();
         *core::ptr::addr_of_mut!(VRAM_LIST) = (*core::ptr::addr_of!(VRAM_LIST)).wrapping_add(1);
         texture_pool_frame();
     }

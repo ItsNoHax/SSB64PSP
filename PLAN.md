@@ -22,7 +22,7 @@
 | Save data | N64 SRAM image in `ssb64.sav` ([D-045](docs/decisions/D-045.md)) | None (validators cannot fail on a PSP, RE-460) |
 | Audio | N64 audio system ported whole, sample-exact ([D-049](docs/decisions/D-049.md), RE-479) | Within the PSP-2000 CPU budget everywhere |
 | PSP performance | 60 FPS under PPSSPP; PSP-2000 figures in STATUS | 60 FPS on a PSP-2000 in every scene |
-| Platform | PSP-2000 and later (64 MiB); PSP-1000 unsupported (RE-288, RE-475) | PSP-1000 (32 MiB) and later |
+| Platform | PSP-2000 and later (64 MiB); PSP-1000 under PSPLink: pack build, 38-scene scripted run (RE-590), XMB budget unmeasured | PSP-1000 (32 MiB) and later |
 | Testing | Host tests (CI: no ROM, stub tables), ROM tests, PPSSPPHeadless goldens as pixel hashes ([visual regression](docs/visual-regression/README.md)), N64 RDRAM traces | Hardware acceptance matrix |
 
 ## Milestones
@@ -57,16 +57,17 @@
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
+| 1P intro frozen models | Replay still re-issues every node's commands (0.8 ms per model): PSP-1000 Polygon Team intro 28 ms (31 fps), Yoshi Team at the 16.7 ms edge. Recorded command replay; acceptance: both intros 60 FPS on a PSP-1000 | RE-576, RE-590 |
 | Boot time | Owner boot is slow, unexplained on the PSP-2000 (534 to about 417 ms to frame 1, RE-582); suspect the stale 64 MB `ms0:/PSP/GAME/ssb64/ssb64.pak` (now a fatal mismatch screen). Acceptance: owner XMB `boot.log` (PSP-1000 and Slim) with pack v149; then pack bytes (fighter-only tables out of the resident prefix, audio prefix); `load_pack` errors to the fatal screen | RE-582 |
 | Campaign by hand | PSP-2000, current production EBOOT: campaign past Race to the Finish; then RE-476/RE-477 checks | RE-476–RE-478 |
-| Hardware acceptance | 30-minute run on second unit; re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341 |
+| Hardware acceptance | Re-capture goldens on PSP; hand-input shield, grab, throws, costume picks | RE-273, RE-284, RE-320, RE-326, RE-339, RE-341; second-unit 30-minute run done (RE-590) |
 | Nub deadzone | Measure on hardware (20 units, linear rescale to ±80: unmeasured) | RE-009 |
 
 Audio cost ([D-049](docs/decisions/D-049.md) amendment, RE-479): DSP runs on
 the Media Engine (batch 159), started by the game's own kernel module
 (batch 160). Remaining:
 
-1. PSP-1000: ME path, memory.
+1. PSP-1000: listen; ME up in every report of a 38-scene run, no underruns (RE-590).
 
 ### Gameplay math, tables and goldens
 
@@ -92,7 +93,7 @@ the Media Engine (batch 159), started by the game's own kernel module
 
 | Task | Remaining / acceptance | Refs |
 |---|---|---|
-| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Owner's 37 compensated textures (RE-588 item 8). Portable packer `ssb-pack` (`no_std`), every `ssb-tablegen` table in the pack, builds without a ROM, EBOOT scan clean (RE-589); first-launch installer `INSTALL.PBP` ([D-053](docs/decisions/D-053.md)): PSP-2000 at the PSP-1000 start budget 8.78 min, identical, lowest free 9.8 MB (RE-588 item 15). XMB hand-off works (owner, PSP-2000). Remaining: HOME mid-build, NoSpace screen, a real PSP-1000 run. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
+| ROM-free release | User puts the US ROM next to the EBOOT; first launch builds `ssb64.pak` on the PSP (ROM check, progress screen); `romtool pack` stays as the PC alternative for users. Owner limit: under 10 min on a real PSP. Owner's 37 compensated textures (RE-588 item 8). Portable packer `ssb-pack` (`no_std`), every `ssb-tablegen` table in the pack, builds without a ROM, EBOOT scan clean (RE-589); first-launch installer `INSTALL.PBP` ([D-053](docs/decisions/D-053.md)): PSP-2000 at the PSP-1000 start budget 8.78 min, identical, lowest free 9.8 MB (RE-588 item 15). XMB hand-off works (owner, PSP-2000). PSP-1000: 8.28 min, identical (RE-590). Remaining: HOME mid-build, NoSpace screen. Acceptance: EBOOT carries no ROM data; pack equals the host-built one | [D-046](docs/decisions/D-046.md), [D-048](docs/decisions/D-048.md), RE-588, RE-589 |
 
 ## Completed
 

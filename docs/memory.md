@@ -26,7 +26,7 @@
 - `MEMSIZE=1` stays set
 - PSP-1000:
   - ignores `MEMSIZE=1` (RE-288)
-  - VS results exceed its budget: out-of-memory screen (RE-475)
+  - 38-scene scripted run under PSPLink (XMB budget unmeasured): lowest free 1,957,888 B (fighter select), VS results 2,106,368 B (RE-590)
 - `scene_files::prefetch`:
   - reads the next scene's files beside the running scene (RE-476)
   - stops queuing reads under `PREFETCH_MARGIN`, 6 MiB (`scene_files.rs:55`)
@@ -80,7 +80,7 @@ Allocated in `Gpu::init` (`psp-runtime/src/gu.rs`), 2 MiB in total:
 | Framebuffer 0 and 1 | 2 × 544 KiB (512×272×4) | Draw and display buffers |
 | Depth buffer | 272 KiB (512×272×2) | 16-bit depth |
 | Photo region (`PHOTO_REGION`) | 512 KiB (512×256×4) | Copy of the wallpaper photo the frozen picture samples (RE-476); lent to a large resident texture (`vram_resident`, RE-492) or, when idle for `TEXTURE_POOL_IDLE_FRAMES` (60, `gu.rs:714`), to the texture pool |
-| Vertex region (`VRAM_VERTICES`) | rest, 176 KiB on a PSP-2000 | Per-frame lit-expand vertex blocks (`ge_vertices`), falling back to list memory |
+| Vertex region (`VRAM_VERTICES`) | rest, 176 KiB on a PSP-2000 | Per-frame lit-expand vertex blocks (`ge_vertices`), falling back to list memory; with a vertex tape armed, to `vertex_overflow` main memory first (at most 192 KiB, RE-590) |
 
 - Texture pool (`TEXTURE_POOL`, RE-539):
   - `pool_texture` copies textures from main RAM into the idle photo region (`sceGuCopyImage`)

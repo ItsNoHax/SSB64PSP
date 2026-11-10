@@ -77,12 +77,13 @@ Encoding traps handled in `ssb-rom/src/dl.rs`:
 - Static drawing keeps the baked rest rebase.
 - Integer positions and signed-byte normals round at the GE submission boundary.
 
-### Frozen-model vertex replay (RE-576)
+### Frozen-model vertex replay (RE-576, RE-590)
 
 - `meshdraw::VertexTape` (armed by `campaign_screen` frozen models): the previous list's expanded vertices in the `gu::ge_vertices` VRAM region are re-referenced, not rebuilt.
 - Conditions: tape valid, previous list serial, region `next` == tape start, key hash equal (matrices, look, object, light, fog, camera, clip, caller key).
 - Skips `light_prepass`, skinning, guard clip, corner writes; same GE commands and addresses.
-- Spoilers: VRAM spill, guard clip, effect colours, float UV, direct skinned vertices, `color_override`, `mat_anim`, effect, `only_node`, hidden, `node_override`.
+- Overflow: while a tape is armed, blocks past the VRAM region go to `gu::vertex_overflow` main memory (grown at each list start by the last list's spill + 16 KiB, at most 192 KiB; freed after the first list that arms none); the region then takes nothing more that list.
+- Spoilers: spill to list memory, guard clip, effect colours, float UV, direct skinned vertices, `color_override`, `mat_anim`, effect, `only_node`, hidden, `node_override`.
 - New `meshdraw` branches go in `#[cold] #[inline(never)]` helpers with state in statics: hot-path code placement moves vs4 up to +0.9 ms.
 
 ### `romtool scan`

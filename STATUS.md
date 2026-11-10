@@ -15,23 +15,22 @@
 | PSP-2000 1P intro | 14.01 ms (timer build); 1P battle 12.68 ms; `vs4@2170` electric no-hit r18 15.78, shock r12 16.65 (batch 187) | RE-479, RE-585, RE-589 |
 | PSP-2000 boot | `psp_main` to frame 1 about 417 ms | RE-582 |
 | PSP-2000 free at `psp_main` | 51.4 MB under PSPLink | RE-574 |
+| PSP-1000 (PSPLink) | pack build 8.28 min, identical; vs4 14.99 ms, opening 8.94, 1P battle 6.70; Polygon Team intro 28.01 ms; lowest free 1.96 MB | RE-590 |
 
 ## Current work
 
+- Landed (batch 199): PSP-1000 run under PSPLink: on-PSP pack build, 38-scene scripted playthrough, ME audio up in every report. Fix: frozen-model vertex overflow (`gu::vertex_overflow`): Polygon Team intro 35.28 to 28.01 ms on PSP-1000, all 30 models replay; goldens unchanged (RE-590).
 - Landed (batch 198): 1P read-ahead: intro → battle, stage clear → next intro, Bonus Practice select → bonus battle. PSP-2000 battle loads 26-75 to 0.9-2.5 ms, next intro 31 to 0.7 ms (RE-501). PLAN MS8 pruned to owner-gated rows; clip_polygon lever rejected (RE-519).
 - Landed (batch 197): clip path diet, bit-exact: branch-free corner encode, format resolved once per primitive. PSP-2000 busy vs4 14.90 to 14.84 ms, Zebes 10.70 to 10.52; Zebes clip walk 0.86 to 0.66 ms (RE-519).
 - Landed (batch 194): all scene draws clip at the viewport (`FRUSTRATIO_1`); flat triangles crossing only x/y draw whole. PSP-2000 busy vs4 15.11 to 15.84 ms, Zebes 10.81 to 11.29, opening 9.60 to 9.46; 172 goldens rebaselined with hardware proof (RE-519).
 - Landed (batch 193): fight first frame `update` 19-22 to 16-20 ms on PSP-2000 (figatree groups cached at boot); `enter` waits only for reads it wants (RE-476, RE-501). GE shade screen-linear (RE-519).
-- Landed (batch 192): opening fight first frame `update` 24-28 to 19-22 ms on PSP-2000: one-field pack scans, in-place clears; vs4 15.50 to 15.45 ms; lazy item players rejected, vs4 +0.25 ms (RE-476; goldens unchanged).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Gaps in `PLAN.md`.
 
 ## Next
 
-1. Owner hardware tests (XMB hand-off done): HOME mid-build, NoSpace screen, PSP-1000 run (RE-588 item 15 pending list).
-2. PSP-1000 Media Engine audio needs a person (PLAN "Audio cost").
-
-PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
+1. Owner hand checks: HOME mid-build, NoSpace screen, PSP-1000 XMB launch and ME audio by ear, hand input (shield, grab, throws, costumes), nub deadzone, boot time from the XMB.
+2. MS8: 1P intro recorded command replay (RE-590 item 8).
 
 ## Blockers
 
@@ -39,7 +38,7 @@ PSP-1000: owner confirmed the game runs on one (2026-10-29 playtest).
 
 ## Verification
 
-Baseline: batch 198 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 524288.
+Baseline: batch 199 (hardware: RE-575, RE-585, RE-590); deepest game stack 127,752 B of 524288; peak golden memory 13,430,528 B.
 
 | Check | Result |
 |---|---|
@@ -49,5 +48,5 @@ Baseline: batch 198 (hardware: RE-575, RE-585); deepest game stack 127,752 B of 
 | Three PSP release builds (game, installer, viewer) | compile |
 | Goldens | full matrix 286 of 286, verify --twice |
 | PPSSPP smoke: `tools/run-ppsspp.sh --crate psp-game --seconds 20` | exit 0, screenshot |
-| Physical PSP | PSP-2000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
+| Physical PSP | PSP-2000 and PSP-1000, 6.61 ARK, PSPLink v3.2.1; opening A/B RE-530, RE-532; `stack_poison` RE-531 |
 | ROMs | `rom/Super Smash Bros. (USA).z64`, `refs/ssb-decomp-re/baserom.us.z64`; SHA-1 `e2929e10...` |

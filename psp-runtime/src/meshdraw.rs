@@ -438,6 +438,11 @@ pub struct VertexTape {
     valid: bool,
 }
 
+/// Most main memory past the VRAM region while tapes are armed
+/// ([`crate::gu::vertex_overflow`]): the Fighting Polygon Team's 30 frozen
+/// models overflow the 176 KiB region.
+const TAPE_OVERFLOW_BYTES: usize = 192 * 1024;
+
 /// [`TAPE`]: where the current model's [`VertexTape`] stands.
 #[derive(Debug, Clone, Copy, Default)]
 enum TapeMode {
@@ -539,6 +544,8 @@ impl DrawState {
     /// `key` names whatever of its look the caller knows and the draw
     /// cannot see. [`Self::finish_tape`] returns the tape to keep.
     pub fn arm_tape(&mut self, tape: VertexTape, key: u64) {
+        // SAFETY: a tape is armed for a draw into the open direct list.
+        unsafe { crate::gu::vertex_overflow(TAPE_OVERFLOW_BYTES) };
         *tape_mode() = TapeMode::Armed(tape, key);
     }
 
