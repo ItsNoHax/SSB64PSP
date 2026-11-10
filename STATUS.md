@@ -19,7 +19,7 @@
 
 ## Current work
 
-- Landed (batch 199): PSP-1000 run under PSPLink: on-PSP pack build, 38-scene scripted playthrough, ME audio up in every report. Fix: frozen-model vertex overflow (`gu::vertex_overflow`): Polygon Team intro 35.28 to 28.01 ms on PSP-1000, all 30 models replay; goldens unchanged (RE-590).
+- Landed (batch 199): PSP-1000 run under PSPLink: on-PSP pack build, 38-scene scripted playthrough, ME audio up in every report; owner XMB install, audio and hand input good. Fix: frozen-model vertex overflow (`gu::vertex_overflow`): Polygon Team intro 35.28 to 28.01 ms on PSP-1000, all 30 models replay; goldens unchanged (RE-590).
 - Landed (batch 198): 1P read-ahead: intro → battle, stage clear → next intro, Bonus Practice select → bonus battle. PSP-2000 battle loads 26-75 to 0.9-2.5 ms, next intro 31 to 0.7 ms (RE-501). PLAN MS8 pruned to owner-gated rows; clip_polygon lever rejected (RE-519).
 - Landed (batch 197): clip path diet, bit-exact: branch-free corner encode, format resolved once per primitive. PSP-2000 busy vs4 14.90 to 14.84 ms, Zebes 10.70 to 10.52; Zebes clip walk 0.86 to 0.66 ms (RE-519).
 - Landed (batch 194): all scene draws clip at the viewport (`FRUSTRATIO_1`); flat triangles crossing only x/y draw whole. PSP-2000 busy vs4 15.11 to 15.84 ms, Zebes 10.81 to 11.29, opening 9.60 to 9.46; 172 goldens rebaselined with hardware proof (RE-519).
@@ -29,7 +29,7 @@
 
 ## Next
 
-1. Owner hand checks: HOME mid-build, NoSpace screen, PSP-1000 XMB launch and ME audio by ear, hand input (shield, grab, throws, costumes), nub deadzone, boot time from the XMB.
+1. Owner hand checks: HOME mid-build, NoSpace screen, boot time from the XMB.
 2. MS8: 1P intro recorded command replay (RE-590 item 8).
 
 ## Blockers
