@@ -2,16 +2,15 @@
 
 Original work. One set per crate in `xmb/`, referenced from its `Psp.toml`.
 
-| Slot | File | Format |
+| Slot | Game (`psp-game/xmb/`) | Viewer (`psp-asset-viewer/xmb/`) |
 |---|---|---|
-| `ICON0` | `xmb/ICON0.PNG` | 144 × 80 RGBA PNG, transparent rounded corners |
-| `ICON1` | `xmb/ICON1.PMF` | 144 × 80 H.264 PMF, 29.97 fps, seamless loop |
-| `PIC0` | `xmb/PIC0.PNG` | 310 × 180 RGBA PNG, transparent background, drawn over `PIC1` |
-| `PIC1` | `xmb/PIC1.PNG` | 480 × 272 RGB PNG |
-| `SND0` | `psp-game/xmb/SND0.AT3` | ATRAC3 66 kbps (LP4), 44.1 kHz stereo, RIFF; shared by both crates |
+| `ICON0` | 144 × 80 RGBA PNG, opaque | 144 × 80 RGBA PNG, transparent rounded corners |
+| `ICON1` | none | 144 × 80 H.264 PMF, 29.97 fps, 4.8 s seamless loop |
+| `PIC0` | none | 310 × 180 RGBA PNG, transparent background, drawn over `PIC1` |
+| `PIC1` | 480 × 272 RGBA PNG, opaque | 480 × 272 RGB PNG |
+| `SND0` | ATRAC3 66 kbps (LP4), 44.1 kHz stereo, RIFF, 28.98 s loop | game's file |
 
-- ICON1 loop length: 7.2 s (game), 4.8 s (viewer)
-- PNGs committed as delivered; `ICON0`, `PIC0` keep alpha (art uses it)
+- PNGs committed as delivered
 - Commands below need [pspbuild](https://github.com/ItsNoHax/pspbuild): `cargo install --locked pspbuild`
 
 ## ICON1
@@ -21,7 +20,6 @@ Original work. One set per crate in `xmb/`, referenced from its `Psp.toml`.
 - Needs `ffmpeg` with `libx264`
 
 ```bash
-pspbuild video icon1 psp-game/xmb/ICON1_source.mp4 -o psp-game/xmb/ICON1.PMF
 pspbuild video icon1 psp-asset-viewer/xmb/ICON1_source.mp4 -o psp-asset-viewer/xmb/ICON1.PMF
 ```
 
@@ -41,12 +39,12 @@ pspbuild video icon1 psp-asset-viewer/xmb/ICON1_source.mp4 -o psp-asset-viewer/x
 Check a result:
 
 ```bash
-ffprobe -v error -count_frames -show_entries stream=profile,level,nb_read_frames psp-game/xmb/ICON1.PMF
+ffprobe -v error -count_frames -show_entries stream=profile,level,nb_read_frames psp-asset-viewer/xmb/ICON1.PMF
 ```
 
 - ffmpeg decoding proves nothing: console decoder is stricter
 - Only a physical PSP shows the animated icon
-- Verified: both icons animate on PSP Slim, firmware 6.61 with ARK (2026-09-28, `e1acd5d`)
+- Verified: game and viewer icons animated on PSP Slim, firmware 6.61 with ARK (2026-09-28, `e1acd5d`)
 
 ## Checking a built EBOOT
 
@@ -56,20 +54,20 @@ pspbuild inspect psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
 
 - Lists each slot's offset, size, kind
 - PNG of wrong size or with transparency → `WARNING:` line
-- Game's RGBA `ICON0.PNG` gets one
+- Game's `ICON0.PNG`, `PIC1.PNG` and viewer's `ICON0.PNG` get one (RGBA type; game's art is opaque)
   - why: some firmware and packers reportedly reject alpha
   - shows on PSP Slim (6.61)
 
 ## SND0
 
-- Original 25.6 s loop: 150 BPM, E minor, 16 bars (drums, bass, chord stabs, lead)
-- `tools/make-snd0-loop.py` synthesizes it from nothing; no samples or music from the original game ([D-037](decisions/D-037.md))
-- Note and echo tails past the end wrap to the start: seamless loop
+- Owner-supplied LP2 file (132 kbps, four QMF bands: XMB plays nothing), re-encoded to LP4
+- Loop: the source's `smpl` loop, samples 2048 to 1279999
 - Viewer's `Psp.toml` points at the game's file
 
 ```bash
-python3 tools/make-snd0-loop.py /tmp/snd0.wav
-pspbuild audio snd0 --exact /tmp/snd0.wav -o psp-game/xmb/SND0.AT3
+ffmpeg -i SOURCE.AT3 /tmp/snd0.wav
+ffmpeg -i /tmp/snd0.wav -af atrim=start_sample=2048:end_sample=1280000,asetpts=N/SR/TB /tmp/loop.wav
+pspbuild audio snd0 --exact /tmp/loop.wav -o psp-game/xmb/SND0.AT3
 pspbuild audio inspect --strict psp-game/xmb/SND0.AT3
 ```
 
@@ -82,7 +80,7 @@ pspbuild audio inspect --strict psp-game/xmb/SND0.AT3
 - `audio inspect --strict` checks all of this; good file ends with:
 
 ```
-Loop:                samples 1024 to 1129983 (25.60 s), forever
+Loop:                samples 1024 to 1278975 (28.98 s), forever
 Verdict:             playable; matches the profile pspbuild writes
 ```
 
