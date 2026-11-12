@@ -493,12 +493,13 @@ mod imp {
         // The ME executor: the audio thread's polls and wait for it per
         // second; sc_busy is busy less the wait (the thread sleeps then).
         let m = crate::me::stats();
+        let pw = crate::power::counts();
         let ml = s.me_last;
         let wait = m.wait_us.wrapping_sub(ml.wait_us);
         let mut line = Line { buf: [0; 1024], len: 0 };
         let _ = writeln!(
             line,
-            "ame n={} state={} lists/s={} polls/s={} wait_us/s={} sc_busy_us/s={} fallbacks={} resets={} kmod={:#x}",
+            "ame n={} state={} lists/s={} polls/s={} wait_us/s={} sc_busy_us/s={} fallbacks={} resets={} kmod={:#x} kfile={:#x} susp={} res={} pinfo={:#x}",
             s.reports,
             m.state,
             per_s(m.frames.wrapping_sub(ml.frames)) / 10,
@@ -508,6 +509,10 @@ mod imp {
             m.fallbacks,
             m.resets,
             m.kmod,
+            m.kfile,
+            pw.0,
+            pw.1,
+            pw.2,
         );
         emit(&line.buf[..line.len]);
         s.me_last = m;

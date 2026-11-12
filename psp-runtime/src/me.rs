@@ -108,6 +108,9 @@ pub struct Stats {
     /// The last bring-up's kernel-module error: 0, or the failed load's
     /// or start's result.
     pub kmod: u32,
+    /// The last failed write of the module file at its relative path: 0,
+    /// or the open's error (the absolute path is tried next).
+    pub kfile: u32,
 }
 
 impl Stats {
@@ -119,6 +122,7 @@ impl Stats {
         fallbacks: 0,
         resets: 0,
         kmod: 0,
+        kfile: 0,
     };
 }
 
@@ -131,6 +135,7 @@ pub fn stats() -> Stats {
         fallbacks: FALLBACKS.load(Ordering::Acquire),
         resets: RESETS.load(Ordering::Acquire),
         kmod: KMOD.load(Ordering::Acquire),
+        kfile: KFILE_ERR.load(Ordering::Acquire),
     }
 }
 
@@ -186,13 +191,41 @@ fn emulator() -> bool {
 /// loads one from a file.
 const KCALL_PATH: &[u8] = b"ssb64_kcall.prx\0";
 
-/// Writes [`KCALL_PRX`] to [`KCALL_PATH`] unless the file already holds
-/// it: `false` when it cannot be written.
-fn kcall_file() -> bool {
+/// [`KCALL_PATH`] in the game's own folder (`argv[0]`'s), NUL-terminated:
+/// set by [`MeExec::start`] on the main thread; empty when unknown. The
+/// fallback when the relative path fails: the audio thread's relative
+/// opens failed after a wake (RE-591).
+static mut KCALL_ABS: [u8; 224] = [0; 224];
+
+/// The last relative [`kcall_file`] failure: 0, or the open's error.
+static KFILE_ERR: AtomicU32 = AtomicU32::new(0);
+
+/// Fills [`KCALL_ABS`]; main thread only ([`crate::launch::exe_path`]).
+fn set_kcall_abs() {
+    let mut arg0 = [0u8; 192];
+    let Some(p) = crate::launch::exe_path(&mut arg0) else {
+        return;
+    };
+    let Some(slash) = p.iter().rposition(|&b| b == b'/') else {
+        return;
+    };
+    // SAFETY: written on the main thread before the audio thread starts.
+    let out = unsafe { &mut *core::ptr::addr_of_mut!(KCALL_ABS) };
+    let n = slash + 1 + KCALL_PATH.len();
+    if n > out.len() {
+        return;
+    }
+    out[..=slash].copy_from_slice(&p[..=slash]);
+    out[slash + 1..n].copy_from_slice(KCALL_PATH);
+}
+
+/// Writes [`KCALL_PRX`] to `path` (NUL-terminated) unless the file already
+/// holds it: `Err` with the open's or write's error.
+fn kcall_write(path: &[u8]) -> Result<(), i32> {
     let mut same = false;
     // SAFETY: a NUL-terminated path; reads into a buffer of its length.
     unsafe {
-        let fd = sys::sceIoOpen(KCALL_PATH.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777);
+        let fd = sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777);
         if fd.0 >= 0 {
             let mut old = alloc::vec![0u8; KCALL_PRX.len() + 1];
             let n = sys::sceIoRead(fd, old.as_mut_ptr() as *mut c_void, old.len() as u32);
@@ -201,22 +234,39 @@ fn kcall_file() -> bool {
         }
     }
     if same {
-        return true;
+        return Ok(());
     }
     // SAFETY: as above; writes the module's bytes.
     unsafe {
         let fd = sys::sceIoOpen(
-            KCALL_PATH.as_ptr(),
+            path.as_ptr(),
             sys::IoOpenFlags::WR_ONLY | sys::IoOpenFlags::CREAT | sys::IoOpenFlags::TRUNC,
             0o777,
         );
         if fd.0 < 0 {
-            return false;
+            return Err(fd.0);
         }
         let n = sys::sceIoWrite(fd, KCALL_PRX.as_ptr() as *const c_void, KCALL_PRX.len());
         sys::sceIoClose(fd);
-        n == KCALL_PRX.len() as i32
+        if n == KCALL_PRX.len() as i32 {
+            Ok(())
+        } else {
+            Err(n.min(-1))
+        }
     }
+}
+
+/// Writes the module file: [`KCALL_PATH`], else [`KCALL_ABS`]. The path
+/// written, or `None` when neither can be.
+fn kcall_file() -> Option<&'static [u8]> {
+    match kcall_write(KCALL_PATH) {
+        Ok(()) => return Some(KCALL_PATH),
+        Err(e) => KFILE_ERR.store(e as u32, Ordering::Release),
+    }
+    // SAFETY: written once at boot, before this thread started.
+    let abs: &'static [u8; 224] = unsafe { &*core::ptr::addr_of!(KCALL_ABS) };
+    let n = abs.iter().position(|&b| b == 0)?;
+    (n > 0 && kcall_write(&abs[..=n]).is_ok()).then_some(&abs[..=n])
 }
 
 /// Starts the ME's program ([`k_me_reset`]) in kernel mode: `Err` when
@@ -224,12 +274,12 @@ fn kcall_file() -> bool {
 /// ([`kcall_file`]) and starts it with [`k_me_reset`]'s address; it
 /// unloads itself.
 fn bring_up() -> Result<(), u32> {
-    if !kcall_file() {
+    let Some(path) = kcall_file() else {
         KMOD.store(u32::MAX, Ordering::Release);
         return Err(STATE_NO_KMOD);
-    }
+    };
     // SAFETY: a NUL-terminated path; no options.
-    let id = unsafe { sys::sceKernelLoadModule(KCALL_PATH.as_ptr(), 0, core::ptr::null_mut()) };
+    let id = unsafe { sys::sceKernelLoadModule(path.as_ptr(), 0, core::ptr::null_mut()) };
     if id.0 < 0 {
         KMOD.store(id.0 as u32, Ordering::Release);
         return Err(STATE_NO_KMOD);
@@ -292,8 +342,8 @@ struct SysEventHandler {
 /// `SceMeRpc` (`me_wrapper`) answers the suspend event by posting a save
 /// command to the system's ME program and spinning until it answers; ours
 /// never does, so the PSP never slept (RE-479). Without it the suspend
-/// leaves the ME alone and the watchdog brings our program back after the
-/// wake; snes9xTYL's ME module does the same. The game's exit reboots the
+/// leaves the ME alone and [`MeExec::resumed`] brings our program back
+/// after the wake (RE-591); snes9xTYL's ME module does the same. The game's exit reboots the
 /// kernel, which restores both.
 extern "C" fn k_me_reset(fns: &KernelFns) -> i32 {
     // SAFETY: kernel mode; the list is the system's, read with interrupts
@@ -408,6 +458,7 @@ impl MeExec {
     /// Brings the ME up: `None` when it is not available (the caller keeps
     /// the SC executor). `dsp`'s runs stop feeding `prof`.
     pub fn start(dsp: &mut Dsp) -> Option<Box<Self>> {
+        set_kcall_abs();
         if !start_me() {
             return None;
         }
@@ -428,6 +479,20 @@ impl MeExec {
     /// The ME stays unusable (the caller goes back to the SC executor).
     pub fn gave_up(&self) -> bool {
         STATE.load(Ordering::Acquire) == STATE_GAVE_UP
+    }
+
+    /// The PSP woke from a suspend: the ME lost its program (the system's
+    /// `SceMeRpc` that would reload one is off, [`k_me_reset`]), so it is
+    /// brought up again after [`RETRY_FRAMES`], with all [`MAX_FAILS`]
+    /// tries. The audio thread calls it between frames (RE-591).
+    pub fn resumed(&mut self) {
+        let s = STATE.load(Ordering::Acquire);
+        if s == STATE_UP || s == STATE_DOWN {
+            STATE.store(STATE_DOWN, Ordering::Release);
+            self.fails = 0;
+            self.retry_in = RETRY_FRAMES;
+            self.sc_dirty = true;
+        }
     }
 
     /// The SC wrote the DSP state (an effect change): written back before
@@ -470,6 +535,13 @@ impl MeExec {
                 if up {
                     self.fails = 0;
                 } else {
+                    // The ME ran before: a failed module load here is
+                    // transient (the Memory Stick right after a wake,
+                    // RE-591), so it counts as a failed try, not as
+                    // "no kernel module".
+                    if STATE.load(Ordering::Acquire) == STATE_NO_KMOD {
+                        STATE.store(STATE_DOWN, Ordering::Release);
+                    }
                     self.fails += 1;
                     self.retry_in = RETRY_FRAMES;
                     if self.fails >= MAX_FAILS {

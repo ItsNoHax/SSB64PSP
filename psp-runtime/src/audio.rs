@@ -533,6 +533,8 @@ pub fn start(section: Section) -> Result<&'static GameAudio, StartError> {
     // SAFETY: the thread that owns it has not started.
     unsafe { (*THREAD_STATE.load(Ordering::Acquire)).me = me };
     STOP.store(false, Ordering::Release);
+    // Parks the thread across a suspend (`park`).
+    crate::power::start();
     // SAFETY: a NUL-terminated name and a `extern "C"` entry. VFPU: the
     // synth may reach rust-psp's VFPU libm (R4 §1).
     let id = unsafe {
@@ -739,6 +741,44 @@ fn bump(counter: &AtomicU32, n: u32) {
     );
 }
 
+/// A suspend (`power`): the thread stops between blocks, releases its SRC
+/// channel once the hardware queue drains, and waits for the wake; then it
+/// reserves the channel again and restarts the ME, which lost its program
+/// in the suspend (RE-591). A thread left blocked in the output across the
+/// suspend faulted on the wake, and the channel kept from before the
+/// suspend played the mix damaged.
+fn park(st: &mut ThreadState) {
+    let t0 = now();
+    while unsafe { sys::sceAudioOutput2GetRestSample() } > 0 && now().wrapping_sub(t0) < 100_000 {
+        unsafe { sys::sceKernelDelayThread(1_000) };
+    }
+    // SAFETY: plain syscall; this thread owns the channel.
+    let released = unsafe { sys::sceAudioSRCChRelease() } >= 0;
+    crate::power::set_parked(true);
+    while crate::power::suspended() && !STOP.load(Ordering::Acquire) {
+        unsafe { sys::sceKernelDelayThread(10_000) };
+    }
+    if !released {
+        unsafe { sys::sceAudioSRCChRelease() };
+    }
+    // The audio hardware may come back after the thread does: retry for up
+    // to a second; a channel still missing shows as output errors.
+    for _ in 0..100 {
+        // SAFETY: plain syscall; 2 = stereo, as `start`.
+        let ch = unsafe {
+            sys::sceAudioSRCChReserve(BLOCK as i32, sys::AudioOutputFrequency::Khz32, 2)
+        };
+        if ch >= 0 {
+            break;
+        }
+        unsafe { sys::sceKernelDelayThread(10_000) };
+    }
+    if let Some(m) = &mut st.me {
+        m.resumed();
+    }
+    crate::power::set_parked(false);
+}
+
 unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
     // Records the FPU control word the synthesizer runs under.
     crate::fpu::init_thread(crate::fpu::GameThread::Audio);
@@ -754,6 +794,11 @@ unsafe extern "C" fn thread_main(_args: usize, _argp: *mut c_void) -> i32 {
     let st = unsafe { &mut *st };
     let mut first = true;
     while !STOP.load(Ordering::Acquire) {
+        if crate::power::suspended() {
+            park(st);
+            first = true;
+            continue;
+        }
         let t0 = now();
         let epoch = EPOCH.load(Ordering::Acquire);
         if epoch != st.epoch {

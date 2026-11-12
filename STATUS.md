@@ -19,11 +19,11 @@
 
 ## Current work
 
+- Landed (batch 200): sleep/wake on PSP Slim: audio thread parks across a suspend (`power`), reopens its SRC channel, ME restarts; was damaged output (ME on) or an audio-thread fault (ME off). Owner: audio fine after wake (RE-591).
 - Landed (batch 199): PSP-1000 run under PSPLink: on-PSP pack build, 38-scene scripted playthrough, ME audio up in every report; owner XMB install, audio and hand input good. Fix: frozen-model vertex overflow (`gu::vertex_overflow`): Polygon Team intro 35.28 to 28.01 ms on PSP-1000, all 30 models replay; goldens unchanged (RE-590).
 - Landed (batch 198): 1P read-ahead: intro → battle, stage clear → next intro, Bonus Practice select → bonus battle. PSP-2000 battle loads 26-75 to 0.9-2.5 ms, next intro 31 to 0.7 ms (RE-501). PLAN MS8 pruned to owner-gated rows; clip_polygon lever rejected (RE-519).
 - Landed (batch 197): clip path diet, bit-exact: branch-free corner encode, format resolved once per primitive. PSP-2000 busy vs4 14.90 to 14.84 ms, Zebes 10.70 to 10.52; Zebes clip walk 0.86 to 0.66 ms (RE-519).
 - Landed (batch 194): all scene draws clip at the viewport (`FRUSTRATIO_1`); flat triangles crossing only x/y draw whole. PSP-2000 busy vs4 15.11 to 15.84 ms, Zebes 10.81 to 11.29, opening 9.60 to 9.46; 172 goldens rebaselined with hardware proof (RE-519).
-- Landed (batch 193): fight first frame `update` 19-22 to 16-20 ms on PSP-2000 (figatree groups cached at boot); `enter` waits only for reads it wants (RE-476, RE-501). GE shade screen-linear (RE-519).
 - Measured (batch 157): Media Engine probe: ssb-engine DSP bit-exact on the ME at SC speed, SC slowdown < 2% (RE-479).
 - Gaps in `PLAN.md`.
 
@@ -38,7 +38,7 @@
 
 ## Verification
 
-Baseline: batch 199 (hardware: RE-575, RE-585, RE-590); deepest game stack 127,752 B of 524288; peak golden memory 13,430,528 B.
+Baseline: batch 199 (hardware: RE-575, RE-585, RE-590); batch 200 audio-only: PSP builds, 5 goldens, smoke, Slim sleep/wake (RE-591); deepest game stack 127,752 B of 524288; peak golden memory 13,430,528 B.
 
 | Check | Result |
 |---|---|

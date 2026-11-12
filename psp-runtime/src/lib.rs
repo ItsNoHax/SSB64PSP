@@ -32,6 +32,7 @@ pub mod me;
 pub mod meshdraw;
 pub mod movie;
 pub mod particles;
+pub mod power;
 pub mod profile;
 pub mod reverb_vfpu;
 pub mod savedata;
