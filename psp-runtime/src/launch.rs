@@ -2,7 +2,7 @@
 //! installer (`psp-installer`, RE-588) when the boot finds no valid pack.
 //!
 //! - The installer is `INSTALL.PBP` in the game's own folder: the folder
-//!   of the path the game was started with (`argv[0]`, [`exe_path`]).
+//!   of the path the game was started with (`argv[0]`, [`exe_dir`]).
 //! - Launched as the XMB launches an EBOOT: ARK's and PRO's
 //!   `SystemCtrlForUser` `sctrlKernelLoadExecVSHMs2` (key `game`,
 //!   argv = the path), the call RE-516 ran on a PSP-2000 from a user-mode
@@ -76,70 +76,22 @@ pub(crate) fn load_exec(path: &[u8]) -> (i32, i32) {
     (vsh, user)
 }
 
-/// The kernel's per-thread block at the top of a user thread's stack; the
-/// start arguments lie right below it (`sceKernelStartThread`).
-const K0_BYTES: usize = 0x100;
-/// How far below that block [`exe_path`] looks for the arguments.
-const ARG_WINDOW: usize = 0x200;
-/// Devices an EBOOT or PRX starts from.
-const DEVICES: [&[u8]; 5] = [b"ms0:/", b"ef0:/", b"host0:/", b"disc0:/", b"umd0:/"];
-
-/// The path this program was started with (`argv[0]`, printable ASCII), read from the
-/// calling thread's start arguments: call it on the main thread, which
-/// `psp::module!` starts with the module's arguments. The kernel copies
-/// them right below the 256-byte block at the top of the thread's stack
-/// ([`first_path`]). `None` if none is found.
-pub fn exe_path(out: &mut [u8; 192]) -> Option<&[u8]> {
-    let mut info = core::mem::MaybeUninit::<sys::SceKernelThreadInfo>::zeroed();
-    let p = info.as_mut_ptr();
-    // SAFETY: `p` points at a writable record the kernel fills.
-    let (base, size) = unsafe {
-        (*p).size = core::mem::size_of::<sys::SceKernelThreadInfo>();
-        let thid = sys::SceUid(sys::sceKernelGetThreadId());
-        if sys::sceKernelReferThreadStatus(thid, p) < 0 {
-            return None;
-        }
-        ((*p).stack as usize, (*p).stack_size as usize)
-    };
-    if base == 0 || size < K0_BYTES + ARG_WINDOW {
-        return None;
-    }
-    let k0 = base + size - K0_BYTES;
-    // SAFETY: inside this thread's own stack, above its live frames.
-    let window = unsafe { core::slice::from_raw_parts((k0 - ARG_WINDOW) as *const u8, ARG_WINDOW) };
-    let found = first_path(window)?;
-    let n = found.len().min(out.len() - 1);
-    out[..n].copy_from_slice(&found[..n]);
-    out[n] = 0;
-    Some(&out[..n])
-}
-
-/// `argv[0]` in `window`, the bytes right below the kernel's block: the
-/// argument block starts 16-byte aligned, `align16(size)` bytes below the
-/// window's end, and its tail padding is left as it was (PPSSPP: 0xFF).
-/// So `argv[0]` is the string at the highest 16-byte boundary that starts
-/// with a device prefix and ends in a NUL inside the window.
-fn first_path(window: &[u8]) -> Option<&[u8]> {
-    (16..=window.len()).step_by(16).find_map(|back| {
-        let s = &window[window.len() - back..];
-        let n = s.iter().position(|&b| b == 0)?;
-        let s = &s[..n];
-        (DEVICES.iter().any(|d| s.starts_with(d)) && s.iter().all(|b| (b' '..=b'~').contains(b)))
-            .then_some(s)
-    })
+/// The folder of the path this program was started with (`argv[0]`, kept by
+/// `psp::module!`, `psp::args`), with its trailing `/`. `None` if unknown.
+pub fn exe_dir() -> Option<&'static [u8]> {
+    let p = psp::args::arg0()?;
+    let slash = p.iter().rposition(|&b| b == b'/')?;
+    Some(&p[..=slash])
 }
 
 /// The game's hand-off when the pack is missing or unusable: LoadExecs
 /// [`INSTALLER`] from the game's folder; if that is impossible, says so
 /// and quits to the XMB on a button press. Never returns.
 pub fn start_installer() -> ! {
-    let mut arg0 = [0u8; 192];
     let mut path = [0u8; 224];
     let mut len = 0;
-    let dir =
-        exe_path(&mut arg0).map(|p| &p[..p.iter().rposition(|&b| b == b'/').map_or(0, |i| i + 1)]);
     let mut result = None;
-    if let Some(dir) = dir.filter(|d| !d.is_empty()) {
+    if let Some(dir) = exe_dir() {
         for &b in dir.iter().chain(INSTALLER.as_bytes()) {
             if len + 1 < path.len() {
                 path[len] = b;

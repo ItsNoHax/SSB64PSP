@@ -11,7 +11,7 @@ description = "Layer C: the SSB64PSP game -- the front end and Training Mode pla
 [workspace]
 
 [dependencies]
-psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "1226452cff685cdca98268368b08b05e08bd25e2" }
+psp = { git = "https://github.com/ItsNoHax/rust-psp", rev = "fc98d348496011dcad8722e738611619bad1ec89" }
 ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }

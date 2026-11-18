@@ -200,23 +200,20 @@ static mut KCALL_ABS: [u8; 224] = [0; 224];
 /// The last relative [`kcall_file`] failure: 0, or the open's error.
 static KFILE_ERR: AtomicU32 = AtomicU32::new(0);
 
-/// Fills [`KCALL_ABS`]; main thread only ([`crate::launch::exe_path`]).
+/// Fills [`KCALL_ABS`] ([`crate::launch::exe_dir`]); before the audio
+/// thread starts.
 fn set_kcall_abs() {
-    let mut arg0 = [0u8; 192];
-    let Some(p) = crate::launch::exe_path(&mut arg0) else {
-        return;
-    };
-    let Some(slash) = p.iter().rposition(|&b| b == b'/') else {
+    let Some(dir) = crate::launch::exe_dir() else {
         return;
     };
     // SAFETY: written on the main thread before the audio thread starts.
     let out = unsafe { &mut *core::ptr::addr_of_mut!(KCALL_ABS) };
-    let n = slash + 1 + KCALL_PATH.len();
+    let n = dir.len() + KCALL_PATH.len();
     if n > out.len() {
         return;
     }
-    out[..=slash].copy_from_slice(&p[..=slash]);
-    out[slash + 1..n].copy_from_slice(KCALL_PATH);
+    out[..dir.len()].copy_from_slice(dir);
+    out[dir.len()..n].copy_from_slice(KCALL_PATH);
 }
 
 /// Writes [`KCALL_PRX`] to `path` (NUL-terminated) unless the file already
