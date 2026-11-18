@@ -102,44 +102,15 @@ impl SemaLock {
 /// `sceKernelCreateSema(name, 0, init, max, NULL)`. `name` is
 /// NUL-terminated. `Err` with the kernel's error.
 pub(crate) fn create_sema(name: &'static [u8], init: u32, max: u32) -> Result<SceUid, i32> {
-    {
-        // rust-psp declares `sceKernelCreateSema` (5 arguments) without its
-        // `i5` ABI mapper, so a plain call leaves the option pointer in `$t0`
-        // unset (PPSSPP logs `deadbeef`, "invalid options parameter"). The
-        // kernel takes arguments 5-8 in `$t0-$t3` (MIPS EABI); rust-psp's
-        // global `i5` trampoline moves the fifth O32 stack argument there.
-        extern "C" {
-            fn i5(
-                a: u32,
-                b: u32,
-                c: u32,
-                d: u32,
-                e: u32,
-                f: extern "C" fn(u32, u32, u32, u32, u32) -> u32,
-            ) -> u32;
-            fn __sceKernelCreateSema_stub(
-                name: u32,
-                attr: u32,
-                init: u32,
-                max: u32,
-                option: u32,
-            ) -> u32;
-        }
-        // SAFETY: the stub is the kernel import rust-psp links; the name is
-        // NUL-terminated and the option pointer is null. The transmute only
-        // changes the declared ABI tag (both are `extern "C"`), from an
-        // `unsafe` to a safe fn pointer as `i5` expects.
-        let id = unsafe {
-            let stub: extern "C" fn(u32, u32, u32, u32, u32) -> u32 = core::mem::transmute(
-                __sceKernelCreateSema_stub as unsafe extern "C" fn(u32, u32, u32, u32, u32) -> u32,
-            );
-            i5(name.as_ptr() as u32, 0, init, max, 0, stub) as i32
-        };
-        if id < 0 {
-            Err(id)
-        } else {
-            Ok(SceUid(id))
-        }
+    // SAFETY: the name is NUL-terminated and the option pointer is null.
+    // `init` and `max` fit an `i32` at every call site.
+    let id = unsafe {
+        sys::sceKernelCreateSema(name.as_ptr(), 0, init as i32, max as i32, core::ptr::null_mut())
+    };
+    if id.0 < 0 {
+        Err(id.0)
+    } else {
+        Ok(id)
     }
 }
 

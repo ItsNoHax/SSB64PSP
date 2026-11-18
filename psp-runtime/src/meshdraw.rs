@@ -1176,8 +1176,8 @@ fn texture_image<'a>(t: &TextureDesc, data: &'a [u8]) -> Option<TextureImage<'a>
     let bufw = t.stride as u32;
     let size = (bufw as usize * psm_bits(psm_of(t.psm))).div_ceil(8) * h as usize;
     // RE-314: the buffer keeps its full stride, but the declared size
-    // is capped at 512 -- a 1024 dimension would encode as log2 15 and
-    // sample far past this texture's bytes into its pack neighbours.
+    // is capped at 512, the GE's limit; the UV scale (`ge_texture_dims`
+    // too) must divide by the same size.
     let (ge_w, ge_h) = ssb_rom::psp_texture::ge_texture_dims(w, h);
     Some(TextureImage { texels: data.get(..size)?, ge_w, ge_h, bufw })
 }
